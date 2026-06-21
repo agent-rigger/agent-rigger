@@ -25,7 +25,7 @@ import {
 } from '@clack/prompts';
 
 import type { CatalogEntry } from '@agent-rigger/catalog';
-import type { Report, Scope, WriteOp } from '@agent-rigger/core';
+import type { RemovalOp, Report, Scope, WriteOp } from '@agent-rigger/core';
 
 // ---------------------------------------------------------------------------
 // Path abbreviation helpers
@@ -153,6 +153,76 @@ export function renderPlan(ops: WriteOp[], opts: RenderPlanOpts = {}): string {
       case 'plugin-install': {
         lines.push(`  ${padVerb('plugin')} ${op.plugin}`);
         lines.push(`${DETAIL_INDENT}via ${abbr(op.marketplace)}`);
+        break;
+      }
+    }
+  }
+
+  return lines.join('\n');
+}
+
+// ---------------------------------------------------------------------------
+
+/**
+ * Options passed to renderRemovalPlan.
+ */
+export interface RenderRemovalPlanOpts {
+  home?: string;
+  cwd?: string;
+}
+
+/**
+ * Render a human-readable removal plan from a list of RemovalOps.
+ *
+ * Format:
+ *   Removal plan (N change(s)):
+ *
+ *     <verb>   <abbreviated-target>
+ *                <detail line(s)>
+ *
+ * Verbs (ASCII, fixed width):
+ *   un-deny    remove-deny
+ *   un-import  remove-block
+ *   delete     delete-file
+ *   unlink     unlink
+ *   uninstall  plugin-uninstall
+ *
+ * Returns "Nothing to remove — not installed." when `ops` is empty.
+ */
+export function renderRemovalPlan(ops: RemovalOp[], opts: RenderRemovalPlanOpts = {}): string {
+  if (ops.length === 0) {
+    return 'Nothing to remove — not installed.';
+  }
+
+  const abbr = (p: string): string => abbreviatePath(p, opts);
+
+  const n = ops.length;
+  const header = `Removal plan (${n} ${n === 1 ? 'change' : 'changes'}):`;
+  const lines: string[] = [header, ''];
+
+  for (const op of ops) {
+    switch (op.kind) {
+      case 'remove-deny': {
+        lines.push(`  ${padVerb('un-deny')} ${abbr(op.path)}`);
+        for (const rule of op.rules) {
+          lines.push(`${DETAIL_INDENT}- ${rule}`);
+        }
+        break;
+      }
+      case 'remove-block': {
+        lines.push(`  ${padVerb('un-import')} ${abbr(op.path)}`);
+        break;
+      }
+      case 'delete-file': {
+        lines.push(`  ${padVerb('delete')} ${abbr(op.path)}`);
+        break;
+      }
+      case 'unlink': {
+        lines.push(`  ${padVerb('unlink')} ${abbr(op.target)}`);
+        break;
+      }
+      case 'plugin-uninstall': {
+        lines.push(`  ${padVerb('uninstall')} ${op.plugin}`);
         break;
       }
     }

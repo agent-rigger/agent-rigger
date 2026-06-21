@@ -8,13 +8,14 @@
 
 import { describe, expect, it } from 'bun:test';
 
-import type { Report, WriteOp } from '@agent-rigger/core';
+import type { RemovalOp, Report, WriteOp } from '@agent-rigger/core';
 import {
   abbreviatePath,
   confirmApply,
   renderCatalogList,
   renderEntryInfo,
   renderPlan,
+  renderRemovalPlan,
   renderReport,
   selectArtifacts,
   selectScope,
@@ -498,5 +499,231 @@ describe('new pure rendering exports', () => {
 
   it('renderEntryInfo is a function', () => {
     expect(typeof renderEntryInfo).toBe('function');
+  });
+
+  it('renderRemovalPlan is a function', () => {
+    expect(typeof renderRemovalPlan).toBe('function');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// renderRemovalPlan — empty list
+// ---------------------------------------------------------------------------
+
+describe('renderRemovalPlan — empty list', () => {
+  it('returns "Nothing to remove — not installed." when ops is empty', () => {
+    const result = renderRemovalPlan([]);
+    expect(result).toBe('Nothing to remove — not installed.');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// renderRemovalPlan — header
+// ---------------------------------------------------------------------------
+
+describe('renderRemovalPlan — header', () => {
+  it('starts with "Removal plan (1 change):" for a single op', () => {
+    const op: RemovalOp = {
+      kind: 'remove-deny',
+      path: '/home/me/.claude/settings.json',
+      rules: ['Read(./.env)'],
+    };
+    const result = renderRemovalPlan([op]);
+    expect(result).toMatch(/^Removal plan \(1 change\):/);
+  });
+
+  it('starts with "Removal plan (N changes):" for multiple ops', () => {
+    const ops: RemovalOp[] = [
+      { kind: 'remove-deny', path: '/a', rules: ['rule-a'] },
+      { kind: 'remove-block', path: '/b' },
+    ];
+    const result = renderRemovalPlan(ops);
+    expect(result).toMatch(/^Removal plan \(2 changes\):/);
+  });
+
+  it('has a blank line after the header', () => {
+    const op: RemovalOp = {
+      kind: 'remove-deny',
+      path: '/home/me/.claude/settings.json',
+      rules: ['Read(./.env)'],
+    };
+    const lines = renderRemovalPlan([op]).split('\n');
+    expect(lines[1]).toBe('');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// renderRemovalPlan — remove-deny
+// ---------------------------------------------------------------------------
+
+describe('renderRemovalPlan — remove-deny', () => {
+  it('renders verb "un-deny" and abbreviated path', () => {
+    const op: RemovalOp = {
+      kind: 'remove-deny',
+      path: '/home/me/.claude/settings.json',
+      rules: ['Read(./.env)'],
+    };
+    const result = renderRemovalPlan([op], { home: '/home/me' });
+    expect(result).toContain('un-deny');
+    expect(result).toContain('~/.claude/settings.json');
+    expect(result).not.toContain('/home/me/.claude/settings.json');
+  });
+
+  it('renders each rule on its own indented line with - prefix', () => {
+    const op: RemovalOp = {
+      kind: 'remove-deny',
+      path: '/home/me/.claude/settings.json',
+      rules: ['rule-a', 'rule-b'],
+    };
+    const result = renderRemovalPlan([op]);
+    const lines = result.split('\n');
+    expect(lines.some((l) => l.includes('rule-a') && l.includes('-'))).toBe(true);
+    expect(lines.some((l) => l.includes('rule-b') && l.includes('-'))).toBe(true);
+  });
+
+  it('renders path without abbreviation when no opts provided', () => {
+    const op: RemovalOp = {
+      kind: 'remove-deny',
+      path: '.claude/settings.json',
+      rules: ['Bash(rm:-rf)'],
+    };
+    const result = renderRemovalPlan([op]);
+    expect(result).toContain('.claude/settings.json');
+    expect(result).toContain('Bash(rm:-rf)');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// renderRemovalPlan — remove-block
+// ---------------------------------------------------------------------------
+
+describe('renderRemovalPlan — remove-block', () => {
+  it('renders verb "un-import" and abbreviated path', () => {
+    const op: RemovalOp = {
+      kind: 'remove-block',
+      path: '/home/me/.claude/CLAUDE.md',
+    };
+    const result = renderRemovalPlan([op], { home: '/home/me' });
+    expect(result).toContain('un-import');
+    expect(result).toContain('~/.claude/CLAUDE.md');
+    expect(result).not.toContain('/home/me/.claude/CLAUDE.md');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// renderRemovalPlan — delete-file
+// ---------------------------------------------------------------------------
+
+describe('renderRemovalPlan — delete-file', () => {
+  it('renders verb "delete" and abbreviated path', () => {
+    const op: RemovalOp = {
+      kind: 'delete-file',
+      path: '/home/me/.claude/harness/AGENTS.md',
+    };
+    const result = renderRemovalPlan([op], { home: '/home/me' });
+    expect(result).toContain('delete');
+    expect(result).toContain('~/.claude/harness/AGENTS.md');
+    expect(result).not.toContain('/home/me/.claude/harness/AGENTS.md');
+  });
+
+  it('renders absolute path when no abbreviation applies', () => {
+    const op: RemovalOp = {
+      kind: 'delete-file',
+      path: '/other/path/AGENTS.md',
+    };
+    const result = renderRemovalPlan([op]);
+    expect(result).toContain('/other/path/AGENTS.md');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// renderRemovalPlan — unlink
+// ---------------------------------------------------------------------------
+
+describe('renderRemovalPlan — unlink', () => {
+  it('renders verb "unlink" and abbreviated target', () => {
+    const op: RemovalOp = {
+      kind: 'unlink',
+      target: '/home/me/.claude/skills/spec-workflow',
+      store: '/home/me/.config/agent-rigger/skills/spec-workflow',
+    };
+    const result = renderRemovalPlan([op], { home: '/home/me' });
+    expect(result).toContain('unlink');
+    expect(result).toContain('~/.claude/skills/spec-workflow');
+    expect(result).not.toContain('/home/me/.claude/skills/spec-workflow');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// renderRemovalPlan — plugin-uninstall
+// ---------------------------------------------------------------------------
+
+describe('renderRemovalPlan — plugin-uninstall', () => {
+  it('renders verb "uninstall" and plugin id', () => {
+    const op: RemovalOp = {
+      kind: 'plugin-uninstall',
+      plugin: 'my-plugin',
+    };
+    const result = renderRemovalPlan([op]);
+    expect(result).toContain('uninstall');
+    expect(result).toContain('my-plugin');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// renderRemovalPlan — path abbreviation
+// ---------------------------------------------------------------------------
+
+describe('renderRemovalPlan — path abbreviation', () => {
+  it('abbreviates home paths to ~ in remove-deny', () => {
+    const op: RemovalOp = {
+      kind: 'remove-deny',
+      path: '/home/me/.claude/settings.json',
+      rules: ['Read(./.env)'],
+    };
+    const result = renderRemovalPlan([op], { home: '/home/me' });
+    expect(result).toContain('~/.claude/settings.json');
+    expect(result).not.toContain('/home/me/.claude/settings.json');
+  });
+
+  it('abbreviates cwd paths to ./ in delete-file', () => {
+    const op: RemovalOp = {
+      kind: 'delete-file',
+      path: '/workspace/project/.claude/AGENTS.md',
+    };
+    const result = renderRemovalPlan([op], { cwd: '/workspace/project' });
+    expect(result).toContain('./.claude/AGENTS.md');
+    expect(result).not.toContain('/workspace/project/.claude/AGENTS.md');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// renderRemovalPlan — multiple ops
+// ---------------------------------------------------------------------------
+
+describe('renderRemovalPlan — multiple ops', () => {
+  it('renders all ops in the output', () => {
+    const ops: RemovalOp[] = [
+      { kind: 'remove-deny', path: '/settings.json', rules: ['rule-a'] },
+      { kind: 'remove-block', path: '/CLAUDE.md' },
+      { kind: 'delete-file', path: '/AGENTS.md' },
+    ];
+    const result = renderRemovalPlan(ops);
+    expect(result).toContain('un-deny');
+    expect(result).toContain('un-import');
+    expect(result).toContain('delete');
+    expect(result).toContain('/settings.json');
+    expect(result).toContain('/CLAUDE.md');
+    expect(result).toContain('/AGENTS.md');
+  });
+
+  it('counts ops correctly in the header', () => {
+    const ops: RemovalOp[] = [
+      { kind: 'remove-deny', path: '/a', rules: ['r'] },
+      { kind: 'remove-block', path: '/b' },
+      { kind: 'delete-file', path: '/c' },
+    ];
+    const result = renderRemovalPlan(ops);
+    expect(result).toMatch(/Removal plan \(3 changes\):/);
   });
 });
