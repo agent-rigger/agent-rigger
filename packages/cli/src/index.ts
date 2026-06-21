@@ -1,3 +1,4 @@
+export * from './cli';
 export * from './cmd-check';
 export * from './cmd-init';
 export * from './cmd-install';

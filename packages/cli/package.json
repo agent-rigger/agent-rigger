@@ -3,14 +3,22 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "bin": {
+    "agent-rigger": "./dist/agent-rigger",
+    "rigger": "./dist/agent-rigger"
+  },
   "exports": {
     ".": "./src/index.ts",
+    "./cli": "./src/cli.ts",
     "./cmd-check": "./src/cmd-check.ts",
     "./cmd-init": "./src/cmd-init.ts",
     "./cmd-install": "./src/cmd-install.ts",
     "./config": "./src/config.ts",
     "./preflight-auth": "./src/preflight-auth.ts",
     "./ui": "./src/ui.ts"
+  },
+  "scripts": {
+    "build": "bun build --compile --outfile dist/agent-rigger src/cli.ts"
   },
   "dependencies": {
     "@agent-rigger/adapters": "workspace:*",
