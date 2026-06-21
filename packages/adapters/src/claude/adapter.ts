@@ -17,6 +17,7 @@ import type { Adapter, AdapterEntry } from '@agent-rigger/core/adapter';
 import type { Env } from '@agent-rigger/core/paths';
 import type { Nature, NatureReport, Scope, WriteOp } from '@agent-rigger/core/types';
 
+import { applyContext, auditContext, planContext } from './context';
 import { applyGuardrail, auditGuardrail, planGuardrail } from './guardrails';
 
 // ---------------------------------------------------------------------------
@@ -57,6 +58,8 @@ type OpKindApply = (ops: WriteOp[], env: Env) => Promise<void>;
 export interface ClaudeAdapterConfig {
   /** Canonical deny rules loaded from artifacts/claude/deny.json. */
   denyRef: string[];
+  /** Canonical AGENTS.md content for the context handler. */
+  agentsContent?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -74,6 +77,8 @@ export interface ClaudeAdapterConfig {
  * @param config  Adapter configuration (currently: denyRef for guardrail handler).
  */
 export function createClaudeAdapter(config: ClaudeAdapterConfig): Adapter {
+  const agentsContent = config.agentsContent ?? '';
+
   // Nature → { audit, plan } — E2-E5 add entries here
   const natureHandlers = new Map<Nature, NatureHandler>([
     [
@@ -89,11 +94,26 @@ export function createClaudeAdapter(config: ClaudeAdapterConfig): Adapter {
         },
       },
     ],
+    [
+      'context',
+      {
+        audit(entry, scope, env): Promise<NatureReport> {
+          const cwd = entry.scope === 'project' ? process.cwd() : undefined;
+          return auditContext(scope, env, agentsContent, cwd);
+        },
+        plan(entry, scope, env): Promise<WriteOp[]> {
+          const cwd = entry.scope === 'project' ? process.cwd() : undefined;
+          return planContext(scope, env, agentsContent, cwd);
+        },
+      },
+    ],
   ]);
 
   // WriteOp kind → apply fn — E2-E5 add entries here
   const opKindHandlers = new Map<WriteOp['kind'], OpKindApply>([
     ['merge-deny', (ops, env) => applyGuardrail(ops, env)],
+    ['write-text', (ops, env) => applyContext(ops, env)],
+    ['ensure-import', (ops, env) => applyContext(ops, env)],
   ]);
 
   return {

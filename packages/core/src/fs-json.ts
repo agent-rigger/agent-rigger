@@ -112,3 +112,18 @@ export async function writeJson(filePath: string, data: unknown): Promise<void> 
   const content = JSON.stringify(data, null, 2) + '\n';
   await Bun.write(filePath, content);
 }
+
+// ---------------------------------------------------------------------------
+// writeText
+// ---------------------------------------------------------------------------
+
+/**
+ * Write a UTF-8 string to `filePath`. Parent directories are created if absent.
+ * Symmetric with readText: writeText then readText returns the original content.
+ */
+export async function writeText(filePath: string, content: string): Promise<void> {
+  const dir = path.dirname(filePath);
+  await mkdir(dir, { recursive: true });
+
+  await Bun.write(filePath, content);
+}
