@@ -5,7 +5,7 @@
  * 1. apply() → check() = exit 0 (all present after first apply)
  * 2. 2nd apply() = no-op: no new .bak files, manifest unchanged
  * 3. settings.json content after 2 applies == after 1 apply
- * 4. Non-deny keys in settings.json survive both applies (invariant §4)
+ * 4. Non-deny keys in settings.json survive both applies (deny-merge invariant)
  *
  * Uses the same realistic deny adapter as engine.check.test.ts.
  * Isolation: fresh tmp HOME per test via makeTmpHome().
@@ -229,7 +229,7 @@ describe('idempotence: 2nd apply is no-op', () => {
     expect(content2).toEqual(content1);
   });
 
-  it('non-deny keys in settings.json survive both applies (§4 invariant)', async () => {
+  it('non-deny keys in settings.json survive both applies (deny-merge invariant)', async () => {
     const adapter = makeDenyAdapter();
     const entries = [makeCatalogEntry(ENTRY_ID)];
 

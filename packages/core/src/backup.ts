@@ -1,7 +1,7 @@
 /**
  * Backup helper for agent-rigger.
  *
- * Design invariants (CONTEXT.md § Sécurité & invariants):
+ * Invariants:
  * - backup-before-write is enforced by the engine; this module is pure I/O.
  * - File absent → no-op, returns null.
  * - File present → copy to <path>.bak-<ISO>-<token>, return the backup path.

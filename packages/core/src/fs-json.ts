@@ -20,7 +20,7 @@ import path from 'node:path';
 /**
  * Thrown by readJson when a file exists but contains malformed JSON.
  *
- * The CLI maps this error to exit code 2 (design §3).
+ * The CLI maps this error to exit code 2.
  * Never call process.exit() here — keep the core testable and runtime-agnostic.
  */
 export class InvalidJsonError extends Error {

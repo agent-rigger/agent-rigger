@@ -1,14 +1,14 @@
 /**
- * Adapter interface for agent-rigger (design.md §3, ADR-0002).
+ * Adapter interface for agent-rigger.
  *
  * The engine (core/engine.ts) is assistant-agnostic: it orchestrates through
  * this interface. Concrete adapters live in packages/adapters/. The core
  * package knows nothing about Claude, OpenCode, or Copilot specifics.
  *
- * Design invariants:
+ * Invariants:
  * - `audit` and `plan` are read-only: they MUST NOT write to the filesystem.
  * - `apply` performs the actual writes; backup is the engine's responsibility.
- * - All three methods receive the injectable `env` for HOME isolation (R12.1).
+ * - All three methods receive the injectable `env` for HOME isolation.
  * - No process.exit() calls; errors propagate as typed exceptions.
  * - No while loops; async operations use Promise.all / for...of / map.
  */
@@ -31,7 +31,7 @@ export interface AdapterEntry {
  * The Adapter interface — one implementation per supported assistant.
  *
  * M0 registers only 'claude'. 'opencode' and 'copilot' are reserved identifiers
- * for future adapters (open/closed principle, ADR-0002).
+ * for future adapters (open/closed principle).
  *
  * Method contracts:
  *
