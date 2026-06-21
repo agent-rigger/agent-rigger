@@ -10,6 +10,7 @@
     "./deny": "./src/deny.ts",
     "./engine": "./src/engine.ts",
     "./fs-json": "./src/fs-json.ts",
+    "./linker": "./src/linker.ts",
     "./managed-import": "./src/managed-import.ts",
     "./manifest": "./src/manifest.ts",
     "./paths": "./src/paths.ts",
