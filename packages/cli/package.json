@@ -6,12 +6,14 @@
   "exports": {
     ".": "./src/index.ts",
     "./config": "./src/config.ts",
-    "./preflight-auth": "./src/preflight-auth.ts"
+    "./preflight-auth": "./src/preflight-auth.ts",
+    "./ui": "./src/ui.ts"
   },
   "dependencies": {
     "@agent-rigger/adapters": "workspace:*",
     "@agent-rigger/catalog": "workspace:*",
     "@agent-rigger/core": "workspace:*",
+    "@clack/prompts": "1.6.0",
     "jsonc-parser": "3.3.1"
   }
 }
