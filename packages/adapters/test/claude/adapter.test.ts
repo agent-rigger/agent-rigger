@@ -156,9 +156,10 @@ describe('ClaudeAdapter — unsupported nature', () => {
   it('throws UnsupportedNatureError for an unregistered nature during audit', async () => {
     const adapter = createClaudeAdapter({ denyRef: REF_DENY });
 
+    // 'mcp' and 'tool' are not yet implemented (M0 scope)
     const entry: AdapterEntry = {
-      id: 'agent-foo',
-      nature: 'agent',
+      id: 'mcp-foo',
+      nature: 'mcp',
       scope: 'user',
     };
 
@@ -176,8 +177,8 @@ describe('ClaudeAdapter — unsupported nature', () => {
     const adapter = createClaudeAdapter({ denyRef: REF_DENY });
 
     const entry: AdapterEntry = {
-      id: 'agent-foo',
-      nature: 'agent',
+      id: 'mcp-foo',
+      nature: 'mcp',
       scope: 'user',
     };
 
@@ -189,16 +190,16 @@ describe('ClaudeAdapter — unsupported nature', () => {
     }
 
     expect(caught).toBeInstanceOf(UnsupportedNatureError);
-    expect((caught as UnsupportedNatureError).nature).toBe('agent');
-    expect((caught as Error).message).toContain('agent');
+    expect((caught as UnsupportedNatureError).nature).toBe('mcp');
+    expect((caught as Error).message).toContain('mcp');
   });
 
   it('throws UnsupportedNatureError for an unregistered nature during plan', async () => {
     const adapter = createClaudeAdapter({ denyRef: REF_DENY });
 
     const entry: AdapterEntry = {
-      id: 'agent-foo',
-      nature: 'agent',
+      id: 'mcp-foo',
+      nature: 'mcp',
       scope: 'user',
     };
 

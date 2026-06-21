@@ -19,6 +19,7 @@ import type { Scanner } from '@agent-rigger/core/scan';
 import { stubScanner } from '@agent-rigger/core/scan';
 import type { Nature, NatureReport, Scope, WriteOp } from '@agent-rigger/core/types';
 
+import { auditAgent, planAgent } from './agents';
 import { applyContext, auditContext, planContext } from './context';
 import { applyGuardrail, auditGuardrail, planGuardrail } from './guardrails';
 import { applyPlugin, auditPlugin, defaultPluginRunner, planPlugin } from './plugins';
@@ -78,6 +79,12 @@ export interface ClaudeAdapterConfig {
    */
   scanner?: Scanner;
   /**
+   * Resolve the source .md file path of a sub-agent from its AdapterEntry.
+   * Required when any entry with nature 'agent' is planned or applied.
+   * Omitting it is safe as long as no agent entries are processed.
+   */
+  agentSource?: (entry: AdapterEntry) => string;
+  /**
    * Resolve the plugin coordinates (plugin id + marketplace path) for a
    * plugin entry. Required when any entry with nature 'plugin' is planned or
    * applied. Omitting it is safe as long as no plugin entries are processed.
@@ -130,6 +137,20 @@ export function createClaudeAdapter(config: ClaudeAdapterConfig): Adapter {
       );
     }
     return config.skillSource(entry);
+  }
+
+  /**
+   * Resolve the agent source .md file for an entry, or raise a clear error when
+   * agentSource is not configured and an agent operation is attempted.
+   */
+  function resolveAgentSource(entry: AdapterEntry): string {
+    if (config.agentSource === undefined) {
+      throw new Error(
+        `ClaudeAdapter: agentSource is required to install agent "${entry.id}". `
+          + 'Pass an agentSource resolver in ClaudeAdapterConfig.',
+      );
+    }
+    return config.agentSource(entry);
   }
 
   /**
@@ -197,6 +218,19 @@ export function createClaudeAdapter(config: ClaudeAdapterConfig): Adapter {
         },
         plan(entry, _scope, _env): Promise<WriteOp[]> {
           return planPlugin(entry, () => resolvePluginSource(entry), { run: pluginRunner });
+        },
+      },
+    ],
+    [
+      'agent',
+      {
+        audit(entry, scope, env): Promise<NatureReport> {
+          const cwd = entry.scope === 'project' ? process.cwd() : undefined;
+          return auditAgent(entry, scope, env, cwd);
+        },
+        plan(entry, scope, env): Promise<WriteOp[]> {
+          const cwd = entry.scope === 'project' ? process.cwd() : undefined;
+          return planAgent(entry, scope, env, () => resolveAgentSource(entry), cwd);
         },
       },
     ],
