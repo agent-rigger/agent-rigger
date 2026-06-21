@@ -479,7 +479,7 @@ describe('e2e — drift detected after install', () => {
       env,
     });
 
-    expect(result.output.toLowerCase()).toMatch(/missing|drift/);
+    expect(result.output).toMatch(/\[miss\s*\]|\[drift\]/);
   });
 });
 

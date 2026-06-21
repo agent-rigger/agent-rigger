@@ -243,7 +243,7 @@ describe('runCheck — incomplete config', () => {
       env,
     });
 
-    expect(result.output.toLowerCase()).toMatch(/missing/);
+    expect(result.output).toMatch(/\[miss\s*\]/);
     expect(result.output).toContain('guardrails-claude');
   });
 

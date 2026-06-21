@@ -28,6 +28,52 @@ import type { CatalogEntry } from '@agent-rigger/catalog';
 import type { Report, Scope, WriteOp } from '@agent-rigger/core';
 
 // ---------------------------------------------------------------------------
+// Path abbreviation helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Options for path abbreviation.
+ *
+ * - home  Absolute home directory string; paths under it become `~/<rel>`.
+ * - cwd   Absolute working directory; paths under it become `./<rel>`.
+ */
+export interface AbbreviatePathOpts {
+  home?: string;
+  cwd?: string;
+}
+
+/**
+ * Abbreviate an absolute path for human display.
+ *
+ * Priority: home prefix > cwd prefix > unchanged.
+ * Comparison is prefix-on-separator boundary to avoid false matches
+ * (e.g. `/home/me2/foo` must NOT match home `/home/me`).
+ */
+export function abbreviatePath(p: string, opts: AbbreviatePathOpts = {}): string {
+  if (opts.home !== undefined && opts.home !== '') {
+    const base = opts.home.endsWith('/') ? opts.home : opts.home + '/';
+    if (p === opts.home) return '~';
+    if (p.startsWith(base)) return '~/' + p.slice(base.length);
+  }
+
+  if (opts.cwd !== undefined && opts.cwd !== '') {
+    const base = opts.cwd.endsWith('/') ? opts.cwd : opts.cwd + '/';
+    if (p === opts.cwd) return '.';
+    if (p.startsWith(base)) return './' + p.slice(base.length);
+  }
+
+  return p;
+}
+
+/**
+ * Options passed to renderPlan.
+ */
+export interface RenderPlanOpts {
+  home?: string;
+  cwd?: string;
+}
+
+// ---------------------------------------------------------------------------
 // Re-exports — callers can use these wrappers instead of importing clack directly
 // ---------------------------------------------------------------------------
 
@@ -37,54 +83,76 @@ export { cancel, intro, isCancel, note, outro, spinner };
 // Pure rendering helpers
 // ---------------------------------------------------------------------------
 
+/** Fixed-width verb column for plan rendering. */
+const VERB_WIDTH = 8;
+
+/** Pad a verb string to VERB_WIDTH with trailing spaces. */
+function padVerb(verb: string): string {
+  return verb.padEnd(VERB_WIDTH);
+}
+
+/** Detail indent (verb column + 2 spaces for the leading "  " prefix). */
+const DETAIL_INDENT = '  ' + ' '.repeat(VERB_WIDTH + 1);
+
 /**
  * Render a human-readable diff plan from a list of WriteOps.
  *
- * Prefix conventions (ASCII only):
- *  +  deny rule added
- *  ~  import ensured
- *  ±  file write (create or overwrite)
- *  -> link (source → store → target)
- *  ⇩  plugin install  (U+21E9, not an emoji, plain Unicode arrow)
+ * Format:
+ *   Plan (N change(s)):
+ *
+ *     <verb>   <abbreviated-target>
+ *                <detail line(s)>
+ *
+ * Verbs (ASCII, fixed width):
+ *   deny     merge-deny
+ *   import   ensure-import
+ *   write    write-text / write-json
+ *   link     link
+ *   plugin   plugin-install
  *
  * Returns a "nothing to apply" message when `ops` is empty.
  */
-export function renderPlan(ops: WriteOp[]): string {
+export function renderPlan(ops: WriteOp[], opts: RenderPlanOpts = {}): string {
   if (ops.length === 0) {
     return 'Nothing to apply — already up to date.';
   }
 
-  const lines: string[] = [];
+  const abbr = (p: string): string => abbreviatePath(p, opts);
+
+  const n = ops.length;
+  const header = `Plan (${n} ${n === 1 ? 'change' : 'changes'}):`;
+  const lines: string[] = [header, ''];
 
   for (const op of ops) {
     switch (op.kind) {
       case 'merge-deny': {
-        lines.push(`  ${op.path}  [deny merge]`);
+        lines.push(`  ${padVerb('deny')} ${abbr(op.path)}`);
         for (const rule of op.toAdd) {
-          lines.push(`    + deny: ${rule}`);
+          lines.push(`${DETAIL_INDENT}+ ${rule}`);
         }
         break;
       }
       case 'ensure-import': {
-        lines.push(`  ${op.path}`);
-        lines.push(`    ~ import: ${op.importLine}`);
+        lines.push(`  ${padVerb('import')} ${abbr(op.path)}`);
+        lines.push(`${DETAIL_INDENT}${op.importLine}`);
         break;
       }
       case 'write-text': {
-        lines.push(`  ± write: ${op.path}`);
+        lines.push(`  ${padVerb('write')} ${abbr(op.path)}`);
         break;
       }
       case 'write-json': {
-        lines.push(`  ± write: ${op.path}`);
+        lines.push(`  ${padVerb('write')} ${abbr(op.path)}`);
         break;
       }
       case 'link': {
-        lines.push(`  -> link: ${op.target} -> ${op.store}`);
-        lines.push(`       (source: ${op.source})`);
+        lines.push(`  ${padVerb('link')} ${abbr(op.target)}`);
+        lines.push(`${DETAIL_INDENT}from ${abbr(op.source)}`);
         break;
       }
       case 'plugin-install': {
-        lines.push(`  [v] plugin: ${op.plugin} (marketplace ${op.marketplace})`);
+        lines.push(`  ${padVerb('plugin')} ${op.plugin}`);
+        lines.push(`${DETAIL_INDENT}via ${abbr(op.marketplace)}`);
         break;
       }
     }
@@ -98,10 +166,10 @@ export function renderPlan(ops: WriteOp[]): string {
 /**
  * Render an audit Report as a human-readable status list.
  *
- * State prefixes:
- *  [ok]      present
- *  [miss]    missing
- *  [drift]   drift — detail appended when provided
+ * State tags are padded to equal width for column alignment:
+ *   [ ok  ]   present
+ *   [miss ]   missing
+ *   [drift]   drift — detail appended when provided
  *
  * Returns a "no entries" message when entries is empty.
  */
@@ -115,16 +183,16 @@ export function renderReport(report: Report): string {
   for (const entry of report.entries) {
     switch (entry.state) {
       case 'present': {
-        lines.push(`  [ok]    ${entry.id}  (${entry.nature})`);
+        lines.push(`  [ ok  ]  ${entry.id}  (${entry.nature})`);
         break;
       }
       case 'missing': {
-        lines.push(`  [missing]  ${entry.id}  (${entry.nature})`);
+        lines.push(`  [miss ]  ${entry.id}  (${entry.nature})`);
         break;
       }
       case 'drift': {
         const detail = entry.detail === undefined ? '' : `  — ${entry.detail}`;
-        lines.push(`  [drift] ${entry.id}  (${entry.nature})${detail}`);
+        lines.push(`  [drift]  ${entry.id}  (${entry.nature})${detail}`);
         break;
       }
     }

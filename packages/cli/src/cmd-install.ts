@@ -19,6 +19,7 @@
 import type { Adapter, AdapterEntry } from '@agent-rigger/core/adapter';
 import { apply } from '@agent-rigger/core/engine';
 import type { Env } from '@agent-rigger/core/paths';
+import { resolveHome } from '@agent-rigger/core/paths';
 import type { Scope, WriteOp } from '@agent-rigger/core/types';
 
 import type { ArtifactEntry, CatalogEntry } from '@agent-rigger/catalog';
@@ -164,7 +165,10 @@ export async function runInstall(opts: RunInstallOptions): Promise<InstallResult
   // Step 4: Diff (plan rendering)
   // -------------------------------------------------------------------------
 
-  const planText = renderPlan(allOps);
+  const planText = renderPlan(allOps, {
+    home: resolveHome(env),
+    cwd: opts.cwd ?? process.cwd(),
+  });
 
   // -------------------------------------------------------------------------
   // Empty plan → already up to date, skip confirm + apply
