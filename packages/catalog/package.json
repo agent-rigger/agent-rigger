@@ -1,0 +1,17 @@
+{
+  "name": "@agent-rigger/catalog",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./schema": "./src/schema.ts",
+    "./catalog.builtin": "./src/catalog.builtin.ts",
+    "./resolver": "./src/resolver.ts",
+    "./tool-check": "./src/tool-check.ts"
+  },
+  "dependencies": {
+    "@agent-rigger/core": "workspace:*",
+    "zod": "4.4.3"
+  }
+}
