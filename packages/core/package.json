@@ -8,6 +8,7 @@
     "./types": "./src/types.ts",
     "./paths": "./src/paths.ts",
     "./fs-json": "./src/fs-json.ts",
-    "./backup": "./src/backup.ts"
+    "./backup": "./src/backup.ts",
+    "./deny": "./src/deny.ts"
   }
 }
