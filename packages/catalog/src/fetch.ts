@@ -1,3 +1,6 @@
+import { join } from 'node:path';
+
+import { type CatalogEntry, CatalogEntrySchema } from './schema';
 import type { CommandRunner } from './tool-check';
 
 // ---------------------------------------------------------------------------
@@ -215,4 +218,124 @@ export async function resolveVersion(url: string, run: CommandRunner): Promise<R
   const sha = firstLine.split('\t')[0] ?? '';
 
   return { ref: sha, sha, isTag: false };
+}
+
+// ---------------------------------------------------------------------------
+// fetchCatalog — shallow clone + catalog.json validation
+// ---------------------------------------------------------------------------
+
+/** The result of a successful catalog fetch. */
+export interface FetchedCatalog {
+  entries: CatalogEntry[];
+  sha: string;
+}
+
+/**
+ * Provides a temporary directory and its cleanup function.
+ * Injected into fetchCatalog — allows deterministic testing without real tmp dirs.
+ */
+export type TmpDirFactory = () => Promise<{ path: string; cleanup: () => Promise<void> }>;
+
+/**
+ * Raised when catalog.json is absent, contains invalid JSON, is not an array,
+ * or fails Zod validation.
+ *
+ * `issues` is a human-readable list of problems (field path + reason).
+ */
+export class CatalogParseError extends Error {
+  readonly issues: string[];
+
+  constructor(message: string, issues: string[]) {
+    super(message);
+    this.name = 'CatalogParseError';
+    this.issues = issues;
+  }
+}
+
+/**
+ * Clones a git repository at `ref` (shallow, depth 1), reads and validates
+ * `catalog.json` from the clone root, then returns the parsed entries and HEAD sha.
+ *
+ * Cleanup of the temporary directory is guaranteed — it runs in the `finally`
+ * block regardless of success or failure.
+ *
+ * Throws RemoteFetchError when any git command exits non-zero.
+ * Throws CatalogParseError when catalog.json is absent, malformed, or invalid.
+ */
+export async function fetchCatalog(
+  url: string,
+  ref: string,
+  run: CommandRunner,
+  opts: { tmpFactory: TmpDirFactory },
+): Promise<FetchedCatalog> {
+  const { path: tmp, cleanup } = await opts.tmpFactory();
+
+  try {
+    // Step 1 — shallow clone into tmp.
+    const cloneResult = await run('git', ['clone', '--depth', '1', '--branch', ref, url, tmp]);
+    if (cloneResult.exitCode !== 0) {
+      throw new RemoteFetchError(url, cloneResult.stderr ?? '');
+    }
+
+    // Step 2 — read catalog.json from the clone root.
+    const catalogPath = join(tmp, 'catalog.json');
+    const catalogFile = Bun.file(catalogPath);
+    const fileExists = await catalogFile.exists();
+    if (!fileExists) {
+      throw new CatalogParseError('catalog.json introuvable dans le content repo', [
+        'catalog.json introuvable',
+      ]);
+    }
+
+    // Step 3 — parse JSON.
+    let raw: unknown;
+    try {
+      const text = await catalogFile.text();
+      raw = JSON.parse(text);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      throw new CatalogParseError(msg, [msg]);
+    }
+
+    // Step 4 — must be an array.
+    if (!Array.isArray(raw)) {
+      throw new CatalogParseError("catalog.json doit être un tableau d'entrées", [
+        "catalog.json doit être un tableau d'entrées",
+      ]);
+    }
+
+    // Step 5 — validate each entry via Zod.
+    const entries: CatalogEntry[] = [];
+    const issues: string[] = [];
+
+    for (let i = 0; i < raw.length; i++) {
+      const parsed = CatalogEntrySchema.safeParse(raw[i]);
+      if (parsed.success) {
+        entries.push(parsed.data);
+      } else {
+        for (const issue of parsed.error.issues) {
+          const path = issue.path.join('.');
+          issues.push(`index ${i}: ${path} ${issue.message}`);
+        }
+      }
+    }
+
+    if (issues.length > 0) {
+      throw new CatalogParseError(
+        `catalog.json contient des entrées invalides: ${issues.join('; ')}`,
+        issues,
+      );
+    }
+
+    // Step 6 — resolve HEAD sha of the clone.
+    const revParseResult = await run('git', ['-C', tmp, 'rev-parse', 'HEAD']);
+    if (revParseResult.exitCode !== 0) {
+      throw new RemoteFetchError(url, revParseResult.stderr ?? '');
+    }
+    const sha = (revParseResult.stdout ?? '').trim();
+
+    return { entries, sha };
+  } finally {
+    await cleanup();
+  }
 }
