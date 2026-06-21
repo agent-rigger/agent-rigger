@@ -1,0 +1,7 @@
+[install]
+# Ensure exact versions from lockfile in CI
+exact = true
+
+[test]
+# Coverage off by default — enable per-package when needed
+coverage = false

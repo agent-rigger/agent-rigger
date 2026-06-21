@@ -1,0 +1,11 @@
+{
+  "name": "@agent-rigger/core",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./types": "./src/types.ts",
+    "./paths": "./src/paths.ts"
+  }
+}

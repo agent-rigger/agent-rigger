@@ -1,0 +1,15 @@
+pre-commit:
+  commands:
+    dprint:
+      glob: "*.{js,ts,cjs,mjs,jsx,tsx,json,md,yaml,yml,toml}"
+      run: bun dprint fmt {staged_files}
+      stage_fixed: true
+    oxlint:
+      glob: "*.{js,ts,cjs,mjs}"
+      run: ./node_modules/.bin/oxlint --fix {staged_files}
+      stage_fixed: true
+
+commit-msg:
+  commands:
+    commitlint:
+      run: bunx commitlint --edit {1}
