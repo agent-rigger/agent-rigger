@@ -167,6 +167,56 @@ Example plan section:
 Tool warnings are advisory. A missing required tool is reported but does not
 block installation.
 
+### `remove` — uninstall artifacts
+
+Remove installed artifacts. Shows a removal plan (what will be deleted or
+reverted) and asks for confirmation before making any change.
+
+```
+# Resource-scoped form — validates the id belongs to the resource type
+agent-rigger guardrails remove guardrails-claude [--yes] [--scope=user|project]
+agent-rigger context remove context-claude --yes
+
+# Top-level form — any resource type
+agent-rigger remove guardrails-claude context-claude --yes
+```
+
+The command:
+
+1. Looks up each id in the catalog — unknown ids are rejected immediately.
+2. Validates that each id matches the resource type (when using the resource
+   form: `guardrails remove`, `skills remove`, etc.).
+3. Computes the removal plan via the adapter: rules to un-deny, import blocks
+   to remove, files to delete, symlinks to unlink, plugins to uninstall.
+4. Displays the plan with aligned verbs:
+   - `un-deny` — removes deny rules from `settings.json`
+   - `un-import` — removes managed import block from `CLAUDE.md`
+   - `delete` — deletes a managed file (e.g. `AGENTS.md`)
+   - `unlink` — removes a skill symlink and its store entry
+   - `uninstall` — uninstalls a plugin via the native CLI
+5. Asks for confirmation — **nothing is removed without it** (skip with `--yes`).
+6. Backs up modified files before removal.
+7. Updates the manifest to reflect the removed entries.
+
+Example output:
+
+```
+--- Removal Plan ---
+Removal plan (1 change):
+
+  un-deny  ~/.claude/settings.json
+           - Read(./.env)
+           - Read(~/.ssh/**)
+
+--- Result ---
+  [ok] Removed 1 entry(s).
+    - guardrails-claude
+  [backup] 1 file(s) backed up.
+    ~ ~/.claude/settings.json.bak-2026-06-21T21-00-00.000Z-abc123
+```
+
+After a `remove`, running `check` will show the entry as `[miss ]`.
+
 ### `init` — configure catalog URL and auth
 
 Run once before the first `install` on a new machine. Persists the catalog URL
