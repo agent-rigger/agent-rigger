@@ -7,7 +7,8 @@
     ".": "./src/index.ts",
     "./schema": "./src/schema.ts",
     "./catalog.builtin": "./src/catalog.builtin.ts",
-    "./resolver": "./src/resolver.ts"
+    "./resolver": "./src/resolver.ts",
+    "./tool-check": "./src/tool-check.ts"
   },
   "dependencies": {
     "@agent-rigger/core": "workspace:*",
