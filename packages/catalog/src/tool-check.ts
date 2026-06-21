@@ -4,23 +4,45 @@ import type { ArtifactEntry, CatalogEntry } from './schema';
 // CommandRunner — injectable shell executor
 // ---------------------------------------------------------------------------
 
-/**
- * Runs a shell command and returns its exit code.
- * Inject a fake implementation in tests to avoid spawning real processes.
- */
-export type CommandRunner = (command: string) => Promise<{ exitCode: number }>;
+/** Result returned by a CommandRunner invocation. */
+export interface CommandResult {
+  exitCode: number;
+  /** Captured stdout. Absent when the caller does not need output. */
+  stdout?: string;
+  /** Captured stderr. Absent when the caller does not need output. */
+  stderr?: string;
+}
 
 /**
- * Default runner: executes `command` via `sh -c` using Bun's process API.
- * stdout and stderr are suppressed — only the exit code matters.
+ * Runs a command with optional argument list and options.
+ * Inject a fake implementation in tests to avoid spawning real processes.
+ *
+ * When called as `run(command)` (no args), implementations may fall back to
+ * `sh -c command`. When called as `run(command, args)`, implementations
+ * should spawn `command` directly with the given args.
  */
-export const defaultRunner: CommandRunner = async (command) => {
-  const proc = Bun.spawn(['sh', '-c', command], {
-    stdout: 'ignore',
-    stderr: 'ignore',
+export type CommandRunner = (
+  command: string,
+  args?: string[],
+  opts?: { cwd?: string },
+) => Promise<CommandResult>;
+
+/**
+ * Default runner: executes `command` via Bun's process API.
+ * When `args` is provided, spawns `[command, ...args]` directly.
+ * Without `args`, falls back to `sh -c <command>`.
+ * Captures stdout and stderr as UTF-8 strings.
+ */
+export const defaultRunner: CommandRunner = async (command, args, _opts) => {
+  const argv = args ? [command, ...args] : ['sh', '-c', command];
+  const proc = Bun.spawn(argv, {
+    stdout: 'pipe',
+    stderr: 'pipe',
   });
   const exitCode = await proc.exited;
-  return { exitCode };
+  const stdout = await new Response(proc.stdout).text();
+  const stderr = await new Response(proc.stderr).text();
+  return { exitCode, stdout, stderr };
 };
 
 // ---------------------------------------------------------------------------
