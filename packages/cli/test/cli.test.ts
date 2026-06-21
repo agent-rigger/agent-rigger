@@ -370,3 +370,437 @@ describe('runCli — install + check flow', () => {
     expect(code).toBe(0);
   });
 });
+
+// ---------------------------------------------------------------------------
+// parseArgs — resource-scoped grammar
+// ---------------------------------------------------------------------------
+
+describe('parseArgs — resource grammar', () => {
+  it('parses ["skills","ls"] with resource and verb', () => {
+    const result = parseArgs(['skills', 'ls']);
+    expect(result.command).toBe('skills');
+    expect(result.resourceVerb).toBe('ls');
+    expect(result.resourceIds).toEqual([]);
+  });
+
+  it('parses ["catalog","ls"]', () => {
+    const result = parseArgs(['catalog', 'ls']);
+    expect(result.command).toBe('catalog');
+    expect(result.resourceVerb).toBe('ls');
+  });
+
+  it('parses ["ls"] as top-level ls command', () => {
+    const result = parseArgs(['ls']);
+    expect(result.command).toBe('ls');
+    expect(result.resourceVerb).toBeUndefined();
+  });
+
+  it('parses ["install","guardrails-claude"] as non-interactive install with ids', () => {
+    const result = parseArgs(['install', 'guardrails-claude']);
+    expect(result.command).toBe('install');
+    expect(result.resourceIds).toContain('guardrails-claude');
+  });
+
+  it('parses ["skills","add","skill:spec-workflow"] as resource add', () => {
+    const result = parseArgs(['skills', 'add', 'skill:spec-workflow']);
+    expect(result.command).toBe('skills');
+    expect(result.resourceVerb).toBe('add');
+    expect(result.resourceIds).toContain('skill:spec-workflow');
+  });
+
+  it('parses ["install","--yes","guardrails-claude"] with yes flag', () => {
+    const result = parseArgs(['install', '--yes', 'guardrails-claude']);
+    expect(result.command).toBe('install');
+    expect(result.flags['yes']).toBe(true);
+    expect(result.resourceIds).toContain('guardrails-claude');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// runCli — ls command
+// ---------------------------------------------------------------------------
+
+describe('runCli — ls (top-level)', () => {
+  let tmp: { dir: string; cleanup: () => Promise<void> };
+
+  beforeEach(async () => {
+    tmp = await makeTmpHome('rigger-ls-cli-');
+  });
+
+  afterEach(async () => {
+    await tmp.cleanup();
+  });
+
+  it('returns exit code 0', async () => {
+    const cap = makeCapture();
+    const code = await runCli(['ls'], {
+      print: cap.print,
+      env: { RIGGER_HOME: tmp.dir },
+      artifactsDir: ARTIFACTS_DIR,
+    });
+    expect(code).toBe(0);
+  });
+
+  it('output contains catalog listing', async () => {
+    const cap = makeCapture();
+    await runCli(['ls'], {
+      print: cap.print,
+      env: { RIGGER_HOME: tmp.dir },
+      artifactsDir: ARTIFACTS_DIR,
+    });
+    const out = cap.lines.join('\n');
+    expect(out).toContain('Catalog');
+    expect(out).toContain('guardrails-claude');
+  });
+});
+
+describe('runCli — skills ls (filtered)', () => {
+  let tmp: { dir: string; cleanup: () => Promise<void> };
+
+  beforeEach(async () => {
+    tmp = await makeTmpHome('rigger-skills-ls-');
+  });
+
+  afterEach(async () => {
+    await tmp.cleanup();
+  });
+
+  it('returns exit code 0', async () => {
+    const cap = makeCapture();
+    const code = await runCli(['skills', 'ls'], {
+      print: cap.print,
+      env: { RIGGER_HOME: tmp.dir },
+      artifactsDir: ARTIFACTS_DIR,
+    });
+    expect(code).toBe(0);
+  });
+
+  it('output contains only skill entries', async () => {
+    const cap = makeCapture();
+    await runCli(['skills', 'ls'], {
+      print: cap.print,
+      env: { RIGGER_HOME: tmp.dir },
+      artifactsDir: ARTIFACTS_DIR,
+    });
+    const out = cap.lines.join('\n');
+    expect(out).toContain('skill:spec-workflow');
+    expect(out).not.toContain('guardrails-claude');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// runCli — non-interactive install with --yes
+// ---------------------------------------------------------------------------
+
+describe('runCli — install <id> --yes (non-interactive)', () => {
+  let tmp: { dir: string; cleanup: () => Promise<void> };
+
+  beforeEach(async () => {
+    tmp = await makeTmpHome('rigger-install-yes-');
+  });
+
+  afterEach(async () => {
+    await tmp.cleanup();
+  });
+
+  it('returns exit code 0 for valid id with --yes', async () => {
+    const cap = makeCapture();
+    const code = await runCli(['install', 'guardrails-claude', '--yes'], {
+      print: cap.print,
+      env: { RIGGER_HOME: tmp.dir },
+      artifactsDir: ARTIFACTS_DIR,
+    });
+    expect(code).toBe(0);
+  });
+
+  it('does not call selectArtifacts prompt when ids provided', async () => {
+    let selectCalled = false;
+    const prompts: CliPrompts = {
+      ...fakePrompts(),
+      selectArtifacts: async () => {
+        selectCalled = true;
+        return [];
+      },
+    };
+    const cap = makeCapture();
+    await runCli(['install', 'guardrails-claude', '--yes'], {
+      print: cap.print,
+      env: { RIGGER_HOME: tmp.dir },
+      artifactsDir: ARTIFACTS_DIR,
+      prompts,
+    });
+    expect(selectCalled).toBe(false);
+  });
+
+  it('does not call confirmApply when --yes flag is set', async () => {
+    let confirmCalled = false;
+    const prompts: CliPrompts = {
+      ...fakePrompts(),
+      confirmApply: async () => {
+        confirmCalled = true;
+        return true;
+      },
+    };
+    const cap = makeCapture();
+    await runCli(['install', 'guardrails-claude', '--yes'], {
+      print: cap.print,
+      env: { RIGGER_HOME: tmp.dir },
+      artifactsDir: ARTIFACTS_DIR,
+      prompts,
+    });
+    expect(confirmCalled).toBe(false);
+  });
+
+  it('calls confirmApply when --yes is NOT set (non-interactive confirm)', async () => {
+    let confirmCalled = false;
+    const prompts: CliPrompts = {
+      ...fakePrompts(),
+      confirmApply: async () => {
+        confirmCalled = true;
+        return true;
+      },
+    };
+    const cap = makeCapture();
+    await runCli(['install', 'guardrails-claude'], {
+      print: cap.print,
+      env: { RIGGER_HOME: tmp.dir },
+      artifactsDir: ARTIFACTS_DIR,
+      prompts,
+    });
+    expect(confirmCalled).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// runCli — resource add validation
+// ---------------------------------------------------------------------------
+
+describe('runCli — <resource> add <id> validation', () => {
+  let tmp: { dir: string; cleanup: () => Promise<void> };
+
+  beforeEach(async () => {
+    tmp = await makeTmpHome('rigger-res-add-');
+  });
+
+  afterEach(async () => {
+    await tmp.cleanup();
+  });
+
+  it('returns exit code 2 when id does not match resource type', async () => {
+    const cap = makeCapture();
+    // guardrails-claude is a guardrail, not a skill
+    const code = await runCli(['skills', 'add', 'guardrails-claude'], {
+      print: cap.print,
+      env: { RIGGER_HOME: tmp.dir },
+      artifactsDir: ARTIFACTS_DIR,
+    });
+    expect(code).toBe(2);
+  });
+
+  it('output contains actionable error message for type mismatch', async () => {
+    const cap = makeCapture();
+    await runCli(['skills', 'add', 'guardrails-claude'], {
+      print: cap.print,
+      env: { RIGGER_HOME: tmp.dir },
+      artifactsDir: ARTIFACTS_DIR,
+    });
+    const out = cap.lines.join('\n');
+    expect(out).toContain('guardrails-claude');
+    expect(out.toLowerCase()).toMatch(/not a skill|is not a/);
+  });
+
+  it('returns exit code 0 for guardrail add with correct resource', async () => {
+    const cap = makeCapture();
+    const code = await runCli(['guardrails', 'add', 'guardrails-claude', '--yes'], {
+      print: cap.print,
+      env: { RIGGER_HOME: tmp.dir },
+      artifactsDir: ARTIFACTS_DIR,
+    });
+    expect(code).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// runCli — <resource> info <id>
+// ---------------------------------------------------------------------------
+
+describe('runCli — <resource> info <id>', () => {
+  let tmp: { dir: string; cleanup: () => Promise<void> };
+
+  beforeEach(async () => {
+    tmp = await makeTmpHome('rigger-info-');
+  });
+
+  afterEach(async () => {
+    await tmp.cleanup();
+  });
+
+  it('returns exit code 0 for known id', async () => {
+    const cap = makeCapture();
+    const code = await runCli(['guardrails', 'info', 'guardrails-claude'], {
+      print: cap.print,
+      env: { RIGGER_HOME: tmp.dir },
+      artifactsDir: ARTIFACTS_DIR,
+    });
+    expect(code).toBe(0);
+  });
+
+  it('output contains entry details', async () => {
+    const cap = makeCapture();
+    await runCli(['guardrails', 'info', 'guardrails-claude'], {
+      print: cap.print,
+      env: { RIGGER_HOME: tmp.dir },
+      artifactsDir: ARTIFACTS_DIR,
+    });
+    const out = cap.lines.join('\n');
+    expect(out).toContain('guardrails-claude');
+    expect(out.toLowerCase()).toMatch(/status|source|nature|guardrail/);
+  });
+
+  it('returns exit code 2 for unknown id', async () => {
+    const cap = makeCapture();
+    const code = await runCli(['guardrails', 'info', 'does-not-exist'], {
+      print: cap.print,
+      env: { RIGGER_HOME: tmp.dir },
+      artifactsDir: ARTIFACTS_DIR,
+    });
+    expect(code).toBe(2);
+  });
+
+  it('output contains actionable message for unknown id', async () => {
+    const cap = makeCapture();
+    await runCli(['guardrails', 'info', 'does-not-exist'], {
+      print: cap.print,
+      env: { RIGGER_HOME: tmp.dir },
+      artifactsDir: ARTIFACTS_DIR,
+    });
+    const out = cap.lines.join('\n');
+    expect(out).toContain('does-not-exist');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// runCli — <resource> check
+// ---------------------------------------------------------------------------
+
+describe('runCli — <resource> check', () => {
+  let tmp: { dir: string; cleanup: () => Promise<void> };
+
+  beforeEach(async () => {
+    tmp = await makeTmpHome('rigger-res-check-');
+  });
+
+  afterEach(async () => {
+    await tmp.cleanup();
+  });
+
+  it('returns exit code 3 when guardrails not installed', async () => {
+    const cap = makeCapture();
+    const code = await runCli(['guardrails', 'check'], {
+      print: cap.print,
+      env: { RIGGER_HOME: tmp.dir },
+      artifactsDir: ARTIFACTS_DIR,
+    });
+    expect(code).toBe(3);
+  });
+
+  it('returns exit code 0 after installing guardrails', async () => {
+    // First install guardrails
+    const installCap = makeCapture();
+    await runCli(['guardrails', 'add', 'guardrails-claude', '--yes'], {
+      print: installCap.print,
+      env: { RIGGER_HOME: tmp.dir },
+      artifactsDir: ARTIFACTS_DIR,
+    });
+
+    const checkCap = makeCapture();
+    const code = await runCli(['guardrails', 'check'], {
+      print: checkCap.print,
+      env: { RIGGER_HOME: tmp.dir },
+      artifactsDir: ARTIFACTS_DIR,
+    });
+    expect(code).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// runCli — planned verbs (remove, update) → code 2
+// ---------------------------------------------------------------------------
+
+describe('runCli — planned verbs (remove, update) return code 2', () => {
+  it('returns exit code 2 for <resource> remove', async () => {
+    const cap = makeCapture();
+    const code = await runCli(['guardrails', 'remove', 'guardrails-claude'], {
+      print: cap.print,
+    });
+    expect(code).toBe(2);
+  });
+
+  it('returns exit code 2 for <resource> update', async () => {
+    const cap = makeCapture();
+    const code = await runCli(['guardrails', 'update', 'guardrails-claude'], {
+      print: cap.print,
+    });
+    expect(code).toBe(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// runCli — unknown resource / unknown verb
+// ---------------------------------------------------------------------------
+
+describe('runCli — unknown resource or verb', () => {
+  it('returns exit code 2 for unknown resource', async () => {
+    const cap = makeCapture();
+    const code = await runCli(['wizards', 'ls'], { print: cap.print });
+    expect(code).toBe(2);
+  });
+
+  it('output contains usage hint for unknown resource', async () => {
+    const cap = makeCapture();
+    await runCli(['wizards', 'ls'], { print: cap.print });
+    const out = cap.lines.join('\n');
+    expect(out.toLowerCase()).toMatch(/unknown|usage|help/);
+  });
+
+  it('returns exit code 2 for known resource with unknown verb', async () => {
+    const cap = makeCapture();
+    const code = await runCli(['skills', 'remove'], { print: cap.print });
+    expect(code).toBe(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// runCli — non-regression: interactive install still works
+// ---------------------------------------------------------------------------
+
+describe('runCli — non-regression interactive install', () => {
+  let tmp: { dir: string; cleanup: () => Promise<void> };
+
+  beforeEach(async () => {
+    tmp = await makeTmpHome('rigger-regression-');
+  });
+
+  afterEach(async () => {
+    await tmp.cleanup();
+  });
+
+  it('interactive install (no ids) still calls selectArtifacts', async () => {
+    let selectCalled = false;
+    const prompts: CliPrompts = {
+      ...fakePrompts(),
+      selectArtifacts: async () => {
+        selectCalled = true;
+        return ['guardrails-claude'];
+      },
+    };
+    const cap = makeCapture();
+    await runCli(['install'], {
+      print: cap.print,
+      env: { RIGGER_HOME: tmp.dir },
+      artifactsDir: ARTIFACTS_DIR,
+      prompts,
+    });
+    expect(selectCalled).toBe(true);
+  });
+});
