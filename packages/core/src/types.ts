@@ -85,6 +85,8 @@ export interface WriteOpWriteJson {
 export interface WriteOpWriteText {
   kind: 'write-text';
   path: string;
+  /** UTF-8 content to write verbatim to the file. */
+  content: string;
   description: string;
 }
 
@@ -110,11 +112,40 @@ export interface WriteOpEnsureImport {
   importLine: string;
 }
 
+/**
+ * Install a skill via the managed store + symlink (linker).
+ * source → store (physical copy); target → store (symlink or copy fallback).
+ * No in-file mutations: the operation is atomic at the directory level.
+ */
+export interface WriteOpLink {
+  kind: 'link';
+  source: string;
+  store: string;
+  target: string;
+}
+
+/**
+ * Install a plugin by delegating to the native CLI mechanism.
+ * No file is written directly: the adapter runs `claude plugin marketplace add`
+ * then `claude plugin install`, and remounts any native error as-is.
+ * Neither `path` nor `target` are present — the engine skips backup and written
+ * path tracking for this kind.
+ */
+export interface WriteOpPluginInstall {
+  kind: 'plugin-install';
+  /** Plugin identifier as expected by `claude plugin install`. */
+  plugin: string;
+  /** Path or URL of the marketplace manifest to register. */
+  marketplace: string;
+}
+
 export type WriteOp =
   | WriteOpWriteJson
   | WriteOpWriteText
   | WriteOpMergeDeny
-  | WriteOpEnsureImport;
+  | WriteOpEnsureImport
+  | WriteOpLink
+  | WriteOpPluginInstall;
 
 // ---------------------------------------------------------------------------
 // Scanner / Verdict

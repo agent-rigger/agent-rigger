@@ -3,6 +3,7 @@ export * from './backup';
 export * from './deny';
 export * from './engine';
 export * from './fs-json';
+export * from './linker';
 export * from './managed-import';
 export * from './manifest';
 export * from './paths';

@@ -88,6 +88,7 @@ export default defineConfig({
     '**/dist/**',
     '**/coverage/**',
     '**/*.d.ts',
+    'artifacts/**',
   ],
   overrides: [
     {
