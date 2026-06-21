@@ -5,7 +5,8 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./config": "./src/config.ts"
+    "./config": "./src/config.ts",
+    "./preflight-auth": "./src/preflight-auth.ts"
   },
   "dependencies": {
     "@agent-rigger/adapters": "workspace:*",
