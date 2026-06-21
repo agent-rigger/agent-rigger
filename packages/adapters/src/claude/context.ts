@@ -22,9 +22,12 @@
  * - No while loops; async uses for...of / map.
  */
 
+import { rm } from 'node:fs/promises';
+
 import {
   ensureImportBlock,
   readText,
+  removeImportBlock,
   resolveProjectTargets,
   resolveUserTargets,
   writeText,
@@ -32,6 +35,7 @@ import {
 import type {
   Env,
   NatureReport,
+  RemovalOp,
   Scope,
   WriteOp,
   WriteOpEnsureImport,
@@ -206,6 +210,78 @@ export async function planContext(
   };
 
   return [writeTextOp, ensureImportOp];
+}
+
+// ---------------------------------------------------------------------------
+// planRemoveContext
+// ---------------------------------------------------------------------------
+
+/**
+ * Compute the removal operations needed to uninstall the context artifact.
+ *
+ * Returns [delete-file, remove-block] when the managed AGENTS.md exists OR
+ * the managed import block is present in CLAUDE.md. Returns [] when neither
+ * artifact is installed (idempotent).
+ *
+ * Read-only: no filesystem writes.
+ *
+ * @param scope          Installation scope.
+ * @param env            Injectable env for HOME resolution.
+ * @param agentsContent  Canonical AGENTS.md content (used to detect installed state).
+ * @param cwd            Working directory (only used when scope is 'project').
+ */
+export async function planRemoveContext(
+  scope: Scope,
+  env: Env,
+  agentsContent: string,
+  cwd?: string,
+): Promise<RemovalOp[]> {
+  const { agentsMd, claudeMd } = resolvePaths(scope, env, cwd);
+  const target = importTarget(scope);
+
+  const [currentAgents, currentClaudeMd] = await Promise.all([
+    readText(agentsMd),
+    readText(claudeMd),
+  ]);
+
+  const agentsInstalled = currentAgents === agentsContent && agentsContent !== '';
+  const blockInstalled = hasImportBlock(currentClaudeMd, target);
+
+  if (!agentsInstalled && !blockInstalled) {
+    return [];
+  }
+
+  return [
+    { kind: 'delete-file', path: agentsMd },
+    { kind: 'remove-block', path: claudeMd },
+  ];
+}
+
+// ---------------------------------------------------------------------------
+// applyRemoveContext
+// ---------------------------------------------------------------------------
+
+/**
+ * Execute delete-file and remove-block operations produced by planRemoveContext.
+ *
+ * For each delete-file op: removes the file at op.path with force:true (tolerant to absence).
+ * For each remove-block op: reads the Markdown file, calls removeImportBlock, writes back.
+ *
+ * Ops of any other kind are ignored (forward-compatibility).
+ *
+ * @param ops  Removal operations (delete-file and remove-block are processed).
+ * @param env  Injectable env (kept for interface symmetry).
+ */
+export async function applyRemoveContext(ops: RemovalOp[], _env: Env): Promise<void> {
+  for (const op of ops) {
+    if (op.kind === 'delete-file') {
+      await rm(op.path, { force: true });
+    } else if (op.kind === 'remove-block') {
+      const current = await readText(op.path);
+      const updated = removeImportBlock(current);
+      await writeText(op.path, updated);
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------

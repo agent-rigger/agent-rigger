@@ -19,12 +19,35 @@ import type { Scanner } from '@agent-rigger/core/scan';
 import { stubScanner } from '@agent-rigger/core/scan';
 import type { Nature, NatureReport, RemovalOp, Scope, WriteOp } from '@agent-rigger/core/types';
 
-import { auditAgent, planAgent } from './agents';
-import { applyContext, auditContext, planContext } from './context';
-import { applyGuardrail, auditGuardrail, planGuardrail } from './guardrails';
-import { applyPlugin, auditPlugin, defaultPluginRunner, planPlugin } from './plugins';
+import { auditAgent, planAgent, planRemoveAgent } from './agents';
+import {
+  applyContext,
+  applyRemoveContext,
+  auditContext,
+  planContext,
+  planRemoveContext,
+} from './context';
+import {
+  applyGuardrail,
+  applyRemoveGuardrail,
+  auditGuardrail,
+  planGuardrail,
+  planRemoveGuardrail,
+} from './guardrails';
+import {
+  applyPlugin,
+  applyRemovePlugin,
+  auditPlugin,
+  defaultPluginRunner,
+  planPlugin,
+  planRemovePlugin,
+  PluginUninstallError,
+} from './plugins';
 import type { PluginRunner, PluginSource } from './plugins';
-import { applySkill, auditSkill, planSkill } from './skills';
+import { applyRemoveSkill, applySkill, auditSkill, planRemoveSkill, planSkill } from './skills';
+
+// Re-export so callers can catch this typed error without importing from plugins directly
+export { PluginUninstallError };
 
 // ---------------------------------------------------------------------------
 // UnsupportedNatureError
@@ -53,9 +76,11 @@ export class UnsupportedNatureError extends Error {
 interface NatureHandler {
   audit(entry: AdapterEntry, scope: Scope, env: Env): Promise<NatureReport>;
   plan(entry: AdapterEntry, scope: Scope, env: Env): Promise<WriteOp[]>;
+  planRemove(entry: AdapterEntry, scope: Scope, env: Env): Promise<RemovalOp[]>;
 }
 
 type OpKindApply = (ops: WriteOp[], env: Env) => Promise<void>;
+type RemovalOpKindApply = (ops: RemovalOp[], env: Env) => Promise<void>;
 
 // ---------------------------------------------------------------------------
 // Config
@@ -169,7 +194,7 @@ export function createClaudeAdapter(config: ClaudeAdapterConfig): Adapter {
 
   const pluginRunner = config.pluginRunner ?? defaultPluginRunner;
 
-  // Nature → { audit, plan } — E2-E5 add entries here
+  // Nature → { audit, plan, planRemove } — E2-E5 add entries here
   const natureHandlers = new Map<Nature, NatureHandler>([
     [
       'guardrail',
@@ -181,6 +206,10 @@ export function createClaudeAdapter(config: ClaudeAdapterConfig): Adapter {
         plan(entry, scope, env): Promise<WriteOp[]> {
           const cwd = entry.scope === 'project' ? process.cwd() : undefined;
           return planGuardrail(scope, env, config.denyRef, cwd);
+        },
+        planRemove(entry, scope, env): Promise<RemovalOp[]> {
+          const cwd = entry.scope === 'project' ? process.cwd() : undefined;
+          return planRemoveGuardrail(scope, env, config.denyRef, cwd);
         },
       },
     ],
@@ -195,6 +224,10 @@ export function createClaudeAdapter(config: ClaudeAdapterConfig): Adapter {
           const cwd = entry.scope === 'project' ? process.cwd() : undefined;
           return planContext(scope, env, agentsContent, cwd);
         },
+        planRemove(entry, scope, env): Promise<RemovalOp[]> {
+          const cwd = entry.scope === 'project' ? process.cwd() : undefined;
+          return planRemoveContext(scope, env, agentsContent, cwd);
+        },
       },
     ],
     [
@@ -208,6 +241,10 @@ export function createClaudeAdapter(config: ClaudeAdapterConfig): Adapter {
           const cwd = entry.scope === 'project' ? process.cwd() : undefined;
           return planSkill(entry, scope, env, () => resolveSkillSource(entry), cwd);
         },
+        planRemove(entry, scope, env): Promise<RemovalOp[]> {
+          const cwd = entry.scope === 'project' ? process.cwd() : undefined;
+          return planRemoveSkill(entry, scope, env, cwd);
+        },
       },
     ],
     [
@@ -218,6 +255,9 @@ export function createClaudeAdapter(config: ClaudeAdapterConfig): Adapter {
         },
         plan(entry, _scope, _env): Promise<WriteOp[]> {
           return planPlugin(entry, () => resolvePluginSource(entry), { run: pluginRunner });
+        },
+        planRemove(entry, _scope, _env): Promise<RemovalOp[]> {
+          return planRemovePlugin(entry, { run: pluginRunner });
         },
       },
     ],
@@ -231,6 +271,10 @@ export function createClaudeAdapter(config: ClaudeAdapterConfig): Adapter {
         plan(entry, scope, env): Promise<WriteOp[]> {
           const cwd = entry.scope === 'project' ? process.cwd() : undefined;
           return planAgent(entry, scope, env, () => resolveAgentSource(entry), cwd);
+        },
+        planRemove(entry, scope, env): Promise<RemovalOp[]> {
+          const cwd = entry.scope === 'project' ? process.cwd() : undefined;
+          return planRemoveAgent(entry, scope, env, cwd);
         },
       },
     ],
@@ -249,6 +293,15 @@ export function createClaudeAdapter(config: ClaudeAdapterConfig): Adapter {
     ['ensure-import', (ops, env) => applyContext(ops, env)],
     ['link', (ops, env) => applySkill(ops, env, scanner)],
     ['plugin-install', (ops, env) => applyPlugin(ops, env, pluginApplyOpts)],
+  ]);
+
+  // RemovalOp kind → applyRemove fn — mirrors the install dispatch pattern
+  const removalOpKindHandlers = new Map<RemovalOp['kind'], RemovalOpKindApply>([
+    ['remove-deny', (ops, env) => applyRemoveGuardrail(ops, env)],
+    ['delete-file', (ops, env) => applyRemoveContext(ops, env)],
+    ['remove-block', (ops, env) => applyRemoveContext(ops, env)],
+    ['unlink', (ops, env) => applyRemoveSkill(ops, env)],
+    ['plugin-uninstall', (ops, env) => applyRemovePlugin(ops, env, { run: pluginRunner })],
   ]);
 
   return {
@@ -292,11 +345,34 @@ export function createClaudeAdapter(config: ClaudeAdapterConfig): Adapter {
       }
     },
 
-    // planRemove / applyRemove — implemented in the remove task (M1)
-    async planRemove(): Promise<RemovalOp[]> {
-      return [];
+    planRemove(entry: AdapterEntry, scope: Scope, env: Env): Promise<RemovalOp[]> {
+      const handler = natureHandlers.get(entry.nature);
+      if (handler === undefined) {
+        return Promise.reject(new UnsupportedNatureError(entry.nature));
+      }
+      return handler.planRemove(entry, scope, env);
     },
 
-    async applyRemove(): Promise<void> {},
+    async applyRemove(ops: RemovalOp[], env: Env): Promise<void> {
+      // Group ops by kind to delegate each group to the right handler.
+      // Maintain the original ordering within each kind group.
+      const grouped = new Map<RemovalOp['kind'], RemovalOp[]>();
+      for (const op of ops) {
+        const existing = grouped.get(op.kind);
+        if (existing === undefined) {
+          grouped.set(op.kind, [op]);
+        } else {
+          existing.push(op);
+        }
+      }
+
+      for (const [kind, kindOps] of grouped) {
+        const applyFn = removalOpKindHandlers.get(kind);
+        if (applyFn === undefined) {
+          throw new Error(`ClaudeAdapter: unsupported removal op kind "${kind}"`);
+        }
+        await applyFn(kindOps, env);
+      }
+    },
   };
 }
