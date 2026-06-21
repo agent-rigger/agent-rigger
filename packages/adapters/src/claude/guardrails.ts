@@ -16,11 +16,19 @@ import {
   computeMissingDeny,
   mergeDeny,
   readJson,
+  removeDeny,
   resolveProjectTargets,
   resolveUserTargets,
   writeJson,
 } from '@agent-rigger/core';
-import type { Env, NatureReport, Scope, WriteOp, WriteOpMergeDeny } from '@agent-rigger/core';
+import type {
+  Env,
+  NatureReport,
+  RemovalOp,
+  Scope,
+  WriteOp,
+  WriteOpMergeDeny,
+} from '@agent-rigger/core';
 
 // ---------------------------------------------------------------------------
 // EmptyDenyArtifactError
@@ -184,6 +192,90 @@ export async function planGuardrail(
   }
 
   return [{ kind: 'merge-deny', path: settingsPath, toAdd: missing }];
+}
+
+// ---------------------------------------------------------------------------
+// applyGuardrail
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// planRemoveGuardrail
+// ---------------------------------------------------------------------------
+
+/**
+ * Compute the removal operations needed to uninstall the guardrail artifact.
+ *
+ * Returns a single remove-deny RemovalOp when the canonical deny rules are
+ * present in settings.json, or an empty array when they are not installed
+ * (idempotent).
+ *
+ * Read-only: no filesystem writes.
+ *
+ * @param scope    Installation scope.
+ * @param env      Injectable env for HOME resolution.
+ * @param denyRef  Canonical deny rules to remove.
+ * @param cwd      Working directory (only used when scope is 'project').
+ */
+export async function planRemoveGuardrail(
+  scope: Scope,
+  env: Env,
+  denyRef: string[],
+  cwd?: string,
+): Promise<RemovalOp[]> {
+  const settingsPath = resolveSettingsPath(scope, env, cwd);
+  const settings = await readJson(settingsPath);
+  const currentDeny = extractDeny(settings);
+
+  // Check whether any of the ref rules are actually present
+  const refSet = new Set(denyRef);
+  const anyPresent = currentDeny.some((rule) => refSet.has(rule));
+
+  if (!anyPresent) {
+    return [];
+  }
+
+  return [{ kind: 'remove-deny', path: settingsPath, rules: denyRef }];
+}
+
+// ---------------------------------------------------------------------------
+// applyRemoveGuardrail
+// ---------------------------------------------------------------------------
+
+/**
+ * Execute remove-deny removal operations produced by planRemoveGuardrail.
+ *
+ * For each remove-deny op:
+ * 1. Read the current settings.json (returns {} if absent).
+ * 2. Extract the current deny array.
+ * 3. Remove managed rules using removeDeny, keeping user rules intact.
+ * 4. Write back, preserving ALL other keys in settings.json.
+ *
+ * Ops of any other kind are ignored (forward-compatibility).
+ *
+ * @param ops  Removal operations (only remove-deny are processed).
+ * @param env  Injectable env (kept for interface symmetry).
+ */
+export async function applyRemoveGuardrail(ops: RemovalOp[], _env: Env): Promise<void> {
+  for (const op of ops) {
+    if (op.kind !== 'remove-deny') {
+      continue;
+    }
+
+    const settings = await readJson(op.path);
+    const currentDeny = extractDeny(settings);
+    const updated = removeDeny(currentDeny, op.rules);
+
+    const existingPerms = settings['permissions'];
+    const basePerms =
+      existingPerms !== null && typeof existingPerms === 'object' && !Array.isArray(existingPerms)
+        ? (existingPerms as Record<string, unknown>)
+        : {};
+
+    await writeJson(op.path, {
+      ...settings,
+      permissions: { ...basePerms, deny: updated },
+    });
+  }
 }
 
 // ---------------------------------------------------------------------------

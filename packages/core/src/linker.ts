@@ -43,6 +43,27 @@ export interface LinkResult {
 }
 
 // ---------------------------------------------------------------------------
+// unlink
+// ---------------------------------------------------------------------------
+
+/**
+ * Remove `target` (symlink, file, or directory) and `store` (file or directory)
+ * from the filesystem.
+ *
+ * Both removals are tolerant to absence: if either path does not exist, the
+ * operation is a no-op for that path (no error is thrown).
+ *
+ * @param target  Path to the symlink or installed file/directory.
+ * @param store   Path to the managed store entry (physical copy).
+ */
+export async function unlink(target: string, store: string): Promise<void> {
+  await Promise.all([
+    rm(target, { recursive: true, force: true }),
+    rm(store, { recursive: true, force: true }),
+  ]);
+}
+
+// ---------------------------------------------------------------------------
 // syncToStore
 // ---------------------------------------------------------------------------
 

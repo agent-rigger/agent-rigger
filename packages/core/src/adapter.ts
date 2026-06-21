@@ -14,7 +14,7 @@
  */
 
 import type { Env } from './paths';
-import type { NatureReport, Scope, WriteOp } from './types';
+import type { NatureReport, RemovalOp, Scope, WriteOp } from './types';
 
 /**
  * An installable artifact entry passed to the adapter methods.
@@ -51,6 +51,18 @@ export interface AdapterEntry {
  * ### apply(ops, env): Promise<void>
  * Execute the write operations produced by plan(). The engine handles backup
  * before calling apply; this method only performs the actual writes.
+ *
+ * ### planRemove(entry, scope, env): Promise<RemovalOp[]>
+ * Compute the removal operations needed to uninstall the artifact.
+ * Returns an empty array if the artifact is not currently installed (idempotence).
+ * This is the read-only counterpart to plan() — used for the dry-run diff display
+ * before the user confirms removal.
+ * MUST NOT write to the filesystem.
+ *
+ * ### applyRemove(ops, env): Promise<void>
+ * Execute the removal operations produced by planRemove(). The engine handles
+ * backup before calling applyRemove; this method only performs the actual removals.
+ * This is the inverse of apply().
  */
 export interface Adapter {
   /** Identifier for the target assistant. */
@@ -86,4 +98,29 @@ export interface Adapter {
    * @param env  Injectable env for HOME resolution.
    */
   apply(ops: WriteOp[], env: Env): Promise<void>;
+
+  /**
+   * Compute the removal operations needed to uninstall the artifact.
+   * Read-only — no filesystem mutations.
+   *
+   * Returns an empty array if the artifact is not currently installed.
+   * This is the logical inverse of plan().
+   *
+   * @param entry  The artifact to plan removal for.
+   * @param scope  Installation scope.
+   * @param env    Injectable env for HOME resolution.
+   * @returns      Array of RemovalOps (empty when artifact is not installed).
+   */
+  planRemove(entry: AdapterEntry, scope: Scope, env: Env): Promise<RemovalOp[]>;
+
+  /**
+   * Execute the provided removal operations.
+   * Called by the engine AFTER it has performed backups.
+   *
+   * This is the logical inverse of apply().
+   *
+   * @param ops  Removal operations produced by planRemove().
+   * @param env  Injectable env for HOME resolution.
+   */
+  applyRemove(ops: RemovalOp[], env: Env): Promise<void>;
 }

@@ -39,6 +39,7 @@ import { runInit } from './cmd-init';
 import { runInstall } from './cmd-install';
 import type { RunLsResult } from './cmd-ls';
 import { RESOURCE_NATURE_MAP, runLs } from './cmd-ls';
+import { runRemove, UnknownRemoveIdError } from './cmd-remove';
 import { PreflightAuthError } from './preflight-auth';
 import { renderEntryInfo } from './ui';
 
@@ -136,6 +137,12 @@ export function parseArgs(argv: string[]): ParsedArgs {
     return { command, resourceVerb: undefined, resourceIds, flags };
   }
 
+  // Top-level remove with required ids: remove <id...>
+  if (command === 'remove') {
+    resourceIds.push(...positionals.slice(1));
+    return { command, resourceVerb: undefined, resourceIds, flags };
+  }
+
   // All other commands (check, init, ls, --help, --version, unknown)
   return { command, resourceVerb: undefined, resourceIds, flags };
 }
@@ -162,16 +169,21 @@ Discovery commands:
   ls                       List all catalog entries with install status.
   catalog ls               Same as ls.
 
-Resource commands (available verbs: ls, add, info, check):
+Resource commands (available verbs: ls, add, info, check, remove):
   <resource> ls            List entries filtered by resource type.
   <resource> add <id...>   Install ids validated against the resource type.
   <resource> add <id...> --yes
                            Install without confirmation prompt.
   <resource> info <id>     Show details for a catalog entry.
   <resource> check         Audit entries for this resource type only.
+  <resource> remove <id...>
+                           Uninstall specified artifact ids.
+  <resource> remove <id...> --yes
+                           Uninstall without confirmation prompt.
+  remove <id...>           Uninstall ids (any resource type).
+  remove <id...> --yes     Uninstall without confirmation prompt.
 
 Planned (not yet implemented):
-  <resource> remove <id>   Uninstall an artifact.
   <resource> update <id>   Update an installed artifact.
 
 Resources:
@@ -398,6 +410,19 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
       });
     }
 
+    // ----- remove -----
+    if (command === 'remove') {
+      return await handleRemove({
+        ids: resourceIds,
+        flags,
+        scope,
+        env,
+        artifactsDir,
+        print,
+        deps,
+      });
+    }
+
     // ----- init -----
     if (command === 'init') {
       const prompts = deps.prompts ?? (await importUiPrompts());
@@ -549,7 +574,33 @@ async function handleResourceCommand(opts: ResourceCommandOpts): Promise<number>
     return result.exitCode;
   }
 
-  // ----- unknown verb (includes planned: remove, update) -----
+  // ----- <resource> remove <id...> -----
+  if (verb === 'remove') {
+    if (ids.length === 0) {
+      print(`[error] "${resource} remove" requires at least one artifact id.\n\n${USAGE}`);
+      return 2;
+    }
+
+    // Validate each id belongs to the resource
+    const invalidIds = ids.filter((id) => {
+      const entry = BUILTIN_CATALOG.find((e) => e.id === id);
+      if (entry === undefined) return false; // will fail at runRemove time with a better error
+      if (natureMapped === 'pack') return entry.kind !== 'pack';
+      return entry.kind !== 'artifact' || entry.nature !== natureMapped;
+    });
+
+    if (invalidIds.length > 0) {
+      const singular = resource.replace(/s$/, '');
+      for (const id of invalidIds) {
+        print(`[error] id "${id}" is not a ${singular}`);
+      }
+      return 2;
+    }
+
+    return await handleRemove({ ids, flags, scope, env, artifactsDir, print, deps });
+  }
+
+  // ----- unknown verb (includes planned: update) -----
   print(`Unknown verb "${verb ?? ''}" for resource "${resource}".\n\n${USAGE}`);
   return 2;
 }
@@ -631,6 +682,54 @@ async function handleInstall(opts: HandleInstallOpts): Promise<number> {
 }
 
 // ---------------------------------------------------------------------------
+// handleRemove — shared remove logic
+// ---------------------------------------------------------------------------
+
+interface HandleRemoveOpts {
+  ids: string[];
+  flags: Record<string, string | boolean>;
+  scope: 'user' | 'project';
+  env: Env;
+  artifactsDir: string;
+  print: (msg: string) => void;
+  deps: CliDeps;
+}
+
+async function handleRemove(opts: HandleRemoveOpts): Promise<number> {
+  const { ids, flags, scope, env, artifactsDir, print, deps } = opts;
+
+  if (ids.length === 0) {
+    print(`[error] "remove" requires at least one artifact id.\n\n${USAGE}`);
+    return 2;
+  }
+
+  const yes = flags['yes'] === true;
+  const adapter = await buildClaudeAdapter(env, artifactsDir);
+  const manifestPath = resolveManifestPath(env);
+
+  let confirm: boolean | ((planText: string) => Promise<boolean>);
+  if (yes) {
+    confirm = true;
+  } else {
+    const prompts = deps.prompts ?? (await importUiPrompts());
+    confirm = (planText: string) => prompts.confirmApply(planText);
+  }
+
+  const result = await runRemove({
+    catalog: BUILTIN_CATALOG,
+    adapter,
+    scope,
+    env,
+    manifestPath,
+    selectedIds: ids,
+    confirm,
+  });
+
+  print(result.output);
+  return 0;
+}
+
+// ---------------------------------------------------------------------------
 // Error handler — maps typed errors to actionable messages + exit codes
 // ---------------------------------------------------------------------------
 
@@ -656,6 +755,11 @@ function handleError(err: unknown, print: (msg: string) => void): number {
 
   if (err instanceof UnknownEntryError) {
     print(`[error] Unknown artifact: ${err.message}`);
+    return 2;
+  }
+
+  if (err instanceof UnknownRemoveIdError) {
+    print(`[error] ${err.message}`);
     return 2;
   }
 

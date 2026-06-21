@@ -87,6 +87,12 @@ function makeDenyAdapter(refDeny: string[] = REF_DENY): Adapter {
         }),
       );
     },
+
+    async planRemove() {
+      return [];
+    },
+
+    async applyRemove(): Promise<void> {},
   };
 }
 

@@ -724,18 +724,10 @@ describe('runCli — <resource> check', () => {
 });
 
 // ---------------------------------------------------------------------------
-// runCli — planned verbs (remove, update) → code 2
+// runCli — planned verbs (update) → code 2
 // ---------------------------------------------------------------------------
 
-describe('runCli — planned verbs (remove, update) return code 2', () => {
-  it('returns exit code 2 for <resource> remove', async () => {
-    const cap = makeCapture();
-    const code = await runCli(['guardrails', 'remove', 'guardrails-claude'], {
-      print: cap.print,
-    });
-    expect(code).toBe(2);
-  });
-
+describe('runCli — planned verbs (update) return code 2', () => {
   it('returns exit code 2 for <resource> update', async () => {
     const cap = makeCapture();
     const code = await runCli(['guardrails', 'update', 'guardrails-claude'], {
@@ -765,8 +757,171 @@ describe('runCli — unknown resource or verb', () => {
 
   it('returns exit code 2 for known resource with unknown verb', async () => {
     const cap = makeCapture();
-    const code = await runCli(['skills', 'remove'], { print: cap.print });
+    const code = await runCli(['skills', 'foo-verb'], { print: cap.print });
     expect(code).toBe(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// runCli — <resource> remove <id...> end-to-end
+// ---------------------------------------------------------------------------
+
+describe('runCli — <resource> remove <id...>', () => {
+  let tmp: { dir: string; cleanup: () => Promise<void> };
+
+  beforeEach(async () => {
+    tmp = await makeTmpHome('rigger-remove-');
+  });
+
+  afterEach(async () => {
+    await tmp.cleanup();
+  });
+
+  it('returns exit code 0 after add + remove --yes', async () => {
+    // Install first
+    await runCli(['guardrails', 'add', 'guardrails-claude', '--yes'], {
+      print: makeCapture().print,
+      env: { RIGGER_HOME: tmp.dir },
+      artifactsDir: ARTIFACTS_DIR,
+    });
+
+    // Now remove
+    const cap = makeCapture();
+    const code = await runCli(['guardrails', 'remove', 'guardrails-claude', '--yes'], {
+      print: cap.print,
+      env: { RIGGER_HOME: tmp.dir },
+      artifactsDir: ARTIFACTS_DIR,
+    });
+    expect(code).toBe(0);
+  });
+
+  it('returns exit code 2 when no ids provided to remove', async () => {
+    const cap = makeCapture();
+    const code = await runCli(['guardrails', 'remove'], {
+      print: cap.print,
+      env: { RIGGER_HOME: tmp.dir },
+      artifactsDir: ARTIFACTS_DIR,
+    });
+    expect(code).toBe(2);
+  });
+
+  it('error message for no ids mentions "remove" and "id"', async () => {
+    const cap = makeCapture();
+    await runCli(['guardrails', 'remove'], {
+      print: cap.print,
+      env: { RIGGER_HOME: tmp.dir },
+      artifactsDir: ARTIFACTS_DIR,
+    });
+    const out = cap.lines.join('\n');
+    expect(out.toLowerCase()).toMatch(/remove|id|argument/);
+  });
+
+  it('returns exit code 2 when id does not match resource type', async () => {
+    const cap = makeCapture();
+    // context-claude is context, not a skill
+    const code = await runCli(['skills', 'remove', 'context-claude', '--yes'], {
+      print: cap.print,
+      env: { RIGGER_HOME: tmp.dir },
+      artifactsDir: ARTIFACTS_DIR,
+    });
+    expect(code).toBe(2);
+  });
+
+  it('check returns exit code 3 after remove (missing)', async () => {
+    // Install
+    await runCli(['guardrails', 'add', 'guardrails-claude', '--yes'], {
+      print: makeCapture().print,
+      env: { RIGGER_HOME: tmp.dir },
+      artifactsDir: ARTIFACTS_DIR,
+    });
+
+    // Remove
+    await runCli(['guardrails', 'remove', 'guardrails-claude', '--yes'], {
+      print: makeCapture().print,
+      env: { RIGGER_HOME: tmp.dir },
+      artifactsDir: ARTIFACTS_DIR,
+    });
+
+    // Check — should show missing
+    const cap = makeCapture();
+    const code = await runCli(['guardrails', 'check'], {
+      print: cap.print,
+      env: { RIGGER_HOME: tmp.dir },
+      artifactsDir: ARTIFACTS_DIR,
+    });
+    expect(code).toBe(3);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// runCli — top-level remove <id...>
+// ---------------------------------------------------------------------------
+
+describe('runCli — top-level remove <id...>', () => {
+  let tmp: { dir: string; cleanup: () => Promise<void> };
+
+  beforeEach(async () => {
+    tmp = await makeTmpHome('rigger-toplevel-remove-');
+  });
+
+  afterEach(async () => {
+    await tmp.cleanup();
+  });
+
+  it('top-level remove returns exit code 0 after install', async () => {
+    await runCli(['install', 'guardrails-claude', '--yes'], {
+      print: makeCapture().print,
+      env: { RIGGER_HOME: tmp.dir },
+      artifactsDir: ARTIFACTS_DIR,
+    });
+
+    const cap = makeCapture();
+    const code = await runCli(['remove', 'guardrails-claude', '--yes'], {
+      print: cap.print,
+      env: { RIGGER_HOME: tmp.dir },
+      artifactsDir: ARTIFACTS_DIR,
+    });
+    expect(code).toBe(0);
+  });
+
+  it('top-level remove returns exit code 2 when no ids provided', async () => {
+    const cap = makeCapture();
+    const code = await runCli(['remove'], {
+      print: cap.print,
+      env: { RIGGER_HOME: tmp.dir },
+      artifactsDir: ARTIFACTS_DIR,
+    });
+    expect(code).toBe(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// runCli — --help mentions remove as available (not planned)
+// ---------------------------------------------------------------------------
+
+describe('runCli — --help mentions remove', () => {
+  it('--help output contains "remove" as an available verb', async () => {
+    const cap = makeCapture();
+    await runCli(['--help'], { print: cap.print });
+    const out = cap.lines.join('\n');
+    expect(out).toContain('remove');
+  });
+
+  it('--help output does NOT list remove as planned', async () => {
+    const cap = makeCapture();
+    await runCli(['--help'], { print: cap.print });
+    const out = cap.lines.join('\n');
+    // "update" should still be planned but "remove" should not appear in planned section
+    // We check the planned section only contains update, not remove
+    const plannedSection = out.match(/planned[^\n]*\n(.*?)(?:\n\n|\n[A-Z]|$)/is)?.[1] ?? '';
+    expect(plannedSection).not.toMatch(/remove/i);
+  });
+
+  it('--help output contains "update" in planned section', async () => {
+    const cap = makeCapture();
+    await runCli(['--help'], { print: cap.print });
+    const out = cap.lines.join('\n');
+    expect(out.toLowerCase()).toMatch(/update.*planned|planned.*update/s);
   });
 });
 

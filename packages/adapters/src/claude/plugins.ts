@@ -32,7 +32,12 @@
 
 import type { AdapterEntry } from '@agent-rigger/core/adapter';
 import type { Env } from '@agent-rigger/core/paths';
-import type { NatureReport, WriteOp, WriteOpPluginInstall } from '@agent-rigger/core/types';
+import type {
+  NatureReport,
+  RemovalOp,
+  WriteOp,
+  WriteOpPluginInstall,
+} from '@agent-rigger/core/types';
 
 // ---------------------------------------------------------------------------
 // PluginRunner
@@ -102,6 +107,28 @@ export class PluginInstallError extends Error {
   constructor(command: string, stderr: string) {
     super(`Plugin install failed: ${command}\n${stderr}`);
     this.name = 'PluginInstallError';
+    this.command = command;
+    this.stderr = stderr;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// PluginUninstallError
+// ---------------------------------------------------------------------------
+
+/**
+ * Thrown by applyRemovePlugin when `claude plugin uninstall` exits with a
+ * non-zero code. Carries the command string and native stderr verbatim.
+ */
+export class PluginUninstallError extends Error {
+  /** The full command string that failed (e.g. "claude plugin uninstall <name>"). */
+  readonly command: string;
+  /** Native stderr output from the `claude` process. */
+  readonly stderr: string;
+
+  constructor(command: string, stderr: string) {
+    super(`Plugin uninstall failed: ${command}\n${stderr}`);
+    this.name = 'PluginUninstallError';
     this.command = command;
     this.stderr = stderr;
   }
@@ -209,6 +236,73 @@ export async function planPlugin(
   const { plugin, marketplace } = pluginSource(entry);
   const op: WriteOpPluginInstall = { kind: 'plugin-install', plugin, marketplace };
   return [op];
+}
+
+// ---------------------------------------------------------------------------
+// planRemovePlugin
+// ---------------------------------------------------------------------------
+
+/**
+ * Compute the removal operations needed to uninstall a plugin.
+ *
+ * Calls auditPlugin internally to determine current state, then:
+ * - Returns [] when the plugin is not present (idempotent).
+ * - Returns [{ kind: 'plugin-uninstall', plugin }] when the plugin is installed.
+ *
+ * Read-only: no filesystem writes.
+ *
+ * @param entry  Artifact entry.
+ * @param opts   Optional { run: PluginRunner } forwarded to auditPlugin.
+ */
+export async function planRemovePlugin(
+  entry: AdapterEntry,
+  opts?: { run?: PluginRunner },
+): Promise<RemovalOp[]> {
+  const report = await auditPlugin(entry, {} as Env, opts);
+  if (report.state !== 'present') {
+    return [];
+  }
+
+  const name = pluginName(entry);
+  return [{ kind: 'plugin-uninstall', plugin: name }];
+}
+
+// ---------------------------------------------------------------------------
+// applyRemovePlugin
+// ---------------------------------------------------------------------------
+
+/**
+ * Execute plugin-uninstall removal operations produced by planRemovePlugin.
+ *
+ * For each plugin-uninstall op:
+ *   Run `claude plugin uninstall <plugin>`.
+ *   If exit code ≠ 0 → throw PluginUninstallError with the native stderr.
+ *
+ * Ops of any other kind are silently skipped (forward-compatibility).
+ *
+ * @param ops   Removal operations (only 'plugin-uninstall' kind are processed).
+ * @param env   Injectable env (kept for interface symmetry).
+ * @param opts  Optional { run: PluginRunner }.
+ */
+export async function applyRemovePlugin(
+  ops: RemovalOp[],
+  _env: Env,
+  opts?: { run?: PluginRunner },
+): Promise<void> {
+  const run = opts?.run ?? defaultPluginRunner;
+
+  for (const op of ops) {
+    if (op.kind !== 'plugin-uninstall') {
+      continue;
+    }
+
+    const cmd = `claude plugin uninstall ${op.plugin}`;
+    const result = await run('claude', ['plugin', 'uninstall', op.plugin]);
+
+    if (result.exitCode !== 0) {
+      throw new PluginUninstallError(cmd, result.stderr);
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
