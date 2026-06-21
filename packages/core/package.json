@@ -10,6 +10,7 @@
     "./fs-json": "./src/fs-json.ts",
     "./backup": "./src/backup.ts",
     "./deny": "./src/deny.ts",
-    "./managed-import": "./src/managed-import.ts"
+    "./managed-import": "./src/managed-import.ts",
+    "./manifest": "./src/manifest.ts"
   }
 }
