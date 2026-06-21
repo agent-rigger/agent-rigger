@@ -1,0 +1,15 @@
+/**
+ * Public barrel for @agent-rigger/adapters.
+ *
+ * Exports ClaudeAdapter and associated types.
+ * E2-E5 will add their handlers here as they are implemented.
+ */
+
+export { createClaudeAdapter, UnsupportedNatureError } from './claude/adapter';
+export type { ClaudeAdapterConfig } from './claude/adapter';
+export {
+  applyGuardrail,
+  auditGuardrail,
+  loadCanonicalDeny,
+  planGuardrail,
+} from './claude/guardrails';
