@@ -34,13 +34,17 @@ import { stubScanner } from '@agent-rigger/core/scan';
 import { BUILTIN_CATALOG } from '@agent-rigger/catalog';
 import { DependencyCycleError, UnknownEntryError } from '@agent-rigger/catalog/resolver';
 
+import type { TmpDirFactory } from '@agent-rigger/catalog';
+import type { CommandRunner } from '@agent-rigger/catalog/tool-check';
 import { runCheck } from './cmd-check';
 import { runInit } from './cmd-init';
 import { runInstall } from './cmd-install';
 import type { RunLsResult } from './cmd-ls';
 import { RESOURCE_NATURE_MAP, runLs } from './cmd-ls';
 import { runRemove, UnknownRemoveIdError } from './cmd-remove';
+import { loadConfig } from './config';
 import { PreflightAuthError } from './preflight-auth';
+import { fetchRemoteCatalog, mergeCatalogs } from './remote';
 import { renderEntryInfo } from './ui';
 
 // ---------------------------------------------------------------------------
@@ -235,6 +239,11 @@ export interface CliDeps {
   artifactsDir?: string;
   /** Interactive prompt overrides (for tests). */
   prompts?: CliPrompts;
+  /**
+   * Remote seam for testing — injected into fetchRemoteCatalog.
+   * Production code uses defaultRunner + defaultTmpFactory.
+   */
+  remote?: { run?: CommandRunner; tmpFactory?: TmpDirFactory };
 }
 
 // ---------------------------------------------------------------------------
@@ -312,6 +321,55 @@ function resolveConfigPath(env: Env): string {
 }
 
 // ---------------------------------------------------------------------------
+// resolveEffectiveCatalog — built-in ∪ remote (best-effort)
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolve the effective catalog for ls commands.
+ *
+ * - Loads the user config to check for a catalogUrl.
+ * - If catalogUrl is configured, attempts to fetch the remote catalog and
+ *   merges it with the built-in (built-in entries win on id collision).
+ * - If the fetch fails for any reason, prints a warning and falls back to
+ *   the built-in catalog. Exit 0 is preserved — ls is best-effort.
+ * - If no catalogUrl is configured, returns BUILTIN_CATALOG unchanged.
+ */
+async function resolveEffectiveCatalog(
+  env: Env,
+  print: (msg: string) => void,
+  remote: CliDeps['remote'],
+): Promise<typeof BUILTIN_CATALOG> {
+  const userConfigPath = resolveConfigPath(env);
+  // projectConfigPath: cwd-relative fallback (no project concept in M1-a)
+  const projectConfigPath = path.join(process.cwd(), '.agent-rigger', 'config.json');
+
+  const config = await loadConfig({
+    userConfigPath,
+    projectConfigPath,
+    env: env as Record<string, string | undefined>,
+  });
+
+  if (!config.catalogUrl) {
+    return BUILTIN_CATALOG;
+  }
+
+  const remoteFetchOpts: Parameters<typeof fetchRemoteCatalog>[0] = {
+    catalogUrl: config.catalogUrl,
+  };
+  if (remote?.run !== undefined) remoteFetchOpts.run = remote.run;
+  if (remote?.tmpFactory !== undefined) remoteFetchOpts.tmpFactory = remote.tmpFactory;
+
+  try {
+    const { entries } = await fetchRemoteCatalog(remoteFetchOpts);
+    return mergeCatalogs(BUILTIN_CATALOG, entries);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    print(`[warning] Remote catalog unavailable (${msg}). Falling back to built-in catalog.`);
+    return BUILTIN_CATALOG;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // runCli
 // ---------------------------------------------------------------------------
 
@@ -355,7 +413,8 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
   try {
     // ----- ls (top-level) -----
     if (command === 'ls') {
-      const result = await runLs({ catalog: BUILTIN_CATALOG, env, scope });
+      const effective = await resolveEffectiveCatalog(env, print, deps.remote);
+      const result = await runLs({ catalog: effective, env, scope });
       print(result.output);
       return 0;
     }
@@ -469,11 +528,12 @@ async function handleResourceCommand(opts: ResourceCommandOpts): Promise<number>
 
   // ----- <resource> ls -----
   if (verb === 'ls' || verb === undefined) {
+    const effectiveCatalog = await resolveEffectiveCatalog(env, print, deps.remote);
     let result: RunLsResult;
     if (natureMapped === 'catalog') {
-      result = await runLs({ catalog: BUILTIN_CATALOG, env, scope });
+      result = await runLs({ catalog: effectiveCatalog, env, scope });
     } else {
-      result = await runLs({ catalog: BUILTIN_CATALOG, env, scope, resourceFilter: natureMapped });
+      result = await runLs({ catalog: effectiveCatalog, env, scope, resourceFilter: natureMapped });
     }
     print(result.output);
     return 0;

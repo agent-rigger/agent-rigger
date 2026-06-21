@@ -14,6 +14,9 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
+import type { CatalogEntry, TmpDirFactory } from '@agent-rigger/catalog';
+import type { CommandRunner } from '@agent-rigger/catalog/tool-check';
+
 import { parseArgs, runCli } from '../src/cli';
 import type { CliPrompts } from '../src/cli';
 
@@ -51,6 +54,14 @@ function fakePrompts(): CliPrompts {
     askMethod: async () => 'https',
   };
 }
+
+// ---------------------------------------------------------------------------
+// Module-level runners (no outer scope captures — extracted per lint)
+// ---------------------------------------------------------------------------
+
+/** A CommandRunner that always fails with exit code 1. */
+const alwaysFailRunner: CommandRunner = (_cmd, _args) =>
+  Promise.resolve({ exitCode: 1, stdout: '', stderr: 'auth required' });
 
 // ---------------------------------------------------------------------------
 // parseArgs
@@ -957,5 +968,196 @@ describe('runCli — non-regression interactive install', () => {
       prompts,
     });
     expect(selectCalled).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// runCli — ls with remote catalog
+// ---------------------------------------------------------------------------
+
+/** SHA constant used in fake git runners. */
+const FAKE_SHA = 'aabbccddeeff00112233445566778899aabbccdd';
+
+/** Minimal valid CatalogEntry for test injection. */
+function makeRemoteEntry(id: string): CatalogEntry {
+  return {
+    kind: 'artifact',
+    id,
+    nature: 'skill',
+    source: 'external',
+    targets: ['claude'],
+    scopes: ['user'],
+  };
+}
+
+/**
+ * Builds a fake TmpDirFactory that writes catalog.json into dir and returns
+ * a no-op cleanup (dir is owned by the test and cleaned up in afterEach).
+ */
+function makeFakeTmpFactory(dir: string, entries: CatalogEntry[]): TmpDirFactory {
+  return async () => {
+    await Bun.write(path.join(dir, 'catalog.json'), JSON.stringify(entries));
+    return { path: dir, cleanup: async () => {} };
+  };
+}
+
+/**
+ * Builds a fake CommandRunner for a successful remote catalog fetch.
+ * - ls-remote --tags → one tag v1.0.0
+ * - clone → exit 0 (catalog written by tmpFactory)
+ * - rev-parse HEAD → FAKE_SHA
+ */
+function makeSuccessRunner(): CommandRunner {
+  return (_cmd, args) => {
+    const argsArr = args ?? [];
+    if (argsArr.includes('ls-remote') && argsArr.includes('--tags')) {
+      return Promise.resolve({
+        exitCode: 0,
+        stdout: `${FAKE_SHA}\trefs/tags/v1.0.0\n`,
+        stderr: '',
+      });
+    }
+    if (argsArr.includes('clone')) {
+      return Promise.resolve({ exitCode: 0, stdout: '', stderr: '' });
+    }
+    if (argsArr.includes('rev-parse')) {
+      return Promise.resolve({ exitCode: 0, stdout: `${FAKE_SHA}\n`, stderr: '' });
+    }
+    return Promise.resolve({ exitCode: 0, stdout: '', stderr: '' });
+  };
+}
+
+describe('runCli — ls with remote catalog configured', () => {
+  let tmp: { dir: string; cleanup: () => Promise<void> };
+  let catalogDir: string;
+
+  beforeEach(async () => {
+    tmp = await makeTmpHome('rigger-remote-ls-');
+    // Write config.json with catalogUrl into the expected config path
+    const configDir = path.join(tmp.dir, '.config', 'agent-rigger');
+    await fs.mkdir(configDir, { recursive: true });
+    await Bun.write(
+      path.join(configDir, 'config.json'),
+      JSON.stringify({ catalogUrl: 'https://example.com/catalog.git' }),
+    );
+    // Create a dir for the fake clone
+    catalogDir = await fs.mkdtemp(path.join(os.tmpdir(), 'rigger-remote-catalog-'));
+  });
+
+  afterEach(async () => {
+    await tmp.cleanup();
+    await fs.rm(catalogDir, { recursive: true, force: true });
+  });
+
+  it('ls shows remote-only entry when fetch succeeds', async () => {
+    const remoteEntries = [makeRemoteEntry('skill:remote-unique')];
+    const cap = makeCapture();
+
+    const code = await runCli(['ls'], {
+      print: cap.print,
+      env: { RIGGER_HOME: tmp.dir },
+      artifactsDir: ARTIFACTS_DIR,
+      remote: {
+        run: makeSuccessRunner(),
+        tmpFactory: makeFakeTmpFactory(catalogDir, remoteEntries),
+      },
+    });
+
+    expect(code).toBe(0);
+    const out = cap.lines.join('\n');
+    expect(out).toContain('skill:remote-unique');
+    expect(out).toContain('guardrails-claude'); // built-in still present
+  });
+
+  it('ls shows remote entry via catalog ls alias', async () => {
+    const remoteEntries = [makeRemoteEntry('skill:remote-alias')];
+    const cap = makeCapture();
+
+    const code = await runCli(['catalog', 'ls'], {
+      print: cap.print,
+      env: { RIGGER_HOME: tmp.dir },
+      artifactsDir: ARTIFACTS_DIR,
+      remote: {
+        run: makeSuccessRunner(),
+        tmpFactory: makeFakeTmpFactory(catalogDir, remoteEntries),
+      },
+    });
+
+    expect(code).toBe(0);
+    const out = cap.lines.join('\n');
+    expect(out).toContain('skill:remote-alias');
+  });
+});
+
+describe('runCli — ls without catalogUrl configured (M0 unchanged)', () => {
+  let tmp: { dir: string; cleanup: () => Promise<void> };
+
+  beforeEach(async () => {
+    tmp = await makeTmpHome('rigger-noop-ls-');
+    // No config.json written → no catalogUrl
+  });
+
+  afterEach(async () => {
+    await tmp.cleanup();
+  });
+
+  it('ls shows only built-in entries and exits 0', async () => {
+    const cap = makeCapture();
+    const code = await runCli(['ls'], {
+      print: cap.print,
+      env: { RIGGER_HOME: tmp.dir },
+      artifactsDir: ARTIFACTS_DIR,
+    });
+    expect(code).toBe(0);
+    const out = cap.lines.join('\n');
+    expect(out).toContain('guardrails-claude');
+    expect(out).not.toContain('skill:remote');
+  });
+});
+
+describe('runCli — ls with catalogUrl configured but remote fails', () => {
+  let tmp: { dir: string; cleanup: () => Promise<void> };
+
+  beforeEach(async () => {
+    tmp = await makeTmpHome('rigger-fail-ls-');
+    const configDir = path.join(tmp.dir, '.config', 'agent-rigger');
+    await fs.mkdir(configDir, { recursive: true });
+    await Bun.write(
+      path.join(configDir, 'config.json'),
+      JSON.stringify({ catalogUrl: 'https://example.com/catalog.git' }),
+    );
+  });
+
+  afterEach(async () => {
+    await tmp.cleanup();
+  });
+
+  it('ls exits 0 with warning and falls back to built-in on remote failure', async () => {
+    const cap = makeCapture();
+    const code = await runCli(['ls'], {
+      print: cap.print,
+      env: { RIGGER_HOME: tmp.dir },
+      artifactsDir: ARTIFACTS_DIR,
+      remote: { run: alwaysFailRunner },
+    });
+
+    expect(code).toBe(0);
+    const out = cap.lines.join('\n');
+    expect(out).toContain('[warning]');
+    expect(out).toContain('guardrails-claude'); // built-in still shown
+  });
+
+  it('warning message is actionable', async () => {
+    const cap = makeCapture();
+    await runCli(['ls'], {
+      print: cap.print,
+      env: { RIGGER_HOME: tmp.dir },
+      artifactsDir: ARTIFACTS_DIR,
+      remote: { run: alwaysFailRunner },
+    });
+
+    const out = cap.lines.join('\n');
+    expect(out).toContain('Remote catalog unavailable');
+    expect(out).toContain('Falling back to built-in catalog');
   });
 });
