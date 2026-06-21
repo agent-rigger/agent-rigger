@@ -264,7 +264,7 @@ describe('runInstall — guardrail+context, confirm:true', () => {
     expect(result.output).toMatch(/write|deny|import/i);
   });
 
-  it('confirm callback receives the plan and is called', async () => {
+  it('confirm callback is called', async () => {
     const adapter = createClaudeAdapter({ denyRef: REF_DENY, agentsContent: AGENTS_CONTENT });
     let confirmCalled = false;
 
@@ -275,7 +275,7 @@ describe('runInstall — guardrail+context, confirm:true', () => {
       env,
       manifestPath,
       selectedIds: ['guardrails-claude', 'context-claude'],
-      confirm: async () => {
+      confirm: async (_planText) => {
         confirmCalled = true;
         return true;
       },
@@ -283,6 +283,82 @@ describe('runInstall — guardrail+context, confirm:true', () => {
 
     expect(confirmCalled).toBe(true);
     expect(result.applied).toBe(true);
+  });
+
+  it('confirm callback receives non-empty planText containing the ops', async () => {
+    const adapter = createClaudeAdapter({ denyRef: REF_DENY, agentsContent: AGENTS_CONTENT });
+    let capturedPlanText = '';
+
+    await runInstall({
+      catalog: MINI_CATALOG,
+      adapter,
+      scope: SCOPE,
+      env,
+      manifestPath,
+      selectedIds: ['guardrails-claude', 'context-claude'],
+      confirm: async (planText) => {
+        capturedPlanText = planText;
+        return true;
+      },
+    });
+
+    // planText must be non-empty and reference something from the ops (deny / import / write)
+    expect(capturedPlanText.length).toBeGreaterThan(0);
+    expect(capturedPlanText).toMatch(/deny|import|write/i);
+  });
+
+  it('confirm callback receives planText containing the deny rules path', async () => {
+    const adapter = createClaudeAdapter({ denyRef: REF_DENY, agentsContent: AGENTS_CONTENT });
+    let capturedPlanText = '';
+
+    await runInstall({
+      catalog: MINI_CATALOG,
+      adapter,
+      scope: SCOPE,
+      env,
+      manifestPath,
+      selectedIds: ['guardrails-claude'],
+      confirm: async (planText) => {
+        capturedPlanText = planText;
+        return true;
+      },
+    });
+
+    // planText must mention the deny op — contains the settings.json path or a deny rule
+    expect(capturedPlanText).toMatch(/settings\.json|deny/i);
+  });
+
+  it('confirm callback is NOT called when plan is empty (already up to date)', async () => {
+    const adapter = createClaudeAdapter({ denyRef: REF_DENY, agentsContent: AGENTS_CONTENT });
+
+    // First install to make the plan empty
+    await runInstall({
+      catalog: MINI_CATALOG,
+      adapter,
+      scope: SCOPE,
+      env,
+      manifestPath,
+      selectedIds: ['guardrails-claude', 'context-claude'],
+      confirm: true,
+    });
+
+    let confirmCallCount = 0;
+    const result = await runInstall({
+      catalog: MINI_CATALOG,
+      adapter,
+      scope: SCOPE,
+      env,
+      manifestPath,
+      selectedIds: ['guardrails-claude', 'context-claude'],
+      confirm: async (_planText) => {
+        confirmCallCount++;
+        return true;
+      },
+    });
+
+    // Plan is empty → confirm must not be called
+    expect(confirmCallCount).toBe(0);
+    expect(result.applied).toBe(false);
   });
 });
 

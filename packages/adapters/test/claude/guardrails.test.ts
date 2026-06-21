@@ -23,6 +23,7 @@ import type { Env } from '@agent-rigger/core/paths';
 import {
   applyGuardrail,
   auditGuardrail,
+  EmptyDenyArtifactError,
   loadCanonicalDeny,
   planGuardrail,
 } from '../../src/claude/guardrails';
@@ -74,30 +75,45 @@ describe('loadCanonicalDeny', () => {
     expect(result).toEqual(['Read(./.env)', 'Read(~/.ssh/**)']);
   });
 
-  it('returns [] when the file does not exist', async () => {
+  it('throws EmptyDenyArtifactError when the file does not exist', async () => {
     const denyPath = path.join(tmp.dir, 'nonexistent.json');
 
-    const result = await loadCanonicalDeny(denyPath);
-
-    expect(result).toEqual([]);
+    await expect(loadCanonicalDeny(denyPath)).rejects.toBeInstanceOf(EmptyDenyArtifactError);
   });
 
-  it('returns [] when deny field is absent in the file', async () => {
+  it('EmptyDenyArtifactError carries the path when file is absent', async () => {
+    const denyPath = path.join(tmp.dir, 'nonexistent.json');
+
+    let caught: unknown;
+    try {
+      await loadCanonicalDeny(denyPath);
+    } catch (err) {
+      caught = err;
+    }
+
+    expect(caught).toBeInstanceOf(EmptyDenyArtifactError);
+    expect((caught as EmptyDenyArtifactError).path).toBe(denyPath);
+  });
+
+  it('throws EmptyDenyArtifactError when deny field is absent in the file', async () => {
     const denyPath = path.join(tmp.dir, 'deny.json');
     await writeJson(denyPath, { other: 'value' });
 
-    const result = await loadCanonicalDeny(denyPath);
-
-    expect(result).toEqual([]);
+    await expect(loadCanonicalDeny(denyPath)).rejects.toBeInstanceOf(EmptyDenyArtifactError);
   });
 
-  it('returns [] when deny field is not an array', async () => {
+  it('throws EmptyDenyArtifactError when deny field is not an array', async () => {
     const denyPath = path.join(tmp.dir, 'deny.json');
     await writeJson(denyPath, { deny: 'not-an-array' });
 
-    const result = await loadCanonicalDeny(denyPath);
+    await expect(loadCanonicalDeny(denyPath)).rejects.toBeInstanceOf(EmptyDenyArtifactError);
+  });
 
-    expect(result).toEqual([]);
+  it('throws EmptyDenyArtifactError when deny is an explicit empty array', async () => {
+    const denyPath = path.join(tmp.dir, 'deny.json');
+    await writeJson(denyPath, { deny: [] });
+
+    await expect(loadCanonicalDeny(denyPath)).rejects.toBeInstanceOf(EmptyDenyArtifactError);
   });
 });
 

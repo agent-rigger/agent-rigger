@@ -46,7 +46,7 @@ function fakePrompts(): CliPrompts {
   return {
     selectArtifacts: async () => ['guardrails-claude', 'context-claude'],
     selectScope: async () => 'user',
-    confirmApply: async () => true,
+    confirmApply: async (_planText) => true,
     askUrl: async () => 'https://github.com/example/catalog.git',
     askMethod: async () => 'https',
   };
@@ -188,6 +188,55 @@ describe('runCli — unknown command', () => {
 });
 
 // ---------------------------------------------------------------------------
+// runCli — invalid --scope
+// ---------------------------------------------------------------------------
+
+describe('runCli — invalid --scope', () => {
+  it('returns exit code 2 for unknown scope value', async () => {
+    const cap = makeCapture();
+    const code = await runCli(['check', '--scope=usr'], { print: cap.print });
+    expect(code).toBe(2);
+  });
+
+  it('output contains actionable message for invalid scope', async () => {
+    const cap = makeCapture();
+    await runCli(['check', '--scope=usr'], { print: cap.print });
+    const out = cap.lines.join('\n');
+    expect(out).toMatch(/scope|user|project/i);
+  });
+
+  it('returns exit code 2 for --scope=admin', async () => {
+    const cap = makeCapture();
+    const code = await runCli(['install', '--scope=admin'], { print: cap.print });
+    expect(code).toBe(2);
+  });
+
+  it('accepts --scope=user without error', async () => {
+    const cap = makeCapture();
+    // No real env needed — scope validation happens before buildClaudeAdapter
+    // We just need it not to return 2 on scope validation
+    // It may fail later (no artifacts dir) but that's code 1 not 2 from scope
+    const code = await runCli(['check', '--scope=user'], {
+      print: cap.print,
+      env: { RIGGER_HOME: '/tmp/nonexistent-rigger-home-test' },
+      artifactsDir: ARTIFACTS_DIR,
+    });
+    // Should not be 2 (scope error); any other code is acceptable
+    expect(code).not.toBe(2);
+  });
+
+  it('accepts --scope=project without scope error', async () => {
+    const cap = makeCapture();
+    const code = await runCli(['check', '--scope=project'], {
+      print: cap.print,
+      env: { RIGGER_HOME: '/tmp/nonexistent-rigger-home-test' },
+      artifactsDir: ARTIFACTS_DIR,
+    });
+    expect(code).not.toBe(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // runCli — check command
 // ---------------------------------------------------------------------------
 
@@ -309,7 +358,7 @@ describe('runCli — install + check flow', () => {
     const cap = makeCapture();
     const prompts: CliPrompts = {
       ...fakePrompts(),
-      confirmApply: async () => false,
+      confirmApply: async (_planText) => false,
     };
     const code = await runCli(['install'], {
       print: cap.print,

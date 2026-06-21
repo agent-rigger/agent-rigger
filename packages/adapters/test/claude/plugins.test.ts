@@ -216,6 +216,35 @@ describe('auditPlugin', () => {
     expect(call.args).toContain('plugin');
     expect(call.args).toContain('list');
   });
+
+  it('returns missing when plugin name is a substring of another token (no false positive)', async () => {
+    // 'git' must NOT match when the line contains 'legit' (substring, not exact token)
+    const gitEntry: AdapterEntry = { id: 'plugin:git', nature: 'plugin', scope: 'user' };
+    const runner = makeSpyRunner({ listStdout: 'legit-plugin\nanother-legit' });
+
+    const report = await auditPlugin(gitEntry, env, { run: runner });
+
+    expect(report.state).toBe('missing');
+  });
+
+  it('returns present when plugin name is an exact token on a line', async () => {
+    const gitEntry: AdapterEntry = { id: 'plugin:git', nature: 'plugin', scope: 'user' };
+    const runner = makeSpyRunner({ listStdout: 'legit-plugin\ngit\nfoo' });
+
+    const report = await auditPlugin(gitEntry, env, { run: runner });
+
+    expect(report.state).toBe('present');
+  });
+
+  it('returns missing when plugin name appears only as infix in every line', async () => {
+    // 'foo' appears inside 'foobar' and 'prefoo' but never as its own token
+    const fooEntry: AdapterEntry = { id: 'plugin:foo', nature: 'plugin', scope: 'user' };
+    const runner = makeSpyRunner({ listStdout: 'foobar\nprefoo\n  foosuffix  ' });
+
+    const report = await auditPlugin(fooEntry, env, { run: runner });
+
+    expect(report.state).toBe('missing');
+  });
 });
 
 // ---------------------------------------------------------------------------

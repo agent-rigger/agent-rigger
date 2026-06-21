@@ -81,9 +81,9 @@ export interface RunInstallOptions {
    * Confirmation source.
    *  - boolean true  → always apply without prompting.
    *  - boolean false → always abort without prompting.
-   *  - async callback → called with the rendered plan; returns true/false.
+   *  - async callback → called with the rendered plan text; returns true/false.
    */
-  confirm: boolean | (() => Promise<boolean>);
+  confirm: boolean | ((planText: string) => Promise<boolean>);
   /** Optional CommandRunner for advisory tool checks. Defaults to defaultRunner. */
   toolRunner?: CommandRunner;
   /** Working directory (reserved; unused in M0). */
@@ -192,7 +192,7 @@ export async function runInstall(opts: RunInstallOptions): Promise<InstallResult
   // Step 5: Confirm
   // -------------------------------------------------------------------------
 
-  const confirmed = typeof confirm === 'boolean' ? confirm : await confirm();
+  const confirmed = typeof confirm === 'boolean' ? confirm : await confirm(planText);
 
   if (!confirmed) {
     const output = buildOutput({
