@@ -2,15 +2,13 @@
  * Domain types for agent-rigger.
  *
  * Keep this file types-only — no logic, no imports from node:* or bun.
- * See CONTEXT.md (Concepts artefacts, État & versioning, Scopes) for the
- * authoritative glossary; design.md §3 for engine contracts.
  */
 
 // ---------------------------------------------------------------------------
 // Primitives
 // ---------------------------------------------------------------------------
 
-/** 7 natures of installable artefacts (CONTEXT.md § Concepts artefacts). */
+/** 7 natures of installable artefacts. */
 export type Nature = 'plugin' | 'guardrail' | 'context' | 'skill' | 'agent' | 'mcp' | 'tool';
 
 /** Installation scope: user-level (~/) or project-level (cwd). */
@@ -138,7 +136,7 @@ export interface Verdict {
 // ---------------------------------------------------------------------------
 
 /**
- * State of a single artefact as observed on disk (design §3 + §6).
+ * State of a single artefact as observed on disk.
  *
  * - 'missing'  → not installed; check exits 3.
  * - 'present'  → installed and matches manifest sha/content; check exits 0.
