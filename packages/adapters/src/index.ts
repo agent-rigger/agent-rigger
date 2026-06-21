@@ -12,6 +12,7 @@ export { applyContext, auditContext, loadCanonicalContext, planContext } from '.
 export {
   applyGuardrail,
   auditGuardrail,
+  EmptyDenyArtifactError,
   loadCanonicalDeny,
   planGuardrail,
 } from './claude/guardrails';

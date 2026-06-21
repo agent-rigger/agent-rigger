@@ -13,7 +13,7 @@
     "format:check": "dprint check",
     "typecheck": "tsc --noEmit",
     "test": "bun test --pass-with-no-tests",
-    "build": "echo \"no package to build yet\"",
+    "build": "bun run --filter '@agent-rigger/cli' build",
     "demo": "bun examples/core-smoke.ts",
     "prepare": "lefthook install"
   },
