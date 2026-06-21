@@ -5,13 +5,15 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./types": "./src/types.ts",
-    "./paths": "./src/paths.ts",
-    "./fs-json": "./src/fs-json.ts",
+    "./adapter": "./src/adapter.ts",
     "./backup": "./src/backup.ts",
     "./deny": "./src/deny.ts",
+    "./engine": "./src/engine.ts",
+    "./fs-json": "./src/fs-json.ts",
     "./managed-import": "./src/managed-import.ts",
     "./manifest": "./src/manifest.ts",
-    "./scan": "./src/scan.ts"
+    "./paths": "./src/paths.ts",
+    "./scan": "./src/scan.ts",
+    "./types": "./src/types.ts"
   }
 }
