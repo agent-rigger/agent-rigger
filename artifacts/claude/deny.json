@@ -1,0 +1,15 @@
+{
+  "deny": [
+    "Read(./.env)",
+    "Read(./.env.*)",
+    "Read(./**/.env)",
+    "Read(./**/.env.*)",
+    "Read(./secrets/**)",
+    "Read(./**/secrets/**)",
+    "Read(./**/*.pem)",
+    "Read(./**/id_rsa)",
+    "Read(~/.ssh/**)",
+    "Read(~/.aws/**)",
+    "Read(~/.kube/config)"
+  ]
+}

@@ -10,7 +10,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
-import { InvalidJsonError, readJson, readText, writeJson } from '../src/fs-json';
+import { InvalidJsonError, readJson, readText, writeJson, writeText } from '../src/fs-json';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -94,6 +94,41 @@ describe('readText', () => {
 
     const result = await readText(filePath);
     expect(result).toBe('Hello world\n');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// writeText
+// ---------------------------------------------------------------------------
+
+describe('writeText', () => {
+  it('round-trips: writeText then readText returns the same content', async () => {
+    const filePath = path.join(tmpDir, 'CLAUDE.md');
+    const content = '# My config\n@~/.claude/harness/AGENTS.md\n';
+
+    await writeText(filePath, content);
+    const result = await readText(filePath);
+
+    expect(result).toBe(content);
+  });
+
+  it('creates missing parent directories', async () => {
+    const filePath = path.join(tmpDir, 'nested', 'deep', 'AGENTS.md');
+    const content = 'agent context\n';
+
+    await writeText(filePath, content);
+    const result = await readText(filePath);
+
+    expect(result).toBe(content);
+  });
+
+  it('overwrites an existing file', async () => {
+    const filePath = path.join(tmpDir, 'file.md');
+    await writeText(filePath, 'first\n');
+    await writeText(filePath, 'second\n');
+
+    const result = await readText(filePath);
+    expect(result).toBe('second\n');
   });
 });
 

@@ -1,0 +1,9 @@
+{
+  "name": "agent-rigger-harness",
+  "version": "0.0.0",
+  "description": "Runtime guardrails plugin for Claude Code. Installs PreToolUse hooks that deny secret reads and writes, block destructive/escalation Bash commands, and warn on prompt-injection signatures.",
+  "license": "MIT",
+  "engines": {
+    "bun": ">=1.3.0"
+  }
+}

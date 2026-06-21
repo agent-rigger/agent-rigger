@@ -130,11 +130,23 @@ export async function apply(
       continue;
     }
 
-    // Collect target paths from ops
-    const targets = ops.map((op) => op.path);
+    // Collect target paths from ops for tracking.
+    // - Ops with 'path' use op.path (write-json, write-text, merge-deny, ensure-import).
+    // - Link ops use op.target (symlink destination); the linker is atomic, no backup needed.
+    // - Ops with neither 'path' nor 'target' (e.g. plugin-install) contribute no path;
+    //   they perform no direct file write, so nothing to track or back up.
+    const targets = ops.flatMap((op) => {
+      if ('path' in op) return [op.path as string];
+      if ('target' in op) return [(op as { target: string }).target];
+      return [];
+    });
 
-    // Backup every target that currently exists on disk
-    const bakResults = await Promise.all(targets.map((p) => backup(p)));
+    // Backup every target that currently exists on disk.
+    // Skip link ops (linker is atomic) and plugin-install ops (no file written).
+    const backupTargets = ops
+      .filter((op) => 'path' in op)
+      .map((op) => (op as { path: string }).path);
+    const bakResults = await Promise.all(backupTargets.map((p) => backup(p)));
     const backedUp = bakResults.filter((b): b is string => b !== null);
     allBackedUp.push(...backedUp);
 

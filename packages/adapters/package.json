@@ -1,0 +1,14 @@
+{
+  "name": "@agent-rigger/adapters",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./claude": "./src/claude/adapter.ts",
+    "./claude/guardrails": "./src/claude/guardrails.ts"
+  },
+  "dependencies": {
+    "@agent-rigger/core": "workspace:*"
+  }
+}
