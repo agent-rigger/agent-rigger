@@ -6,6 +6,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./cmd-check": "./src/cmd-check.ts",
+    "./cmd-init": "./src/cmd-init.ts",
     "./cmd-install": "./src/cmd-install.ts",
     "./config": "./src/config.ts",
     "./preflight-auth": "./src/preflight-auth.ts",
