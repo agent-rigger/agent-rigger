@@ -17,7 +17,7 @@ import type { Adapter, AdapterEntry } from '@agent-rigger/core/adapter';
 import type { Env } from '@agent-rigger/core/paths';
 import type { Scanner } from '@agent-rigger/core/scan';
 import { stubScanner } from '@agent-rigger/core/scan';
-import type { Nature, NatureReport, Scope, WriteOp } from '@agent-rigger/core/types';
+import type { Nature, NatureReport, RemovalOp, Scope, WriteOp } from '@agent-rigger/core/types';
 
 import { auditAgent, planAgent } from './agents';
 import { applyContext, auditContext, planContext } from './context';
@@ -291,5 +291,12 @@ export function createClaudeAdapter(config: ClaudeAdapterConfig): Adapter {
         await applyFn(kindOps, env);
       }
     },
+
+    // planRemove / applyRemove — implemented in the remove task (M1)
+    async planRemove(): Promise<RemovalOp[]> {
+      return [];
+    },
+
+    async applyRemove(): Promise<void> {},
   };
 }

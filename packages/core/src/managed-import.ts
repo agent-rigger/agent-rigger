@@ -88,6 +88,35 @@ function appendBlock(claudeMd: string, target: string): string {
 }
 
 /**
+ * Remove the managed block from `claudeMd`, preserving all surrounding content.
+ *
+ * Rules:
+ * - If no managed block is present → return `claudeMd` unchanged.
+ * - Otherwise: remove the block (from BEGIN to END inclusive) and clean up
+ *   any residual blank lines so no more than one consecutive blank line remains.
+ * - Idempotent: `removeImportBlock(removeImportBlock(x)) === removeImportBlock(x)`.
+ *
+ * @param claudeMd - Current content of CLAUDE.md.
+ * @returns        - The updated CLAUDE.md content with the managed block removed.
+ */
+export function removeImportBlock(claudeMd: string): string {
+  if (!hasBlock(claudeMd)) {
+    return claudeMd;
+  }
+
+  const beginIdx = claudeMd.indexOf(BEGIN_MARKER);
+  const endIdx = claudeMd.indexOf(END_MARKER);
+  const endOfBlock = endIdx + END_MARKER.length;
+
+  const prefix = claudeMd.slice(0, beginIdx);
+  const suffix = claudeMd.slice(endOfBlock);
+
+  // Combine prefix + suffix, then collapse sequences of 3+ newlines down to 2
+  const combined = prefix + suffix;
+  return combined.replace(/\n{3,}/g, '\n\n').replace(/^\n+/, '').replace(/\n+$/, '');
+}
+
+/**
  * Ensure `claudeMd` contains exactly one managed block importing `target`.
  *
  * Rules (in evaluation order):
