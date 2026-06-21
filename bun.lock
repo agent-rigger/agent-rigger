@@ -29,6 +29,16 @@
         "zod": "4.4.3",
       },
     },
+    "packages/cli": {
+      "name": "@agent-rigger/cli",
+      "version": "0.0.0",
+      "dependencies": {
+        "@agent-rigger/adapters": "workspace:*",
+        "@agent-rigger/catalog": "workspace:*",
+        "@agent-rigger/core": "workspace:*",
+        "jsonc-parser": "3.3.1",
+      },
+    },
     "packages/core": {
       "name": "@agent-rigger/core",
       "version": "0.0.0",
@@ -42,6 +52,8 @@
     "@agent-rigger/adapters": ["@agent-rigger/adapters@workspace:packages/adapters"],
 
     "@agent-rigger/catalog": ["@agent-rigger/catalog@workspace:packages/catalog"],
+
+    "@agent-rigger/cli": ["@agent-rigger/cli@workspace:packages/cli"],
 
     "@agent-rigger/core": ["@agent-rigger/core@workspace:packages/core"],
 
@@ -226,6 +238,8 @@
     "json-parse-even-better-errors": ["json-parse-even-better-errors@2.3.1", "", {}, "sha512-xyFwyhro/JEof6Ghe2iz2NcXoj2sloNsWr/XsERDK/oiPCfaNhl5ONfp+jQdAZRQQ0IJWNzH9zIZF7li91kh2w=="],
 
     "json-schema-traverse": ["json-schema-traverse@1.0.0", "", {}, "sha512-NM8/P9n3XjXhIZn1lLhkFaACTOURQXjWhV4BA/RnOv8xvgqtqpAX9IO4mRQxSx1Rlo4tqzeqb0sOlruaOy3dug=="],
+
+    "jsonc-parser": ["jsonc-parser@3.3.1", "", {}, "sha512-HUgH65KyejrUFPvHFPbqOY0rsFip3Bo5wb4ngvdi1EpCYWUQDC5V+Y7mZws+DLkr4M//zQJoanu1SP+87Dv1oQ=="],
 
     "lefthook": ["lefthook@2.1.9", "", { "optionalDependencies": { "lefthook-darwin-arm64": "2.1.9", "lefthook-darwin-x64": "2.1.9", "lefthook-freebsd-arm64": "2.1.9", "lefthook-freebsd-x64": "2.1.9", "lefthook-linux-arm64": "2.1.9", "lefthook-linux-x64": "2.1.9", "lefthook-openbsd-arm64": "2.1.9", "lefthook-openbsd-x64": "2.1.9", "lefthook-windows-arm64": "2.1.9", "lefthook-windows-x64": "2.1.9" }, "bin": { "lefthook": "bin/index.js" } }, "sha512-bwDaIOViTktE8kJLf9jP0p+H2/RDTlFFlc43Am2YgUsX22hI6Sq4RbzsrecwzY5y+MHTipOH7WsmWSEniePHWQ=="],
 
