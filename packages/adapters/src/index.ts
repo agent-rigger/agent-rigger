@@ -15,6 +15,15 @@ export {
   planGuardrail,
 } from './claude/guardrails';
 export {
+  applyPlugin,
+  auditPlugin,
+  defaultPluginRunner,
+  planPlugin,
+  PluginInstallError,
+  pluginName,
+} from './claude/plugins';
+export type { PluginRunner, PluginSource } from './claude/plugins';
+export {
   applySkill,
   auditSkill,
   planSkill,

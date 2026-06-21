@@ -130,12 +130,19 @@ export async function apply(
       continue;
     }
 
-    // Collect target paths from ops.
-    // Link ops use op.target (the symlink destination) instead of op.path;
-    // the linker manages its own atomicity so no backup is needed for them.
-    const targets = ops.map((op) => ('path' in op ? op.path : (op as { target: string }).target));
+    // Collect target paths from ops for tracking.
+    // - Ops with 'path' use op.path (write-json, write-text, merge-deny, ensure-import).
+    // - Link ops use op.target (symlink destination); the linker is atomic, no backup needed.
+    // - Ops with neither 'path' nor 'target' (e.g. plugin-install) contribute no path;
+    //   they perform no direct file write, so nothing to track or back up.
+    const targets = ops.flatMap((op) => {
+      if ('path' in op) return [op.path as string];
+      if ('target' in op) return [(op as { target: string }).target];
+      return [];
+    });
 
-    // Backup every target that currently exists on disk (skip link ops — linker is atomic).
+    // Backup every target that currently exists on disk.
+    // Skip link ops (linker is atomic) and plugin-install ops (no file written).
     const backupTargets = ops
       .filter((op) => 'path' in op)
       .map((op) => (op as { path: string }).path);
