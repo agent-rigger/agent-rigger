@@ -34,6 +34,8 @@ import { describe, expect, it, mock } from 'bun:test';
 import {
   CatalogParseError,
   fetchCatalog,
+  InvalidRemoteRefError,
+  InvalidRemoteUrlError,
   listRemoteTags,
   RemoteFetchError,
   resolveVersion,
@@ -722,16 +724,17 @@ describe('fetchCatalog — clone argv', () => {
     );
     expect(cloneCalls).toHaveLength(1);
     const argv = cloneCalls[0];
-    expect(argv).toEqual(
-      expect.arrayContaining([
-        'clone',
-        '--depth',
-        '1',
-        '--branch',
-        'v1.2.3',
-        'https://example.com/catalog.git',
-      ]),
-    );
+    // '--' must appear after the branch ref and before the URL to prevent option injection.
+    expect(argv).toEqual([
+      'clone',
+      '--depth',
+      '1',
+      '--branch',
+      'v1.2.3',
+      '--',
+      'https://example.com/catalog.git',
+      expect.any(String),
+    ]);
   });
 
   it('tmp path is the last argument to git clone', async () => {
@@ -746,5 +749,150 @@ describe('fetchCatalog — clone argv', () => {
     );
     const argv = cloneCalls[0] ?? [];
     expect(argv.at(-1)).toBe(dirPath());
+  });
+});
+
+// ---------------------------------------------------------------------------
+// assertSafeRemoteUrl / InvalidRemoteUrlError
+// ---------------------------------------------------------------------------
+
+/** No-op runner for URL validation tests — never actually called. */
+const noop: CommandRunner = () => Promise.resolve({ exitCode: 0, stdout: '', stderr: '' });
+
+describe('assertSafeRemoteUrl — rejects dangerous URLs', () => {
+  it('rejects ext:: transport (RCE vector)', async () => {
+    await expect(
+      listRemoteTags('ext::sh -c id', noop),
+    ).rejects.toBeInstanceOf(InvalidRemoteUrlError);
+  });
+
+  it('rejects URL starting with -- (option injection)', async () => {
+    await expect(
+      listRemoteTags('--upload-pack=x', noop),
+    ).rejects.toBeInstanceOf(InvalidRemoteUrlError);
+  });
+
+  it('rejects fd:: transport', async () => {
+    await expect(listRemoteTags('fd::17', noop)).rejects.toBeInstanceOf(InvalidRemoteUrlError);
+  });
+
+  it('accepts https:// URL', async () => {
+    const runner = makeRunner('');
+    await expect(
+      listRemoteTags('https://github.com/owner/repo.git', runner),
+    ).resolves.toEqual([]);
+  });
+
+  it('accepts ssh:// URL', async () => {
+    const runner = makeRunner('');
+    await expect(
+      listRemoteTags('ssh://git@github.com/owner/repo.git', runner),
+    ).resolves.toEqual([]);
+  });
+
+  it('accepts SCP-style git@ URL', async () => {
+    const runner = makeRunner('');
+    await expect(
+      listRemoteTags('git@github.com:owner/repo.git', runner),
+    ).resolves.toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// assertSafeRef / InvalidRemoteRefError — via fetchCatalog
+// ---------------------------------------------------------------------------
+
+describe('assertSafeRef — rejects dangerous refs', () => {
+  it('rejects ref starting with -- (option injection)', async () => {
+    const { factory } = await makeTmpFactory(JSON.stringify([VALID_TOOL_ENTRY]));
+    await expect(
+      fetchCatalog('https://example.com/catalog.git', '--foo', makeCloneRunner(), {
+        tmpFactory: factory,
+      }),
+    ).rejects.toBeInstanceOf(InvalidRemoteRefError);
+  });
+
+  it('rejects empty ref', async () => {
+    const { factory } = await makeTmpFactory(JSON.stringify([VALID_TOOL_ENTRY]));
+    await expect(
+      fetchCatalog('https://example.com/catalog.git', '', makeCloneRunner(), {
+        tmpFactory: factory,
+      }),
+    ).rejects.toBeInstanceOf(InvalidRemoteRefError);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// resolveVersion — HEAD sha vide → RemoteFetchError
+// ---------------------------------------------------------------------------
+
+/**
+ * Runner that always exits 0 with empty stdout.
+ * Simulates a remote that returns no tags AND returns an empty HEAD response.
+ */
+const emptyHeadRunner: CommandRunner = () =>
+  Promise.resolve({ exitCode: 0, stdout: '', stderr: '' });
+
+describe('resolveVersion — empty HEAD sha triggers RemoteFetchError', () => {
+  it('throws RemoteFetchError when HEAD ls-remote exits 0 but stdout is empty', async () => {
+    await expect(
+      resolveVersion('https://example.com/repo.git', emptyHeadRunner),
+    ).rejects.toBeInstanceOf(RemoteFetchError);
+  });
+
+  it('error message mentions HEAD output being empty', async () => {
+    try {
+      await resolveVersion('https://example.com/repo.git', emptyHeadRunner);
+      expect(true).toBe(false);
+    } catch (e) {
+      expect(e).toBeInstanceOf(RemoteFetchError);
+      expect((e as RemoteFetchError).message).toMatch(/vide/i);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// fetchCatalog — rev-parse failure → RemoteFetchError + cleanup called
+// ---------------------------------------------------------------------------
+
+/**
+ * Runner where clone succeeds but rev-parse exits 1.
+ * Simulates a corrupted or incomplete clone.
+ */
+function makeRevParseFailRunner(): CommandRunner {
+  return (_cmd, args) => {
+    const argv = args ?? [];
+    if (argv[0] === 'clone') {
+      return Promise.resolve({ exitCode: 0, stdout: '', stderr: '' });
+    }
+    if (argv[0] === '-C' && argv[2] === 'rev-parse') {
+      return Promise.resolve({ exitCode: 1, stdout: '', stderr: 'fatal: not a git repository' });
+    }
+    return Promise.resolve({ exitCode: 1, stdout: '', stderr: 'unexpected' });
+  };
+}
+
+describe('fetchCatalog — rev-parse failure triggers RemoteFetchError', () => {
+  it('throws RemoteFetchError when rev-parse exits 1', async () => {
+    const catalog = JSON.stringify([VALID_TOOL_ENTRY]);
+    const { factory } = await makeTmpFactory(catalog);
+    await expect(
+      fetchCatalog('https://example.com/catalog.git', 'v1.0.0', makeRevParseFailRunner(), {
+        tmpFactory: factory,
+      }),
+    ).rejects.toBeInstanceOf(RemoteFetchError);
+  });
+
+  it('cleanup is called exactly once when rev-parse fails', async () => {
+    const catalog = JSON.stringify([VALID_TOOL_ENTRY]);
+    const { factory, cleanupSpy } = await makeTmpFactory(catalog);
+    try {
+      await fetchCatalog('https://example.com/catalog.git', 'v1.0.0', makeRevParseFailRunner(), {
+        tmpFactory: factory,
+      });
+    } catch {
+      // expected
+    }
+    expect(cleanupSpy).toHaveBeenCalledTimes(1);
   });
 });
