@@ -22,12 +22,18 @@ import { lstat } from 'node:fs/promises';
 import path from 'node:path';
 
 import type { AdapterEntry } from '@agent-rigger/core/adapter';
-import { link } from '@agent-rigger/core/linker';
+import { link, unlink } from '@agent-rigger/core/linker';
 import { resolveUserTargets } from '@agent-rigger/core/paths';
 import type { Env } from '@agent-rigger/core/paths';
 import { stubScanner } from '@agent-rigger/core/scan';
 import type { Scanner } from '@agent-rigger/core/scan';
-import type { NatureReport, Scope, WriteOp, WriteOpLink } from '@agent-rigger/core/types';
+import type {
+  NatureReport,
+  RemovalOp,
+  Scope,
+  WriteOp,
+  WriteOpLink,
+} from '@agent-rigger/core/types';
 
 // ---------------------------------------------------------------------------
 // SkillScanBlockedError
@@ -164,6 +170,65 @@ export async function planSkill(
 
   const op: WriteOpLink = { kind: 'link', source, store, target };
   return [op];
+}
+
+// ---------------------------------------------------------------------------
+// planRemoveSkill
+// ---------------------------------------------------------------------------
+
+/**
+ * Compute the removal operations needed to uninstall a skill.
+ *
+ * Returns [] when the skill target does not exist (not installed).
+ * Returns [{ kind: 'unlink', target, store }] when the skill is present.
+ *
+ * Read-only: no filesystem writes.
+ *
+ * @param entry   Artifact entry (id carries the skill name).
+ * @param scope   Installation scope.
+ * @param env     Injectable env for HOME resolution.
+ * @param cwd     Working directory (only used when scope is 'project').
+ */
+export async function planRemoveSkill(
+  entry: AdapterEntry,
+  scope: Scope,
+  env: Env,
+  cwd?: string,
+): Promise<RemovalOp[]> {
+  const report = await auditSkill(entry, scope, env, cwd);
+  if (report.state !== 'present') {
+    return [];
+  }
+
+  const name = skillName(entry);
+  const store = resolveStorePath(name, env);
+  const target = resolveTargetPath(name, scope, env, cwd);
+
+  return [{ kind: 'unlink', target, store }];
+}
+
+// ---------------------------------------------------------------------------
+// applyRemoveSkill
+// ---------------------------------------------------------------------------
+
+/**
+ * Execute unlink removal operations produced by planRemoveSkill.
+ *
+ * For each unlink op: removes both the target (symlink/file/directory) and the
+ * store entry. Uses core unlink() which is tolerant to absence (force:true).
+ *
+ * Ops of any other kind are ignored (forward-compatibility).
+ *
+ * @param ops  Removal operations (only 'unlink' kind are processed).
+ * @param env  Injectable env (kept for interface symmetry).
+ */
+export async function applyRemoveSkill(ops: RemovalOp[], _env: Env): Promise<void> {
+  for (const op of ops) {
+    if (op.kind !== 'unlink') {
+      continue;
+    }
+    await unlink(op.target, op.store);
+  }
 }
 
 // ---------------------------------------------------------------------------
