@@ -14,7 +14,7 @@ export interface CommandResult {
 }
 
 /**
- * Runs a command with optional argument list and options.
+ * Runs a command with optional argument list.
  * Inject a fake implementation in tests to avoid spawning real processes.
  *
  * When called as `run(command)` (no args), implementations may fall back to
@@ -24,7 +24,6 @@ export interface CommandResult {
 export type CommandRunner = (
   command: string,
   args?: string[],
-  opts?: { cwd?: string },
 ) => Promise<CommandResult>;
 
 /**
@@ -33,7 +32,7 @@ export type CommandRunner = (
  * Without `args`, falls back to `sh -c <command>`.
  * Captures stdout and stderr as UTF-8 strings.
  */
-export const defaultRunner: CommandRunner = async (command, args, _opts) => {
+export const defaultRunner: CommandRunner = async (command, args) => {
   const argv = args ? [command, ...args] : ['sh', '-c', command];
   const proc = Bun.spawn(argv, {
     stdout: 'pipe',
