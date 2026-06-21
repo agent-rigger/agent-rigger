@@ -48,6 +48,94 @@ export class RemoteFetchError extends Error {
 }
 
 // ---------------------------------------------------------------------------
+// Input validation — allowlist guards against argument injection
+// ---------------------------------------------------------------------------
+
+/**
+ * Raised when a remote URL is rejected by the allowlist validator.
+ *
+ * Accepted forms: https://, http://, ssh://, git@host:owner/repo(.git), /absolute/path.
+ * Rejected: anything starting with '-', ext::, fd::, or other unlisted transports.
+ */
+export class InvalidRemoteUrlError extends Error {
+  readonly url: string;
+
+  constructor(url: string) {
+    super(
+      `URL distante non autorisée: "${url}". Formes acceptées: https://, http://, ssh://, git@host:owner/repo, /chemin/absolu.`,
+    );
+    this.name = 'InvalidRemoteUrlError';
+    this.url = url;
+  }
+}
+
+/**
+ * Raised when a git ref is rejected by the guard.
+ *
+ * Rejects empty strings and refs starting with '-' (option injection).
+ */
+export class InvalidRemoteRefError extends Error {
+  readonly ref: string;
+
+  constructor(ref: string) {
+    super(
+      `Référence git non autorisée: "${ref}". La ref ne peut pas être vide ni commencer par '-'.`,
+    );
+    this.name = 'InvalidRemoteRefError';
+    this.ref = ref;
+  }
+}
+
+/**
+ * Allowlist guard for remote URLs passed to git commands.
+ *
+ * Accepted forms:
+ *  - https:// or http://
+ *  - ssh://
+ *  - SCP-style: git@host:owner/repo(.git)
+ *  - Absolute path: /...
+ *
+ * Explicitly rejects:
+ *  - Anything starting with '-' (option injection)
+ *  - ext:: transport (arbitrary command execution)
+ *  - fd:: transport (file descriptor injection)
+ *  - Any other unlisted transport
+ *
+ * Throws InvalidRemoteUrlError when the URL does not match.
+ */
+export function assertSafeRemoteUrl(url: string): void {
+  if (
+    url.startsWith('https://')
+    || url.startsWith('http://')
+    || url.startsWith('ssh://')
+    || url.startsWith('/')
+  ) {
+    return;
+  }
+
+  // SCP-style: git@host:owner/repo or git@host:owner/repo.git
+  // Must not contain spaces, newlines, or shell metacharacters.
+  const SCP_RE = /^[a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+:[a-zA-Z0-9._/-]+$/;
+  if (SCP_RE.test(url)) {
+    return;
+  }
+
+  throw new InvalidRemoteUrlError(url);
+}
+
+/**
+ * Guard for git refs passed as --branch or positional arguments.
+ *
+ * Rejects empty strings and anything starting with '-'.
+ * Throws InvalidRemoteRefError when the ref is unsafe.
+ */
+export function assertSafeRef(ref: string): void {
+  if (ref.length === 0 || ref.startsWith('-')) {
+    throw new InvalidRemoteRefError(ref);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Semver parsing — minimal, zero dependencies
 //
 // Accepts "vX.Y.Z" or "X.Y.Z", stripping a leading "v".
@@ -168,7 +256,9 @@ function parseLsRemoteTags(stdout: string): Map<string, string> {
  * Throws RemoteFetchError when git exits with a non-zero code.
  */
 export async function listRemoteTags(url: string, run: CommandRunner): Promise<RemoteTag[]> {
-  const result = await run('git', ['ls-remote', '--tags', url]);
+  assertSafeRemoteUrl(url);
+
+  const result = await run('git', ['ls-remote', '--tags', '--', url]);
 
   if (result.exitCode !== 0) {
     throw new RemoteFetchError(url, result.stderr ?? '');
@@ -207,7 +297,7 @@ export async function resolveVersion(url: string, run: CommandRunner): Promise<R
   }
 
   // No semver tags — fall back to HEAD sha.
-  const headResult = await run('git', ['ls-remote', url, 'HEAD']);
+  const headResult = await run('git', ['ls-remote', '--', url, 'HEAD']);
 
   if (headResult.exitCode !== 0) {
     throw new RemoteFetchError(url, headResult.stderr ?? '');
@@ -216,6 +306,13 @@ export async function resolveVersion(url: string, run: CommandRunner): Promise<R
   // Expected format: "<sha>\tHEAD"
   const firstLine = (headResult.stdout ?? '').split('\n')[0]?.trim() ?? '';
   const sha = firstLine.split('\t')[0] ?? '';
+
+  if (sha === '') {
+    throw new RemoteFetchError(
+      url,
+      'HEAD introuvable : ls-remote HEAD a renvoyé une sortie vide',
+    );
+  }
 
   return { ref: sha, sha, isTag: false };
 }
@@ -268,11 +365,24 @@ export async function fetchCatalog(
   run: CommandRunner,
   opts: { tmpFactory: TmpDirFactory },
 ): Promise<FetchedCatalog> {
+  assertSafeRemoteUrl(url);
+  assertSafeRef(ref);
+
   const { path: tmp, cleanup } = await opts.tmpFactory();
 
   try {
     // Step 1 — shallow clone into tmp.
-    const cloneResult = await run('git', ['clone', '--depth', '1', '--branch', ref, url, tmp]);
+    // '--' separates options from operands so URL/ref cannot be parsed as git flags.
+    const cloneResult = await run('git', [
+      'clone',
+      '--depth',
+      '1',
+      '--branch',
+      ref,
+      '--',
+      url,
+      tmp,
+    ]);
     if (cloneResult.exitCode !== 0) {
       throw new RemoteFetchError(url, cloneResult.stderr ?? '');
     }
