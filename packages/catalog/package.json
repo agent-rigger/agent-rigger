@@ -5,7 +5,8 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./schema": "./src/schema.ts"
+    "./schema": "./src/schema.ts",
+    "./catalog.builtin": "./src/catalog.builtin.ts"
   },
   "dependencies": {
     "@agent-rigger/core": "workspace:*",
