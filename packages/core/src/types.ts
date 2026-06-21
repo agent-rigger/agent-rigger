@@ -85,6 +85,8 @@ export interface WriteOpWriteJson {
 export interface WriteOpWriteText {
   kind: 'write-text';
   path: string;
+  /** UTF-8 content to write verbatim to the file. */
+  content: string;
   description: string;
 }
 

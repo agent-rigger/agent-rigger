@@ -7,6 +7,7 @@
 
 export { createClaudeAdapter, UnsupportedNatureError } from './claude/adapter';
 export type { ClaudeAdapterConfig } from './claude/adapter';
+export { applyContext, auditContext, loadCanonicalContext, planContext } from './claude/context';
 export {
   applyGuardrail,
   auditGuardrail,
