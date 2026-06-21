@@ -21,6 +21,8 @@ import type { Nature, NatureReport, Scope, WriteOp } from '@agent-rigger/core/ty
 
 import { applyContext, auditContext, planContext } from './context';
 import { applyGuardrail, auditGuardrail, planGuardrail } from './guardrails';
+import { applyPlugin, auditPlugin, defaultPluginRunner, planPlugin } from './plugins';
+import type { PluginRunner, PluginSource } from './plugins';
 import { applySkill, auditSkill, planSkill } from './skills';
 
 // ---------------------------------------------------------------------------
@@ -75,6 +77,27 @@ export interface ClaudeAdapterConfig {
    * Replace with a real scanner at the security milestone.
    */
   scanner?: Scanner;
+  /**
+   * Resolve the plugin coordinates (plugin id + marketplace path) for a
+   * plugin entry. Required when any entry with nature 'plugin' is planned or
+   * applied. Omitting it is safe as long as no plugin entries are processed.
+   *
+   * Default (when resolver is provided but pluginSource returns undefined):
+   * plugin = pluginName(entry), marketplace = '<cwd>/.claude-plugin/marketplace.json'.
+   */
+  pluginSource?: (entry: AdapterEntry) => PluginSource;
+  /**
+   * Injectable runner for plugin CLI commands.
+   * Defaults to defaultPluginRunner (Bun.spawn-backed).
+   * Replace with a fake runner in tests to avoid real `claude` invocations.
+   */
+  pluginRunner?: PluginRunner;
+  /**
+   * Optional GitLab personal access token forwarded as GITLAB_TOKEN to the
+   * plugin runner env. Useful when the marketplace is hosted on a private
+   * GitLab instance.
+   */
+  gitlabToken?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -108,6 +131,22 @@ export function createClaudeAdapter(config: ClaudeAdapterConfig): Adapter {
     }
     return config.skillSource(entry);
   }
+
+  /**
+   * Resolve plugin coordinates for an entry, or raise a clear error when
+   * pluginSource is not configured and a plugin operation is attempted.
+   */
+  function resolvePluginSource(entry: AdapterEntry): PluginSource {
+    if (config.pluginSource === undefined) {
+      throw new Error(
+        `ClaudeAdapter: pluginSource is required to install plugin "${entry.id}". `
+          + 'Pass a pluginSource resolver in ClaudeAdapterConfig.',
+      );
+    }
+    return config.pluginSource(entry);
+  }
+
+  const pluginRunner = config.pluginRunner ?? defaultPluginRunner;
 
   // Nature → { audit, plan } — E2-E5 add entries here
   const natureHandlers = new Map<Nature, NatureHandler>([
@@ -150,7 +189,24 @@ export function createClaudeAdapter(config: ClaudeAdapterConfig): Adapter {
         },
       },
     ],
+    [
+      'plugin',
+      {
+        audit(entry, _scope, env): Promise<NatureReport> {
+          return auditPlugin(entry, env, { run: pluginRunner });
+        },
+        plan(entry, _scope, _env): Promise<WriteOp[]> {
+          return planPlugin(entry, () => resolvePluginSource(entry), { run: pluginRunner });
+        },
+      },
+    ],
   ]);
+
+  // Build plugin apply opts once; omit gitlabToken key entirely when not set
+  // (exactOptionalPropertyTypes prevents assigning undefined to optional string).
+  const pluginApplyOpts = config.gitlabToken === undefined
+    ? { run: pluginRunner }
+    : { run: pluginRunner, gitlabToken: config.gitlabToken };
 
   // WriteOp kind → apply fn — E2-E5 add entries here
   const opKindHandlers = new Map<WriteOp['kind'], OpKindApply>([
@@ -158,6 +214,7 @@ export function createClaudeAdapter(config: ClaudeAdapterConfig): Adapter {
     ['write-text', (ops, env) => applyContext(ops, env)],
     ['ensure-import', (ops, env) => applyContext(ops, env)],
     ['link', (ops, env) => applySkill(ops, env, scanner)],
+    ['plugin-install', (ops, env) => applyPlugin(ops, env, pluginApplyOpts)],
   ]);
 
   return {

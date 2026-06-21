@@ -124,12 +124,28 @@ export interface WriteOpLink {
   target: string;
 }
 
+/**
+ * Install a plugin by delegating to the native CLI mechanism.
+ * No file is written directly: the adapter runs `claude plugin marketplace add`
+ * then `claude plugin install`, and remounts any native error as-is.
+ * Neither `path` nor `target` are present — the engine skips backup and written
+ * path tracking for this kind.
+ */
+export interface WriteOpPluginInstall {
+  kind: 'plugin-install';
+  /** Plugin identifier as expected by `claude plugin install`. */
+  plugin: string;
+  /** Path or URL of the marketplace manifest to register. */
+  marketplace: string;
+}
+
 export type WriteOp =
   | WriteOpWriteJson
   | WriteOpWriteText
   | WriteOpMergeDeny
   | WriteOpEnsureImport
-  | WriteOpLink;
+  | WriteOpLink
+  | WriteOpPluginInstall;
 
 // ---------------------------------------------------------------------------
 // Scanner / Verdict
