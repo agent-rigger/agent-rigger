@@ -12,7 +12,7 @@
  * Design:
  * - Each call creates a fresh directory under os.tmpdir().
  * - The returned env object has { RIGGER_HOME: '<tmp-path>' } so resolveHome()
- *   picks it up (design §3, R12.1).
+ *   picks it up.
  * - cleanup() removes the entire tmp tree (recursive).
  * - NOT a test file — no `it`/`describe` exports. Pure utility.
  */

@@ -1,11 +1,11 @@
 /**
- * Managed-import logic for agent-rigger (R5, ADR-0007).
+ * Managed-import logic for agent-rigger.
  *
  * Pure function — no I/O, no filesystem access.
  * Consumers (adapters/claude/context.ts) call this to compute the new
  * CLAUDE.md content; the actual read/write is the adapter's concern.
  *
- * Design invariants (design.md §4 — CLAUDE.md bloc managé):
+ * Invariants:
  * - Exactly one managed block is present after the call.
  * - Idempotent: ensureImportBlock(ensureImportBlock(x, t), t) === ensureImportBlock(x, t).
  * - User content (before / after the block) is always preserved intact.

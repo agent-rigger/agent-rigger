@@ -7,7 +7,7 @@
  * real filesystem or the real ~/.
  *
  * RIGGER_HOME env var overrides the home directory used for all user-scope
- * paths. This is the sole seam for test isolation (R12.1, design §3).
+ * paths. This is the sole seam for test isolation.
  */
 
 import os from 'node:os';

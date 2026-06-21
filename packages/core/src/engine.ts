@@ -1,5 +1,5 @@
 /**
- * Engine orchestrator for agent-rigger (design.md §3, §5).
+ * Engine orchestrator for agent-rigger.
  *
  * Two public operations:
  *

@@ -1,5 +1,5 @@
 /**
- * Security-scan seam for agent-rigger (R10, design §6).
+ * Security-scan seam for agent-rigger.
  *
  * The engine calls a Scanner BEFORE installing a skill / MCP source. M0 ships a
  * stub that always passes; the real implementation (Trivy / Gitleaks / Cisco
@@ -21,7 +21,7 @@ export interface Scanner {
 
 /**
  * M0 stub scanner: passes everything (`{ ok: true }`).
- * Replaced by a real scanner at the security milestone (CONTEXT.md § scanner).
+ * Replaced by a real scanner at the security milestone.
  */
 export const stubScanner: Scanner = {
   scan(_source: string): Promise<Verdict> {

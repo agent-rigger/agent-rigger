@@ -1,11 +1,11 @@
 /**
- * Deny-merge logic for agent-rigger (R4 guardrail).
+ * Deny-merge logic for agent-rigger.
  *
  * Pure functions — no I/O, no filesystem access.
  * Consumers (adapters/claude/guardrails.ts) call these to compute what to
  * write into settings.json; the actual read/write is the adapter's concern.
  *
- * Design invariants (design.md §4 — settings.json merge deny):
+ * Invariants:
  * - Concatenate + deduplicate; nothing else is touched.
  * - current is always preserved intact at the head of the result.
  * - Comparison is strict string equality (case-sensitive, character-exact).

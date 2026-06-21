@@ -1,5 +1,5 @@
 /**
- * Tests for scan.ts — the security-scan seam (R10).
+ * Tests for scan.ts — the security-scan seam.
  */
 
 import { describe, expect, it } from 'bun:test';

@@ -4,7 +4,7 @@
  * Function is pure (string → string); no I/O, no filesystem.
  * All cases run synchronously.
  *
- * Design invariants (design.md §4 — CLAUDE.md bloc managé, R5, ADR-0007):
+ * Invariants:
  * - A single managed block is present after the call.
  * - User content (before / after the block) is preserved intact.
  * - Idempotent: calling twice with the same target returns the same string.
