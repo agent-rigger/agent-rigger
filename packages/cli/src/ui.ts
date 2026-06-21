@@ -202,6 +202,58 @@ export function renderReport(report: Report): string {
 }
 
 // ---------------------------------------------------------------------------
+// renderEntryInfo — pure single-entry detail view
+// ---------------------------------------------------------------------------
+
+/** Options for renderEntryInfo. */
+export interface RenderEntryInfoOpts {
+  /** Whether this entry is installed in the manifest. */
+  installed?: boolean;
+}
+
+/**
+ * Render a detailed view of a single catalog entry.
+ *
+ * Format:
+ *   <id>  (<nature>)
+ *     status:   installed | available
+ *     source:   internal | external
+ *     targets:  claude, ...
+ *     scopes:   user, project, ...
+ *     level:    required | recommended   (artifact only, when present)
+ *     requires: id1, id2, ...            (artifact only, when present)
+ *     members:  id1, id2, ...            (pack only)
+ *
+ * No emoji.
+ */
+export function renderEntryInfo(entry: CatalogEntry, opts: RenderEntryInfoOpts = {}): string {
+  const status = opts.installed === true ? 'installed' : 'available';
+  const natureLabel = entry.kind === 'pack' ? 'pack' : entry.nature;
+  const lines: string[] = [];
+
+  lines.push(`${entry.id}  (${natureLabel})`);
+  lines.push(`  status:   ${status}`);
+  lines.push(`  source:   ${entry.source}`);
+  lines.push(`  targets:  ${entry.targets.join(', ')}`);
+  lines.push(`  scopes:   ${entry.scopes.join(', ')}`);
+
+  if (entry.kind === 'artifact') {
+    if (entry.level !== undefined) {
+      lines.push(`  level:    ${entry.level}`);
+    }
+    if (entry.requires !== undefined && entry.requires.length > 0) {
+      lines.push(`  requires: ${entry.requires.join(', ')}`);
+    }
+  }
+
+  if (entry.kind === 'pack') {
+    lines.push(`  members:  ${entry.members.join(', ')}`);
+  }
+
+  return lines.join('\n');
+}
+
+// ---------------------------------------------------------------------------
 // Interactive prompts — thin clack glue (not unit-tested)
 // ---------------------------------------------------------------------------
 
@@ -247,6 +299,82 @@ export async function selectScope(): Promise<Scope> {
 
   return result;
 }
+
+// ---------------------------------------------------------------------------
+// renderCatalogList — pure catalog listing
+// ---------------------------------------------------------------------------
+
+/** Options for renderCatalogList. */
+export interface RenderCatalogListOpts {
+  /** Set of ids considered installed (from manifest). All available when absent. */
+  installedIds?: Set<string>;
+  /** Human label for filtered listing, e.g. "Skills". When absent: "Catalog". */
+  label?: string;
+}
+
+/**
+ * Render a human-readable catalog listing.
+ *
+ * For each entry, one aligned line:
+ *   <status-tag>  <id>  <nature|pack>  <hint>
+ *
+ * Status tags are padded to equal width:
+ *   [installed]  — id present in installedIds.
+ *   [available]  — id absent from installedIds.
+ *
+ * Hint:
+ *   - artifact with level  → level string (e.g. "required").
+ *   - artifact without level → source string (e.g. "internal").
+ *   - pack                 → "(N members)".
+ *
+ * Header: "Catalog (N entries):" or "<label> (N):" when label is provided.
+ */
+export function renderCatalogList(
+  entries: CatalogEntry[],
+  opts: RenderCatalogListOpts = {},
+): string {
+  const { installedIds, label } = opts;
+
+  const n = entries.length;
+  const entryWord = n === 1 ? 'entry' : 'entries';
+  const header = label === undefined ? `Catalog (${n} ${entryWord}):` : `${label} (${n}):`;
+
+  // Status tag strings — pad to equal width.
+  const INSTALLED = '[installed]';
+  const AVAILABLE = '[available]';
+  // Both are 11 chars; keep explicit pad so future changes stay consistent.
+  const TAG_WIDTH = Math.max(INSTALLED.length, AVAILABLE.length);
+
+  const tagFor = (id: string): string => {
+    const installed = installedIds !== undefined && installedIds.has(id);
+    const raw = installed ? INSTALLED : AVAILABLE;
+    return raw.padEnd(TAG_WIDTH);
+  };
+
+  // Build rows first, then pad the id and nature columns to their max width so
+  // every column lines up regardless of id/nature length.
+  const rows = entries.map((entry) => {
+    const nature = entry.kind === 'pack' ? 'pack' : entry.nature;
+    const hint = entry.kind === 'pack'
+      ? `(${entry.members.length} members)`
+      : (entry.level ?? entry.source);
+    return { tag: tagFor(entry.id), id: entry.id, nature, hint };
+  });
+
+  const idWidth = Math.max(0, ...rows.map((r) => r.id.length));
+  const natureWidth = Math.max(0, ...rows.map((r) => r.nature.length));
+
+  const lines = [
+    header,
+    ...rows.map(
+      (r) => `  ${r.tag}  ${r.id.padEnd(idWidth)}  ${r.nature.padEnd(natureWidth)}  ${r.hint}`,
+    ),
+  ];
+
+  return lines.join('\n');
+}
+
+// ---------------------------------------------------------------------------
 
 /**
  * Present a yes/no confirmation prompt.
