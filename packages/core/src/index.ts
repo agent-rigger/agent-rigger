@@ -4,4 +4,5 @@ export * from './fs-json';
 export * from './managed-import';
 export * from './manifest';
 export * from './paths';
+export * from './scan';
 export * from './types';
