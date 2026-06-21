@@ -14,6 +14,7 @@
     "typecheck": "tsc --noEmit",
     "test": "bun test --pass-with-no-tests",
     "build": "echo \"no package to build yet\"",
+    "demo": "bun examples/core-smoke.ts",
     "prepare": "lefthook install"
   },
   "devDependencies": {
