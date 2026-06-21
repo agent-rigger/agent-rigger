@@ -37,7 +37,10 @@ import { DependencyCycleError, UnknownEntryError } from '@agent-rigger/catalog/r
 import { runCheck } from './cmd-check';
 import { runInit } from './cmd-init';
 import { runInstall } from './cmd-install';
+import type { RunLsResult } from './cmd-ls';
+import { RESOURCE_NATURE_MAP, runLs } from './cmd-ls';
 import { PreflightAuthError } from './preflight-auth';
+import { renderEntryInfo } from './ui';
 
 // ---------------------------------------------------------------------------
 // Version — sourced from package.json at build time; fallback to "0.0.0"
@@ -49,22 +52,55 @@ const CLI_VERSION = '0.0.0';
 // parseArgs
 // ---------------------------------------------------------------------------
 
+/**
+ * Known resource tokens (singular + plural aliases).
+ *
+ * "catalog" is treated as a resource alias for listing all entries.
+ */
+const KNOWN_RESOURCES = new Set(Object.keys(RESOURCE_NATURE_MAP));
+
 /** Result of parsing argv. */
 export interface ParsedArgs {
+  /**
+   * Primary command token.
+   *   - workflow commands: 'check' | 'install' | 'init' | 'ls'
+   *   - resource commands: the resource name (e.g. 'skills', 'guardrails')
+   */
   command: string | undefined;
+  /** Verb following a resource command, e.g. 'ls' or 'install'. Undefined when not a resource. */
+  resourceVerb: string | undefined;
+  /**
+   * Non-flag positional arguments after the verb (ids for install).
+   * Also populated for top-level `install <id...>`.
+   */
+  resourceIds: string[];
   flags: Record<string, string | boolean>;
 }
 
 /**
- * Parse a minimal CLI argv array.
+ * Parse a hybrid CLI argv array.
  *
- * - First non-flag token is the command.
+ * Grammar:
+ *   <workflow-command> [flags]
+ *   install [<id...>] [--yes] [--scope=...]
+ *   ls [--scope=...]
+ *   <resource> ls [--scope=...]
+ *   <resource> install <id...> [--yes] [--scope=...]
+ *
+ * - First non-flag token is `command`.
+ * - When command is a known resource: second non-flag token is `resourceVerb`,
+ *   remaining non-flag tokens are `resourceIds`.
+ * - When command is 'install': remaining non-flag tokens are `resourceIds`
+ *   (non-interactive if non-empty; interactive if empty).
  * - --key=value → flags[key] = value
  * - --key       → flags[key] = true
  */
 export function parseArgs(argv: string[]): ParsedArgs {
-  let command: string | undefined;
+  const resourceIds: string[] = [];
   const flags: Record<string, string | boolean> = {};
+
+  // Collect flags and positional tokens in order.
+  const positionals: string[] = [];
 
   for (const arg of argv) {
     if (arg.startsWith('--')) {
@@ -75,12 +111,33 @@ export function parseArgs(argv: string[]): ParsedArgs {
       } else {
         flags[rest.slice(0, eqIdx)] = rest.slice(eqIdx + 1);
       }
-    } else if (command === undefined) {
-      command = arg;
+    } else {
+      positionals.push(arg);
     }
   }
 
-  return { command, flags };
+  if (positionals.length === 0) {
+    return { command: undefined, resourceVerb: undefined, resourceIds, flags };
+  }
+
+  // positionals.length > 0 is established above; positionals[0] is defined.
+  const command = positionals[0] as string;
+
+  // Resource grammar: <resource> <verb> [ids...]
+  if (KNOWN_RESOURCES.has(command)) {
+    const resourceVerb = positionals[1];
+    resourceIds.push(...positionals.slice(2));
+    return { command, resourceVerb, resourceIds, flags };
+  }
+
+  // Top-level install with optional ids: install [<id...>]
+  if (command === 'install') {
+    resourceIds.push(...positionals.slice(1));
+    return { command, resourceVerb: undefined, resourceIds, flags };
+  }
+
+  // All other commands (check, init, ls, --help, --version, unknown)
+  return { command, resourceVerb: undefined, resourceIds, flags };
 }
 
 // ---------------------------------------------------------------------------
@@ -92,19 +149,53 @@ agent-rigger — Claude Code guardrail & context installer
 
 Usage:
   agent-rigger <command> [options]
+  agent-rigger <resource> <verb> [args] [options]
 
-Commands:
-  check    Audit whether guardrails and context are correctly installed.
-  install  Install selected artifacts (guardrails, context, skills, agents).
-  init     First-launch wizard: configure catalog URL and auth method.
+Workflow commands:
+  check                    Audit whether guardrails and context are correctly installed.
+  install                  Install selected artifacts interactively.
+  install <id...>          Install specified artifact ids non-interactively.
+  install <id...> --yes    Install without confirmation prompt.
+  init                     First-launch wizard: configure catalog URL and auth method.
+
+Discovery commands:
+  ls                       List all catalog entries with install status.
+  catalog ls               Same as ls.
+
+Resource commands (available verbs: ls, add, info, check):
+  <resource> ls            List entries filtered by resource type.
+  <resource> add <id...>   Install ids validated against the resource type.
+  <resource> add <id...> --yes
+                           Install without confirmation prompt.
+  <resource> info <id>     Show details for a catalog entry.
+  <resource> check         Audit entries for this resource type only.
+
+Planned (not yet implemented):
+  <resource> remove <id>   Uninstall an artifact.
+  <resource> update <id>   Update an installed artifact.
+
+Resources:
+  skill | skills           Workflow skills.
+  agent | agents           Role-specialised sub-agents.
+  guardrail | guardrails   Claude deny rules and safety guardrails.
+  context | contexts       Claude context and AGENTS.md entries.
+  plugin | plugins         Claude Code plugins.
+  tool | tools             Host system tools (advisory check only).
+  pack | packs             Named bundles of multiple entries.
 
 Options:
   --scope=<user|project>  Installation scope (default: user).
+  --yes                   Skip confirmation prompt (non-interactive install only).
   --help                  Show this help message.
   --version               Show CLI version.
 
 Examples:
   agent-rigger check
+  agent-rigger ls
+  agent-rigger skills ls
+  agent-rigger guardrails add guardrails-claude --yes
+  agent-rigger guardrails info guardrails-claude
+  agent-rigger guardrails check
   agent-rigger install --scope=user
   agent-rigger init
 `;
@@ -227,7 +318,7 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
   const env: Env = deps.env ?? Bun.env;
   const artifactsDir = deps.artifactsDir ?? resolveArtifactsDir();
 
-  const { command, flags } = parseArgs(argv);
+  const { command, resourceVerb, resourceIds, flags } = parseArgs(argv);
 
   // --version (check before --help so `--version` alone works)
   if (flags['version'] === true) {
@@ -247,12 +338,34 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
     return 2;
   }
 
+  const scope = (flags['scope'] === 'project' ? 'project' : 'user') as 'user' | 'project';
+
   try {
+    // ----- ls (top-level) -----
+    if (command === 'ls') {
+      const result = await runLs({ catalog: BUILTIN_CATALOG, env, scope });
+      print(result.output);
+      return 0;
+    }
+
+    // ----- resource commands: <resource> <verb> [ids...] -----
+    if (RESOURCE_NATURE_MAP[command] !== undefined) {
+      return await handleResourceCommand({
+        resource: command,
+        verb: resourceVerb,
+        ids: resourceIds,
+        flags,
+        scope,
+        env,
+        artifactsDir,
+        print,
+        deps,
+      });
+    }
+
     // ----- check -----
     if (command === 'check') {
       const adapter = await buildClaudeAdapter(env, artifactsDir);
-
-      const scope = (flags['scope'] === 'project' ? 'project' : 'user') as 'user' | 'project';
 
       // Builtin entries for guardrail + context check
       const entries: AdapterEntry[] = [
@@ -274,30 +387,15 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
 
     // ----- install -----
     if (command === 'install') {
-      const prompts = deps.prompts ?? (await importUiPrompts());
-
-      const selectedIds = await prompts.selectArtifacts(BUILTIN_CATALOG);
-      if (selectedIds.length === 0) {
-        print('No artifacts selected — nothing to install.');
-        return 0;
-      }
-
-      const scope = await prompts.selectScope();
-      const adapter = await buildClaudeAdapter(env, artifactsDir);
-      const manifestPath = resolveManifestPath(env);
-
-      const result = await runInstall({
-        catalog: BUILTIN_CATALOG,
-        adapter,
+      return await handleInstall({
+        ids: resourceIds,
+        flags,
         scope,
         env,
-        manifestPath,
-        selectedIds,
-        confirm: (planText) => prompts.confirmApply(planText),
+        artifactsDir,
+        print,
+        deps,
       });
-
-      print(result.output);
-      return 0;
     }
 
     // ----- init -----
@@ -321,6 +419,215 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
   } catch (err) {
     return handleError(err, print);
   }
+}
+
+// ---------------------------------------------------------------------------
+// handleResourceCommand — route <resource> <verb> [ids...]
+// ---------------------------------------------------------------------------
+
+interface ResourceCommandOpts {
+  resource: string;
+  verb: string | undefined;
+  ids: string[];
+  flags: Record<string, string | boolean>;
+  scope: 'user' | 'project';
+  env: Env;
+  artifactsDir: string;
+  print: (msg: string) => void;
+  deps: CliDeps;
+}
+
+async function handleResourceCommand(opts: ResourceCommandOpts): Promise<number> {
+  const { resource, verb, ids, flags, scope, env, artifactsDir, print, deps } = opts;
+
+  const natureMapped = RESOURCE_NATURE_MAP[resource] ?? 'catalog';
+
+  // ----- <resource> ls -----
+  if (verb === 'ls' || verb === undefined) {
+    let result: RunLsResult;
+    if (natureMapped === 'catalog') {
+      result = await runLs({ catalog: BUILTIN_CATALOG, env, scope });
+    } else {
+      result = await runLs({ catalog: BUILTIN_CATALOG, env, scope, resourceFilter: natureMapped });
+    }
+    print(result.output);
+    return 0;
+  }
+
+  // ----- <resource> add <id...> -----
+  if (verb === 'add') {
+    if (ids.length === 0) {
+      print(`[error] "${resource} add" requires at least one artifact id.\n\n${USAGE}`);
+      return 2;
+    }
+
+    // Validate each id belongs to the resource
+    const invalidIds = ids.filter((id) => {
+      const entry = BUILTIN_CATALOG.find((e) => e.id === id);
+      if (entry === undefined) return false; // will fail at resolve time with a better error
+      if (natureMapped === 'pack') return entry.kind !== 'pack';
+      return entry.kind !== 'artifact' || entry.nature !== natureMapped;
+    });
+
+    if (invalidIds.length > 0) {
+      const singular = resource.replace(/s$/, '');
+      for (const id of invalidIds) {
+        print(`[error] id "${id}" is not a ${singular}`);
+      }
+      return 2;
+    }
+
+    return await handleInstall({ ids, flags, scope, env, artifactsDir, print, deps });
+  }
+
+  // ----- <resource> info <id> -----
+  if (verb === 'info') {
+    const id = ids[0];
+    if (id === undefined) {
+      print(`[error] "${resource} info" requires an artifact id.\n\n${USAGE}`);
+      return 2;
+    }
+
+    const entry = BUILTIN_CATALOG.find((e) => e.id === id);
+    if (entry === undefined) {
+      print(`[error] Unknown artifact id "${id}". Run "agent-rigger ls" to see available entries.`);
+      return 2;
+    }
+
+    // Read manifest to determine installed status
+    const targets = resolveUserTargets(env);
+    let installed = false;
+    try {
+      const { readManifest } = await import('@agent-rigger/core/manifest');
+      const manifest = await readManifest(targets.stateJson);
+      installed = manifest.artifacts.some((a) => a.id === id && a.scope === scope);
+    } catch {
+      installed = false;
+    }
+
+    print(renderEntryInfo(entry, { installed }));
+    return 0;
+  }
+
+  // ----- <resource> check -----
+  if (verb === 'check') {
+    if (natureMapped === 'pack') {
+      print(
+        '[error] "packs check" is not supported — packs are bundles, not installable directly.',
+      );
+      return 2;
+    }
+
+    // Filter catalog to get artifact entries of this nature
+    const adapterNature = natureMapped as
+      | 'plugin'
+      | 'guardrail'
+      | 'context'
+      | 'skill'
+      | 'agent'
+      | 'mcp'
+      | 'tool';
+    const filteredEntries: AdapterEntry[] = BUILTIN_CATALOG
+      .filter((e) => e.kind === 'artifact' && e.nature === adapterNature)
+      .map((e) => ({ id: e.id, nature: adapterNature, scope }));
+
+    if (filteredEntries.length === 0) {
+      print(`No ${resource} entries in catalog.`);
+      return 0;
+    }
+
+    const adapter = await buildClaudeAdapter(env, artifactsDir);
+    const result = await runCheck({
+      adapter,
+      entries: filteredEntries,
+      scope,
+      env,
+      toolEntries: BUILTIN_CATALOG,
+    });
+
+    print(result.output);
+    return result.exitCode;
+  }
+
+  // ----- unknown verb (includes planned: remove, update) -----
+  print(`Unknown verb "${verb ?? ''}" for resource "${resource}".\n\n${USAGE}`);
+  return 2;
+}
+
+// ---------------------------------------------------------------------------
+// handleInstall — shared install logic (interactive or non-interactive)
+// ---------------------------------------------------------------------------
+
+interface HandleInstallOpts {
+  ids: string[];
+  flags: Record<string, string | boolean>;
+  scope: 'user' | 'project';
+  env: Env;
+  artifactsDir: string;
+  print: (msg: string) => void;
+  deps: CliDeps;
+}
+
+async function handleInstall(opts: HandleInstallOpts): Promise<number> {
+  const { ids, flags, scope, env, artifactsDir, print, deps } = opts;
+
+  const yes = flags['yes'] === true;
+
+  // Non-interactive: ids provided on the command line
+  if (ids.length > 0) {
+    const adapter = await buildClaudeAdapter(env, artifactsDir);
+    const manifestPath = resolveManifestPath(env);
+
+    // Determine confirmation strategy
+    let confirm: boolean | ((planText: string) => Promise<boolean>);
+    if (yes) {
+      // --yes: skip confirmation entirely
+      confirm = true;
+    } else {
+      // No --yes: show plan and ask confirmation via prompt
+      const prompts = deps.prompts ?? (await importUiPrompts());
+      confirm = (planText: string) => prompts.confirmApply(planText);
+    }
+
+    const result = await runInstall({
+      catalog: BUILTIN_CATALOG,
+      adapter,
+      scope,
+      env,
+      manifestPath,
+      selectedIds: ids,
+      confirm,
+    });
+
+    print(result.output);
+    return 0;
+  }
+
+  // Interactive: no ids — use selectArtifacts prompt
+  const prompts = deps.prompts ?? (await importUiPrompts());
+
+  const selectedIds = await prompts.selectArtifacts(BUILTIN_CATALOG);
+  if (selectedIds.length === 0) {
+    print('No artifacts selected — nothing to install.');
+    return 0;
+  }
+
+  const interactiveScope = await prompts.selectScope();
+  const adapter = await buildClaudeAdapter(env, artifactsDir);
+  const manifestPath = resolveManifestPath(env);
+
+  const result = await runInstall({
+    catalog: BUILTIN_CATALOG,
+    adapter,
+    scope: interactiveScope,
+    env,
+    manifestPath,
+    selectedIds,
+    confirm: (planText) => prompts.confirmApply(planText),
+  });
+
+  print(result.output);
+  return 0;
 }
 
 // ---------------------------------------------------------------------------

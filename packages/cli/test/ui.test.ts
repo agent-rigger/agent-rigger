@@ -12,6 +12,8 @@ import type { Report, WriteOp } from '@agent-rigger/core';
 import {
   abbreviatePath,
   confirmApply,
+  renderCatalogList,
+  renderEntryInfo,
   renderPlan,
   renderReport,
   selectArtifacts,
@@ -482,5 +484,19 @@ describe('interactive exports', () => {
 
   it('confirmApply is a function', () => {
     expect(typeof confirmApply).toBe('function');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// New pure rendering exports — type-level checks
+// ---------------------------------------------------------------------------
+
+describe('new pure rendering exports', () => {
+  it('renderCatalogList is a function', () => {
+    expect(typeof renderCatalogList).toBe('function');
+  });
+
+  it('renderEntryInfo is a function', () => {
+    expect(typeof renderEntryInfo).toBe('function');
   });
 });
