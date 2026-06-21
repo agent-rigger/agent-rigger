@@ -5,6 +5,7 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
+    "./cmd-check": "./src/cmd-check.ts",
     "./config": "./src/config.ts",
     "./preflight-auth": "./src/preflight-auth.ts",
     "./ui": "./src/ui.ts"
