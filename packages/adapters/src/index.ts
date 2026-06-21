@@ -14,3 +14,10 @@ export {
   loadCanonicalDeny,
   planGuardrail,
 } from './claude/guardrails';
+export {
+  applySkill,
+  auditSkill,
+  planSkill,
+  skillName,
+  SkillScanBlockedError,
+} from './claude/skills';

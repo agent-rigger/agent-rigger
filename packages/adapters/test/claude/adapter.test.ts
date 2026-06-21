@@ -157,8 +157,8 @@ describe('ClaudeAdapter — unsupported nature', () => {
     const adapter = createClaudeAdapter({ denyRef: REF_DENY });
 
     const entry: AdapterEntry = {
-      id: 'skill-foo',
-      nature: 'skill',
+      id: 'agent-foo',
+      nature: 'agent',
       scope: 'user',
     };
 
@@ -176,8 +176,8 @@ describe('ClaudeAdapter — unsupported nature', () => {
     const adapter = createClaudeAdapter({ denyRef: REF_DENY });
 
     const entry: AdapterEntry = {
-      id: 'skill-foo',
-      nature: 'skill',
+      id: 'agent-foo',
+      nature: 'agent',
       scope: 'user',
     };
 
@@ -189,8 +189,8 @@ describe('ClaudeAdapter — unsupported nature', () => {
     }
 
     expect(caught).toBeInstanceOf(UnsupportedNatureError);
-    expect((caught as UnsupportedNatureError).nature).toBe('skill');
-    expect((caught as Error).message).toContain('skill');
+    expect((caught as UnsupportedNatureError).nature).toBe('agent');
+    expect((caught as Error).message).toContain('agent');
   });
 
   it('throws UnsupportedNatureError for an unregistered nature during plan', async () => {

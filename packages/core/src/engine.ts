@@ -130,11 +130,16 @@ export async function apply(
       continue;
     }
 
-    // Collect target paths from ops
-    const targets = ops.map((op) => op.path);
+    // Collect target paths from ops.
+    // Link ops use op.target (the symlink destination) instead of op.path;
+    // the linker manages its own atomicity so no backup is needed for them.
+    const targets = ops.map((op) => ('path' in op ? op.path : (op as { target: string }).target));
 
-    // Backup every target that currently exists on disk
-    const bakResults = await Promise.all(targets.map((p) => backup(p)));
+    // Backup every target that currently exists on disk (skip link ops — linker is atomic).
+    const backupTargets = ops
+      .filter((op) => 'path' in op)
+      .map((op) => (op as { path: string }).path);
+    const bakResults = await Promise.all(backupTargets.map((p) => backup(p)));
     const backedUp = bakResults.filter((b): b is string => b !== null);
     allBackedUp.push(...backedUp);
 

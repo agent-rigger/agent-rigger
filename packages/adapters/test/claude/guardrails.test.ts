@@ -200,7 +200,7 @@ describe('planGuardrail', () => {
     const targets = resolveUserTargets(env);
     const ops = await planGuardrail('user', env, REF_DENY);
 
-    expect(ops[0]!.path).toBe(targets.claudeSettings);
+    expect((ops[0] as { kind: string; path: string }).path).toBe(targets.claudeSettings);
   });
 
   it('returns only the missing rules in toAdd (partial install)', async () => {
@@ -236,7 +236,7 @@ describe('planGuardrail', () => {
     const targets = resolveProjectTargets(cwd);
     const ops = await planGuardrail('project', env, REF_DENY, cwd);
 
-    expect(ops[0]!.path).toBe(targets.claudeSettings);
+    expect((ops[0] as { kind: string; path: string }).path).toBe(targets.claudeSettings);
   });
 });
 
