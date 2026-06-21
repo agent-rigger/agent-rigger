@@ -23,6 +23,32 @@ import {
 import type { Env, NatureReport, Scope, WriteOp, WriteOpMergeDeny } from '@agent-rigger/core';
 
 // ---------------------------------------------------------------------------
+// EmptyDenyArtifactError
+// ---------------------------------------------------------------------------
+
+/**
+ * Thrown by loadCanonicalDeny when the deny artifact is absent, invalid, or
+ * resolves to an empty array.
+ *
+ * A canonical security artifact must exist and contain at least one rule.
+ * An empty deny ref would cause auditGuardrail to report 'present' even when
+ * no protection is actually installed — a false confidence of security.
+ */
+export class EmptyDenyArtifactError extends Error {
+  /** Absolute path of the deny.json artifact that was read (or expected). */
+  readonly path: string;
+
+  constructor(path: string) {
+    super(
+      `Canonical deny artifact is missing or empty: ${path}. `
+        + 'Ensure the artifact file exists, contains a "deny" array, and has at least one rule.',
+    );
+    this.name = 'EmptyDenyArtifactError';
+    this.path = path;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
 
@@ -65,16 +91,25 @@ function extractDeny(settings: Record<string, unknown>): string[] {
 /**
  * Read the canonical deny rules from a deny.json artifact file.
  *
- * - File absent or deny field missing/invalid → returns [].
- * - Valid deny array → returns the array of string rules.
+ * - Valid deny array with at least one rule → returns the array of string rules.
+ * - File absent, deny field missing/non-array, or array empty → throws EmptyDenyArtifactError.
+ *
+ * A non-empty deny artifact is a hard requirement: an empty denyRef would cause
+ * auditGuardrail to report 'present' when no protection is installed (false confidence).
+ *
+ * Note: syntactically invalid JSON continues to throw InvalidJsonError from readJson.
  */
 export async function loadCanonicalDeny(denyJsonPath: string): Promise<string[]> {
   const raw = await readJson(denyJsonPath);
   const deny = raw['deny'];
   if (!Array.isArray(deny)) {
-    return [];
+    throw new EmptyDenyArtifactError(denyJsonPath);
   }
-  return deny.filter((x): x is string => typeof x === 'string');
+  const rules = deny.filter((x): x is string => typeof x === 'string');
+  if (rules.length === 0) {
+    throw new EmptyDenyArtifactError(denyJsonPath);
+  }
+  return rules;
 }
 
 // ---------------------------------------------------------------------------

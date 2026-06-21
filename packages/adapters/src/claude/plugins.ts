@@ -168,8 +168,9 @@ export async function auditPlugin(
 
   const { stdout } = await run('claude', ['plugin', 'list']);
 
-  // Check if the plugin name appears as a line or substring in the list output
-  const present = stdout.split('\n').some((line) => line.trim() === name || line.includes(name));
+  // Exact token match: the plugin name must appear as a whitespace-delimited token on a line.
+  // substring matching (line.includes) produces false positives — e.g. 'git' matching 'legit'.
+  const present = stdout.split('\n').some((line) => line.trim().split(/\s+/).includes(name));
 
   return {
     id: entry.id,

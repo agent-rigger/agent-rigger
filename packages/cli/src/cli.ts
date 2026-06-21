@@ -19,6 +19,7 @@ import path from 'node:path';
 
 import {
   createClaudeAdapter,
+  EmptyDenyArtifactError,
   loadCanonicalContext,
   loadCanonicalDeny,
   PluginInstallError,
@@ -116,7 +117,7 @@ Examples:
 export interface CliPrompts {
   selectArtifacts: (entries: typeof BUILTIN_CATALOG) => Promise<string[]>;
   selectScope: () => Promise<'user' | 'project'>;
-  confirmApply: () => Promise<boolean>;
+  confirmApply: (planText: string) => Promise<boolean>;
   askUrl: () => Promise<string>;
   askMethod: () => Promise<'provider-cli' | 'https' | 'ssh'>;
 }
@@ -240,6 +241,12 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
     return 0;
   }
 
+  // Validate --scope before entering any command block
+  if (flags['scope'] !== undefined && flags['scope'] !== 'user' && flags['scope'] !== 'project') {
+    print(`[error] Invalid --scope value: "${flags['scope']}". Must be "user" or "project".`);
+    return 2;
+  }
+
   try {
     // ----- check -----
     if (command === 'check') {
@@ -286,7 +293,7 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
         env,
         manifestPath,
         selectedIds,
-        confirm: prompts.confirmApply,
+        confirm: (planText) => prompts.confirmApply(planText),
       });
 
       print(result.output);
@@ -321,6 +328,12 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
 // ---------------------------------------------------------------------------
 
 function handleError(err: unknown, print: (msg: string) => void): number {
+  if (err instanceof EmptyDenyArtifactError) {
+    print(`[error] Canonical deny artifact missing or empty: ${err.path}`);
+    print('  Ensure deny.json exists and contains at least one rule in the "deny" array.');
+    return 1;
+  }
+
   if (err instanceof InvalidJsonError) {
     print(`[error] Invalid JSON: ${err.path}`);
     if (err.cause instanceof Error) {
@@ -376,7 +389,7 @@ async function importUiPrompts(): Promise<CliPrompts> {
   return {
     selectArtifacts: (entries) => ui.selectArtifacts(entries),
     selectScope: () => ui.selectScope(),
-    confirmApply: () => ui.confirmApply(''),
+    confirmApply: (planText) => ui.confirmApply(planText),
     askUrl: async () => {
       const { text } = await import('@clack/prompts');
       const result = await text({
