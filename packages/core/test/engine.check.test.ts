@@ -116,6 +116,12 @@ function makeDenyAdapter(refDeny: string[] = REF_DENY): Adapter {
         }),
       );
     },
+
+    async planRemove() {
+      return [];
+    },
+
+    async applyRemove(): Promise<void> {},
   };
 }
 
@@ -229,6 +235,10 @@ describe('check: missing entry', () => {
         return [];
       },
       async apply() {},
+      async planRemove() {
+        return [];
+      },
+      async applyRemove(): Promise<void> {},
     };
 
     const entries = [makeCatalogEntry(ENTRY_ID), makeCatalogEntry('other')];
@@ -248,6 +258,10 @@ describe('check: missing entry', () => {
         return [];
       },
       async apply() {},
+      async planRemove() {
+        return [];
+      },
+      async applyRemove(): Promise<void> {},
     };
 
     const entries = [makeCatalogEntry(ENTRY_ID)];

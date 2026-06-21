@@ -148,6 +148,71 @@ export type WriteOp =
   | WriteOpPluginInstall;
 
 // ---------------------------------------------------------------------------
+// RemovalOp — planned removal operations (for diff display and apply)
+// ---------------------------------------------------------------------------
+
+/**
+ * Remove deny rules managed by agent-rigger from settings.json.
+ * Only the rules listed in `rules` are removed; other deny entries are kept.
+ */
+export interface RemovalOpRemoveDeny {
+  kind: 'remove-deny';
+  /** Absolute path to settings.json. */
+  path: string;
+  /** The managed rules to remove (those originally added by agent-rigger). */
+  rules: string[];
+}
+
+/**
+ * Remove the managed import block from a Markdown file (e.g. CLAUDE.md).
+ * User content outside the block is preserved intact.
+ */
+export interface RemovalOpRemoveBlock {
+  kind: 'remove-block';
+  /** Absolute path to the Markdown file. */
+  path: string;
+}
+
+/**
+ * Delete a managed file (e.g. AGENTS.md) that was written directly by an adapter.
+ */
+export interface RemovalOpDeleteFile {
+  kind: 'delete-file';
+  /** Absolute path to the file to delete. */
+  path: string;
+}
+
+/**
+ * Remove a linked artifact: delete both the symlink (or copy) at `target`
+ * and the physical store entry at `store`.
+ */
+export interface RemovalOpUnlink {
+  kind: 'unlink';
+  /** Path to the symlink or installed file/directory (e.g. ~/.claude/skills/my-skill). */
+  target: string;
+  /** Path to the managed store entry (e.g. ~/.config/agent-rigger/skills/my-skill). */
+  store: string;
+}
+
+/**
+ * Uninstall a plugin via the native CLI mechanism.
+ * No direct file removal; the adapter delegates to `claude plugin uninstall`.
+ * This op carries no `path` or `target` — the engine skips backup for it.
+ */
+export interface RemovalOpPluginUninstall {
+  kind: 'plugin-uninstall';
+  /** Plugin identifier as expected by `claude plugin uninstall`. */
+  plugin: string;
+}
+
+export type RemovalOp =
+  | RemovalOpRemoveDeny
+  | RemovalOpRemoveBlock
+  | RemovalOpDeleteFile
+  | RemovalOpUnlink
+  | RemovalOpPluginUninstall;
+
+// ---------------------------------------------------------------------------
 // Scanner / Verdict
 // ---------------------------------------------------------------------------
 

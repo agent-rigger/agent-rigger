@@ -63,3 +63,25 @@ export function computeMissingDeny(ref: string[], current: string[]): string[] {
 export function mergeDeny(current: string[], ref: string[]): string[] {
   return [...current, ...computeMissingDeny(ref, current)];
 }
+
+/**
+ * Returns `current` with every rule that also appears in `ref` removed.
+ *
+ * Properties:
+ * - Rules in `current` that are NOT in `ref` are preserved in their original order.
+ * - Comparison is strict string equality (case-sensitive, character-exact).
+ * - `ref` empty → `current` returned unchanged.
+ * - Idempotent: `removeDeny(removeDeny(c, ref), ref) === removeDeny(c, ref)`.
+ *
+ * This is the logical inverse of `mergeDeny`.
+ *
+ * @param current - Existing deny rules to filter.
+ * @param ref     - Rules to remove (those managed by agent-rigger).
+ */
+export function removeDeny(current: string[], ref: string[]): string[] {
+  if (ref.length === 0) {
+    return current;
+  }
+  const refSet = new Set(ref);
+  return current.filter((rule) => !refSet.has(rule));
+}

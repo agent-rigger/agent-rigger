@@ -27,6 +27,23 @@ import type { Env } from './paths';
 import type { Manifest, ManifestEntry, Report, Scope } from './types';
 
 // ---------------------------------------------------------------------------
+// RemoveResult
+// ---------------------------------------------------------------------------
+
+/**
+ * Result returned by remove().
+ *
+ * - removed:   Ids of entries that were removed (planRemove returned ops).
+ * - backedUp:  Paths of .bak-* files created before removals.
+ * - manifest:  The manifest as it was persisted after this remove run.
+ */
+export interface RemoveResult {
+  removed: string[];
+  backedUp: string[];
+  manifest: Manifest;
+}
+
+// ---------------------------------------------------------------------------
 // ApplyResult
 // ---------------------------------------------------------------------------
 
@@ -167,8 +184,94 @@ export async function apply(
 }
 
 // ---------------------------------------------------------------------------
+// remove
+// ---------------------------------------------------------------------------
+
+/**
+ * Remove all entries: planRemove → backup → applyRemove → manifest update.
+ *
+ * For each entry:
+ *   1. Call adapter.planRemove() to get the set of RemovalOps.
+ *   2. If plan is empty → no-op (idempotent; not installed or already removed).
+ *   3. Otherwise: backup every op target that exists on disk.
+ *      - Ops with a `path` field (remove-deny, remove-block, delete-file) are backed up.
+ *      - Ops with `target` (unlink) and `plugin-uninstall` ops are not backed up
+ *        (unlink is handled by the primitive; plugin-uninstall has no file).
+ *   4. Call adapter.applyRemove(ops, env) to perform the removals.
+ *   5. Remove the entry from the manifest (filter by id + scope).
+ * After all entries: persist the updated manifest.
+ *
+ * Idempotent: if planRemove returns [] (artifact not installed) → no-op,
+ * manifest unchanged.
+ *
+ * @param adapter       The adapter to use for planning and removing.
+ * @param entries       Catalog entries to remove.
+ * @param scope         Installation scope ('user' | 'project').
+ * @param env           Injectable env for HOME resolution.
+ * @param manifestPath  Absolute path to state.json.
+ */
+export async function remove(
+  adapter: Adapter,
+  entries: AdapterEntry[],
+  scope: Scope,
+  env: Env,
+  manifestPath: string,
+): Promise<RemoveResult> {
+  let manifest = await readManifest(manifestPath);
+
+  const allRemoved: string[] = [];
+  const allBackedUp: string[] = [];
+
+  for (const entry of entries) {
+    const ops = await adapter.planRemove(entry, scope, env);
+
+    // No ops → not installed; leave the manifest untouched for this entry.
+    if (ops.length === 0) {
+      continue;
+    }
+
+    // Backup targets with a `path` field before removal.
+    // Ops with `target` (unlink) delegate removal to the primitive.
+    // `plugin-uninstall` has neither path nor target — nothing to back up.
+    const backupTargets = ops.flatMap((op) => {
+      if (op.kind === 'remove-deny' || op.kind === 'remove-block' || op.kind === 'delete-file') {
+        return [op.path];
+      }
+      return [];
+    });
+
+    const bakResults = await Promise.all(backupTargets.map((p) => backup(p)));
+    const backedUp = bakResults.filter((b): b is string => b !== null);
+    allBackedUp.push(...backedUp);
+
+    // Delegate actual removals to the adapter
+    await adapter.applyRemove(ops, env);
+
+    // Remove this entry from the manifest
+    manifest = removeEntry(manifest, entry.id, scope);
+    allRemoved.push(entry.id);
+  }
+
+  // Persist the manifest once after all entries have been processed
+  await writeManifest(manifestPath, manifest);
+
+  return { removed: allRemoved, backedUp: allBackedUp, manifest };
+}
+
+// ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
+
+/**
+ * Return a new Manifest with the entry matching both `id` and `scope` removed.
+ * Pure / immutable: the input manifest is not mutated.
+ */
+function removeEntry(manifest: Manifest, id: string, scope: Scope): Manifest {
+  return {
+    ...manifest,
+    artifacts: manifest.artifacts.filter((e) => !(e.id === id && e.scope === scope)),
+  };
+}
 
 /**
  * Build a ManifestEntry from an AdapterEntry + the paths written.

@@ -92,6 +92,12 @@ const denyAdapter: Adapter = {
       await writeJson(op.path, { ...settings, permissions: { ...basePerms, deny: merged } });
     }
   },
+
+  async planRemove() {
+    return [];
+  },
+
+  async applyRemove(): Promise<void> {},
 };
 
 function rule(label: string): void {
