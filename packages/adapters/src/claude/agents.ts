@@ -29,9 +29,16 @@ import { lstat } from 'node:fs/promises';
 import path from 'node:path';
 
 import type { AdapterEntry } from '@agent-rigger/core/adapter';
+import { unlink } from '@agent-rigger/core/linker';
 import { resolveHome, resolveUserTargets } from '@agent-rigger/core/paths';
 import type { Env } from '@agent-rigger/core/paths';
-import type { NatureReport, Scope, WriteOp, WriteOpLink } from '@agent-rigger/core/types';
+import type {
+  NatureReport,
+  RemovalOp,
+  Scope,
+  WriteOp,
+  WriteOpLink,
+} from '@agent-rigger/core/types';
 
 // ---------------------------------------------------------------------------
 // agentName
@@ -110,6 +117,69 @@ export async function auditAgent(
     nature: 'agent',
     state: exists ? 'present' : 'missing',
   };
+}
+
+// ---------------------------------------------------------------------------
+// planAgent
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// planRemoveAgent
+// ---------------------------------------------------------------------------
+
+/**
+ * Compute the removal operations needed to uninstall a sub-agent.
+ *
+ * Returns [] when the agent target does not exist (not installed).
+ * Returns [{ kind: 'unlink', target, store }] when the agent is present.
+ *
+ * Read-only: no filesystem writes.
+ *
+ * @param entry   Artifact entry (id carries the agent name).
+ * @param scope   Installation scope.
+ * @param env     Injectable env for HOME resolution.
+ * @param cwd     Working directory (only used when scope is 'project').
+ */
+export async function planRemoveAgent(
+  entry: AdapterEntry,
+  scope: Scope,
+  env: Env,
+  cwd?: string,
+): Promise<RemovalOp[]> {
+  const report = await auditAgent(entry, scope, env, cwd);
+  if (report.state !== 'present') {
+    return [];
+  }
+
+  const name = agentName(entry);
+  const store = resolveStorePath(name, env);
+  const target = resolveTargetPath(name, scope, env, cwd);
+
+  return [{ kind: 'unlink', target, store }];
+}
+
+// ---------------------------------------------------------------------------
+// applyRemoveAgent
+// ---------------------------------------------------------------------------
+
+/**
+ * Execute unlink removal operations produced by planRemoveAgent.
+ *
+ * For each unlink op: removes both the target (.md symlink or file) and the
+ * store entry. Uses core unlink() which is tolerant to absence (force:true).
+ *
+ * Ops of any other kind are ignored (forward-compatibility).
+ *
+ * @param ops  Removal operations (only 'unlink' kind are processed).
+ * @param env  Injectable env (kept for interface symmetry).
+ */
+export async function applyRemoveAgent(ops: RemovalOp[], _env: Env): Promise<void> {
+  for (const op of ops) {
+    if (op.kind !== 'unlink') {
+      continue;
+    }
+    await unlink(op.target, op.store);
+  }
 }
 
 // ---------------------------------------------------------------------------
