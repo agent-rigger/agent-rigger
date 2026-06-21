@@ -1,0 +1,16 @@
+{
+  "name": "@agent-rigger/cli",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./config": "./src/config.ts"
+  },
+  "dependencies": {
+    "@agent-rigger/adapters": "workspace:*",
+    "@agent-rigger/catalog": "workspace:*",
+    "@agent-rigger/core": "workspace:*",
+    "jsonc-parser": "3.3.1"
+  }
+}
