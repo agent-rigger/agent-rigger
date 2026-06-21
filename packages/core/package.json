@@ -9,6 +9,7 @@
     "./paths": "./src/paths.ts",
     "./fs-json": "./src/fs-json.ts",
     "./backup": "./src/backup.ts",
-    "./deny": "./src/deny.ts"
+    "./deny": "./src/deny.ts",
+    "./managed-import": "./src/managed-import.ts"
   }
 }
