@@ -112,11 +112,24 @@ export interface WriteOpEnsureImport {
   importLine: string;
 }
 
+/**
+ * Install a skill via the managed store + symlink (linker).
+ * source → store (physical copy); target → store (symlink or copy fallback).
+ * No in-file mutations: the operation is atomic at the directory level.
+ */
+export interface WriteOpLink {
+  kind: 'link';
+  source: string;
+  store: string;
+  target: string;
+}
+
 export type WriteOp =
   | WriteOpWriteJson
   | WriteOpWriteText
   | WriteOpMergeDeny
-  | WriteOpEnsureImport;
+  | WriteOpEnsureImport
+  | WriteOpLink;
 
 // ---------------------------------------------------------------------------
 // Scanner / Verdict

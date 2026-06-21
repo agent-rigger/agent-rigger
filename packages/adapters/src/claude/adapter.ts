@@ -15,10 +15,13 @@
 
 import type { Adapter, AdapterEntry } from '@agent-rigger/core/adapter';
 import type { Env } from '@agent-rigger/core/paths';
+import type { Scanner } from '@agent-rigger/core/scan';
+import { stubScanner } from '@agent-rigger/core/scan';
 import type { Nature, NatureReport, Scope, WriteOp } from '@agent-rigger/core/types';
 
 import { applyContext, auditContext, planContext } from './context';
 import { applyGuardrail, auditGuardrail, planGuardrail } from './guardrails';
+import { applySkill, auditSkill, planSkill } from './skills';
 
 // ---------------------------------------------------------------------------
 // UnsupportedNatureError
@@ -60,6 +63,18 @@ export interface ClaudeAdapterConfig {
   denyRef: string[];
   /** Canonical AGENTS.md content for the context handler. */
   agentsContent?: string;
+  /**
+   * Resolve the source directory of a skill from its AdapterEntry.
+   * Required when any entry with nature 'skill' is planned or applied.
+   * Omitting it is safe as long as no skill entries are processed.
+   */
+  skillSource?: (entry: AdapterEntry) => string;
+  /**
+   * Security scanner invoked before each skill installation.
+   * Defaults to stubScanner (M0: always passes).
+   * Replace with a real scanner at the security milestone.
+   */
+  scanner?: Scanner;
 }
 
 // ---------------------------------------------------------------------------
@@ -78,6 +93,21 @@ export interface ClaudeAdapterConfig {
  */
 export function createClaudeAdapter(config: ClaudeAdapterConfig): Adapter {
   const agentsContent = config.agentsContent ?? '';
+  const scanner = config.scanner ?? stubScanner;
+
+  /**
+   * Resolve the skill source for an entry, or raise a clear error when
+   * skillSource is not configured and a skill operation is attempted.
+   */
+  function resolveSkillSource(entry: AdapterEntry): string {
+    if (config.skillSource === undefined) {
+      throw new Error(
+        `ClaudeAdapter: skillSource is required to install skill "${entry.id}". `
+          + 'Pass a skillSource resolver in ClaudeAdapterConfig.',
+      );
+    }
+    return config.skillSource(entry);
+  }
 
   // Nature → { audit, plan } — E2-E5 add entries here
   const natureHandlers = new Map<Nature, NatureHandler>([
@@ -107,6 +137,19 @@ export function createClaudeAdapter(config: ClaudeAdapterConfig): Adapter {
         },
       },
     ],
+    [
+      'skill',
+      {
+        audit(entry, scope, env): Promise<NatureReport> {
+          const cwd = entry.scope === 'project' ? process.cwd() : undefined;
+          return auditSkill(entry, scope, env, cwd);
+        },
+        plan(entry, scope, env): Promise<WriteOp[]> {
+          const cwd = entry.scope === 'project' ? process.cwd() : undefined;
+          return planSkill(entry, scope, env, () => resolveSkillSource(entry), cwd);
+        },
+      },
+    ],
   ]);
 
   // WriteOp kind → apply fn — E2-E5 add entries here
@@ -114,6 +157,7 @@ export function createClaudeAdapter(config: ClaudeAdapterConfig): Adapter {
     ['merge-deny', (ops, env) => applyGuardrail(ops, env)],
     ['write-text', (ops, env) => applyContext(ops, env)],
     ['ensure-import', (ops, env) => applyContext(ops, env)],
+    ['link', (ops, env) => applySkill(ops, env, scanner)],
   ]);
 
   return {
