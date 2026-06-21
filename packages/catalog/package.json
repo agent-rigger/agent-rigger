@@ -6,7 +6,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./schema": "./src/schema.ts",
-    "./catalog.builtin": "./src/catalog.builtin.ts"
+    "./catalog.builtin": "./src/catalog.builtin.ts",
+    "./resolver": "./src/resolver.ts"
   },
   "dependencies": {
     "@agent-rigger/core": "workspace:*",
