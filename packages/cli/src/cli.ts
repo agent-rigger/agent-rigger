@@ -251,18 +251,39 @@ export interface CliDeps {
 // ---------------------------------------------------------------------------
 
 /**
+ * Options for the external-resolver seam in buildClaudeAdapter.
+ *
+ * @param externalIds      Set of artifact ids (e.g. 'skill:x', 'agent:y') whose
+ *                         source should be resolved from externalBaseDir instead of
+ *                         the local artifactsDir. Both fields must be provided
+ *                         together for the seam to activate.
+ * @param externalBaseDir  Absolute path to the root of a remote checkout. Expected
+ *                         layout: skills/<name>/ and agents/<name>.md.
+ */
+export interface BuildClaudeAdapterOpts {
+  externalIds?: Set<string>;
+  externalBaseDir?: string;
+}
+
+/**
  * Build a ClaudeAdapter from the artifacts directory.
  *
  * - denyRef       : loaded from <artifactsDir>/claude/deny.json
  * - agentsContent : loaded from <artifactsDir>/shared/AGENTS.md
  * - skillSource   : resolves id → <artifactsDir>/claude/skills/<id>
+ *                   or <externalBaseDir>/skills/<id> when id is in externalIds
  * - agentSource   : resolves id → <artifactsDir>/claude/agents/<agentId>.md
+ *                   or <externalBaseDir>/agents/<agentId>.md when id is in externalIds
  * - pluginSource  : resolves id → { plugin: <pluginId>, marketplace: <cwd>/.claude-plugin/marketplace.json }
  * - scanner       : stubScanner (M0: always passes)
+ *
+ * @param opts  Optional external-resolver seam for remote installs (M1b-4).
+ *              Omitting opts → existing behaviour unchanged (100% rétro-compatible).
  */
 export async function buildClaudeAdapter(
   _env: Env,
   artifactsDir: string,
+  opts?: BuildClaudeAdapterOpts,
 ): Promise<Adapter> {
   const denyJsonPath = path.join(artifactsDir, 'claude', 'deny.json');
   const agentsMdPath = path.join(artifactsDir, 'shared', 'AGENTS.md');
@@ -276,10 +297,26 @@ export async function buildClaudeAdapter(
     denyRef,
     agentsContent,
     scanner: stubScanner,
-    skillSource: (entry) =>
-      path.join(artifactsDir, 'claude', 'skills', entry.id.replace(/^skill:/, '')),
-    agentSource: (entry) =>
-      path.join(artifactsDir, 'claude', 'agents', entry.id.replace(/^agent:/, '') + '.md'),
+    skillSource: (entry) => {
+      const name = entry.id.replace(/^skill:/, '');
+      if (
+        opts?.externalIds?.has(entry.id) === true
+        && opts.externalBaseDir !== undefined
+      ) {
+        return path.join(opts.externalBaseDir, 'skills', name);
+      }
+      return path.join(artifactsDir, 'claude', 'skills', name);
+    },
+    agentSource: (entry) => {
+      const name = entry.id.replace(/^agent:/, '');
+      if (
+        opts?.externalIds?.has(entry.id) === true
+        && opts.externalBaseDir !== undefined
+      ) {
+        return path.join(opts.externalBaseDir, 'agents', name + '.md');
+      }
+      return path.join(artifactsDir, 'claude', 'agents', name + '.md');
+    },
     pluginSource: (entry) => ({
       plugin: entry.id.replace(/^plugin:/, ''),
       marketplace: path.join(process.cwd(), '.claude-plugin', 'marketplace.json'),
