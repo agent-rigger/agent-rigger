@@ -238,6 +238,60 @@ export const CatalogEntrySchema = z.discriminatedUnion('kind', [
 export type CatalogEntry = z.infer<typeof CatalogEntrySchema>;
 
 // ---------------------------------------------------------------------------
+// CatalogFileSchema — top-level wrapper {meta, entries}
+// ---------------------------------------------------------------------------
+
+/**
+ * Schema for the top-level `meta` object in `catalog.json`.
+ *
+ * - `name`        : non-empty string identifying this catalog.
+ * - `required`    : optional list of entry ids (pack or artefact) deemed required.
+ * - `recommended` : optional list of entry ids (pack or artefact) deemed recommended.
+ *
+ * No referential validation is performed — ids are arbitrary strings.
+ */
+export const MetaSchema = z.object({
+  /** Non-empty catalog name. */
+  name: z.string().min(1),
+
+  /**
+   * Entry ids (pack or artefact) that are considered required.
+   * Arbitrary ids — no referential check performed here.
+   */
+  required: z.array(z.string()).optional().default([]),
+
+  /**
+   * Entry ids (pack or artefact) that are considered recommended.
+   * Arbitrary ids — no referential check performed here.
+   */
+  recommended: z.array(z.string()).optional().default([]),
+});
+
+/** Inferred type for the catalog meta block. */
+export type CatalogMeta = z.infer<typeof MetaSchema>;
+
+/**
+ * Schema for a complete `catalog.json` file.
+ *
+ * Expected shape:
+ * ```json
+ * {
+ *   "meta": { "name": "...", "required": [], "recommended": [] },
+ *   "entries": [ ... ]
+ * }
+ * ```
+ */
+export const CatalogFileSchema = z.object({
+  /** Catalog metadata. */
+  meta: MetaSchema,
+  /** Array of catalog entries (artifact or pack). */
+  entries: z.array(CatalogEntrySchema),
+});
+
+/** Inferred type for a complete catalog file. */
+export type CatalogFile = z.infer<typeof CatalogFileSchema>;
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
@@ -258,4 +312,23 @@ export type SafeParseCatalogResult = ReturnType<(typeof CatalogEntrySchema)['saf
  */
 export function safeParseCatalogEntry(input: unknown): SafeParseCatalogResult {
   return CatalogEntrySchema.safeParse(input);
+}
+
+/**
+ * Parse `input` as a CatalogFile (the full `catalog.json` wrapper).
+ * Throws a ZodError if validation fails.
+ */
+export function parseCatalog(input: unknown): CatalogFile {
+  return CatalogFileSchema.parse(input);
+}
+
+/** Return type of safeParseCatalog. */
+export type SafeParseCatalogFileResult = ReturnType<(typeof CatalogFileSchema)['safeParse']>;
+
+/**
+ * Attempt to parse `input` as a CatalogFile without throwing.
+ * Returns `{ success: true, data }` on success or `{ success: false, error }` on failure.
+ */
+export function safeParseCatalog(input: unknown): SafeParseCatalogFileResult {
+  return CatalogFileSchema.safeParse(input);
 }

@@ -77,7 +77,11 @@ async function makeIsolatedEnv(opts: {
   const contentDir = await fs.mkdtemp(path.join(os.tmpdir(), 'rigger-picker-content-'));
 
   // Write catalog.json for the remote content repo.
-  await fs.writeFile(path.join(contentDir, 'catalog.json'), JSON.stringify(catalog), 'utf8');
+  await fs.writeFile(
+    path.join(contentDir, 'catalog.json'),
+    JSON.stringify({ meta: { name: 'picker-test-catalog' }, entries: catalog }),
+    'utf8',
+  );
 
   // Write skill fixtures.
   for (const skillId of skillIds) {
@@ -131,7 +135,11 @@ async function makeIsolatedEnv(opts: {
     const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'rigger-picker-checkout-'));
     tmpDirs.push(tmpDir);
     // Copy catalog + skills into fresh tmpDir so each checkout is independent.
-    await fs.writeFile(path.join(tmpDir, 'catalog.json'), JSON.stringify(catalog), 'utf8');
+    await fs.writeFile(
+      path.join(tmpDir, 'catalog.json'),
+      JSON.stringify({ meta: { name: 'picker-test-catalog' }, entries: catalog }),
+      'utf8',
+    );
     for (const skillId of skillIds) {
       await fs.mkdir(path.join(tmpDir, 'skills', skillId), { recursive: true });
       await fs.writeFile(

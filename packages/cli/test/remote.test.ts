@@ -147,7 +147,10 @@ describe('fetchRemoteCatalog — success', () => {
     const result = await fetchRemoteCatalog({
       catalogUrl: 'https://example.com/catalog.git',
       run: makeRunner(tagsStdout),
-      tmpFactory: makeFakeTmpFactory(dir, remoteEntries),
+      tmpFactory: makeFakeTmpFactory(dir, {
+        meta: { name: 'remote-test-catalog' },
+        entries: remoteEntries,
+      }),
     });
 
     expect(result.entries).toHaveLength(1);
@@ -177,7 +180,7 @@ describe('fetchRemoteCatalog — RemoteFetchError propagation', () => {
       fetchRemoteCatalog({
         catalogUrl: 'https://example.com/catalog.git',
         run: makeRunner(tagsStdout, 1), // clone exits 1
-        tmpFactory: makeFakeTmpFactory(dir, []),
+        tmpFactory: makeFakeTmpFactory(dir, { meta: { name: 'fail-test-catalog' }, entries: [] }),
       }),
     ).rejects.toBeInstanceOf(RemoteFetchError);
 

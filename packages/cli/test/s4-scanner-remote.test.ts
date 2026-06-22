@@ -70,7 +70,7 @@ async function makeRemoteEnv(): Promise<{
   // Write catalog.json
   await fs.writeFile(
     path.join(contentDir, 'catalog.json'),
-    JSON.stringify([REMOTE_SKILL_ENTRY]),
+    JSON.stringify({ meta: { name: 's4-test-catalog' }, entries: [REMOTE_SKILL_ENTRY] }),
     'utf8',
   );
 

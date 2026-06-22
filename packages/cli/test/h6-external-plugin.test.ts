@@ -77,7 +77,7 @@ async function makePluginEnv(): Promise<{
   // Write catalog.json with the external plugin entry
   await fs.writeFile(
     path.join(contentDir, 'catalog.json'),
-    JSON.stringify([REMOTE_PLUGIN_ENTRY]),
+    JSON.stringify({ meta: { name: 'h6-test-catalog' }, entries: [REMOTE_PLUGIN_ENTRY] }),
     'utf8',
   );
 
