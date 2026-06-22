@@ -40,6 +40,7 @@ import {
   RemoteFetchError,
   resolveVersion,
   type TmpDirFactory,
+  withRemoteCheckout,
 } from './fetch';
 import type { CommandRunner } from './tool-check';
 
@@ -893,6 +894,180 @@ describe('fetchCatalog — rev-parse failure triggers RemoteFetchError', () => {
     } catch {
       // expected
     }
+    expect(cleanupSpy).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// withRemoteCheckout
+// ---------------------------------------------------------------------------
+
+describe('withRemoteCheckout — callback receives checkoutDir', () => {
+  it('passes the tmp path from tmpFactory to fn', async () => {
+    const { factory, dirPath } = await makeTmpFactory(undefined);
+    let receivedDir = '';
+    await withRemoteCheckout(
+      'https://example.com/repo.git',
+      'v1.0.0',
+      makeCloneRunner(),
+      { tmpFactory: factory },
+      async (dir) => {
+        receivedDir = dir;
+      },
+    );
+    expect(receivedDir).toBe(dirPath());
+  });
+});
+
+describe('withRemoteCheckout — clone argv', () => {
+  it('passes correct argv to git clone including -- separator', async () => {
+    const { factory, dirPath } = await makeTmpFactory(undefined);
+    const cloneCalls: string[][] = [];
+    await withRemoteCheckout(
+      'https://example.com/repo.git',
+      'v2.3.4',
+      makeCloneRunner(cloneCalls),
+      { tmpFactory: factory },
+      async () => {},
+    );
+    expect(cloneCalls).toHaveLength(1);
+    expect(cloneCalls[0]).toEqual([
+      'clone',
+      '--depth',
+      '1',
+      '--branch',
+      'v2.3.4',
+      '--',
+      'https://example.com/repo.git',
+      dirPath(),
+    ]);
+  });
+});
+
+describe('withRemoteCheckout — clone failure: RemoteFetchError + cleanup', () => {
+  it('throws RemoteFetchError when clone exits 1', async () => {
+    const { factory } = await makeTmpFactory(undefined);
+    await expect(
+      withRemoteCheckout(
+        'https://example.com/repo.git',
+        'v1.0.0',
+        makeFailCloneRunner('fatal: repo not found'),
+        { tmpFactory: factory },
+        async () => {},
+      ),
+    ).rejects.toBeInstanceOf(RemoteFetchError);
+  });
+
+  it('cleanup is called exactly once when clone fails', async () => {
+    const { factory, cleanupSpy } = await makeTmpFactory(undefined);
+    try {
+      await withRemoteCheckout(
+        'https://example.com/repo.git',
+        'v1.0.0',
+        makeFailCloneRunner('fatal: repo not found'),
+        { tmpFactory: factory },
+        async () => {},
+      );
+    } catch {
+      // expected
+    }
+    expect(cleanupSpy).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('withRemoteCheckout — fn throws: error propagates + cleanup called', () => {
+  it('propagates the error thrown by fn', async () => {
+    const { factory } = await makeTmpFactory(undefined);
+    await expect(
+      withRemoteCheckout(
+        'https://example.com/repo.git',
+        'v1.0.0',
+        makeCloneRunner(),
+        { tmpFactory: factory },
+        async () => {
+          throw new Error('boom');
+        },
+      ),
+    ).rejects.toThrow('boom');
+  });
+
+  it('cleanup is called exactly once when fn throws', async () => {
+    const { factory, cleanupSpy } = await makeTmpFactory(undefined);
+    try {
+      await withRemoteCheckout(
+        'https://example.com/repo.git',
+        'v1.0.0',
+        makeCloneRunner(),
+        { tmpFactory: factory },
+        async () => {
+          throw new Error('boom');
+        },
+      );
+    } catch {
+      // expected
+    }
+    expect(cleanupSpy).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('withRemoteCheckout — invalid url/ref: error before tmpFactory called', () => {
+  it('throws InvalidRemoteUrlError for ext:: transport without calling tmpFactory', async () => {
+    const factorySpy = mock(async () => ({
+      path: '/tmp/unused',
+      cleanup: mock(async () => {}),
+    }));
+    await expect(
+      withRemoteCheckout(
+        'ext::sh -c x',
+        'v1.0.0',
+        makeCloneRunner(),
+        { tmpFactory: factorySpy as TmpDirFactory },
+        async () => {},
+      ),
+    ).rejects.toBeInstanceOf(InvalidRemoteUrlError);
+    expect(factorySpy).not.toHaveBeenCalled();
+  });
+
+  it('throws InvalidRemoteRefError for ref starting with -- without calling tmpFactory', async () => {
+    const factorySpy = mock(async () => ({
+      path: '/tmp/unused',
+      cleanup: mock(async () => {}),
+    }));
+    await expect(
+      withRemoteCheckout(
+        'https://example.com/repo.git',
+        '--foo',
+        makeCloneRunner(),
+        { tmpFactory: factorySpy as TmpDirFactory },
+        async () => {},
+      ),
+    ).rejects.toBeInstanceOf(InvalidRemoteRefError);
+    expect(factorySpy).not.toHaveBeenCalled();
+  });
+});
+
+describe('withRemoteCheckout — success: returns fn value + cleanup called', () => {
+  it('returns the value returned by fn', async () => {
+    const { factory } = await makeTmpFactory(undefined);
+    const result = await withRemoteCheckout(
+      'https://example.com/repo.git',
+      'v1.0.0',
+      makeCloneRunner(),
+      { tmpFactory: factory },
+      async () => 42,
+    );
+    expect(result).toBe(42);
+  });
+
+  it('cleanup is called exactly once on success', async () => {
+    const { factory, cleanupSpy } = await makeTmpFactory(undefined);
+    await withRemoteCheckout(
+      'https://example.com/repo.git',
+      'v1.0.0',
+      makeCloneRunner(),
+      { tmpFactory: factory },
+      async () => {},
+    );
     expect(cleanupSpy).toHaveBeenCalledTimes(1);
   });
 });
