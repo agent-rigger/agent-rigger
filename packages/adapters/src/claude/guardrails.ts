@@ -25,8 +25,10 @@ import type {
   Env,
   NatureReport,
   RemovalOp,
+  RemovalOpRemoveAllow,
   Scope,
   WriteOp,
+  WriteOpMergeAllow,
   WriteOpMergeDeny,
 } from '@agent-rigger/core';
 
@@ -92,6 +94,22 @@ function extractDeny(settings: Record<string, unknown>): string[] {
   return deny.filter((x): x is string => typeof x === 'string');
 }
 
+/**
+ * Extract permissions.allow from a parsed settings object.
+ * Returns [] if the field is absent or not an array.
+ */
+function extractAllow(settings: Record<string, unknown>): string[] {
+  const perms = settings['permissions'];
+  if (perms === null || typeof perms !== 'object') {
+    return [];
+  }
+  const allow = (perms as Record<string, unknown>)['allow'];
+  if (!Array.isArray(allow)) {
+    return [];
+  }
+  return allow.filter((x): x is string => typeof x === 'string');
+}
+
 // ---------------------------------------------------------------------------
 // loadCanonicalDeny
 // ---------------------------------------------------------------------------
@@ -121,6 +139,28 @@ export async function loadCanonicalDeny(denyJsonPath: string): Promise<string[]>
 }
 
 // ---------------------------------------------------------------------------
+// loadCanonicalAllow
+// ---------------------------------------------------------------------------
+
+/**
+ * Read the canonical allow rules from an allow.json artifact file.
+ *
+ * Unlike loadCanonicalDeny, an empty or absent allow artifact is valid —
+ * it simply means no additional allow rules are configured. Returns [] in all
+ * absent/empty/missing-field cases without throwing.
+ *
+ * Note: syntactically invalid JSON continues to throw InvalidJsonError from readJson.
+ */
+export async function loadCanonicalAllow(allowJsonPath: string): Promise<string[]> {
+  const raw = await readJson(allowJsonPath);
+  const allow = raw['allow'];
+  if (!Array.isArray(allow)) {
+    return [];
+  }
+  return allow.filter((x): x is string => typeof x === 'string');
+}
+
+// ---------------------------------------------------------------------------
 // auditGuardrail
 // ---------------------------------------------------------------------------
 
@@ -128,7 +168,7 @@ export async function loadCanonicalDeny(denyJsonPath: string): Promise<string[]>
  * Audit the current state of the guardrail artifact on disk.
  *
  * Reads settings.json at the scope-appropriate path and compares
- * permissions.deny against denyRef using computeMissingDeny.
+ * permissions.deny against denyRef and permissions.allow against allowRef.
  *
  * Returns:
  * - state 'present' if all ref rules are present (nothing missing).
@@ -136,26 +176,31 @@ export async function loadCanonicalDeny(denyJsonPath: string): Promise<string[]>
  *
  * Read-only: no filesystem writes.
  *
- * @param scope    Installation scope.
- * @param env      Injectable env for HOME resolution.
- * @param denyRef  Canonical deny rules to verify against.
- * @param cwd      Working directory (only used when scope is 'project').
+ * @param scope     Installation scope.
+ * @param env       Injectable env for HOME resolution.
+ * @param denyRef   Canonical deny rules to verify against.
+ * @param cwd       Working directory (only used when scope is 'project').
+ * @param allowRef  Canonical allow rules to verify against (default []).
  */
 export async function auditGuardrail(
   scope: Scope,
   env: Env,
   denyRef: string[],
   cwd?: string,
+  allowRef: string[] = [],
 ): Promise<NatureReport> {
   const settingsPath = resolveSettingsPath(scope, env, cwd);
   const settings = await readJson(settingsPath);
   const currentDeny = extractDeny(settings);
-  const missing = computeMissingDeny(denyRef, currentDeny);
+  const missingDeny = computeMissingDeny(denyRef, currentDeny);
+
+  const currentAllow = extractAllow(settings);
+  const missingAllow = computeMissingDeny(allowRef, currentAllow);
 
   return {
     id: GUARDRAIL_ID,
     nature: 'guardrail',
-    state: missing.length === 0 ? 'present' : 'missing',
+    state: missingDeny.length === 0 && missingAllow.length === 0 ? 'present' : 'missing',
   };
 }
 
@@ -166,32 +211,48 @@ export async function auditGuardrail(
 /**
  * Compute the write operations needed to install the guardrail.
  *
- * Returns a single merge-deny WriteOp when rules are missing,
+ * Returns merge-deny and/or merge-allow WriteOps when rules are missing,
  * or an empty array when the artifact is already up-to-date (idempotent).
  *
  * Read-only: no filesystem writes.
  *
- * @param scope    Installation scope.
- * @param env      Injectable env for HOME resolution.
- * @param denyRef  Canonical deny rules to install.
- * @param cwd      Working directory (only used when scope is 'project').
+ * @param scope     Installation scope.
+ * @param env       Injectable env for HOME resolution.
+ * @param denyRef   Canonical deny rules to install.
+ * @param cwd       Working directory (only used when scope is 'project').
+ * @param allowRef  Canonical allow rules to install (default []).
  */
 export async function planGuardrail(
   scope: Scope,
   env: Env,
   denyRef: string[],
   cwd?: string,
+  allowRef: string[] = [],
 ): Promise<WriteOp[]> {
   const settingsPath = resolveSettingsPath(scope, env, cwd);
   const settings = await readJson(settingsPath);
   const currentDeny = extractDeny(settings);
-  const missing = computeMissingDeny(denyRef, currentDeny);
+  const missingDeny = computeMissingDeny(denyRef, currentDeny);
 
-  if (missing.length === 0) {
-    return [];
+  const currentAllow = extractAllow(settings);
+  const missingAllow = computeMissingDeny(allowRef, currentAllow);
+
+  const ops: WriteOp[] = [];
+
+  if (missingDeny.length > 0) {
+    ops.push({ kind: 'merge-deny', path: settingsPath, toAdd: missingDeny });
   }
 
-  return [{ kind: 'merge-deny', path: settingsPath, toAdd: missing }];
+  if (missingAllow.length > 0) {
+    const allowOp: WriteOpMergeAllow = {
+      kind: 'merge-allow',
+      path: settingsPath,
+      toAdd: missingAllow,
+    };
+    ops.push(allowOp);
+  }
+
+  return ops;
 }
 
 // ---------------------------------------------------------------------------
@@ -205,36 +266,54 @@ export async function planGuardrail(
 /**
  * Compute the removal operations needed to uninstall the guardrail artifact.
  *
- * Returns a single remove-deny RemovalOp when the canonical deny rules are
- * present in settings.json, or an empty array when they are not installed
+ * Returns remove-deny and/or remove-allow RemovalOps when the canonical rules
+ * are present in settings.json, or an empty array when none are installed
  * (idempotent).
  *
  * Read-only: no filesystem writes.
  *
- * @param scope    Installation scope.
- * @param env      Injectable env for HOME resolution.
- * @param denyRef  Canonical deny rules to remove.
- * @param cwd      Working directory (only used when scope is 'project').
+ * @param scope     Installation scope.
+ * @param env       Injectable env for HOME resolution.
+ * @param denyRef   Canonical deny rules to remove.
+ * @param cwd       Working directory (only used when scope is 'project').
+ * @param allowRef  Canonical allow rules to remove (default []).
  */
 export async function planRemoveGuardrail(
   scope: Scope,
   env: Env,
   denyRef: string[],
   cwd?: string,
+  allowRef: string[] = [],
 ): Promise<RemovalOp[]> {
   const settingsPath = resolveSettingsPath(scope, env, cwd);
   const settings = await readJson(settingsPath);
   const currentDeny = extractDeny(settings);
 
-  // Check whether any of the ref rules are actually present
-  const refSet = new Set(denyRef);
-  const anyPresent = currentDeny.some((rule) => refSet.has(rule));
+  const ops: RemovalOp[] = [];
 
-  if (!anyPresent) {
-    return [];
+  // Check whether any of the deny ref rules are actually present
+  const denyRefSet = new Set(denyRef);
+  const anyDenyPresent = currentDeny.some((rule) => denyRefSet.has(rule));
+
+  if (anyDenyPresent) {
+    ops.push({ kind: 'remove-deny', path: settingsPath, rules: denyRef });
   }
 
-  return [{ kind: 'remove-deny', path: settingsPath, rules: denyRef }];
+  if (allowRef.length > 0) {
+    const currentAllow = extractAllow(settings);
+    const allowRefSet = new Set(allowRef);
+    const anyAllowPresent = currentAllow.some((rule) => allowRefSet.has(rule));
+    if (anyAllowPresent) {
+      const allowOp: RemovalOpRemoveAllow = {
+        kind: 'remove-allow',
+        path: settingsPath,
+        rules: allowRef,
+      };
+      ops.push(allowOp);
+    }
+  }
+
+  return ops;
 }
 
 // ---------------------------------------------------------------------------
@@ -257,24 +336,38 @@ export async function planRemoveGuardrail(
  */
 export async function applyRemoveGuardrail(ops: RemovalOp[], _env: Env): Promise<void> {
   for (const op of ops) {
-    if (op.kind !== 'remove-deny') {
-      continue;
+    if (op.kind === 'remove-deny') {
+      const settings = await readJson(op.path);
+      const currentDeny = extractDeny(settings);
+      const updated = removeDeny(currentDeny, op.rules);
+
+      const existingPerms = settings['permissions'];
+      const basePerms =
+        existingPerms !== null && typeof existingPerms === 'object' && !Array.isArray(existingPerms)
+          ? (existingPerms as Record<string, unknown>)
+          : {};
+
+      await writeJson(op.path, {
+        ...settings,
+        permissions: { ...basePerms, deny: updated },
+      });
+    } else if (op.kind === 'remove-allow') {
+      const removeAllowOp = op as RemovalOpRemoveAllow;
+      const settings = await readJson(removeAllowOp.path);
+      const currentAllow = extractAllow(settings);
+      const updated = removeDeny(currentAllow, removeAllowOp.rules);
+
+      const existingPerms = settings['permissions'];
+      const basePerms =
+        existingPerms !== null && typeof existingPerms === 'object' && !Array.isArray(existingPerms)
+          ? (existingPerms as Record<string, unknown>)
+          : {};
+
+      await writeJson(removeAllowOp.path, {
+        ...settings,
+        permissions: { ...basePerms, allow: updated },
+      });
     }
-
-    const settings = await readJson(op.path);
-    const currentDeny = extractDeny(settings);
-    const updated = removeDeny(currentDeny, op.rules);
-
-    const existingPerms = settings['permissions'];
-    const basePerms =
-      existingPerms !== null && typeof existingPerms === 'object' && !Array.isArray(existingPerms)
-        ? (existingPerms as Record<string, unknown>)
-        : {};
-
-    await writeJson(op.path, {
-      ...settings,
-      permissions: { ...basePerms, deny: updated },
-    });
   }
 }
 
@@ -300,23 +393,38 @@ export async function applyRemoveGuardrail(ops: RemovalOp[], _env: Env): Promise
  */
 export async function applyGuardrail(ops: WriteOp[], _env: Env): Promise<void> {
   for (const op of ops) {
-    if (op.kind !== 'merge-deny') {
-      continue;
+    if (op.kind === 'merge-deny') {
+      const mergeDenyOp = op as WriteOpMergeDeny;
+      const settings = await readJson(mergeDenyOp.path);
+      const currentDeny = extractDeny(settings);
+      const merged = mergeDeny(currentDeny, mergeDenyOp.toAdd);
+
+      const existingPerms = settings['permissions'];
+      const basePerms =
+        existingPerms !== null && typeof existingPerms === 'object' && !Array.isArray(existingPerms)
+          ? (existingPerms as Record<string, unknown>)
+          : {};
+
+      await writeJson(mergeDenyOp.path, {
+        ...settings,
+        permissions: { ...basePerms, deny: merged },
+      });
+    } else if (op.kind === 'merge-allow') {
+      const mergeAllowOp = op as WriteOpMergeAllow;
+      const settings = await readJson(mergeAllowOp.path);
+      const currentAllow = extractAllow(settings);
+      const merged = mergeDeny(currentAllow, mergeAllowOp.toAdd);
+
+      const existingPerms = settings['permissions'];
+      const basePerms =
+        existingPerms !== null && typeof existingPerms === 'object' && !Array.isArray(existingPerms)
+          ? (existingPerms as Record<string, unknown>)
+          : {};
+
+      await writeJson(mergeAllowOp.path, {
+        ...settings,
+        permissions: { ...basePerms, allow: merged },
+      });
     }
-    const mergeDenyOp = op as WriteOpMergeDeny;
-    const settings = await readJson(mergeDenyOp.path);
-    const currentDeny = extractDeny(settings);
-    const merged = mergeDeny(currentDeny, mergeDenyOp.toAdd);
-
-    const existingPerms = settings['permissions'];
-    const basePerms =
-      existingPerms !== null && typeof existingPerms === 'object' && !Array.isArray(existingPerms)
-        ? (existingPerms as Record<string, unknown>)
-        : {};
-
-    await writeJson(mergeDenyOp.path, {
-      ...settings,
-      permissions: { ...basePerms, deny: merged },
-    });
   }
 }

@@ -91,6 +91,8 @@ type RemovalOpKindApply = (ops: RemovalOp[], env: Env) => Promise<void>;
 export interface ClaudeAdapterConfig {
   /** Canonical deny rules loaded from artifacts/claude/deny.json. */
   denyRef: string[];
+  /** Canonical allow rules loaded from artifacts/claude/allow.json (default []). */
+  allowRef?: string[];
   /** Canonical AGENTS.md content for the context handler. */
   agentsContent?: string;
   /**
@@ -160,6 +162,7 @@ export interface ClaudeAdapterConfig {
 export function createClaudeAdapter(config: ClaudeAdapterConfig): Adapter {
   const agentsContent = config.agentsContent ?? '';
   const scanner = config.scanner ?? stubScanner;
+  const allowRef = config.allowRef ?? [];
 
   /**
    * Resolve the skill source for an entry, or raise a clear error when
@@ -226,15 +229,15 @@ export function createClaudeAdapter(config: ClaudeAdapterConfig): Adapter {
       {
         audit(entry, scope, env): Promise<NatureReport> {
           const cwd = entry.scope === 'project' ? process.cwd() : undefined;
-          return auditGuardrail(scope, env, config.denyRef, cwd);
+          return auditGuardrail(scope, env, config.denyRef, cwd, allowRef);
         },
         plan(entry, scope, env): Promise<WriteOp[]> {
           const cwd = entry.scope === 'project' ? process.cwd() : undefined;
-          return planGuardrail(scope, env, config.denyRef, cwd);
+          return planGuardrail(scope, env, config.denyRef, cwd, allowRef);
         },
         planRemove(entry, scope, env): Promise<RemovalOp[]> {
           const cwd = entry.scope === 'project' ? process.cwd() : undefined;
-          return planRemoveGuardrail(scope, env, config.denyRef, cwd);
+          return planRemoveGuardrail(scope, env, config.denyRef, cwd, allowRef);
         },
       },
     ],
@@ -349,6 +352,7 @@ export function createClaudeAdapter(config: ClaudeAdapterConfig): Adapter {
   // WriteOp kind → apply fn — E2-E5 add entries here
   const opKindHandlers = new Map<WriteOp['kind'], OpKindApply>([
     ['merge-deny', (ops, env) => applyGuardrail(ops, env)],
+    ['merge-allow', (ops, env) => applyGuardrail(ops, env)],
     ['write-text', (ops, env) => applyContext(ops, env)],
     ['ensure-import', (ops, env) => applyContext(ops, env)],
     ['link', (ops, env) => applySkill(ops, env, scanner)],
@@ -359,6 +363,7 @@ export function createClaudeAdapter(config: ClaudeAdapterConfig): Adapter {
   // RemovalOp kind → applyRemove fn — mirrors the install dispatch pattern
   const removalOpKindHandlers = new Map<RemovalOp['kind'], RemovalOpKindApply>([
     ['remove-deny', (ops, env) => applyRemoveGuardrail(ops, env)],
+    ['remove-allow', (ops, env) => applyRemoveGuardrail(ops, env)],
     ['delete-file', (ops, env) => applyRemoveContext(ops, env)],
     ['remove-block', (ops, env) => applyRemoveContext(ops, env)],
     ['unlink', (ops, env) => applyRemoveSkill(ops, env)],
