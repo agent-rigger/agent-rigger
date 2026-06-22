@@ -1460,9 +1460,8 @@ describe('runCli — ls with catalogUrl configured but remote fails', () => {
     });
 
     const out = cap.lines.join('\n');
-    expect(out).toContain('Remote catalog unavailable');
-    // Note: "Falling back to built-in catalog" message is kept in code for now
-    // but no built-in entries are shown (catalog is [])
+    expect(out).toContain('Catalog distant indisponible');
+    expect(out).toMatch(/init|URL/);
   });
 });
 
