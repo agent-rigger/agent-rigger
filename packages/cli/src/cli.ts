@@ -50,7 +50,7 @@ import { runUpdate } from './cmd-update';
 import { loadConfig } from './config';
 import { PreflightAuthError } from './preflight-auth';
 import { CatalogUrlMissingError, defaultTmpFactory, fetchRemoteCatalog } from './remote';
-import { runRemoteInstall } from './remote-install';
+import { runRemoteInstall, ScanBlockedError } from './remote-install';
 import { renderEntryInfo } from './ui';
 
 // ---------------------------------------------------------------------------
@@ -759,6 +759,7 @@ async function handleInstall(opts: HandleInstallOpts): Promise<number> {
   const { ids, flags, scope, env, artifactsDir, print, deps } = opts;
 
   const yes = flags['yes'] === true;
+  const force = flags['force'] === true;
 
   // Non-interactive: ids provided on the command line
   if (ids.length > 0) {
@@ -784,7 +785,7 @@ async function handleInstall(opts: HandleInstallOpts): Promise<number> {
       const runner: CommandRunner = deps.remote?.run ?? defaultRunner;
       const tmpFactory: TmpDirFactory = deps.remote?.tmpFactory ?? defaultTmpFactory;
 
-      const result = await runRemoteInstall({
+      const remoteOpts = {
         ids,
         catalogUrl,
         scope,
@@ -794,7 +795,10 @@ async function handleInstall(opts: HandleInstallOpts): Promise<number> {
         runner,
         tmpFactory,
         confirm,
-      });
+        ...(force ? { force } : {}),
+      };
+
+      const result = await runRemoteInstall(remoteOpts);
 
       print(result.output);
       return 0;
@@ -842,7 +846,7 @@ async function handleInstall(opts: HandleInstallOpts): Promise<number> {
     const runner: CommandRunner = deps.remote?.run ?? defaultRunner;
     const tmpFactory: TmpDirFactory = deps.remote?.tmpFactory ?? defaultTmpFactory;
 
-    const remoteResult = await runRemoteInstall({
+    const interactiveOpts = {
       ids: selectedIds,
       catalogUrl,
       scope: interactiveScope,
@@ -851,8 +855,11 @@ async function handleInstall(opts: HandleInstallOpts): Promise<number> {
       artifactsDir,
       runner,
       tmpFactory,
-      confirm: (planText) => prompts.confirmApply(planText),
-    });
+      confirm: (planText: string) => prompts.confirmApply(planText),
+      ...(force ? { force } : {}),
+    };
+
+    const remoteResult = await runRemoteInstall(interactiveOpts);
 
     print(remoteResult.output);
     return 0;
@@ -947,6 +954,7 @@ async function handleUpdate(opts: HandleUpdateOpts): Promise<number> {
   }
 
   const yes = flags['yes'] === true;
+  const force = flags['force'] === true;
   const runner: CommandRunner = deps.remote?.run ?? defaultRunner;
   const tmpFactory: TmpDirFactory = deps.remote?.tmpFactory ?? defaultTmpFactory;
 
@@ -958,7 +966,7 @@ async function handleUpdate(opts: HandleUpdateOpts): Promise<number> {
     confirm = (planText: string) => prompts.confirmApply(planText);
   }
 
-  const result = await runUpdate({
+  const updateOpts = {
     ids,
     scope,
     env,
@@ -968,7 +976,10 @@ async function handleUpdate(opts: HandleUpdateOpts): Promise<number> {
     runner,
     tmpFactory,
     confirm,
-  });
+    ...(force ? { force } : {}),
+  };
+
+  const result = await runUpdate(updateOpts);
 
   print(result.output);
   return 0;
@@ -1062,6 +1073,11 @@ function handleError(err: unknown, print: (msg: string) => void): number {
   if (err instanceof DependencyCycleError) {
     print(`[error] Dependency cycle: ${err.message}`);
     return 2;
+  }
+
+  if (err instanceof ScanBlockedError) {
+    print(`[error] ${err.message}`);
+    return 1;
   }
 
   if (err instanceof SkillScanBlockedError) {
