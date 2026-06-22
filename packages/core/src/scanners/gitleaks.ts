@@ -112,7 +112,7 @@ export function createGitleaksScanner(opts?: GitleaksOpts): Scanner {
         '--report-format',
         'json',
         '--report-path',
-        '/dev/stdout',
+        '-',
       ]);
 
       if (exitCode === 0) {
