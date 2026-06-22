@@ -119,6 +119,25 @@ describe('createGitleaksScanner — exit 2, tool error', () => {
 });
 
 // ---------------------------------------------------------------------------
+// exit 1 but empty findings → fail-closed (anomalous report)
+// ---------------------------------------------------------------------------
+
+describe('createGitleaksScanner — exit 1 but empty findings (fail-closed)', () => {
+  it('returns { ok: false } when exit 1 and stdout is empty', async () => {
+    const scanner = createGitleaksScanner({ run: mockRunner(1, '') });
+    const verdict = await scanner.scan('/tmp/x');
+    expect(verdict.ok).toBe(false);
+    expect(verdict.findings?.length).toBeGreaterThan(0);
+  });
+
+  it('returns { ok: false } when exit 1 and stdout is "[]"', async () => {
+    const scanner = createGitleaksScanner({ run: mockRunner(1, '[]') });
+    const verdict = await scanner.scan('/tmp/x');
+    expect(verdict.ok).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // isGitleaksAvailable
 // ---------------------------------------------------------------------------
 

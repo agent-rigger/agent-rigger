@@ -122,8 +122,12 @@ export function createGitleaksScanner(opts?: GitleaksOpts): Scanner {
       if (exitCode === 1) {
         const raw = parseFindings(stdout);
         if (raw.length === 0) {
-          // exit 1 but no parseable findings — treat as clean (edge case)
-          return { ok: true };
+          // exit 1 signals findings by contract; an empty/unparseable report is
+          // anomalous (broken report flag, partial parse) → fail-closed, not clean.
+          return {
+            ok: false,
+            findings: ['gitleaks: exit 1 with no parseable findings (unexpected — fail-closed)'],
+          };
         }
         return { ok: false, findings: raw.map(formatFinding) };
       }
