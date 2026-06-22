@@ -18,20 +18,15 @@
 import path from 'node:path';
 
 import {
-  createClaudeAdapter,
   EmptyDenyArtifactError,
-  loadCanonicalContext,
-  loadCanonicalDeny,
   PluginInstallError,
   SkillScanBlockedError,
 } from '@agent-rigger/adapters';
-import type { ResolvedHook } from '@agent-rigger/adapters';
-import type { Adapter, AdapterEntry } from '@agent-rigger/core/adapter';
-import { assertSafeArtifactName, UnsafeArtifactNameError } from '@agent-rigger/core/artifact-name';
+import type { AdapterEntry } from '@agent-rigger/core/adapter';
+import { UnsafeArtifactNameError } from '@agent-rigger/core/artifact-name';
 import { InvalidJsonError } from '@agent-rigger/core/fs-json';
 import type { Env } from '@agent-rigger/core/paths';
 import { resolveUserTargets } from '@agent-rigger/core/paths';
-import { stubScanner } from '@agent-rigger/core/scan';
 
 import {
   BUILTIN_CATALOG,
@@ -42,6 +37,9 @@ import {
 } from '@agent-rigger/catalog';
 import { DependencyCycleError, UnknownEntryError } from '@agent-rigger/catalog/resolver';
 import { type CommandRunner, defaultRunner } from '@agent-rigger/catalog/tool-check';
+import { buildClaudeAdapter } from './adapter-builder';
+export { buildClaudeAdapter } from './adapter-builder';
+export type { BuildClaudeAdapterOpts } from './adapter-builder';
 import { runCheck } from './cmd-check';
 import { runInit } from './cmd-init';
 import { runInstall } from './cmd-install';
@@ -268,140 +266,8 @@ export interface CliDeps {
   remote?: { run?: CommandRunner; tmpFactory?: TmpDirFactory };
 }
 
-// ---------------------------------------------------------------------------
-// buildClaudeAdapter — mount adapter from real artifacts
-// ---------------------------------------------------------------------------
-
-/**
- * Options for the external-resolver seam in buildClaudeAdapter.
- *
- * @param externalIds      Set of artifact ids (e.g. 'skill:x', 'agent:y') whose
- *                         source should be resolved from externalBaseDir instead of
- *                         the local artifactsDir. Both fields must be provided
- *                         together for the seam to activate.
- * @param externalBaseDir  Absolute path to the root of a remote checkout. Expected
- *                         layout: skills/<name>/ and agents/<name>.md.
- * @param catalogUrl       URL of the content repo (used as the marketplace URL for
- *                         external plugin installs). When provided alongside externalIds,
- *                         plugin entries in externalIds use this URL as their marketplace
- *                         instead of the bundled <cwd>/.claude-plugin/marketplace.json.
- */
-export interface BuildClaudeAdapterOpts {
-  externalIds?: Set<string>;
-  externalBaseDir?: string;
-  catalogUrl?: string;
-}
-
-/**
- * Build a ClaudeAdapter from the artifacts directory.
- *
- * - denyRef       : loaded from <artifactsDir>/claude/deny.json
- * - agentsContent : loaded from <artifactsDir>/shared/AGENTS.md
- * - skillSource   : resolves id → <artifactsDir>/claude/skills/<id>
- *                   or <externalBaseDir>/skills/<id> when id is in externalIds
- * - agentSource   : resolves id → <artifactsDir>/claude/agents/<agentId>.md
- *                   or <externalBaseDir>/agents/<agentId>.md when id is in externalIds
- * - pluginSource  : resolves id → { plugin: <pluginId>, marketplace: <cwd>/.claude-plugin/marketplace.json }
- * - scanner       : stubScanner (M0: always passes)
- *
- * @param opts  Optional external-resolver seam for remote installs (M1b-4).
- *              Omitting opts → existing behaviour unchanged (100% rétro-compatible).
- */
-export async function buildClaudeAdapter(
-  _env: Env,
-  artifactsDir: string,
-  opts?: BuildClaudeAdapterOpts,
-): Promise<Adapter> {
-  const denyJsonPath = path.join(artifactsDir, 'claude', 'deny.json');
-  const agentsMdPath = path.join(artifactsDir, 'shared', 'AGENTS.md');
-
-  const [denyRef, agentsContent] = await Promise.all([
-    loadCanonicalDeny(denyJsonPath),
-    loadCanonicalContext(agentsMdPath),
-  ]);
-
-  // hookSpec resolves built-in hook entries to their concrete ResolvedHook specification.
-  // External hooks (not in BUILTIN_CATALOG) are not yet supported — throw an actionable error.
-  const hookSpec = (entry: AdapterEntry): ResolvedHook => {
-    const catalogEntry = BUILTIN_CATALOG.find((e) => e.id === entry.id);
-    if (
-      catalogEntry === undefined
-      || catalogEntry.kind !== 'artifact'
-      || catalogEntry.nature !== 'hook'
-    ) {
-      throw new Error(
-        `hookSpec: external hooks not yet supported — "${entry.id}" is not a built-in hook entry. `
-          + 'Install built-in hooks only (hook:guard-command, hook:guard-secret, '
-          + 'hook:guard-write-secret, hook:guard-prompt).',
-      );
-    }
-    const name = entry.id.replace(/^hook:/, '');
-    // Depth-in-defence: guard before any path.join.
-    assertSafeArtifactName(name, entry.id);
-    const scriptSource = path.join(artifactsDir, 'claude', 'hooks');
-    const scriptStore = path.join(path.dirname(resolveUserTargets(_env).stateJson), 'hooks');
-    const command = `bun run ${scriptStore}/${name}.ts`;
-    const base: ResolvedHook = {
-      event: catalogEntry.event ?? '',
-      matcher: catalogEntry.matcher ?? '',
-      command,
-      scriptSource,
-      scriptStore,
-    };
-    if (catalogEntry.timeout !== undefined) {
-      return { ...base, timeout: catalogEntry.timeout };
-    }
-    return base;
-  };
-
-  return createClaudeAdapter({
-    denyRef,
-    agentsContent,
-    scanner: stubScanner,
-    skillSource: (entry) => {
-      const name = entry.id.replace(/^skill:/, '');
-      // Depth-in-defence: guard before any path.join — prevents traversal via
-      // an external catalog entry like "skill:../../../../etc/evil".
-      assertSafeArtifactName(name, entry.id);
-      if (
-        opts?.externalIds?.has(entry.id) === true
-        && opts.externalBaseDir !== undefined
-      ) {
-        return path.join(opts.externalBaseDir, 'skills', name);
-      }
-      return path.join(artifactsDir, 'claude', 'skills', name);
-    },
-    agentSource: (entry) => {
-      const name = entry.id.replace(/^agent:/, '');
-      // Depth-in-defence: guard before any path.join.
-      assertSafeArtifactName(name, entry.id);
-      if (
-        opts?.externalIds?.has(entry.id) === true
-        && opts.externalBaseDir !== undefined
-      ) {
-        return path.join(opts.externalBaseDir, 'agents', name + '.md');
-      }
-      return path.join(artifactsDir, 'claude', 'agents', name + '.md');
-    },
-    pluginSource: (entry) => {
-      const plugin = entry.id.replace(/^plugin:/, '');
-      // External plugin: use the content repo URL as the marketplace.
-      // This lets `claude plugin marketplace add <url>` register the remote
-      // repository, then `claude plugin install <plugin>` installs from it.
-      if (
-        opts?.externalIds?.has(entry.id) === true
-        && opts.catalogUrl !== undefined
-      ) {
-        return { plugin, marketplace: opts.catalogUrl };
-      }
-      return {
-        plugin,
-        marketplace: path.join(process.cwd(), '.claude-plugin', 'marketplace.json'),
-      };
-    },
-    hookSpec,
-  });
-}
+// buildClaudeAdapter + BuildClaudeAdapterOpts are defined and exported from adapter-builder.ts.
+// They are re-exported at the top of this file so existing consumers of "cli.ts" are unaffected.
 
 // ---------------------------------------------------------------------------
 // resolveArtifactsDir — find repo artifacts relative to this file

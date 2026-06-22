@@ -21,24 +21,31 @@ single command tells you whether your local setup matches the expected state.
 
 ## Concepts
 
-**Artifact** — a deployable unit of harness configuration. Seven natures:
+**Artifact** — a deployable unit of harness configuration. Eight natures:
 
-| Nature      | What it is                                              |
-| ----------- | ------------------------------------------------------- |
-| `guardrail` | Deny list written into `settings.json`                  |
-| `context`   | AGENTS.md context file symlinked into `~/.claude/`      |
-| `skill`     | Workflow script installed into the skill store          |
-| `agent`     | Role-specialised sub-agent definition (Markdown)        |
-| `mcp`       | MCP server declaration (reserved; not in M0 catalog)    |
-| `plugin`    | Claude Code plugin installed via the plugin marketplace |
-| `tool`      | Third-party host CLI (e.g. `glab`); presence-checked    |
+| Nature      | What it is                                                         |
+| ----------- | ------------------------------------------------------------------ |
+| `guardrail` | Deny list written into `settings.json` (`permissions.deny`)        |
+| `hook`      | Claude Code hook written into `settings.json` (`hooks`) + a script |
+| `context`   | AGENTS.md context file symlinked into `~/.claude/`                 |
+| `skill`     | Workflow script installed into the skill store                     |
+| `agent`     | Role-specialised sub-agent definition (Markdown)                   |
+| `mcp`       | MCP server declaration (reserved; not in the catalog yet)          |
+| `plugin`    | Claude Code plugin installed via the plugin marketplace            |
+| `tool`      | Third-party host CLI (e.g. `glab`); presence-checked               |
 
-**Pack** — a named bundle of artifacts installed as a unit. Example:
-`pack:spec-workflow` expands to `skill:spec-workflow` + three agents
-(`agent:tech-lead`, `agent:pm`, `agent:reviewer`).
+A `hook` entry carries its `event` (e.g. `PreToolUse`) and `matcher`; installing
+it merges the hook into `settings.json` and deposits its script into a managed
+store. The built-in guards (`hook:guard-command`, `hook:guard-secret`,
+`hook:guard-write-secret`, `hook:guard-prompt`) ship this way.
 
-**Catalog** — the list of known artifacts and packs. M0 ships a built-in
-catalog. Fetching from a remote content repository is a planned M1 feature.
+**Pack** — a named bundle of artifacts installed as a unit. Examples:
+`pack:spec-workflow` (a skill + three agents), `pack:harness` (the four guard
+hooks), `pack:baseline` (a team baseline: `pack:harness` + guardrails + context).
+
+**Catalog** — the list of known artifacts and packs. agent-rigger ships a
+built-in catalog and fetches additional entries from a remote content repository
+when a catalog URL is configured (`ls`/`add`/`update`).
 
 **Manifest** — `~/.config/agent-rigger/state.json`. Records what was installed
 and when. Used by `check` to detect drift.

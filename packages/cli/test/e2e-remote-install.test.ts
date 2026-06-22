@@ -19,6 +19,9 @@
  * 5. (TEST-1) Path traversal id rejected — exit non-0, no files written outside HOME.
  * 6. (TEST-2) Cleanup on abort/throw — finally block covers both cases.
  * 7. (TEST-3) Mixed internal+external install — versionFor verified per-entry.
+ * 8. (TEST-4) pack:harness via remote path (catalogUrl set) → all 4 guards written to
+ *    settings.json + scripts deposited to store. Covers the bug where hookSpec was absent
+ *    from buildClaudeAdapterForRemote (now unified via adapter-builder.ts).
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
@@ -29,6 +32,7 @@ import path from 'node:path';
 import { type CatalogEntry, type TmpDirFactory } from '@agent-rigger/catalog';
 import type { CommandRunner } from '@agent-rigger/catalog/tool-check';
 import { UnsafeArtifactNameError } from '@agent-rigger/core/artifact-name';
+import { readJson } from '@agent-rigger/core/fs-json';
 import { resolveUserTargets } from '@agent-rigger/core/paths';
 import type { Env } from '@agent-rigger/core/paths';
 
@@ -736,5 +740,120 @@ describe('TEST-3 — mixed install: builtin (internal) + remote (external)', () 
     // versionFor returns {source:'internal', ref:'v0.0.0', sha:''} for non-external entries
     expect(internal?.ref).toBe('v0.0.0');
     expect(internal?.sha).toBe('');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// TEST-4: pack:harness via remote path (catalogUrl set)
+//
+// Regression guard: before adapter-builder.ts unification, buildClaudeAdapterForRemote
+// in remote-install.ts lacked hookSpec → remote install of hook/pack entries threw
+// "hookSpec is required". This test proves the fix.
+// ---------------------------------------------------------------------------
+
+describe('TEST-4 — pack:harness install via remote path with catalogUrl', () => {
+  // pack:harness is a built-in pack; with catalogUrl configured the request goes
+  // through runRemoteInstall → buildClaudeAdapter (unified) → hookSpec present.
+
+  it('exits 0 when installing pack:harness with catalogUrl configured', async () => {
+    const cap = makeCapture();
+    const code = await runCli(['install', 'pack:harness', '--yes'], {
+      print: cap.print,
+      env: remoteEnv.env,
+      artifactsDir: ARTIFACTS_DIR,
+      remote: { run: remoteEnv.runner, tmpFactory: remoteEnv.tmpFactory },
+    });
+    expect(code).toBe(0);
+  });
+
+  it('writes all 4 guard hooks to settings.json', async () => {
+    await runCli(['install', 'pack:harness', '--yes'], {
+      print: makeCapture().print,
+      env: remoteEnv.env,
+      artifactsDir: ARTIFACTS_DIR,
+      remote: { run: remoteEnv.runner, tmpFactory: remoteEnv.tmpFactory },
+    });
+
+    const settings = await readJson(targets.claudeSettings);
+
+    // GUARD_HOOKS matches the BUILTIN_CATALOG values exactly.
+    const GUARD_HOOKS = [
+      { event: 'PreToolUse', matcher: 'Bash' },
+      { event: 'PreToolUse', matcher: 'Read|Edit|MultiEdit|Write|NotebookEdit|Grep|Glob|Bash' },
+      { event: 'PreToolUse', matcher: 'Write|Edit|MultiEdit' },
+      { event: 'UserPromptSubmit', matcher: '*' },
+    ] as const;
+
+    const hooksSection = (settings as Record<string, unknown>)['hooks'] as
+      | Record<string, unknown[]>
+      | undefined;
+    expect(hooksSection).toBeDefined();
+
+    for (const guard of GUARD_HOOKS) {
+      const eventHooks = (hooksSection?.[guard.event]) as unknown[] | undefined;
+      expect(eventHooks).toBeDefined();
+      const found = (eventHooks ?? []).some(
+        (h) => (h as { matcher?: string }).matcher === guard.matcher,
+      );
+      expect(found).toBe(true);
+    }
+  });
+
+  it('deposits hook scripts to store/hooks/', async () => {
+    await runCli(['install', 'pack:harness', '--yes'], {
+      print: makeCapture().print,
+      env: remoteEnv.env,
+      artifactsDir: ARTIFACTS_DIR,
+      remote: { run: remoteEnv.runner, tmpFactory: remoteEnv.tmpFactory },
+    });
+
+    const scriptStore = path.join(path.dirname(targets.stateJson), 'hooks');
+
+    for (const name of ['guard-command', 'guard-secret', 'guard-write-secret', 'guard-prompt']) {
+      const exists = await fs.stat(path.join(scriptStore, `${name}.ts`))
+        .then(() => true).catch(() => false);
+      expect(exists).toBe(true);
+    }
+  });
+
+  it('deposits _shared/hook-lib.ts to store/hooks/', async () => {
+    await runCli(['install', 'pack:harness', '--yes'], {
+      print: makeCapture().print,
+      env: remoteEnv.env,
+      artifactsDir: ARTIFACTS_DIR,
+      remote: { run: remoteEnv.runner, tmpFactory: remoteEnv.tmpFactory },
+    });
+
+    const scriptStore = path.join(path.dirname(targets.stateJson), 'hooks');
+    const sharedExists = await fs.stat(path.join(scriptStore, '_shared', 'hook-lib.ts'))
+      .then(() => true).catch(() => false);
+    expect(sharedExists).toBe(true);
+  });
+
+  it('manifest contains all 4 guard entries with source:internal', async () => {
+    await runCli(['install', 'pack:harness', '--yes'], {
+      print: makeCapture().print,
+      env: remoteEnv.env,
+      artifactsDir: ARTIFACTS_DIR,
+      remote: { run: remoteEnv.runner, tmpFactory: remoteEnv.tmpFactory },
+    });
+
+    const raw = await fs.readFile(targets.stateJson, 'utf8');
+    const manifest = JSON.parse(raw) as {
+      artifacts: Array<{ id: string; source?: string }>;
+    };
+
+    for (
+      const id of [
+        'hook:guard-command',
+        'hook:guard-secret',
+        'hook:guard-write-secret',
+        'hook:guard-prompt',
+      ]
+    ) {
+      const entry = manifest.artifacts.find((a) => a.id === id);
+      expect(entry).toBeDefined();
+      expect(entry?.source).toBe('internal');
+    }
   });
 });
