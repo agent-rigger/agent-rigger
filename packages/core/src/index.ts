@@ -11,4 +11,5 @@ export * from './manifest';
 export * from './paths';
 export * from './scan';
 export * from './scanners/gitleaks';
+export * from './scanners/trivy';
 export * from './types';
