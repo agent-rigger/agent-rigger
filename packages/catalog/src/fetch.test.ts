@@ -447,21 +447,31 @@ async function makeTmpFactory(catalogContent?: string): Promise<{
 }
 
 /**
- * Builds a CommandRunner for fetchCatalog tests.
+ * Builds a CommandRunner for fetchCatalog / withRemoteCheckout tests.
  *
- * - git clone → always exits 0 (no-op success; tmpFactory already prepared the dir)
- * - git rev-parse HEAD → exits 0 with FIXED_SHA
- * - anything else → exits 1
+ * - git clone            → exits 0, records argv in `cloneCalls`
+ * - git -C <p> rev-parse → exits 0 with FIXED_SHA  (fetchCatalog rev-parse)
+ * - git -C <p> fetch     → exits 0  (sha-path fetch step)
+ * - git -C <p> checkout  → exits 0  (sha-path checkout step)
+ * - anything else        → exits 1
+ *
+ * Optional `allCalls` captures every non-clone `-C` call for argv assertions.
  */
-function makeCloneRunner(cloneCalls: string[][] = []): CommandRunner {
+function makeCloneRunner(cloneCalls: string[][] = [], allCalls: string[][] = []): CommandRunner {
   return (_cmd, args) => {
     const argv = args ?? [];
     if (argv[0] === 'clone') {
       cloneCalls.push(argv);
       return Promise.resolve({ exitCode: 0, stdout: '', stderr: '' });
     }
-    if (argv[0] === '-C' && argv[2] === 'rev-parse') {
-      return Promise.resolve({ exitCode: 0, stdout: `${FIXED_SHA}\n`, stderr: '' });
+    if (argv[0] === '-C') {
+      allCalls.push(argv);
+      if (argv[2] === 'rev-parse') {
+        return Promise.resolve({ exitCode: 0, stdout: `${FIXED_SHA}\n`, stderr: '' });
+      }
+      if (argv[2] === 'fetch' || argv[2] === 'checkout') {
+        return Promise.resolve({ exitCode: 0, stdout: '', stderr: '' });
+      }
     }
     return Promise.resolve({ exitCode: 1, stdout: '', stderr: 'unexpected command' });
   };
@@ -489,6 +499,7 @@ describe('fetchCatalog — valid catalog returns entries and sha', () => {
     const result = await fetchCatalog(
       'https://example.com/catalog.git',
       'v1.0.0',
+      true,
       makeCloneRunner(),
       {
         tmpFactory: factory,
@@ -503,6 +514,7 @@ describe('fetchCatalog — valid catalog returns entries and sha', () => {
     const result = await fetchCatalog(
       'https://example.com/catalog.git',
       'v1.0.0',
+      true,
       makeCloneRunner(),
       {
         tmpFactory: factory,
@@ -517,6 +529,7 @@ describe('fetchCatalog — valid catalog returns entries and sha', () => {
     const result = await fetchCatalog(
       'https://example.com/catalog.git',
       'v1.0.0',
+      true,
       makeCloneRunner(),
       {
         tmpFactory: factory,
@@ -537,7 +550,7 @@ describe('fetchCatalog — invalid entry triggers CatalogParseError', () => {
     const catalog = JSON.stringify([badEntry]);
     const { factory } = await makeTmpFactory(catalog);
     await expect(
-      fetchCatalog('https://example.com/catalog.git', 'v1.0.0', makeCloneRunner(), {
+      fetchCatalog('https://example.com/catalog.git', 'v1.0.0', true, makeCloneRunner(), {
         tmpFactory: factory,
       }),
     ).rejects.toBeInstanceOf(CatalogParseError);
@@ -548,7 +561,7 @@ describe('fetchCatalog — invalid entry triggers CatalogParseError', () => {
     const catalog = JSON.stringify([badEntry]);
     const { factory } = await makeTmpFactory(catalog);
     try {
-      await fetchCatalog('https://example.com/catalog.git', 'v1.0.0', makeCloneRunner(), {
+      await fetchCatalog('https://example.com/catalog.git', 'v1.0.0', true, makeCloneRunner(), {
         tmpFactory: factory,
       });
       expect(true).toBe(false);
@@ -570,7 +583,7 @@ describe('fetchCatalog — non-array catalog.json triggers CatalogParseError', (
     const catalog = JSON.stringify({ entries: [] });
     const { factory } = await makeTmpFactory(catalog);
     await expect(
-      fetchCatalog('https://example.com/catalog.git', 'v1.0.0', makeCloneRunner(), {
+      fetchCatalog('https://example.com/catalog.git', 'v1.0.0', true, makeCloneRunner(), {
         tmpFactory: factory,
       }),
     ).rejects.toBeInstanceOf(CatalogParseError);
@@ -580,7 +593,7 @@ describe('fetchCatalog — non-array catalog.json triggers CatalogParseError', (
     const catalog = JSON.stringify({ entries: [] });
     const { factory } = await makeTmpFactory(catalog);
     try {
-      await fetchCatalog('https://example.com/catalog.git', 'v1.0.0', makeCloneRunner(), {
+      await fetchCatalog('https://example.com/catalog.git', 'v1.0.0', true, makeCloneRunner(), {
         tmpFactory: factory,
       });
       expect(true).toBe(false);
@@ -600,7 +613,7 @@ describe('fetchCatalog — absent catalog.json triggers CatalogParseError', () =
     // Pass undefined so no catalog.json is written
     const { factory } = await makeTmpFactory(undefined);
     await expect(
-      fetchCatalog('https://example.com/catalog.git', 'v1.0.0', makeCloneRunner(), {
+      fetchCatalog('https://example.com/catalog.git', 'v1.0.0', true, makeCloneRunner(), {
         tmpFactory: factory,
       }),
     ).rejects.toBeInstanceOf(CatalogParseError);
@@ -609,7 +622,7 @@ describe('fetchCatalog — absent catalog.json triggers CatalogParseError', () =
   it('error message mentions catalog.json being introuvable', async () => {
     const { factory } = await makeTmpFactory(undefined);
     try {
-      await fetchCatalog('https://example.com/catalog.git', 'v1.0.0', makeCloneRunner(), {
+      await fetchCatalog('https://example.com/catalog.git', 'v1.0.0', true, makeCloneRunner(), {
         tmpFactory: factory,
       });
       expect(true).toBe(false);
@@ -628,7 +641,7 @@ describe('fetchCatalog — invalid JSON triggers CatalogParseError', () => {
   it('throws CatalogParseError when catalog.json is broken JSON', async () => {
     const { factory } = await makeTmpFactory('{ this is not json }');
     await expect(
-      fetchCatalog('https://example.com/catalog.git', 'v1.0.0', makeCloneRunner(), {
+      fetchCatalog('https://example.com/catalog.git', 'v1.0.0', true, makeCloneRunner(), {
         tmpFactory: factory,
       }),
     ).rejects.toBeInstanceOf(CatalogParseError);
@@ -646,6 +659,7 @@ describe('fetchCatalog — clone failure: RemoteFetchError and cleanup always ca
       fetchCatalog(
         'https://example.com/catalog.git',
         'v1.0.0',
+        true,
         makeFailCloneRunner('fatal: repository not found'),
         { tmpFactory: factory },
       ),
@@ -658,6 +672,7 @@ describe('fetchCatalog — clone failure: RemoteFetchError and cleanup always ca
       await fetchCatalog(
         'https://example.com/catalog.git',
         'v1.0.0',
+        true,
         makeFailCloneRunner('fatal: repository not found'),
         { tmpFactory: factory },
       );
@@ -673,6 +688,7 @@ describe('fetchCatalog — clone failure: RemoteFetchError and cleanup always ca
       await fetchCatalog(
         'https://example.com/catalog.git',
         'v1.0.0',
+        true,
         makeFailCloneRunner('fatal: repository not found'),
         { tmpFactory: factory },
       );
@@ -693,7 +709,7 @@ describe('fetchCatalog — cleanup called on success', () => {
   it('cleanup spy is called exactly once on a successful fetch', async () => {
     const catalog = JSON.stringify([VALID_TOOL_ENTRY]);
     const { factory, cleanupSpy } = await makeTmpFactory(catalog);
-    await fetchCatalog('https://example.com/catalog.git', 'v1.0.0', makeCloneRunner(), {
+    await fetchCatalog('https://example.com/catalog.git', 'v1.0.0', true, makeCloneRunner(), {
       tmpFactory: factory,
     });
     expect(cleanupSpy).toHaveBeenCalledTimes(1);
@@ -702,7 +718,7 @@ describe('fetchCatalog — cleanup called on success', () => {
   it('tmp dir does not exist after successful fetch (cleanup ran)', async () => {
     const catalog = JSON.stringify([VALID_TOOL_ENTRY]);
     const { factory, dirPath } = await makeTmpFactory(catalog);
-    await fetchCatalog('https://example.com/catalog.git', 'v1.0.0', makeCloneRunner(), {
+    await fetchCatalog('https://example.com/catalog.git', 'v1.0.0', true, makeCloneRunner(), {
       tmpFactory: factory,
     });
     const exists = await Bun.file(join(dirPath(), 'catalog.json')).exists();
@@ -722,6 +738,7 @@ describe('fetchCatalog — clone argv', () => {
     await fetchCatalog(
       'https://example.com/catalog.git',
       'v1.2.3',
+      true,
       makeCloneRunner(cloneCalls),
       { tmpFactory: factory },
     );
@@ -747,6 +764,7 @@ describe('fetchCatalog — clone argv', () => {
     await fetchCatalog(
       'https://example.com/catalog.git',
       'v1.2.3',
+      true,
       makeCloneRunner(cloneCalls),
       { tmpFactory: factory },
     );
@@ -809,7 +827,7 @@ describe('assertSafeRef — rejects dangerous refs', () => {
   it('rejects ref starting with -- (option injection)', async () => {
     const { factory } = await makeTmpFactory(JSON.stringify([VALID_TOOL_ENTRY]));
     await expect(
-      fetchCatalog('https://example.com/catalog.git', '--foo', makeCloneRunner(), {
+      fetchCatalog('https://example.com/catalog.git', '--foo', true, makeCloneRunner(), {
         tmpFactory: factory,
       }),
     ).rejects.toBeInstanceOf(InvalidRemoteRefError);
@@ -818,7 +836,7 @@ describe('assertSafeRef — rejects dangerous refs', () => {
   it('rejects empty ref', async () => {
     const { factory } = await makeTmpFactory(JSON.stringify([VALID_TOOL_ENTRY]));
     await expect(
-      fetchCatalog('https://example.com/catalog.git', '', makeCloneRunner(), {
+      fetchCatalog('https://example.com/catalog.git', '', true, makeCloneRunner(), {
         tmpFactory: factory,
       }),
     ).rejects.toBeInstanceOf(InvalidRemoteRefError);
@@ -880,7 +898,7 @@ describe('fetchCatalog — rev-parse failure triggers RemoteFetchError', () => {
     const catalog = JSON.stringify([VALID_TOOL_ENTRY]);
     const { factory } = await makeTmpFactory(catalog);
     await expect(
-      fetchCatalog('https://example.com/catalog.git', 'v1.0.0', makeRevParseFailRunner(), {
+      fetchCatalog('https://example.com/catalog.git', 'v1.0.0', true, makeRevParseFailRunner(), {
         tmpFactory: factory,
       }),
     ).rejects.toBeInstanceOf(RemoteFetchError);
@@ -890,9 +908,15 @@ describe('fetchCatalog — rev-parse failure triggers RemoteFetchError', () => {
     const catalog = JSON.stringify([VALID_TOOL_ENTRY]);
     const { factory, cleanupSpy } = await makeTmpFactory(catalog);
     try {
-      await fetchCatalog('https://example.com/catalog.git', 'v1.0.0', makeRevParseFailRunner(), {
-        tmpFactory: factory,
-      });
+      await fetchCatalog(
+        'https://example.com/catalog.git',
+        'v1.0.0',
+        true,
+        makeRevParseFailRunner(),
+        {
+          tmpFactory: factory,
+        },
+      );
     } catch {
       // expected
     }
@@ -911,6 +935,7 @@ describe('withRemoteCheckout — callback receives checkoutDir', () => {
     await withRemoteCheckout(
       'https://example.com/repo.git',
       'v1.0.0',
+      true,
       makeCloneRunner(),
       { tmpFactory: factory },
       async (dir) => {
@@ -928,6 +953,7 @@ describe('withRemoteCheckout — clone argv', () => {
     await withRemoteCheckout(
       'https://example.com/repo.git',
       'v2.3.4',
+      true,
       makeCloneRunner(cloneCalls),
       { tmpFactory: factory },
       async () => {},
@@ -953,6 +979,7 @@ describe('withRemoteCheckout — clone failure: RemoteFetchError + cleanup', () 
       withRemoteCheckout(
         'https://example.com/repo.git',
         'v1.0.0',
+        true,
         makeFailCloneRunner('fatal: repo not found'),
         { tmpFactory: factory },
         async () => {},
@@ -966,6 +993,7 @@ describe('withRemoteCheckout — clone failure: RemoteFetchError + cleanup', () 
       await withRemoteCheckout(
         'https://example.com/repo.git',
         'v1.0.0',
+        true,
         makeFailCloneRunner('fatal: repo not found'),
         { tmpFactory: factory },
         async () => {},
@@ -984,6 +1012,7 @@ describe('withRemoteCheckout — fn throws: error propagates + cleanup called', 
       withRemoteCheckout(
         'https://example.com/repo.git',
         'v1.0.0',
+        true,
         makeCloneRunner(),
         { tmpFactory: factory },
         async () => {
@@ -999,6 +1028,7 @@ describe('withRemoteCheckout — fn throws: error propagates + cleanup called', 
       await withRemoteCheckout(
         'https://example.com/repo.git',
         'v1.0.0',
+        true,
         makeCloneRunner(),
         { tmpFactory: factory },
         async () => {
@@ -1022,6 +1052,7 @@ describe('withRemoteCheckout — invalid url/ref: error before tmpFactory called
       withRemoteCheckout(
         'ext::sh -c x',
         'v1.0.0',
+        true,
         makeCloneRunner(),
         { tmpFactory: factorySpy as TmpDirFactory },
         async () => {},
@@ -1039,6 +1070,7 @@ describe('withRemoteCheckout — invalid url/ref: error before tmpFactory called
       withRemoteCheckout(
         'https://example.com/repo.git',
         '--foo',
+        true,
         makeCloneRunner(),
         { tmpFactory: factorySpy as TmpDirFactory },
         async () => {},
@@ -1054,6 +1086,7 @@ describe('withRemoteCheckout — success: returns fn value + cleanup called', ()
     const result = await withRemoteCheckout(
       'https://example.com/repo.git',
       'v1.0.0',
+      true,
       makeCloneRunner(),
       { tmpFactory: factory },
       async () => 42,
@@ -1066,11 +1099,255 @@ describe('withRemoteCheckout — success: returns fn value + cleanup called', ()
     await withRemoteCheckout(
       'https://example.com/repo.git',
       'v1.0.0',
+      true,
       makeCloneRunner(),
       { tmpFactory: factory },
       async () => {},
     );
     expect(cleanupSpy).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// withRemoteCheckout — isTag: false (sha path): clone + fetch + checkout
+// ---------------------------------------------------------------------------
+
+const SHA_COMMIT = 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeef';
+
+/**
+ * Builds a CommandRunner for the sha path (isTag: false).
+ *
+ * Records every call argv into `allCalls`.
+ * - git clone              → exits 0
+ * - git -C <p> fetch       → exits 0
+ * - git -C <p> checkout    → exits 0
+ * - git -C <p> rev-parse   → exits 0 with FIXED_SHA  (used by fetchCatalog)
+ * - anything else          → exits 1
+ */
+function makeShaRunner(allCalls: string[][] = []): CommandRunner {
+  return (_cmd, args) => {
+    const argv = args ?? [];
+    allCalls.push(argv);
+    if (argv[0] === 'clone') {
+      return Promise.resolve({ exitCode: 0, stdout: '', stderr: '' });
+    }
+    if (argv[0] === '-C') {
+      const sub = argv[2];
+      if (sub === 'fetch' || sub === 'checkout' || sub === 'rev-parse') {
+        return Promise.resolve({ exitCode: 0, stdout: `${FIXED_SHA}\n`, stderr: '' });
+      }
+    }
+    return Promise.resolve({ exitCode: 1, stdout: '', stderr: 'unexpected command' });
+  };
+}
+
+/**
+ * Builds a CommandRunner where the sha-path fetch step fails.
+ */
+function makeFailFetchRunner(stderr: string): CommandRunner {
+  return (_cmd, args) => {
+    const argv = args ?? [];
+    if (argv[0] === 'clone') {
+      return Promise.resolve({ exitCode: 0, stdout: '', stderr: '' });
+    }
+    if (argv[0] === '-C' && argv[2] === 'fetch') {
+      return Promise.resolve({ exitCode: 1, stdout: '', stderr });
+    }
+    return Promise.resolve({ exitCode: 0, stdout: '', stderr: '' });
+  };
+}
+
+/**
+ * Builds a CommandRunner where the sha-path checkout step fails.
+ */
+function makeFailCheckoutRunner(stderr: string): CommandRunner {
+  return (_cmd, args) => {
+    const argv = args ?? [];
+    if (argv[0] === 'clone') {
+      return Promise.resolve({ exitCode: 0, stdout: '', stderr: '' });
+    }
+    if (argv[0] === '-C' && argv[2] === 'fetch') {
+      return Promise.resolve({ exitCode: 0, stdout: '', stderr: '' });
+    }
+    if (argv[0] === '-C' && argv[2] === 'checkout') {
+      return Promise.resolve({ exitCode: 1, stdout: '', stderr });
+    }
+    return Promise.resolve({ exitCode: 0, stdout: '', stderr: '' });
+  };
+}
+
+describe('withRemoteCheckout — isTag:false (sha path) emits clone + fetch + checkout', () => {
+  it('clones without --branch and then fetches the sha', async () => {
+    const { factory, dirPath } = await makeTmpFactory(undefined);
+    const allCalls: string[][] = [];
+    await withRemoteCheckout(
+      'https://example.com/repo.git',
+      SHA_COMMIT,
+      false,
+      makeShaRunner(allCalls),
+      { tmpFactory: factory },
+      async () => {},
+    );
+    const cloneCall = allCalls.find((a) => a[0] === 'clone');
+    expect(cloneCall).toEqual([
+      'clone',
+      '--depth',
+      '1',
+      '--',
+      'https://example.com/repo.git',
+      dirPath(),
+    ]);
+  });
+
+  it('issues git fetch with the sha after clone', async () => {
+    const { factory, dirPath } = await makeTmpFactory(undefined);
+    const allCalls: string[][] = [];
+    await withRemoteCheckout(
+      'https://example.com/repo.git',
+      SHA_COMMIT,
+      false,
+      makeShaRunner(allCalls),
+      { tmpFactory: factory },
+      async () => {},
+    );
+    const fetchCall = allCalls.find((a) => a[0] === '-C' && a[2] === 'fetch');
+    expect(fetchCall).toEqual(['-C', dirPath(), 'fetch', '--depth', '1', 'origin', SHA_COMMIT]);
+  });
+
+  it('issues git checkout with the sha after fetch', async () => {
+    const { factory, dirPath } = await makeTmpFactory(undefined);
+    const allCalls: string[][] = [];
+    await withRemoteCheckout(
+      'https://example.com/repo.git',
+      SHA_COMMIT,
+      false,
+      makeShaRunner(allCalls),
+      { tmpFactory: factory },
+      async () => {},
+    );
+    const checkoutCall = allCalls.find((a) => a[0] === '-C' && a[2] === 'checkout');
+    expect(checkoutCall).toEqual(['-C', dirPath(), 'checkout', SHA_COMMIT]);
+  });
+
+  it('fn receives the checkout dir', async () => {
+    const { factory, dirPath } = await makeTmpFactory(undefined);
+    let received = '';
+    await withRemoteCheckout(
+      'https://example.com/repo.git',
+      SHA_COMMIT,
+      false,
+      makeShaRunner(),
+      { tmpFactory: factory },
+      async (dir) => {
+        received = dir;
+      },
+    );
+    expect(received).toBe(dirPath());
+  });
+
+  it('cleanup is called on success', async () => {
+    const { factory, cleanupSpy } = await makeTmpFactory(undefined);
+    await withRemoteCheckout(
+      'https://example.com/repo.git',
+      SHA_COMMIT,
+      false,
+      makeShaRunner(),
+      { tmpFactory: factory },
+      async () => {},
+    );
+    expect(cleanupSpy).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('withRemoteCheckout — isTag:false: fetch failure throws RemoteFetchError + cleanup', () => {
+  it('throws RemoteFetchError when fetch exits 1', async () => {
+    const { factory } = await makeTmpFactory(undefined);
+    await expect(
+      withRemoteCheckout(
+        'https://example.com/repo.git',
+        SHA_COMMIT,
+        false,
+        makeFailFetchRunner('fatal: sha not found'),
+        { tmpFactory: factory },
+        async () => {},
+      ),
+    ).rejects.toBeInstanceOf(RemoteFetchError);
+  });
+
+  it('cleanup is called even when fetch fails', async () => {
+    const { factory, cleanupSpy } = await makeTmpFactory(undefined);
+    try {
+      await withRemoteCheckout(
+        'https://example.com/repo.git',
+        SHA_COMMIT,
+        false,
+        makeFailFetchRunner('fatal: sha not found'),
+        { tmpFactory: factory },
+        async () => {},
+      );
+    } catch {
+      // expected
+    }
+    expect(cleanupSpy).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('withRemoteCheckout — isTag:false: checkout failure throws RemoteFetchError + cleanup', () => {
+  it('throws RemoteFetchError when checkout exits 1', async () => {
+    const { factory } = await makeTmpFactory(undefined);
+    await expect(
+      withRemoteCheckout(
+        'https://example.com/repo.git',
+        SHA_COMMIT,
+        false,
+        makeFailCheckoutRunner('error: pathspec SHA did not match'),
+        { tmpFactory: factory },
+        async () => {},
+      ),
+    ).rejects.toBeInstanceOf(RemoteFetchError);
+  });
+
+  it('cleanup is called even when checkout fails', async () => {
+    const { factory, cleanupSpy } = await makeTmpFactory(undefined);
+    try {
+      await withRemoteCheckout(
+        'https://example.com/repo.git',
+        SHA_COMMIT,
+        false,
+        makeFailCheckoutRunner('error: pathspec SHA did not match'),
+        { tmpFactory: factory },
+        async () => {},
+      );
+    } catch {
+      // expected
+    }
+    expect(cleanupSpy).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('withRemoteCheckout — isTag:true (tag path) clone argv unchanged (non-regression)', () => {
+  it('passes --branch <tag> to git clone', async () => {
+    const { factory, dirPath } = await makeTmpFactory(undefined);
+    const cloneCalls: string[][] = [];
+    await withRemoteCheckout(
+      'https://example.com/repo.git',
+      'v3.0.0',
+      true,
+      makeCloneRunner(cloneCalls),
+      { tmpFactory: factory },
+      async () => {},
+    );
+    expect(cloneCalls).toHaveLength(1);
+    expect(cloneCalls[0]).toEqual([
+      'clone',
+      '--depth',
+      '1',
+      '--branch',
+      'v3.0.0',
+      '--',
+      'https://example.com/repo.git',
+      dirPath(),
+    ]);
   });
 });
 

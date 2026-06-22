@@ -184,6 +184,7 @@ export async function runUpdate(opts: RunUpdateOptions): Promise<UpdateResult> {
     const checkoutResult = await withRemoteCheckout(
       catalogUrl,
       remote.ref,
+      remote.isTag,
       runner,
       { tmpFactory },
       async (dir) => {

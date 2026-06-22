@@ -382,20 +382,31 @@ export class CatalogParseError extends Error {
 }
 
 /**
- * Performs a shallow clone of `url` at `ref` into a temporary directory,
+ * Performs a shallow clone of `url` into a temporary directory,
  * executes `fn(checkoutDir)`, then cleans up the directory unconditionally.
+ *
+ * When `isTag` is true the ref is a branch/tag name and is passed via
+ * `--branch <ref>` (original behaviour).
+ *
+ * When `isTag` is false the ref is an arbitrary commit sha (HEAD fallback).
+ * `git clone --branch <sha>` is rejected by git, so the sha path uses:
+ *   1. `git clone --depth 1 -- <url> <path>` (clone default branch)
+ *   2. `git -C <path> fetch --depth 1 origin <sha>`
+ *   3. `git -C <path> checkout <sha>`
  *
  * Guarantees:
  *  - `assertSafeRemoteUrl` and `assertSafeRef` are called before any tmp allocation.
- *  - cleanup runs in `finally`, covering success, clone failure, and `fn` throw.
+ *  - cleanup runs in `finally`, covering success, clone failure, fetch/checkout
+ *    failure, and `fn` throw.
  *
  * Returns the value returned by `fn`.
- * Throws RemoteFetchError when git clone exits non-zero.
+ * Throws RemoteFetchError when any git command exits non-zero.
  * Throws InvalidRemoteUrlError / InvalidRemoteRefError for unsafe inputs.
  */
 export async function withRemoteCheckout<T>(
   url: string,
   ref: string,
+  isTag: boolean,
   run: CommandRunner,
   opts: { tmpFactory: TmpDirFactory },
   fn: (checkoutDir: string) => Promise<T>,
@@ -406,19 +417,37 @@ export async function withRemoteCheckout<T>(
   const { path, cleanup } = await opts.tmpFactory();
 
   try {
-    // '--' separates options from operands so URL/ref cannot be parsed as git flags.
-    const cloneResult = await run('git', [
-      'clone',
-      '--depth',
-      '1',
-      '--branch',
-      ref,
-      '--',
-      url,
-      path,
-    ]);
-    if (cloneResult.exitCode !== 0) {
-      throw new RemoteFetchError(url, cloneResult.stderr ?? '');
+    if (isTag) {
+      // '--' separates options from operands so URL/ref cannot be parsed as git flags.
+      const cloneResult = await run('git', [
+        'clone',
+        '--depth',
+        '1',
+        '--branch',
+        ref,
+        '--',
+        url,
+        path,
+      ]);
+      if (cloneResult.exitCode !== 0) {
+        throw new RemoteFetchError(url, cloneResult.stderr ?? '');
+      }
+    } else {
+      // SHA path: clone default branch, then fetch + checkout the specific sha.
+      const cloneResult = await run('git', ['clone', '--depth', '1', '--', url, path]);
+      if (cloneResult.exitCode !== 0) {
+        throw new RemoteFetchError(url, cloneResult.stderr ?? '');
+      }
+
+      const fetchResult = await run('git', ['-C', path, 'fetch', '--depth', '1', 'origin', ref]);
+      if (fetchResult.exitCode !== 0) {
+        throw new RemoteFetchError(url, fetchResult.stderr ?? '');
+      }
+
+      const checkoutResult = await run('git', ['-C', path, 'checkout', ref]);
+      if (checkoutResult.exitCode !== 0) {
+        throw new RemoteFetchError(url, checkoutResult.stderr ?? '');
+      }
     }
 
     return await fn(path);
@@ -517,10 +546,11 @@ export async function readCatalogDir(dir: string): Promise<CatalogEntry[]> {
 export async function fetchCatalog(
   url: string,
   ref: string,
+  isTag: boolean,
   run: CommandRunner,
   opts: { tmpFactory: TmpDirFactory },
 ): Promise<FetchedCatalog> {
-  return withRemoteCheckout(url, ref, run, opts, async (dir) => {
+  return withRemoteCheckout(url, ref, isTag, run, opts, async (dir) => {
     const entries = await readCatalogDir(dir);
 
     // Resolve HEAD sha of the clone.
