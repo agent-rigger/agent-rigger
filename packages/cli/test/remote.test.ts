@@ -33,7 +33,6 @@ function makeEntry(id: string): CatalogEntry {
     kind: 'artifact',
     id,
     nature: 'skill',
-    source: 'external',
     targets: ['claude'],
     scopes: ['user'],
   };
@@ -224,7 +223,6 @@ describe('mergeCatalogs', () => {
       kind: 'artifact',
       id: 'guardrails-claude',
       nature: 'guardrail',
-      source: 'internal',
       targets: ['claude'],
       scopes: ['user', 'project'],
     };
@@ -232,13 +230,12 @@ describe('mergeCatalogs', () => {
       kind: 'artifact',
       id: 'guardrails-claude',
       nature: 'guardrail',
-      source: 'external', // different source — remote version
       targets: ['claude'],
       scopes: ['user'],
     };
     const { entries, conflicts } = mergeCatalogs([builtinEntry], [remoteEntry]);
     expect(entries).toHaveLength(1);
-    expect(entries[0]?.source).toBe('internal'); // built-in kept
+    expect(entries[0]?.id).toBe('guardrails-claude'); // built-in kept
     expect(conflicts).toContain('guardrails-claude');
   });
 

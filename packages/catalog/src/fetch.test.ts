@@ -399,7 +399,6 @@ const VALID_TOOL_ENTRY = {
   kind: 'artifact',
   id: 'tool:glab',
   nature: 'tool',
-  source: 'external',
   targets: ['claude'],
   scopes: ['user'],
   level: 'required',
@@ -410,7 +409,6 @@ const VALID_TOOL_ENTRY = {
 const VALID_PACK_ENTRY = {
   kind: 'pack',
   id: 'pack:dev',
-  source: 'internal',
   targets: ['claude'],
   scopes: ['user'],
   members: ['tool:glab'],

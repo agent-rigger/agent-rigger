@@ -44,7 +44,6 @@ const EXTERNAL_SKILL_ENTRY: CatalogEntry = {
   kind: 'artifact',
   id: 'skill:remote-demo',
   nature: 'skill',
-  source: 'external',
   targets: ['claude'],
   scopes: ['user', 'project'],
 };
@@ -237,7 +236,7 @@ describe('interactive install — with catalogUrl', () => {
     expect(code).toBe(0);
   });
 
-  it('manifest entry has source:external after interactive remote install', async () => {
+  it('manifest entry has real ref/sha after interactive remote install', async () => {
     const prompts: CliPrompts = {
       selectArtifacts: async () => ['skill:remote-demo'],
       selectScope: async () => 'user',
@@ -256,12 +255,12 @@ describe('interactive install — with catalogUrl', () => {
 
     const raw = await fs.readFile(targets.stateJson, 'utf8');
     const manifest = JSON.parse(raw) as {
-      artifacts: Array<{ id: string; source: string; ref?: string }>;
+      artifacts: Array<{ id: string; ref?: string; sha?: string }>;
     };
     const entry = manifest.artifacts.find((a) => a.id === 'skill:remote-demo');
     expect(entry).toBeDefined();
-    expect(entry?.source).toBe('external');
     expect(entry?.ref).toBe(TAG_V1_0_0);
+    expect(entry?.sha).not.toBe('');
   });
 
   it('store SKILL.md is written after interactive remote install', async () => {
@@ -323,9 +322,7 @@ describe('interactive install — without catalogUrl', () => {
 
       expect(capturedEntries).not.toBeNull();
       // The remote-demo fixture entry must NOT appear in the built-in-only catalog.
-      // NOTE: BUILTIN_CATALOG itself contains source:'external' entries (e.g. tool:glab — host
-      // tools that must be present on the system), so filtering on source alone would give false
-      // positives. We assert on the specific remote fixture id instead.
+      // We assert on the specific remote fixture id.
       // capturedEntries is non-null at this point (asserted above).
       // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       const remoteFixtureEntries = capturedEntries!.filter((e) => e.id === 'skill:remote-demo');
@@ -335,7 +332,7 @@ describe('interactive install — without catalogUrl', () => {
     }
   });
 
-  it('installs a built-in skill locally (manifest source:internal)', async () => {
+  it('installs a built-in skill locally (manifest has no remote ref)', async () => {
     const noUrlIso = await makeIsolatedEnv({ withCatalogUrl: false });
     const noUrlTargets = resolveUserTargets(noUrlIso.env);
 
@@ -360,10 +357,11 @@ describe('interactive install — without catalogUrl', () => {
 
       const raw = await fs.readFile(noUrlTargets.stateJson, 'utf8');
       const manifest = JSON.parse(raw) as {
-        artifacts: Array<{ id: string; source: string }>;
+        artifacts: Array<{ id: string; ref: string; sha: string }>;
       };
       const entry = manifest.artifacts.find((a) => a.id === 'guardrails-claude');
-      expect(entry?.source).toBe('internal');
+      expect(entry?.ref).toBe('v0.0.0');
+      expect(entry?.sha).toBe('');
     } finally {
       await noUrlIso.cleanupAll();
     }

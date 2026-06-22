@@ -90,13 +90,13 @@ export interface RunInstallOptions {
   /** Working directory (reserved; unused in M0). */
   cwd?: string;
   /**
-   * Optional seam for remote installs (M1b-3/M1b-4).
-   * When provided, each entry's source/ref/sha in the manifest is derived
-   * from this function instead of the M0 defaults (internal/v0.0.0/'').
+   * Optional seam for remote installs.
+   * When provided, each entry's ref/sha in the manifest is derived
+   * from this function instead of the defaults (v0.0.0/'').
    */
   versionFor?: (
     entry: AdapterEntry,
-  ) => { source: 'internal' | 'external'; ref: string; sha: string };
+  ) => { ref: string; sha: string };
 }
 
 // ---------------------------------------------------------------------------

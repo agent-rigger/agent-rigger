@@ -54,7 +54,6 @@ const REMOTE_SKILL_ENTRY: CatalogEntry = {
   kind: 'artifact',
   id: 'skill:remote-demo',
   nature: 'skill',
-  source: 'external',
   targets: ['claude'],
   scopes: ['user', 'project'],
 };

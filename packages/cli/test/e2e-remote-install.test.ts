@@ -58,7 +58,6 @@ const REMOTE_SKILL_ENTRY: CatalogEntry = {
   kind: 'artifact',
   id: 'skill:remote-demo',
   nature: 'skill',
-  source: 'external',
   targets: ['claude'],
   scopes: ['user', 'project'],
 };
@@ -267,7 +266,7 @@ describe('remote install — skill:remote-demo --yes with catalogUrl', () => {
     expect(stat).not.toBeNull();
   });
 
-  it('manifest entry has source:external', async () => {
+  it('manifest entry has real ref (identifies remote origin)', async () => {
     await runCli(['install', 'skill:remote-demo', '--yes'], {
       print: makeCapture().print,
       env: remoteEnv.env,
@@ -277,11 +276,12 @@ describe('remote install — skill:remote-demo --yes with catalogUrl', () => {
 
     const raw = await fs.readFile(targets.stateJson, 'utf8');
     const manifest = JSON.parse(raw) as {
-      artifacts: Array<{ id: string; source?: string; ref?: string; sha?: string }>;
+      artifacts: Array<{ id: string; ref?: string; sha?: string }>;
     };
     const entry = manifest.artifacts.find((a) => a.id === 'skill:remote-demo');
     expect(entry).toBeDefined();
-    expect(entry?.source).toBe('external');
+    // Remote entry has a real ref/sha (not defaults)
+    expect(entry?.ref).not.toBe('v0.0.0');
   });
 
   it('manifest entry has real ref (tag name)', async () => {
@@ -318,10 +318,10 @@ describe('remote install — skill:remote-demo --yes with catalogUrl', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Scenario 2: install builtin --yes with catalogUrl → source:'internal'
+// Scenario 2: install builtin --yes with catalogUrl → defaults (ref:v0.0.0)
 // ---------------------------------------------------------------------------
 
-describe('remote install — builtin id with catalogUrl → source:internal', () => {
+describe('remote install — builtin id with catalogUrl → local defaults', () => {
   it('exits 0 for guardrails-claude', async () => {
     const cap = makeCapture();
     const code = await runCli(['install', 'guardrails-claude', '--yes'], {
@@ -333,7 +333,7 @@ describe('remote install — builtin id with catalogUrl → source:internal', ()
     expect(code).toBe(0);
   });
 
-  it('manifest entry for guardrails-claude has source:internal', async () => {
+  it('manifest entry for guardrails-claude has default ref (not from remote)', async () => {
     await runCli(['install', 'guardrails-claude', '--yes'], {
       print: makeCapture().print,
       env: remoteEnv.env,
@@ -343,11 +343,12 @@ describe('remote install — builtin id with catalogUrl → source:internal', ()
 
     const raw = await fs.readFile(targets.stateJson, 'utf8');
     const manifest = JSON.parse(raw) as {
-      artifacts: Array<{ id: string; source?: string }>;
+      artifacts: Array<{ id: string; ref?: string; sha?: string }>;
     };
     const entry = manifest.artifacts.find((a) => a.id === 'guardrails-claude');
     expect(entry).toBeDefined();
-    expect(entry?.source).toBe('internal');
+    expect(entry?.ref).toBe('v0.0.0');
+    expect(entry?.sha).toBe('');
   });
 });
 
@@ -381,7 +382,7 @@ describe('remote install — builtin id WITHOUT catalogUrl → local flow', () =
     }
   });
 
-  it('manifest entry has source:internal when no catalogUrl', async () => {
+  it('manifest entry has default ref/sha when no catalogUrl', async () => {
     const localEnv = await makeRemoteEnv({ withCatalogUrl: false });
     const localTargets = resolveUserTargets(localEnv.env);
 
@@ -395,10 +396,11 @@ describe('remote install — builtin id WITHOUT catalogUrl → local flow', () =
 
       const raw = await fs.readFile(localTargets.stateJson, 'utf8');
       const manifest = JSON.parse(raw) as {
-        artifacts: Array<{ id: string; source?: string }>;
+        artifacts: Array<{ id: string; ref?: string; sha?: string }>;
       };
       const entry = manifest.artifacts.find((a) => a.id === 'guardrails-claude');
-      expect(entry?.source).toBe('internal');
+      expect(entry?.ref).toBe('v0.0.0');
+      expect(entry?.sha).toBe('');
     } finally {
       await localEnv.cleanupAll();
     }
@@ -436,7 +438,6 @@ describe('TEST-1 — path traversal id rejected', () => {
       kind: 'artifact',
       id: 'skill:../../../../etc/evil',
       nature: 'skill',
-      source: 'external',
       targets: ['claude'],
       scopes: ['user', 'project'],
     };
@@ -484,7 +485,6 @@ describe('TEST-1 — path traversal id rejected', () => {
       kind: 'artifact',
       id: 'skill:../../../../etc/evil',
       nature: 'skill',
-      source: 'external',
       targets: ['claude'],
       scopes: ['user', 'project'],
     };
@@ -523,7 +523,6 @@ describe('TEST-1 — path traversal id rejected', () => {
       kind: 'artifact',
       id: 'skill:../../../../etc/evil',
       nature: 'skill',
-      source: 'external',
       targets: ['claude'],
       scopes: ['user', 'project'],
     };
@@ -696,7 +695,7 @@ describe('TEST-3 — mixed install: builtin (internal) + remote (external)', () 
     expect(code).toBe(0);
   });
 
-  it('manifest: guardrails-claude has source:internal', async () => {
+  it('manifest: guardrails-claude has default ref (no remote checkout)', async () => {
     await runCli(['install', 'guardrails-claude', 'skill:remote-demo', '--yes'], {
       print: makeCapture().print,
       env: remoteEnv.env,
@@ -706,17 +705,16 @@ describe('TEST-3 — mixed install: builtin (internal) + remote (external)', () 
 
     const raw = await fs.readFile(targets.stateJson, 'utf8');
     const manifest = JSON.parse(raw) as {
-      artifacts: Array<{ id: string; source?: string; ref?: string; sha?: string }>;
+      artifacts: Array<{ id: string; ref?: string; sha?: string }>;
     };
 
     const internal = manifest.artifacts.find((a) => a.id === 'guardrails-claude');
     expect(internal).toBeDefined();
-    expect(internal?.source).toBe('internal');
     expect(internal?.ref).toBe('v0.0.0');
     expect(internal?.sha).toBe('');
   });
 
-  it('manifest: skill:remote-demo has source:external with real ref+sha', async () => {
+  it('manifest: skill:remote-demo has real ref+sha (from checkout)', async () => {
     await runCli(['install', 'guardrails-claude', 'skill:remote-demo', '--yes'], {
       print: makeCapture().print,
       env: remoteEnv.env,
@@ -726,12 +724,11 @@ describe('TEST-3 — mixed install: builtin (internal) + remote (external)', () 
 
     const raw = await fs.readFile(targets.stateJson, 'utf8');
     const manifest = JSON.parse(raw) as {
-      artifacts: Array<{ id: string; source?: string; ref?: string; sha?: string }>;
+      artifacts: Array<{ id: string; ref?: string; sha?: string }>;
     };
 
     const external = manifest.artifacts.find((a) => a.id === 'skill:remote-demo');
     expect(external).toBeDefined();
-    expect(external?.source).toBe('external');
     expect(external?.ref).toBe(TAG_NAME);
     expect(external?.sha).toBe(SHA);
   });
@@ -843,7 +840,7 @@ describe('TEST-4 — pack:harness install via remote path with catalogUrl', () =
     expect(sharedExists).toBe(true);
   });
 
-  it('manifest contains all 4 guard entries with source:internal', async () => {
+  it('manifest contains all 4 guard entries installed locally (no remote ref)', async () => {
     await runCli(['install', 'pack:harness', '--yes'], {
       print: makeCapture().print,
       env: remoteEnv.env,
@@ -853,7 +850,7 @@ describe('TEST-4 — pack:harness install via remote path with catalogUrl', () =
 
     const raw = await fs.readFile(targets.stateJson, 'utf8');
     const manifest = JSON.parse(raw) as {
-      artifacts: Array<{ id: string; source?: string }>;
+      artifacts: Array<{ id: string; ref: string; sha: string }>;
     };
 
     for (
@@ -866,7 +863,8 @@ describe('TEST-4 — pack:harness install via remote path with catalogUrl', () =
     ) {
       const entry = manifest.artifacts.find((a) => a.id === id);
       expect(entry).toBeDefined();
-      expect(entry?.source).toBe('internal');
+      expect(entry?.ref).toBe('v0.0.0');
+      expect(entry?.sha).toBe('');
     }
   });
 });

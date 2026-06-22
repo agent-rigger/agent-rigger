@@ -1017,7 +1017,7 @@ async function resolveUpdateAvailable(
     const manifest = await readManifest(manifestPath);
 
     const staleIds = manifest.artifacts
-      .filter((e) => e.scope === scope && e.source === 'external')
+      .filter((e) => e.scope === scope && e.ref !== 'v0.0.0')
       .filter((e) => isUpdateAvailable(e.ref, remoteVersion))
       .map((e) => `  [update available]  ${e.id}  ${e.ref} → ${remoteVersion.ref}`);
 

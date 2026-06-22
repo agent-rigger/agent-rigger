@@ -60,7 +60,6 @@ const REMOTE_SKILL_ENTRY: CatalogEntry = {
   kind: 'artifact',
   id: 'skill:remote-demo',
   nature: 'skill',
-  source: 'external',
   targets: ['claude'],
   scopes: ['user', 'project'],
 };
@@ -70,7 +69,6 @@ const REMOTE_SKILL_B_ENTRY: CatalogEntry = {
   kind: 'artifact',
   id: 'skill:remote-b',
   nature: 'skill',
-  source: 'external',
   targets: ['claude'],
   scopes: ['user', 'project'],
 };

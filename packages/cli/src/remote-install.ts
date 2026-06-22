@@ -79,7 +79,7 @@ export class ScanBlockedError extends Error {
 // scanPathFor — derive the filesystem path to scan inside the checkout dir
 // ---------------------------------------------------------------------------
 
-function scanPathFor(entry: ArtifactEntry, baseDir: string): string | null {
+export function scanPathFor(entry: ArtifactEntry, baseDir: string): string | null {
   if (entry.nature === 'skill') {
     const name = entry.id.replace(/^skill:/, '');
     return path.join(baseDir, 'skills', name);
@@ -97,9 +97,9 @@ function scanPathFor(entry: ArtifactEntry, baseDir: string): string | null {
 // ---------------------------------------------------------------------------
 
 /**
- * Scan all external entries in the checkout directory.
+ * Scan all entries that have a resolvable checkout path in the given directory.
  *
- * - Resolves each entry to a scan path (skills/agents only; others skipped).
+ * - Resolves each entry to a scan path (skills/agents only; others skipped naturally).
  * - Runs scanner.scan() in parallel via Promise.all.
  * - If any verdict is !ok and force is false → throws ScanBlockedError.
  * - If any verdict is !ok and force is true  → returns { warnings: [...] }.
@@ -107,12 +107,12 @@ function scanPathFor(entry: ArtifactEntry, baseDir: string): string | null {
  *
  * Callers prepend the warnings to their output.
  *
- * @param opts.entries  External ArtifactEntry list to scan.
+ * @param opts.entries  ArtifactEntry list to scan (entries without a checkout path are skipped).
  * @param opts.baseDir  Root of the remote checkout directory.
  * @param opts.scanner  Scanner instance to use.
  * @param opts.force    When true, blocking scan warns instead of throwing.
  */
-export async function scanExternalEntries(opts: {
+export async function scanEntries(opts: {
   entries: ArtifactEntry[];
   baseDir: string;
   scanner: Scanner;
@@ -240,21 +240,34 @@ export async function runRemoteInstall(opts: {
 
       const { entries: effective } = mergeCatalogs(BUILTIN_CATALOG, remoteEntries);
       const resolved = resolve(ids, effective);
-      const externalIds = new Set(
-        resolved.filter((e) => e.source === 'external').map((e) => e.id),
+
+      // Entries with a checkout path (skills/agents) are "remote" — they come
+      // from the fetched content repo. Others (guardrails, contexts, hooks)
+      // always come from the local artifacts dir.
+      // Plugin entries that appear in remoteEntries (not in builtin) are also
+      // considered remote: they use catalogUrl as their marketplace URL.
+      const remoteEntryIds = new Set(remoteEntries.map((e) => e.id));
+      const remoteIds = new Set(
+        resolved
+          .filter(
+            (e) =>
+              scanPathFor(e, dir) !== null
+              || (e.nature === 'plugin' && remoteEntryIds.has(e.id)),
+          )
+          .map((e) => e.id),
       );
 
-      // Security scan — external entries only (ADR-0014).
-      const externalResolved = resolved.filter((e) => e.source === 'external');
-      const { warnings } = await scanExternalEntries({
-        entries: externalResolved,
+      // Security scan — all entries that have a checkout path (uniform scan, ADR-0014).
+      // Entries without a scanPath (e.g. guardrails, hooks) are naturally skipped.
+      const { warnings } = await scanEntries({
+        entries: resolved,
         baseDir: dir,
         scanner,
         force,
       });
 
       const adapter = await buildClaudeAdapter(env, artifactsDir, {
-        externalIds,
+        externalIds: remoteIds,
         externalBaseDir: dir,
         catalogUrl,
         pluginRunner,
@@ -262,11 +275,11 @@ export async function runRemoteInstall(opts: {
 
       const versionFor = (
         entry: { id: string },
-      ): { source: 'internal' | 'external'; ref: string; sha: string } => {
-        if (externalIds.has(entry.id)) {
-          return { source: 'external', ref: version.ref, sha: version.sha };
+      ): { ref: string; sha: string } => {
+        if (remoteIds.has(entry.id)) {
+          return { ref: version.ref, sha: version.sha };
         }
-        return { source: 'internal', ref: 'v0.0.0', sha: '' };
+        return { ref: 'v0.0.0', sha: '' };
       };
 
       const result = await runInstall({
