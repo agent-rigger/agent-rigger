@@ -89,9 +89,9 @@ type RemovalOpKindApply = (ops: RemovalOp[], env: Env) => Promise<void>;
 // ---------------------------------------------------------------------------
 
 export interface ClaudeAdapterConfig {
-  /** Canonical deny rules loaded from artifacts/claude/deny.json. */
+  /** Canonical deny rules loaded from the installed guardrail entry (deny.json from catalog checkout). */
   denyRef: string[];
-  /** Canonical allow rules loaded from artifacts/claude/allow.json (default []). */
+  /** Canonical allow rules loaded from the installed guardrail entry (allow.json from catalog checkout, default []). */
   allowRef?: string[];
   /** Canonical AGENTS.md content for the context handler. */
   agentsContent?: string;

@@ -2,9 +2,12 @@
  * e2e.test.ts — End-to-end integration tests for the install → check flow.
  *
  * Strategy:
- * - Real artifacts from the repo (artifacts/claude/deny.json, artifacts/shared/AGENTS.md).
+ * - Local test fixtures from packages/cli/test/fixtures/ (deny.json, allow.json, AGENTS.md).
+ *   These fixtures replace the former artifacts/ directory which no longer exists — all
+ *   catalog content now originates from a remote checkout, so e2e tests use a fixture
+ *   directory that mirrors the catalog layout without recreating the removed artifacts/.
  * - Isolated RIGGER_HOME via tmp dir (never touches real ~/.claude).
- * - buildClaudeAdapter mounts the real adapter from real artifact files.
+ * - buildClaudeAdapter mounts the real adapter from fixture files.
  * - runInstall → runCheck exercised end-to-end with real filesystem writes.
  * - No process.exit, no while loops, no mocks of implementation.
  *
@@ -43,30 +46,36 @@ import { runInstall } from '../src/cmd-install';
 // packages/cli/test → packages/cli → packages → agent-rigger (repo root)
 // ---------------------------------------------------------------------------
 
-const REPO_ROOT = path.resolve(import.meta.dirname, '../../..');
-const ARTIFACTS_DIR = path.join(REPO_ROOT, 'artifacts');
+/**
+ * Local fixture directory with minimal catalog-layout files for e2e tests.
+ * Mirrors the layout that a remote checkout provides:
+ *   fixtures/deny.json        — guardrail deny rules
+ *   fixtures/allow.json       — guardrail allow rules
+ *   fixtures/AGENTS.md        — context document
+ *
+ * The former artifacts/ directory has been removed (F2: CLI carries no builtin content).
+ * All production content now comes from a remote catalog checkout; tests use this
+ * fixture dir in its place.
+ */
+const FIXTURE_DIR = path.resolve(import.meta.dirname, 'fixtures');
 
 /**
- * Build a ClaudeAdapter pre-loaded with the real artifact content from ARTIFACTS_DIR.
+ * Build a ClaudeAdapter pre-loaded with fixture content from FIXTURE_DIR.
  *
- * Replaces the old `buildClaudeAdapter(env, ARTIFACTS_DIR)` call. This helper
- * loads deny/allow/AGENTS.md directly from the repo artifacts dir and creates
+ * Loads deny/allow/AGENTS.md from the local fixture directory and creates
  * the adapter via `createClaudeAdapter`. The e2e tests only need guardrail +
  * context functionality; `env` is accepted for signature compatibility.
  */
 async function buildE2eAdapter(_env: Env): Promise<ReturnType<typeof createClaudeAdapter>> {
-  const denyRef = await loadCanonicalDeny(path.join(ARTIFACTS_DIR, 'claude', 'deny.json'));
-  const allowRef = await loadCanonicalAllow(path.join(ARTIFACTS_DIR, 'claude', 'allow.json'));
-  const agentsContent = await loadCanonicalContext(
-    path.join(ARTIFACTS_DIR, 'shared', 'AGENTS.md'),
-  );
+  const denyRef = await loadCanonicalDeny(path.join(FIXTURE_DIR, 'deny.json'));
+  const allowRef = await loadCanonicalAllow(path.join(FIXTURE_DIR, 'allow.json'));
+  const agentsContent = await loadCanonicalContext(path.join(FIXTURE_DIR, 'AGENTS.md'));
   return createClaudeAdapter({ denyRef, allowRef, agentsContent, scanner: stubScanner });
 }
 
 // ---------------------------------------------------------------------------
-// Fixture catalog (replaces E2E_FIXTURE_CATALOG — no built-in content)
-// Provides the minimum entries needed for e2e install/check tests.
-// ids map to real artifact files in artifacts/ (deny.json, AGENTS.md).
+// Fixture catalog — provides the minimum entries needed for e2e install/check tests.
+// ids match the fixture files in packages/cli/test/fixtures/ (deny.json, AGENTS.md).
 // ---------------------------------------------------------------------------
 
 const E2E_FIXTURE_CATALOG: CatalogEntry[] = [
