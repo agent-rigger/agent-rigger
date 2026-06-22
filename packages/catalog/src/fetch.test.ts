@@ -37,6 +37,7 @@ import {
   InvalidRemoteRefError,
   InvalidRemoteUrlError,
   listRemoteTags,
+  readCatalogDir,
   RemoteFetchError,
   resolveVersion,
   type TmpDirFactory,
@@ -1069,5 +1070,154 @@ describe('withRemoteCheckout — success: returns fn value + cleanup called', ()
       async () => {},
     );
     expect(cleanupSpy).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// readCatalogDir — standalone unit tests
+// ---------------------------------------------------------------------------
+
+/**
+ * Creates a real temporary directory, writes `catalog.json` with the given content
+ * (or leaves it absent when content is undefined), and returns the directory path.
+ * The caller is responsible for cleanup via rm.
+ */
+async function makeReadCatalogDir(catalogContent?: string): Promise<{
+  dir: string;
+  cleanup: () => Promise<void>;
+}> {
+  const dir = await mkdtemp(join(tmpdir(), 'readcatalogdir-test-'));
+  if (catalogContent !== undefined) {
+    await writeFile(join(dir, 'catalog.json'), catalogContent, 'utf8');
+  }
+  return { dir, cleanup: () => rm(dir, { recursive: true, force: true }) };
+}
+
+describe('readCatalogDir — valid catalog returns entries', () => {
+  it('returns all validated entries from the directory', async () => {
+    const catalog = JSON.stringify([VALID_TOOL_ENTRY, VALID_PACK_ENTRY]);
+    const { dir, cleanup } = await makeReadCatalogDir(catalog);
+    try {
+      const entries = await readCatalogDir(dir);
+      expect(entries).toHaveLength(2);
+    } finally {
+      await cleanup();
+    }
+  });
+
+  it('returns artifact entry typed correctly', async () => {
+    const catalog = JSON.stringify([VALID_TOOL_ENTRY]);
+    const { dir, cleanup } = await makeReadCatalogDir(catalog);
+    try {
+      const entries = await readCatalogDir(dir);
+      expect(entries[0]?.kind).toBe('artifact');
+    } finally {
+      await cleanup();
+    }
+  });
+
+  it('returns pack entry typed correctly', async () => {
+    const catalog = JSON.stringify([VALID_PACK_ENTRY]);
+    const { dir, cleanup } = await makeReadCatalogDir(catalog);
+    try {
+      const entries = await readCatalogDir(dir);
+      expect(entries[0]?.kind).toBe('pack');
+    } finally {
+      await cleanup();
+    }
+  });
+
+  it('returns empty array for empty catalog array', async () => {
+    const { dir, cleanup } = await makeReadCatalogDir('[]');
+    try {
+      const entries = await readCatalogDir(dir);
+      expect(entries).toHaveLength(0);
+    } finally {
+      await cleanup();
+    }
+  });
+});
+
+describe('readCatalogDir — absent catalog.json throws CatalogParseError', () => {
+  it('throws CatalogParseError when catalog.json does not exist', async () => {
+    const { dir, cleanup } = await makeReadCatalogDir(undefined);
+    try {
+      await expect(readCatalogDir(dir)).rejects.toBeInstanceOf(CatalogParseError);
+    } finally {
+      await cleanup();
+    }
+  });
+
+  it('error message mentions introuvable', async () => {
+    const { dir, cleanup } = await makeReadCatalogDir(undefined);
+    try {
+      await expect(readCatalogDir(dir)).rejects.toMatchObject({
+        message: expect.stringMatching(/introuvable/i),
+      });
+    } finally {
+      await cleanup();
+    }
+  });
+});
+
+describe('readCatalogDir — invalid JSON throws CatalogParseError', () => {
+  it('throws CatalogParseError on broken JSON', async () => {
+    const { dir, cleanup } = await makeReadCatalogDir('{ not valid json }');
+    try {
+      await expect(readCatalogDir(dir)).rejects.toBeInstanceOf(CatalogParseError);
+    } finally {
+      await cleanup();
+    }
+  });
+});
+
+describe('readCatalogDir — non-array root throws CatalogParseError', () => {
+  it('throws CatalogParseError when root is an object', async () => {
+    const { dir, cleanup } = await makeReadCatalogDir(JSON.stringify({ entries: [] }));
+    try {
+      await expect(readCatalogDir(dir)).rejects.toBeInstanceOf(CatalogParseError);
+    } finally {
+      await cleanup();
+    }
+  });
+
+  it('error message mentions tableau', async () => {
+    const { dir, cleanup } = await makeReadCatalogDir(JSON.stringify({ entries: [] }));
+    try {
+      await expect(readCatalogDir(dir)).rejects.toMatchObject({
+        message: expect.stringMatching(/tableau/i),
+      });
+    } finally {
+      await cleanup();
+    }
+  });
+});
+
+describe('readCatalogDir — invalid entry throws CatalogParseError with issues', () => {
+  it('throws CatalogParseError when an entry has an unknown nature', async () => {
+    const badEntry = { ...VALID_TOOL_ENTRY, nature: 'unknown-nature' };
+    const { dir, cleanup } = await makeReadCatalogDir(JSON.stringify([badEntry]));
+    try {
+      await expect(readCatalogDir(dir)).rejects.toBeInstanceOf(CatalogParseError);
+    } finally {
+      await cleanup();
+    }
+  });
+
+  it('issues array is non-empty on validation failure', async () => {
+    const badEntry = { ...VALID_TOOL_ENTRY, nature: 'unknown-nature' };
+    const { dir, cleanup } = await makeReadCatalogDir(JSON.stringify([badEntry]));
+    try {
+      try {
+        await readCatalogDir(dir);
+        expect(true).toBe(false);
+      } catch (e) {
+        expect(e).toBeInstanceOf(CatalogParseError);
+        expect((e as CatalogParseError).issues.length).toBeGreaterThan(0);
+        expect((e as CatalogParseError).issues[0]).toMatch(/index 0/i);
+      }
+    } finally {
+      await cleanup();
+    }
   });
 });
