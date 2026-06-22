@@ -1,0 +1,73 @@
+name: Release
+
+# Build standalone binaries for every supported platform and attach them to a
+# GitHub Release. Bun cross-compiles all targets from a single host
+# (`bun build --compile --target=...`), so one ubuntu job produces the full
+# matrix — no per-OS runners or artifact passing required.
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write # required to create the release and upload assets
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build binaries & publish release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+
+      - name: Install dependencies (frozen)
+        run: bun install --frozen-lockfile
+
+      - name: Sanity — lint · format · types · test
+        run: |
+          bun run lint
+          bun run format:check
+          bun run typecheck
+          bun test
+
+      - name: Build standalone binaries (all targets)
+        working-directory: packages/cli
+        run: |
+          mkdir -p dist
+          bun build --compile --target=bun-linux-x64     --outfile dist/agent-rigger-linux-x64       src/cli.ts
+          bun build --compile --target=bun-linux-arm64   --outfile dist/agent-rigger-linux-arm64     src/cli.ts
+          bun build --compile --target=bun-darwin-x64    --outfile dist/agent-rigger-darwin-x64      src/cli.ts
+          bun build --compile --target=bun-darwin-arm64  --outfile dist/agent-rigger-darwin-arm64    src/cli.ts
+          bun build --compile --target=bun-windows-x64   --outfile dist/agent-rigger-windows-x64.exe src/cli.ts
+
+      - name: Smoke-test the linux-x64 binary
+        working-directory: packages/cli
+        run: |
+          chmod +x dist/agent-rigger-linux-x64
+          ./dist/agent-rigger-linux-x64 --version
+
+      - name: Checksums
+        working-directory: packages/cli/dist
+        run: sha256sum agent-rigger-* > SHA256SUMS.txt
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            packages/cli/dist/agent-rigger-linux-x64
+            packages/cli/dist/agent-rigger-linux-arm64
+            packages/cli/dist/agent-rigger-darwin-x64
+            packages/cli/dist/agent-rigger-darwin-arm64
+            packages/cli/dist/agent-rigger-windows-x64.exe
+            packages/cli/dist/SHA256SUMS.txt
+          generate_release_notes: true
+          fail_on_unmatched_files: true
