@@ -19,18 +19,9 @@
  * - exactOptionalPropertyTypes: never assigns undefined to optional fields.
  */
 
-import path from 'node:path';
-
-import {
-  createClaudeAdapter,
-  loadCanonicalContext,
-  loadCanonicalDeny,
-} from '@agent-rigger/adapters';
 import type { PluginRunner } from '@agent-rigger/adapters';
 import { assertSafeArtifactName } from '@agent-rigger/core/artifact-name';
-import { resolveUserTargets } from '@agent-rigger/core/paths';
 import type { Env } from '@agent-rigger/core/paths';
-import { stubScanner } from '@agent-rigger/core/scan';
 import type { Scope } from '@agent-rigger/core/types';
 
 import {
@@ -44,84 +35,9 @@ import {
 import { resolve } from '@agent-rigger/catalog/resolver';
 import type { CommandRunner } from '@agent-rigger/catalog/tool-check';
 
+import { buildClaudeAdapter } from './adapter-builder';
 import type { InstallResult } from './cmd-install';
 import { runInstall } from './cmd-install';
-
-// ---------------------------------------------------------------------------
-// buildClaudeAdapterForRemote — shared adapter construction
-// ---------------------------------------------------------------------------
-
-/**
- * Build a ClaudeAdapter that resolves sources from either a remote checkout
- * directory (for external ids) or the bundled artifacts directory (for internal ids).
- *
- * Mirror of buildClaudeAdapter in cli.ts with externalIds + externalBaseDir always set.
- * Kept private to this module to avoid a circular dep on cli.ts.
- */
-async function buildClaudeAdapterForRemote(
-  env: Env,
-  artifactsDir: string,
-  externalIds: Set<string>,
-  externalBaseDir: string,
-  catalogUrl: string,
-  commandRunner: CommandRunner,
-) {
-  const denyJsonPath = path.join(artifactsDir, 'claude', 'deny.json');
-  const agentsMdPath = path.join(artifactsDir, 'shared', 'AGENTS.md');
-
-  const [denyRef, agentsContent] = await Promise.all([
-    loadCanonicalDeny(denyJsonPath),
-    loadCanonicalContext(agentsMdPath),
-  ]);
-
-  // Adapt CommandRunner → PluginRunner (PluginRunner accepts an optional env opts arg;
-  // the CommandRunner signature doesn't carry it, so we ignore it here — tests don't
-  // need the env forwarding that GITLAB_TOKEN injection provides).
-  const pluginRunner: PluginRunner = (command, args) =>
-    commandRunner(command, args).then(
-      (r) => ({ exitCode: r.exitCode, stdout: r.stdout ?? '', stderr: r.stderr ?? '' }),
-    );
-
-  return createClaudeAdapter({
-    denyRef,
-    agentsContent,
-    scanner: stubScanner,
-    pluginRunner,
-    skillSource: (entry) => {
-      const name = entry.id.replace(/^skill:/, '');
-      assertSafeArtifactName(name, entry.id);
-      if (externalIds.has(entry.id)) {
-        return path.join(externalBaseDir, 'skills', name);
-      }
-      return path.join(artifactsDir, 'claude', 'skills', name);
-    },
-    agentSource: (entry) => {
-      const name = entry.id.replace(/^agent:/, '');
-      assertSafeArtifactName(name, entry.id);
-      if (externalIds.has(entry.id)) {
-        return path.join(externalBaseDir, 'agents', name + '.md');
-      }
-      return path.join(artifactsDir, 'claude', 'agents', name + '.md');
-    },
-    pluginSource: (entry) => {
-      const plugin = entry.id.replace(/^plugin:/, '');
-      // External plugin: use the content repo URL as the marketplace so that
-      // `claude plugin marketplace add <catalogUrl>` registers the right source.
-      if (externalIds.has(entry.id)) {
-        return { plugin, marketplace: catalogUrl };
-      }
-      return {
-        plugin,
-        marketplace: path.join(
-          path.dirname(resolveUserTargets(env).stateJson),
-          '..',
-          '.claude-plugin',
-          'marketplace.json',
-        ),
-      };
-    },
-  });
-}
 
 // ---------------------------------------------------------------------------
 // runRemoteInstall
@@ -134,7 +50,8 @@ async function buildClaudeAdapterForRemote(
  * 1. resolveVersion(catalogUrl, runner) → ResolvedVersion.
  * 2. withRemoteCheckout(url, ref, runner, {tmpFactory}, async (dir) => {
  *      readCatalogDir(dir) → frontier guard → mergeCatalogs → resolve →
- *      buildClaudeAdapterForRemote → versionFor → runInstall
+ *      buildClaudeAdapter({externalIds, externalBaseDir, catalogUrl, pluginRunner}) →
+ *      versionFor → runInstall
  *    })
  * 3. Returns InstallResult from runInstall.
  *
@@ -164,6 +81,14 @@ export async function runRemoteInstall(opts: {
     confirm,
   } = opts;
 
+  // Adapt CommandRunner → PluginRunner (PluginRunner accepts an optional env opts arg;
+  // the CommandRunner signature doesn't carry it, so we ignore it here — tests don't
+  // need the env forwarding that GITLAB_TOKEN injection provides).
+  const pluginRunner: PluginRunner = (command, args) =>
+    runner(command, args).then(
+      (r) => ({ exitCode: r.exitCode, stdout: r.stdout ?? '', stderr: r.stderr ?? '' }),
+    );
+
   const version = await resolveVersion(catalogUrl, runner);
 
   return withRemoteCheckout(catalogUrl, version.ref, runner, { tmpFactory }, async (dir) => {
@@ -188,14 +113,12 @@ export async function runRemoteInstall(opts: {
       resolved.filter((e) => e.source === 'external').map((e) => e.id),
     );
 
-    const adapter = await buildClaudeAdapterForRemote(
-      env,
-      artifactsDir,
+    const adapter = await buildClaudeAdapter(env, artifactsDir, {
       externalIds,
-      dir,
+      externalBaseDir: dir,
       catalogUrl,
-      runner,
-    );
+      pluginRunner,
+    });
 
     const versionFor = (
       entry: { id: string },
