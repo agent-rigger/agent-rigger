@@ -21,6 +21,7 @@ import type { CatalogEntry, TmpDirFactory } from '@agent-rigger/catalog';
 import type { CommandRunner } from '@agent-rigger/catalog/tool-check';
 import { resolveUserTargets } from '@agent-rigger/core/paths';
 import type { Env } from '@agent-rigger/core/paths';
+import { stubScanner } from '@agent-rigger/core/scan';
 
 import { runCli } from '../src/cli';
 
@@ -182,7 +183,7 @@ async function preInstall(env: Env, tag: string, sha: string) {
     print: cap.print,
     env,
     artifactsDir: ARTIFACTS_DIR,
-    remote: { run: iso.makeRunner(), tmpFactory: iso.makeTmpFactory() },
+    remote: { run: iso.makeRunner(), tmpFactory: iso.makeTmpFactory(), scanner: stubScanner },
   });
 }
 
@@ -200,7 +201,7 @@ describe('update routing — top-level `update <id...> --yes`', () => {
       print: cap.print,
       env: iso.env,
       artifactsDir: ARTIFACTS_DIR,
-      remote: { run: iso.makeRunner(), tmpFactory: iso.makeTmpFactory() },
+      remote: { run: iso.makeRunner(), tmpFactory: iso.makeTmpFactory(), scanner: stubScanner },
     });
 
     expect(code).toBe(0);
@@ -215,7 +216,7 @@ describe('update routing — top-level `update <id...> --yes`', () => {
       print: cap.print,
       env: iso.env,
       artifactsDir: ARTIFACTS_DIR,
-      remote: { run: iso.makeRunner(), tmpFactory: iso.makeTmpFactory() },
+      remote: { run: iso.makeRunner(), tmpFactory: iso.makeTmpFactory(), scanner: stubScanner },
     });
 
     const raw = await fs.readFile(targets.stateJson, 'utf8');
@@ -235,7 +236,7 @@ describe('update routing — top-level `update <id...> --yes`', () => {
       print: cap.print,
       env: iso.env,
       artifactsDir: ARTIFACTS_DIR,
-      remote: { run: iso.makeRunner(), tmpFactory: iso.makeTmpFactory() },
+      remote: { run: iso.makeRunner(), tmpFactory: iso.makeTmpFactory(), scanner: stubScanner },
     });
 
     const output = cap.lines.join('\n');
@@ -253,7 +254,7 @@ describe('update routing — `skills update <id> --yes`', () => {
       print: cap.print,
       env: iso.env,
       artifactsDir: ARTIFACTS_DIR,
-      remote: { run: iso.makeRunner(), tmpFactory: iso.makeTmpFactory() },
+      remote: { run: iso.makeRunner(), tmpFactory: iso.makeTmpFactory(), scanner: stubScanner },
     });
 
     expect(code).toBe(0);
@@ -268,7 +269,7 @@ describe('update routing — `skills update <id> --yes`', () => {
       print: cap.print,
       env: iso.env,
       artifactsDir: ARTIFACTS_DIR,
-      remote: { run: iso.makeRunner(), tmpFactory: iso.makeTmpFactory() },
+      remote: { run: iso.makeRunner(), tmpFactory: iso.makeTmpFactory(), scanner: stubScanner },
     });
 
     const raw = await fs.readFile(targets.stateJson, 'utf8');
@@ -287,7 +288,11 @@ describe('update routing — no catalogUrl → exit 2', () => {
         print: cap.print,
         env: noUrlIso.env,
         artifactsDir: ARTIFACTS_DIR,
-        remote: { run: noUrlIso.makeRunner(), tmpFactory: noUrlIso.makeTmpFactory() },
+        remote: {
+          run: noUrlIso.makeRunner(),
+          tmpFactory: noUrlIso.makeTmpFactory(),
+          scanner: stubScanner,
+        },
       });
       expect(code).toBe(2);
     } finally {
@@ -303,7 +308,11 @@ describe('update routing — no catalogUrl → exit 2', () => {
         print: cap.print,
         env: noUrlIso.env,
         artifactsDir: ARTIFACTS_DIR,
-        remote: { run: noUrlIso.makeRunner(), tmpFactory: noUrlIso.makeTmpFactory() },
+        remote: {
+          run: noUrlIso.makeRunner(),
+          tmpFactory: noUrlIso.makeTmpFactory(),
+          scanner: stubScanner,
+        },
       });
       const output = cap.lines.join('\n');
       expect(output).toMatch(/init/i);
@@ -321,7 +330,7 @@ describe('update routing — internal entry → exit 0, skipped', () => {
       print: cap.print,
       env: iso.env,
       artifactsDir: ARTIFACTS_DIR,
-      remote: { run: iso.makeRunner(), tmpFactory: iso.makeTmpFactory() },
+      remote: { run: iso.makeRunner(), tmpFactory: iso.makeTmpFactory(), scanner: stubScanner },
     });
     // runUpdate returns skipped for internal → exit 0
     expect(code).toBe(0);
@@ -333,7 +342,7 @@ describe('update routing — internal entry → exit 0, skipped', () => {
       print: cap.print,
       env: iso.env,
       artifactsDir: ARTIFACTS_DIR,
-      remote: { run: iso.makeRunner(), tmpFactory: iso.makeTmpFactory() },
+      remote: { run: iso.makeRunner(), tmpFactory: iso.makeTmpFactory(), scanner: stubScanner },
     });
     const output = cap.lines.join('\n');
     expect(output).toMatch(/skipped|no remote version/i);
@@ -349,7 +358,7 @@ describe('update routing — wrong nature id → exit 2', () => {
       print: cap.print,
       env: iso.env,
       artifactsDir: ARTIFACTS_DIR,
-      remote: { run: iso.makeRunner(), tmpFactory: iso.makeTmpFactory() },
+      remote: { run: iso.makeRunner(), tmpFactory: iso.makeTmpFactory(), scanner: stubScanner },
     });
 
     expect(code).toBe(2);
@@ -363,7 +372,7 @@ describe('update routing — wrong nature id → exit 2', () => {
       print: cap.print,
       env: iso.env,
       artifactsDir: ARTIFACTS_DIR,
-      remote: { run: iso.makeRunner(), tmpFactory: iso.makeTmpFactory() },
+      remote: { run: iso.makeRunner(), tmpFactory: iso.makeTmpFactory(), scanner: stubScanner },
     });
 
     const output = cap.lines.join('\n');
@@ -386,7 +395,7 @@ describe('check — update-available annotation (Part B)', () => {
       print: cap.print,
       env: iso.env,
       artifactsDir: ARTIFACTS_DIR,
-      remote: { run: iso.makeRunner(), tmpFactory: iso.makeTmpFactory() },
+      remote: { run: iso.makeRunner(), tmpFactory: iso.makeTmpFactory(), scanner: stubScanner },
     });
 
     const output = cap.lines.join('\n');
@@ -403,7 +412,7 @@ describe('check — update-available annotation (Part B)', () => {
       print: cap.print,
       env: iso.env,
       artifactsDir: ARTIFACTS_DIR,
-      remote: { run: iso.makeRunner(), tmpFactory: iso.makeTmpFactory() },
+      remote: { run: iso.makeRunner(), tmpFactory: iso.makeTmpFactory(), scanner: stubScanner },
     });
 
     // check itself: guardrails-claude + context-claude may or may not be installed.
@@ -423,7 +432,11 @@ describe('check — update-available annotation (Part B)', () => {
         print: cap.print,
         env: noUrlIso.env,
         artifactsDir: ARTIFACTS_DIR,
-        remote: { run: noUrlIso.makeRunner(), tmpFactory: noUrlIso.makeTmpFactory() },
+        remote: {
+          run: noUrlIso.makeRunner(),
+          tmpFactory: noUrlIso.makeTmpFactory(),
+          scanner: stubScanner,
+        },
       });
 
       const output = cap.lines.join('\n');
@@ -441,7 +454,7 @@ describe('check — update-available annotation (Part B)', () => {
       print: cap.print,
       env: iso.env,
       artifactsDir: ARTIFACTS_DIR,
-      remote: { run: failRunner, tmpFactory: iso.makeTmpFactory() },
+      remote: { run: failRunner, tmpFactory: iso.makeTmpFactory(), scanner: stubScanner },
     });
 
     const output = cap.lines.join('\n');
@@ -459,7 +472,7 @@ describe('check — update-available annotation (Part B)', () => {
       print: cap.print,
       env: iso.env,
       artifactsDir: ARTIFACTS_DIR,
-      remote: { run: iso.makeRunner(), tmpFactory: iso.makeTmpFactory() },
+      remote: { run: iso.makeRunner(), tmpFactory: iso.makeTmpFactory(), scanner: stubScanner },
     });
 
     const output = cap.lines.join('\n');

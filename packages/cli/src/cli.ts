@@ -27,6 +27,7 @@ import { UnsafeArtifactNameError } from '@agent-rigger/core/artifact-name';
 import { InvalidJsonError } from '@agent-rigger/core/fs-json';
 import type { Env } from '@agent-rigger/core/paths';
 import { resolveUserTargets } from '@agent-rigger/core/paths';
+import type { Scanner } from '@agent-rigger/core/scan';
 
 import {
   BUILTIN_CATALOG,
@@ -262,8 +263,10 @@ export interface CliDeps {
   /**
    * Remote seam for testing — injected into fetchRemoteCatalog.
    * Production code uses defaultRunner + defaultTmpFactory.
+   * `scanner` is forwarded to runRemoteInstall/runUpdate so tests can bypass
+   * the real composite scanner (gitleaks/trivy) without affecting prod behaviour.
    */
-  remote?: { run?: CommandRunner; tmpFactory?: TmpDirFactory };
+  remote?: { run?: CommandRunner; tmpFactory?: TmpDirFactory; scanner?: Scanner };
 }
 
 // buildClaudeAdapter + BuildClaudeAdapterOpts are defined and exported from adapter-builder.ts.
@@ -796,6 +799,7 @@ async function handleInstall(opts: HandleInstallOpts): Promise<number> {
         tmpFactory,
         confirm,
         ...(force ? { force } : {}),
+        ...(deps.remote?.scanner === undefined ? {} : { scanner: deps.remote.scanner }),
       };
 
       const result = await runRemoteInstall(remoteOpts);
@@ -857,6 +861,7 @@ async function handleInstall(opts: HandleInstallOpts): Promise<number> {
       tmpFactory,
       confirm: (planText: string) => prompts.confirmApply(planText),
       ...(force ? { force } : {}),
+      ...(deps.remote?.scanner === undefined ? {} : { scanner: deps.remote.scanner }),
     };
 
     const remoteResult = await runRemoteInstall(interactiveOpts);
@@ -977,6 +982,7 @@ async function handleUpdate(opts: HandleUpdateOpts): Promise<number> {
     tmpFactory,
     confirm,
     ...(force ? { force } : {}),
+    ...(deps.remote?.scanner === undefined ? {} : { scanner: deps.remote.scanner }),
   };
 
   const result = await runUpdate(updateOpts);
