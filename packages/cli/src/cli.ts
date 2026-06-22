@@ -257,8 +257,6 @@ export interface CliDeps {
   print?: (msg: string) => void;
   /** Environment variables. Defaults to Bun.env. */
   env?: Env;
-  /** Absolute path to the artifacts directory. Defaults to resolved from __dirname. */
-  artifactsDir?: string;
   /** Interactive prompt overrides (for tests). */
   prompts?: CliPrompts;
   /**
@@ -272,21 +270,6 @@ export interface CliDeps {
 
 // buildClaudeAdapter + BuildClaudeAdapterOpts are defined and exported from adapter-builder.ts.
 // They are re-exported at the top of this file so existing consumers of "cli.ts" are unaffected.
-
-// ---------------------------------------------------------------------------
-// resolveArtifactsDir — find repo artifacts relative to this file
-// ---------------------------------------------------------------------------
-
-/**
- * Resolve the default artifacts directory.
- * In dev (src/): walk up to repo root, then artifacts/.
- * In compiled binary: same relative path from dist/.
- */
-function resolveArtifactsDir(): string {
-  // Walk up: packages/cli/src/ → packages/cli/ → packages/ → repo root (agent-rigger/)
-  const thisDir = path.dirname(import.meta.path);
-  return path.resolve(thisDir, '..', '..', '..', 'artifacts');
-}
 
 // ---------------------------------------------------------------------------
 // resolveUserStatePath — manifest path for install
@@ -391,7 +374,6 @@ async function resolveEffectiveCatalog(
 export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number> {
   const print = deps.print ?? ((msg: string) => process.stdout.write(msg + '\n'));
   const env: Env = deps.env ?? Bun.env;
-  const artifactsDir = deps.artifactsDir ?? resolveArtifactsDir();
 
   const { command, resourceVerb, resourceIds, flags } = parseArgs(argv);
 
@@ -436,7 +418,6 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
         flags,
         scope,
         env,
-        artifactsDir,
         print,
         deps,
       });
@@ -476,13 +457,15 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
         return 0;
       }
 
-      const adapter = await buildClaudeAdapter(env, artifactsDir);
+      const manifestPath = resolveManifestPath(env);
+      const adapter = await buildClaudeAdapter(env);
 
       const result = await runCheck({
         adapter,
         entries,
         scope,
         env,
+        manifestPath,
         toolEntries: effective,
       });
 
@@ -502,7 +485,6 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
         flags,
         scope,
         env,
-        artifactsDir,
         print,
         deps,
       });
@@ -515,7 +497,6 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
         flags,
         scope,
         env,
-        artifactsDir,
         print,
         deps,
       });
@@ -528,7 +509,6 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
         flags,
         scope,
         env,
-        artifactsDir,
         print,
         deps,
       });
@@ -568,13 +548,12 @@ interface ResourceCommandOpts {
   flags: Record<string, string | boolean>;
   scope: 'user' | 'project';
   env: Env;
-  artifactsDir: string;
   print: (msg: string) => void;
   deps: CliDeps;
 }
 
 async function handleResourceCommand(opts: ResourceCommandOpts): Promise<number> {
-  const { resource, verb, ids, flags, scope, env, artifactsDir, print, deps } = opts;
+  const { resource, verb, ids, flags, scope, env, print, deps } = opts;
 
   const natureMapped = RESOURCE_NATURE_MAP[resource] ?? 'catalog';
 
@@ -618,7 +597,7 @@ async function handleResourceCommand(opts: ResourceCommandOpts): Promise<number>
       return 2;
     }
 
-    return await handleInstall({ ids, flags, scope, env, artifactsDir, print, deps });
+    return await handleInstall({ ids, flags, scope, env, print, deps });
   }
 
   // ----- <resource> info <id> -----
@@ -684,12 +663,14 @@ async function handleResourceCommand(opts: ResourceCommandOpts): Promise<number>
       return 0;
     }
 
-    const adapter = await buildClaudeAdapter(env, artifactsDir);
+    const manifestPath = resolveManifestPath(env);
+    const adapter = await buildClaudeAdapter(env);
     const result = await runCheck({
       adapter,
       entries: filteredEntries,
       scope,
       env,
+      manifestPath,
       toolEntries: effectiveCatalog,
     });
 
@@ -746,7 +727,7 @@ async function handleResourceCommand(opts: ResourceCommandOpts): Promise<number>
       return 2;
     }
 
-    return await handleUpdate({ ids, flags, scope, env, artifactsDir, print, deps });
+    return await handleUpdate({ ids, flags, scope, env, print, deps });
   }
 
   // ----- <resource> remove <id...> -----
@@ -773,7 +754,7 @@ async function handleResourceCommand(opts: ResourceCommandOpts): Promise<number>
       return 2;
     }
 
-    return await handleRemove({ ids, flags, scope, env, artifactsDir, print, deps });
+    return await handleRemove({ ids, flags, scope, env, print, deps });
   }
 
   // ----- unknown verb (includes planned: update) -----
@@ -790,13 +771,12 @@ interface HandleInstallOpts {
   flags: Record<string, string | boolean>;
   scope: 'user' | 'project';
   env: Env;
-  artifactsDir: string;
   print: (msg: string) => void;
   deps: CliDeps;
 }
 
 async function handleInstall(opts: HandleInstallOpts): Promise<number> {
-  const { ids, flags, scope, env, artifactsDir, print, deps } = opts;
+  const { ids, flags, scope, env, print, deps } = opts;
 
   const yes = flags['yes'] === true;
   const force = flags['force'] === true;
@@ -831,7 +811,6 @@ async function handleInstall(opts: HandleInstallOpts): Promise<number> {
         scope,
         env,
         manifestPath,
-        artifactsDir,
         runner,
         tmpFactory,
         confirm,
@@ -881,7 +860,6 @@ async function handleInstall(opts: HandleInstallOpts): Promise<number> {
       scope: interactiveScope,
       env,
       manifestPath: interactiveManifestPath,
-      artifactsDir,
       runner,
       tmpFactory,
       confirm: (planText: string) => prompts.confirmApply(planText),
@@ -909,13 +887,12 @@ interface HandleRemoveOpts {
   flags: Record<string, string | boolean>;
   scope: 'user' | 'project';
   env: Env;
-  artifactsDir: string;
   print: (msg: string) => void;
   deps: CliDeps;
 }
 
 async function handleRemove(opts: HandleRemoveOpts): Promise<number> {
-  const { ids, flags, scope, env, artifactsDir, print, deps } = opts;
+  const { ids, flags, scope, env, print, deps } = opts;
 
   if (ids.length === 0) {
     print(`[error] "remove" requires at least one artifact id.\n\n${USAGE}`);
@@ -923,7 +900,7 @@ async function handleRemove(opts: HandleRemoveOpts): Promise<number> {
   }
 
   const yes = flags['yes'] === true;
-  const adapter = await buildClaudeAdapter(env, artifactsDir);
+  const adapter = await buildClaudeAdapter(env);
   const manifestPath = resolveManifestPath(env);
 
   // Build effective catalog for remove (entries in manifest)
@@ -960,13 +937,12 @@ interface HandleUpdateOpts {
   flags: Record<string, string | boolean>;
   scope: 'user' | 'project';
   env: Env;
-  artifactsDir: string;
   print: (msg: string) => void;
   deps: CliDeps;
 }
 
 async function handleUpdate(opts: HandleUpdateOpts): Promise<number> {
-  const { ids, flags, scope, env, artifactsDir, print, deps } = opts;
+  const { ids, flags, scope, env, print, deps } = opts;
 
   const config = await loadCliConfig(env);
 
@@ -992,7 +968,6 @@ async function handleUpdate(opts: HandleUpdateOpts): Promise<number> {
     scope,
     env,
     manifestPath: resolveManifestPath(env),
-    artifactsDir,
     catalogUrl: config.catalogUrl,
     runner,
     tmpFactory,

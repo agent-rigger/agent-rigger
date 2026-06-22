@@ -21,13 +21,20 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
+import {
+  createClaudeAdapter,
+  loadCanonicalAllow,
+  loadCanonicalContext,
+  loadCanonicalDeny,
+} from '@agent-rigger/adapters';
 import type { AdapterEntry } from '@agent-rigger/core/adapter';
 import { resolveUserTargets } from '@agent-rigger/core/paths';
 import type { Env } from '@agent-rigger/core/paths';
+import { stubScanner } from '@agent-rigger/core/scan';
 
 import type { CatalogEntry } from '@agent-rigger/catalog';
 
-import { buildClaudeAdapter, runCli } from '../src/cli';
+import { runCli } from '../src/cli';
 import { runCheck } from '../src/cmd-check';
 import { runInstall } from '../src/cmd-install';
 
@@ -38,6 +45,23 @@ import { runInstall } from '../src/cmd-install';
 
 const REPO_ROOT = path.resolve(import.meta.dirname, '../../..');
 const ARTIFACTS_DIR = path.join(REPO_ROOT, 'artifacts');
+
+/**
+ * Build a ClaudeAdapter pre-loaded with the real artifact content from ARTIFACTS_DIR.
+ *
+ * Replaces the old `buildClaudeAdapter(env, ARTIFACTS_DIR)` call. This helper
+ * loads deny/allow/AGENTS.md directly from the repo artifacts dir and creates
+ * the adapter via `createClaudeAdapter`. The e2e tests only need guardrail +
+ * context functionality; `env` is accepted for signature compatibility.
+ */
+async function buildE2eAdapter(_env: Env): Promise<ReturnType<typeof createClaudeAdapter>> {
+  const denyRef = await loadCanonicalDeny(path.join(ARTIFACTS_DIR, 'claude', 'deny.json'));
+  const allowRef = await loadCanonicalAllow(path.join(ARTIFACTS_DIR, 'claude', 'allow.json'));
+  const agentsContent = await loadCanonicalContext(
+    path.join(ARTIFACTS_DIR, 'shared', 'AGENTS.md'),
+  );
+  return createClaudeAdapter({ denyRef, allowRef, agentsContent, scanner: stubScanner });
+}
 
 // ---------------------------------------------------------------------------
 // Fixture catalog (replaces E2E_FIXTURE_CATALOG — no built-in content)
@@ -127,7 +151,7 @@ afterEach(async () => {
 
 describe('e2e — install → check = 0', () => {
   it('runInstall applied:true with real artifacts', async () => {
-    const adapter = await buildClaudeAdapter(env, ARTIFACTS_DIR);
+    const adapter = await buildE2eAdapter(env);
 
     const result = await runInstall({
       catalog: E2E_FIXTURE_CATALOG,
@@ -144,7 +168,7 @@ describe('e2e — install → check = 0', () => {
   });
 
   it('settings.json contains deny rules from real deny.json', async () => {
-    const adapter = await buildClaudeAdapter(env, ARTIFACTS_DIR);
+    const adapter = await buildE2eAdapter(env);
 
     await runInstall({
       catalog: E2E_FIXTURE_CATALOG,
@@ -166,7 +190,7 @@ describe('e2e — install → check = 0', () => {
   });
 
   it('AGENTS.md is written at target path with real content', async () => {
-    const adapter = await buildClaudeAdapter(env, ARTIFACTS_DIR);
+    const adapter = await buildE2eAdapter(env);
 
     await runInstall({
       catalog: E2E_FIXTURE_CATALOG,
@@ -184,7 +208,7 @@ describe('e2e — install → check = 0', () => {
   });
 
   it('CLAUDE.md contains managed import block referencing AGENTS.md', async () => {
-    const adapter = await buildClaudeAdapter(env, ARTIFACTS_DIR);
+    const adapter = await buildE2eAdapter(env);
 
     await runInstall({
       catalog: E2E_FIXTURE_CATALOG,
@@ -201,7 +225,7 @@ describe('e2e — install → check = 0', () => {
   });
 
   it('state.json manifest has both entry ids', async () => {
-    const adapter = await buildClaudeAdapter(env, ARTIFACTS_DIR);
+    const adapter = await buildE2eAdapter(env);
 
     await runInstall({
       catalog: E2E_FIXTURE_CATALOG,
@@ -224,7 +248,7 @@ describe('e2e — install → check = 0', () => {
   });
 
   it('runCheck returns exitCode 0 after install', async () => {
-    const adapter = await buildClaudeAdapter(env, ARTIFACTS_DIR);
+    const adapter = await buildE2eAdapter(env);
 
     await runInstall({
       catalog: E2E_FIXTURE_CATALOG,
@@ -237,7 +261,7 @@ describe('e2e — install → check = 0', () => {
     });
 
     // Re-mount adapter (simulates a fresh check invocation)
-    const checkAdapter = await buildClaudeAdapter(env, ARTIFACTS_DIR);
+    const checkAdapter = await buildE2eAdapter(env);
 
     const result = await runCheck({
       adapter: checkAdapter,
@@ -257,7 +281,7 @@ describe('e2e — install → check = 0', () => {
 
 describe('e2e — check before install = 3', () => {
   it('runCheck returns exitCode 3 on a fresh empty HOME', async () => {
-    const adapter = await buildClaudeAdapter(env, ARTIFACTS_DIR);
+    const adapter = await buildE2eAdapter(env);
 
     const result = await runCheck({
       adapter,
@@ -270,7 +294,7 @@ describe('e2e — check before install = 3', () => {
   });
 
   it('report has missing entries for both guardrail and context', async () => {
-    const adapter = await buildClaudeAdapter(env, ARTIFACTS_DIR);
+    const adapter = await buildE2eAdapter(env);
 
     const result = await runCheck({
       adapter,
@@ -296,7 +320,7 @@ describe('e2e — check before install = 3', () => {
 
 describe('e2e — idempotence install×2', () => {
   it('second install returns applied:false', async () => {
-    const adapter = await buildClaudeAdapter(env, ARTIFACTS_DIR);
+    const adapter = await buildE2eAdapter(env);
     const installOpts = {
       catalog: E2E_FIXTURE_CATALOG,
       adapter,
@@ -314,7 +338,7 @@ describe('e2e — idempotence install×2', () => {
   });
 
   it('second install output indicates up-to-date', async () => {
-    const adapter = await buildClaudeAdapter(env, ARTIFACTS_DIR);
+    const adapter = await buildE2eAdapter(env);
     const installOpts = {
       catalog: E2E_FIXTURE_CATALOG,
       adapter,
@@ -332,7 +356,7 @@ describe('e2e — idempotence install×2', () => {
   });
 
   it('second install creates no .bak files', async () => {
-    const adapter = await buildClaudeAdapter(env, ARTIFACTS_DIR);
+    const adapter = await buildE2eAdapter(env);
     const installOpts = {
       catalog: E2E_FIXTURE_CATALOG,
       adapter,
@@ -350,7 +374,7 @@ describe('e2e — idempotence install×2', () => {
   });
 
   it('settings.json is unchanged byte-for-byte after second install', async () => {
-    const adapter = await buildClaudeAdapter(env, ARTIFACTS_DIR);
+    const adapter = await buildE2eAdapter(env);
     const installOpts = {
       catalog: E2E_FIXTURE_CATALOG,
       adapter,
@@ -371,7 +395,7 @@ describe('e2e — idempotence install×2', () => {
   });
 
   it('check returns 0 after two installs', async () => {
-    const adapter = await buildClaudeAdapter(env, ARTIFACTS_DIR);
+    const adapter = await buildE2eAdapter(env);
     const installOpts = {
       catalog: E2E_FIXTURE_CATALOG,
       adapter,
@@ -385,7 +409,7 @@ describe('e2e — idempotence install×2', () => {
     await runInstall(installOpts);
     await runInstall(installOpts);
 
-    const checkAdapter = await buildClaudeAdapter(env, ARTIFACTS_DIR);
+    const checkAdapter = await buildE2eAdapter(env);
     const result = await runCheck({
       adapter: checkAdapter,
       entries: ENTRIES,
@@ -405,7 +429,7 @@ describe('e2e — idempotence install×2', () => {
 
 describe('e2e — drift detected after install', () => {
   it('runCheck returns exitCode 3 after deny rules are removed from settings.json', async () => {
-    const adapter = await buildClaudeAdapter(env, ARTIFACTS_DIR);
+    const adapter = await buildE2eAdapter(env);
 
     // Install first
     await runInstall({
@@ -426,7 +450,7 @@ describe('e2e — drift detected after install', () => {
     );
 
     // Re-mount adapter for check
-    const checkAdapter = await buildClaudeAdapter(env, ARTIFACTS_DIR);
+    const checkAdapter = await buildE2eAdapter(env);
 
     const result = await runCheck({
       adapter: checkAdapter,
@@ -439,7 +463,7 @@ describe('e2e — drift detected after install', () => {
   });
 
   it('report shows guardrails-claude as missing after drift', async () => {
-    const adapter = await buildClaudeAdapter(env, ARTIFACTS_DIR);
+    const adapter = await buildE2eAdapter(env);
 
     await runInstall({
       catalog: E2E_FIXTURE_CATALOG,
@@ -458,7 +482,7 @@ describe('e2e — drift detected after install', () => {
       'utf8',
     );
 
-    const checkAdapter = await buildClaudeAdapter(env, ARTIFACTS_DIR);
+    const checkAdapter = await buildE2eAdapter(env);
 
     const result = await runCheck({
       adapter: checkAdapter,
@@ -475,7 +499,7 @@ describe('e2e — drift detected after install', () => {
   });
 
   it('output mentions missing or drift state after deny rules removed', async () => {
-    const adapter = await buildClaudeAdapter(env, ARTIFACTS_DIR);
+    const adapter = await buildE2eAdapter(env);
 
     await runInstall({
       catalog: E2E_FIXTURE_CATALOG,
@@ -493,7 +517,7 @@ describe('e2e — drift detected after install', () => {
       'utf8',
     );
 
-    const checkAdapter = await buildClaudeAdapter(env, ARTIFACTS_DIR);
+    const checkAdapter = await buildE2eAdapter(env);
 
     const result = await runCheck({
       adapter: checkAdapter,
@@ -519,7 +543,6 @@ describe('e2e — via runCli', () => {
     const code = await runCli(['check'], {
       print: cap.print,
       env,
-      artifactsDir: ARTIFACTS_DIR,
     });
 
     // Without catalogUrl → effective catalog is [] → check returns 0 with actionable message
@@ -530,7 +553,7 @@ describe('e2e — via runCli', () => {
 
   it('direct runCheck on empty HOME returns exit code 3 (no catalog involvement)', async () => {
     // runCheck is called directly with known entries — bypasses catalog
-    const adapter = await buildClaudeAdapter(env, ARTIFACTS_DIR);
+    const adapter = await buildE2eAdapter(env);
 
     const result = await runCheck({
       adapter,

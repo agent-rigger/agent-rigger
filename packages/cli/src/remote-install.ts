@@ -183,7 +183,6 @@ export async function runRemoteInstall(opts: {
   scope: Scope;
   env: Env;
   manifestPath: string;
-  artifactsDir: string;
   runner: CommandRunner;
   tmpFactory: TmpDirFactory;
   confirm: boolean | ((planText: string) => Promise<boolean>);
@@ -196,7 +195,6 @@ export async function runRemoteInstall(opts: {
     scope,
     env,
     manifestPath,
-    artifactsDir,
     runner,
     tmpFactory,
     confirm,
@@ -240,18 +238,15 @@ export async function runRemoteInstall(opts: {
       const { entries: effective } = mergeCatalogs([], remoteEntries);
       const resolved = resolve(ids, effective);
 
-      // Entries with a checkout path (skills/agents) are "remote" — they come
-      // from the fetched content repo. Others (guardrails, contexts, hooks)
-      // always come from the local artifacts dir.
-      // Plugin entries that appear in remoteEntries are also considered remote.
+      // All entries from the remote catalog are sourced from the checkout.
+      // - Skills / agents: have a checkout path (scanPathFor != null).
+      // - Guardrails / contexts / hooks: no scan path but also come from checkout.
+      // - Plugins: from the remote catalog's marketplace URL.
+      // remoteIds tells buildClaudeAdapter which entries to resolve from externalBaseDir.
       const remoteEntryIds = new Set(remoteEntries.map((e) => e.id));
       const remoteIds = new Set(
         resolved
-          .filter(
-            (e) =>
-              scanPathFor(e, dir) !== null
-              || (e.nature === 'plugin' && remoteEntryIds.has(e.id)),
-          )
+          .filter((e) => remoteEntryIds.has(e.id))
           .map((e) => e.id),
       );
 
@@ -267,7 +262,7 @@ export async function runRemoteInstall(opts: {
       // Build effectiveEntries map for hookSpec resolution
       const effectiveEntries = new Map(effective.map((e) => [e.id, e]));
 
-      const adapter = await buildClaudeAdapter(env, artifactsDir, {
+      const adapter = await buildClaudeAdapter(env, {
         externalIds: remoteIds,
         externalBaseDir: dir,
         catalogUrl,

@@ -33,9 +33,6 @@ import { runRemoteInstall, ScanBlockedError } from '../src/remote-install';
 // Repo root + artifacts dir
 // ---------------------------------------------------------------------------
 
-const REPO_ROOT = path.resolve(import.meta.dirname, '../../..');
-const ARTIFACTS_DIR = path.join(REPO_ROOT, 'artifacts');
-
 // ---------------------------------------------------------------------------
 // Fixed test fixtures
 // ---------------------------------------------------------------------------
@@ -209,7 +206,6 @@ describe('S4 — external skill + blocking scanner, no --force', () => {
         scope: 'user',
         env: remoteEnv.env,
         manifestPath: targets.stateJson,
-        artifactsDir: ARTIFACTS_DIR,
         runner: remoteEnv.runner,
         tmpFactory: remoteEnv.tmpFactory,
         confirm: true,
@@ -226,7 +222,6 @@ describe('S4 — external skill + blocking scanner, no --force', () => {
       scope: 'user',
       env: remoteEnv.env,
       manifestPath: targets.stateJson,
-      artifactsDir: ARTIFACTS_DIR,
       runner: remoteEnv.runner,
       tmpFactory: remoteEnv.tmpFactory,
       confirm: true,
@@ -247,7 +242,6 @@ describe('S4 — external skill + blocking scanner, no --force', () => {
       scope: 'user',
       env: remoteEnv.env,
       manifestPath: targets.stateJson,
-      artifactsDir: ARTIFACTS_DIR,
       runner: remoteEnv.runner,
       tmpFactory: remoteEnv.tmpFactory,
       confirm: true,
@@ -269,7 +263,6 @@ describe('S4 — external skill + blocking scanner, no --force', () => {
       scope: 'user',
       env: remoteEnv.env,
       manifestPath: targets.stateJson,
-      artifactsDir: ARTIFACTS_DIR,
       runner: remoteEnv.runner,
       tmpFactory: remoteEnv.tmpFactory,
       confirm: true,
@@ -296,7 +289,6 @@ describe('S4 — external skill + blocking scanner, with --force', () => {
         scope: 'user',
         env: remoteEnv.env,
         manifestPath: targets.stateJson,
-        artifactsDir: ARTIFACTS_DIR,
         runner: remoteEnv.runner,
         tmpFactory: remoteEnv.tmpFactory,
         confirm: true,
@@ -313,7 +305,6 @@ describe('S4 — external skill + blocking scanner, with --force', () => {
       scope: 'user',
       env: remoteEnv.env,
       manifestPath: targets.stateJson,
-      artifactsDir: ARTIFACTS_DIR,
       runner: remoteEnv.runner,
       tmpFactory: remoteEnv.tmpFactory,
       confirm: true,
@@ -333,7 +324,6 @@ describe('S4 — external skill + blocking scanner, with --force', () => {
       scope: 'user',
       env: remoteEnv.env,
       manifestPath: targets.stateJson,
-      artifactsDir: ARTIFACTS_DIR,
       runner: remoteEnv.runner,
       tmpFactory: remoteEnv.tmpFactory,
       confirm: true,
@@ -358,7 +348,6 @@ describe('S4 — external skill + clean scanner', () => {
       scope: 'user',
       env: remoteEnv.env,
       manifestPath: targets.stateJson,
-      artifactsDir: ARTIFACTS_DIR,
       runner: remoteEnv.runner,
       tmpFactory: remoteEnv.tmpFactory,
       confirm: true,
@@ -384,7 +373,6 @@ describe('S4 — guardrail install (no checkout path), scanner never called', ()
       scope: 'user',
       env: remoteEnv.env,
       manifestPath: targets.stateJson,
-      artifactsDir: ARTIFACTS_DIR,
       runner: remoteEnv.runner,
       tmpFactory: remoteEnv.tmpFactory,
       confirm: true,

@@ -36,6 +36,62 @@ export interface Artifact {
 }
 
 // ---------------------------------------------------------------------------
+// AppliedPayload — the mutations actually applied during install
+// ---------------------------------------------------------------------------
+
+/**
+ * Payload recorded when a guardrail is installed.
+ * Captures the exact deny + allow rules that were merged into settings.json.
+ */
+export interface AppliedGuardrail {
+  kind: 'guardrail';
+  /** Deny rules that were added (the full canonical set, not just the delta). */
+  denyRules: string[];
+  /** Allow rules that were added (the full canonical set). */
+  allowRules: string[];
+}
+
+/**
+ * Payload recorded when a context artifact is installed.
+ * Captures the AGENTS.md content that was written.
+ */
+export interface AppliedContext {
+  kind: 'context';
+  /** Full UTF-8 content of the AGENTS.md file that was written. */
+  block: string;
+}
+
+/**
+ * Payload recorded when a hook is installed.
+ * Captures the exact event/matcher/command registered in settings.json.
+ */
+export interface AppliedHook {
+  kind: 'hook';
+  event: string;
+  matcher: string;
+  command: string;
+  timeout?: number;
+}
+
+/**
+ * Payload recorded when a skill or agent is installed via a link op.
+ * The `files` field mirrors ManifestEntry.files for link-type artifacts.
+ */
+export interface AppliedLink {
+  kind: 'link';
+  /** Absolute paths of files/dirs written (target + store). */
+  files: string[];
+}
+
+/**
+ * Discriminated union of per-nature applied payloads.
+ *
+ * Present on ManifestEntry.applied after B-iii.
+ * Absent on legacy entries installed before B-iii → remove/check degrade gracefully.
+ */
+export type AppliedPayload = AppliedGuardrail | AppliedContext | AppliedHook | AppliedLink;
+
+// ---------------------------------------------------------------------------
 // Manifest
 // ---------------------------------------------------------------------------
 
@@ -47,6 +103,8 @@ export interface Artifact {
  * - sha: resolved commit sha (reproducibility + drift detection).
  * - installedAt: ISO-8601 timestamp string.
  * - files: absolute paths of files written or managed.
+ * - applied: structured payload of the mutations applied at install time.
+ *   Optional for backward compatibility with manifests written before B-iii.
  */
 export interface ManifestEntry {
   id: string;
@@ -56,6 +114,8 @@ export interface ManifestEntry {
   scope: Scope;
   installedAt: string;
   files: string[];
+  /** Structured payload of the mutations applied at install time. Added in B-iii. */
+  applied?: AppliedPayload;
 }
 
 /**

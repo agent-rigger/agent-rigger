@@ -16,7 +16,7 @@
  */
 
 import type { Adapter, AdapterEntry } from '@agent-rigger/core/adapter';
-import { remove } from '@agent-rigger/core/engine';
+import { planRemoval, remove } from '@agent-rigger/core/engine';
 import type { Env } from '@agent-rigger/core/paths';
 import { resolveHome } from '@agent-rigger/core/paths';
 import type { RemovalOp, Scope } from '@agent-rigger/core/types';
@@ -142,14 +142,12 @@ export async function runRemove(opts: RunRemoveOptions): Promise<RemoveCommandRe
   });
 
   // -------------------------------------------------------------------------
-  // Step 3: Plan — aggregate RemovalOps from all entries
+  // Step 3: Plan — aggregate RemovalOps from all entries.
+  // Entries are enriched with their manifest `applied` payload (B-iii) so the
+  // preview matches what remove() will actually do for installed entries.
   // -------------------------------------------------------------------------
 
-  const allOps: RemovalOp[] = [];
-  for (const entry of adapterEntries) {
-    const ops = await adapter.planRemove(entry, scope, env);
-    allOps.push(...ops);
-  }
+  const allOps: RemovalOp[] = await planRemoval(adapter, adapterEntries, scope, env, manifestPath);
 
   // -------------------------------------------------------------------------
   // Step 4: Render plan

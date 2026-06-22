@@ -229,7 +229,14 @@ export function createClaudeAdapter(config: ClaudeAdapterConfig): Adapter {
       {
         audit(entry, scope, env): Promise<NatureReport> {
           const cwd = entry.scope === 'project' ? process.cwd() : undefined;
-          return auditGuardrail(scope, env, config.denyRef, cwd, allowRef);
+          // B-iii: prefer applied payload from manifest when available.
+          const effectiveDeny = entry.applied?.kind === 'guardrail'
+            ? entry.applied.denyRules
+            : config.denyRef;
+          const effectiveAllow = entry.applied?.kind === 'guardrail'
+            ? entry.applied.allowRules
+            : allowRef;
+          return auditGuardrail(scope, env, effectiveDeny, cwd, effectiveAllow);
         },
         plan(entry, scope, env): Promise<WriteOp[]> {
           const cwd = entry.scope === 'project' ? process.cwd() : undefined;
@@ -237,7 +244,14 @@ export function createClaudeAdapter(config: ClaudeAdapterConfig): Adapter {
         },
         planRemove(entry, scope, env): Promise<RemovalOp[]> {
           const cwd = entry.scope === 'project' ? process.cwd() : undefined;
-          return planRemoveGuardrail(scope, env, config.denyRef, cwd, allowRef);
+          // B-iii: prefer applied payload from manifest when available.
+          const effectiveDeny = entry.applied?.kind === 'guardrail'
+            ? entry.applied.denyRules
+            : config.denyRef;
+          const effectiveAllow = entry.applied?.kind === 'guardrail'
+            ? entry.applied.allowRules
+            : allowRef;
+          return planRemoveGuardrail(scope, env, effectiveDeny, cwd, effectiveAllow);
         },
       },
     ],
@@ -246,7 +260,11 @@ export function createClaudeAdapter(config: ClaudeAdapterConfig): Adapter {
       {
         audit(entry, scope, env): Promise<NatureReport> {
           const cwd = entry.scope === 'project' ? process.cwd() : undefined;
-          return auditContext(scope, env, agentsContent, cwd);
+          // B-iii: prefer applied payload from manifest when available.
+          const effectiveContent = entry.applied?.kind === 'context'
+            ? entry.applied.block
+            : agentsContent;
+          return auditContext(scope, env, effectiveContent, cwd);
         },
         plan(entry, scope, env): Promise<WriteOp[]> {
           const cwd = entry.scope === 'project' ? process.cwd() : undefined;
@@ -254,7 +272,11 @@ export function createClaudeAdapter(config: ClaudeAdapterConfig): Adapter {
         },
         planRemove(entry, scope, env): Promise<RemovalOp[]> {
           const cwd = entry.scope === 'project' ? process.cwd() : undefined;
-          return planRemoveContext(scope, env, agentsContent, cwd);
+          // B-iii: prefer applied payload from manifest when available.
+          const effectiveContent = entry.applied?.kind === 'context'
+            ? entry.applied.block
+            : agentsContent;
+          return planRemoveContext(scope, env, effectiveContent, cwd);
         },
       },
     ],
@@ -310,13 +332,23 @@ export function createClaudeAdapter(config: ClaudeAdapterConfig): Adapter {
       'hook',
       {
         audit(entry, scope, env): Promise<NatureReport> {
+          const cwd = entry.scope === 'project' ? process.cwd() : undefined;
+          // B-iii: prefer applied payload from manifest when available.
+          if (entry.applied?.kind === 'hook') {
+            const appliedSpec: ResolvedHook = {
+              event: entry.applied.event,
+              matcher: entry.applied.matcher,
+              command: entry.applied.command,
+              ...(entry.applied.timeout === undefined ? {} : { timeout: entry.applied.timeout }),
+            };
+            return auditHook(entry, scope, env, appliedSpec, cwd);
+          }
           let spec: ResolvedHook;
           try {
             spec = resolveHookSpec(entry);
           } catch (err) {
             return Promise.reject(err);
           }
-          const cwd = entry.scope === 'project' ? process.cwd() : undefined;
           return auditHook(entry, scope, env, spec, cwd);
         },
         plan(entry, scope, env): Promise<WriteOp[]> {
@@ -330,13 +362,23 @@ export function createClaudeAdapter(config: ClaudeAdapterConfig): Adapter {
           return planHook(entry, scope, env, spec, cwd);
         },
         planRemove(entry, scope, env): Promise<RemovalOp[]> {
+          const cwd = entry.scope === 'project' ? process.cwd() : undefined;
+          // B-iii: prefer applied payload from manifest when available.
+          if (entry.applied?.kind === 'hook') {
+            const appliedSpec: ResolvedHook = {
+              event: entry.applied.event,
+              matcher: entry.applied.matcher,
+              command: entry.applied.command,
+              ...(entry.applied.timeout === undefined ? {} : { timeout: entry.applied.timeout }),
+            };
+            return planRemoveHook(entry, scope, env, appliedSpec, cwd);
+          }
           let spec: ResolvedHook;
           try {
             spec = resolveHookSpec(entry);
           } catch (err) {
             return Promise.reject(err);
           }
-          const cwd = entry.scope === 'project' ? process.cwd() : undefined;
           return planRemoveHook(entry, scope, env, spec, cwd);
         },
       },

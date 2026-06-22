@@ -53,9 +53,6 @@ const REMOTE_PLUGIN_ENTRY: CatalogEntry = {
 // Repo root + artifacts dir
 // ---------------------------------------------------------------------------
 
-const REPO_ROOT = path.resolve(import.meta.dirname, '../../..');
-const ARTIFACTS_DIR = path.join(REPO_ROOT, 'artifacts');
-
 // ---------------------------------------------------------------------------
 // makePluginEnv — isolated HOME + content dir with plugin catalog fixture
 // ---------------------------------------------------------------------------
@@ -190,7 +187,6 @@ describe('H6 — external plugin: runner receives catalogUrl as marketplace URL'
       scope: 'user',
       env: ctx.env,
       manifestPath: ctx.manifestPath,
-      artifactsDir: ARTIFACTS_DIR,
       runner: ctx.runner,
       tmpFactory: ctx.tmpFactory,
       confirm: true,
@@ -210,7 +206,6 @@ describe('H6 — external plugin: runner receives catalogUrl as marketplace URL'
       scope: 'user',
       env: ctx.env,
       manifestPath: ctx.manifestPath,
-      artifactsDir: ARTIFACTS_DIR,
       runner: ctx.runner,
       tmpFactory: ctx.tmpFactory,
       confirm: true,
@@ -230,7 +225,6 @@ describe('H6 — external plugin: runner receives catalogUrl as marketplace URL'
       scope: 'user',
       env: ctx.env,
       manifestPath: ctx.manifestPath,
-      artifactsDir: ARTIFACTS_DIR,
       runner: ctx.runner,
       tmpFactory: ctx.tmpFactory,
       confirm: true,
@@ -254,7 +248,6 @@ describe('H6 — external plugin: runner receives catalogUrl as marketplace URL'
       scope: 'user',
       env: ctx.env,
       manifestPath: ctx.manifestPath,
-      artifactsDir: ARTIFACTS_DIR,
       runner: ctx.runner,
       tmpFactory: ctx.tmpFactory,
       confirm: true,
@@ -290,7 +283,7 @@ describe('H6 — internal/local plugin: pluginSource uses local marketplace.json
     const localEnv: Env = { RIGGER_HOME: tmpHomeDir };
 
     try {
-      const adapter = await buildClaudeAdapter(localEnv, ARTIFACTS_DIR, {
+      const adapter = await buildClaudeAdapter(localEnv, {
         externalIds: new Set(['skill:something-else']), // plugin:demo-plugin NOT in externalIds
         catalogUrl: CATALOG_URL,
       });
