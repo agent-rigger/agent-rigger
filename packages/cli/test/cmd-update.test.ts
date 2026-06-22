@@ -36,9 +36,6 @@ import { runUpdate } from '../src/cmd-update';
 // Repo root + artifacts dir
 // ---------------------------------------------------------------------------
 
-const REPO_ROOT = path.resolve(import.meta.dirname, '../../..');
-const ARTIFACTS_DIR = path.join(REPO_ROOT, 'artifacts');
-
 // ---------------------------------------------------------------------------
 // Fixed test fixtures
 // ---------------------------------------------------------------------------
@@ -248,7 +245,6 @@ async function preInstallRemote(env: Env, tag: string, sha: string) {
   await runCli(['install', 'skill:remote-demo', '--yes'], {
     print: makeCapture().print,
     env,
-    artifactsDir: ARTIFACTS_DIR,
     remote: { run: iso.makeRunner(), tmpFactory: iso.makeTmpFactory(), scanner: stubScanner },
   });
 }
@@ -267,7 +263,6 @@ describe('runUpdate — stale: re-installs when remote is newer', () => {
       scope: 'user',
       env: iso.env,
       manifestPath: targets.stateJson,
-      artifactsDir: ARTIFACTS_DIR,
       catalogUrl: 'https://example.com/catalog.git',
       runner: iso.makeRunner(),
       tmpFactory: iso.makeTmpFactory(),
@@ -287,7 +282,6 @@ describe('runUpdate — stale: re-installs when remote is newer', () => {
       scope: 'user',
       env: iso.env,
       manifestPath: targets.stateJson,
-      artifactsDir: ARTIFACTS_DIR,
       catalogUrl: 'https://example.com/catalog.git',
       runner: iso.makeRunner(),
       tmpFactory: iso.makeTmpFactory(),
@@ -322,7 +316,6 @@ describe('runUpdate — stale: re-installs when remote is newer', () => {
       scope: 'user',
       env: iso.env,
       manifestPath: targets.stateJson,
-      artifactsDir: ARTIFACTS_DIR,
       catalogUrl: 'https://example.com/catalog.git',
       runner: iso.makeRunner(),
       tmpFactory: iso.makeTmpFactory(),
@@ -345,7 +338,6 @@ describe('runUpdate — stale: re-installs when remote is newer', () => {
       scope: 'user',
       env: iso.env,
       manifestPath: targets.stateJson,
-      artifactsDir: ARTIFACTS_DIR,
       catalogUrl: 'https://example.com/catalog.git',
       runner: iso.makeRunner(),
       tmpFactory: iso.makeTmpFactory(),
@@ -373,7 +365,6 @@ describe('runUpdate — up-to-date: no write when versions match', () => {
       scope: 'user',
       env: iso.env,
       manifestPath,
-      artifactsDir: ARTIFACTS_DIR,
       catalogUrl: 'https://example.com/catalog.git',
       runner: iso.makeRunner(),
       tmpFactory: iso.makeTmpFactory(),
@@ -397,7 +388,6 @@ describe('runUpdate — up-to-date: no write when versions match', () => {
       scope: 'user',
       env: iso.env,
       manifestPath: targets.stateJson,
-      artifactsDir: ARTIFACTS_DIR,
       catalogUrl: 'https://example.com/catalog.git',
       runner: iso.makeRunner(),
       tmpFactory: iso.makeTmpFactory(),
@@ -420,7 +410,6 @@ describe('runUpdate — internal entry: skipped', () => {
       scope: 'user',
       env: iso.env,
       manifestPath: targets.stateJson,
-      artifactsDir: ARTIFACTS_DIR,
       catalogUrl: 'https://example.com/catalog.git',
       runner: iso.makeRunner(),
       tmpFactory: iso.makeTmpFactory(),
@@ -437,7 +426,6 @@ describe('runUpdate — internal entry: skipped', () => {
       scope: 'user',
       env: iso.env,
       manifestPath: targets.stateJson,
-      artifactsDir: ARTIFACTS_DIR,
       catalogUrl: 'https://example.com/catalog.git',
       runner: iso.makeRunner(),
       tmpFactory: iso.makeTmpFactory(),
@@ -468,7 +456,6 @@ describe('runUpdate — no ids: auto-selects external installed entries', () => 
       await runCli(['install', 'skill:remote-demo', 'skill:remote-b', '--yes'], {
         print: makeCapture().print,
         env: dualIso.env,
-        artifactsDir: ARTIFACTS_DIR,
         remote: {
           run: dualIso.makeRunner(),
           tmpFactory: dualIso.makeTmpFactory(),
@@ -483,7 +470,6 @@ describe('runUpdate — no ids: auto-selects external installed entries', () => 
         scope: 'user',
         env: dualIso.env,
         manifestPath: dualTargets.stateJson,
-        artifactsDir: ARTIFACTS_DIR,
         catalogUrl: 'https://example.com/catalog.git',
         runner: dualIso.makeRunner(),
         tmpFactory: dualIso.makeTmpFactory(),
@@ -507,7 +493,6 @@ describe('runUpdate — no ids: auto-selects external installed entries', () => 
       scope: 'user',
       env: iso.env,
       manifestPath: targets.stateJson,
-      artifactsDir: ARTIFACTS_DIR,
       catalogUrl: 'https://example.com/catalog.git',
       runner: iso.makeRunner(),
       tmpFactory: iso.makeTmpFactory(),
@@ -531,7 +516,6 @@ describe('runUpdate — id not installed: skipped', () => {
       scope: 'user',
       env: iso.env,
       manifestPath: targets.stateJson,
-      artifactsDir: ARTIFACTS_DIR,
       catalogUrl: 'https://example.com/catalog.git',
       runner: iso.makeRunner(),
       tmpFactory: iso.makeTmpFactory(),
@@ -548,7 +532,6 @@ describe('runUpdate — id not installed: skipped', () => {
       scope: 'user',
       env: iso.env,
       manifestPath: targets.stateJson,
-      artifactsDir: ARTIFACTS_DIR,
       catalogUrl: 'https://example.com/catalog.git',
       runner: iso.makeRunner(),
       tmpFactory: iso.makeTmpFactory(),
@@ -583,7 +566,6 @@ describe('runUpdate — transactional: confirm=false leaves artifact intact', ()
       scope: 'user',
       env: iso.env,
       manifestPath: targets.stateJson,
-      artifactsDir: ARTIFACTS_DIR,
       catalogUrl: 'https://example.com/catalog.git',
       runner: iso.makeRunner(),
       tmpFactory: iso.makeTmpFactory(),
@@ -622,7 +604,6 @@ describe('runUpdate — transactional: confirm=false leaves artifact intact', ()
       scope: 'user',
       env: iso.env,
       manifestPath: targets.stateJson,
-      artifactsDir: ARTIFACTS_DIR,
       catalogUrl: 'https://example.com/catalog.git',
       runner: iso.makeRunner(),
       tmpFactory: iso.makeTmpFactory(),
@@ -645,7 +626,6 @@ describe('runUpdate — transactional: confirm=false leaves artifact intact', ()
       scope: 'user',
       env: iso.env,
       manifestPath: targets.stateJson,
-      artifactsDir: ARTIFACTS_DIR,
       catalogUrl: 'https://example.com/catalog.git',
       runner: iso.makeRunner(),
       tmpFactory: iso.makeTmpFactory(),
@@ -692,7 +672,6 @@ describe('runUpdate — transactional: clone failure leaves artifact intact', ()
         scope: 'user',
         env: iso.env,
         manifestPath: targets.stateJson,
-        artifactsDir: ARTIFACTS_DIR,
         catalogUrl: 'https://example.com/catalog.git',
         runner: cloneFailRunner,
         tmpFactory: iso.makeTmpFactory(),
@@ -722,7 +701,6 @@ describe('runUpdate — interactive confirm: installs when confirmed', () => {
       scope: 'user',
       env: iso.env,
       manifestPath: targets.stateJson,
-      artifactsDir: ARTIFACTS_DIR,
       catalogUrl: 'https://example.com/catalog.git',
       runner: iso.makeRunner(),
       tmpFactory: iso.makeTmpFactory(),
@@ -750,7 +728,6 @@ describe('runUpdate — interactive confirm: installs when confirmed', () => {
       scope: 'user',
       env: iso.env,
       manifestPath: targets.stateJson,
-      artifactsDir: ARTIFACTS_DIR,
       catalogUrl: 'https://example.com/catalog.git',
       runner: iso.makeRunner(),
       tmpFactory: iso.makeTmpFactory(),

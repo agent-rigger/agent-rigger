@@ -45,7 +45,7 @@ import type { Scanner } from '@agent-rigger/core/scan';
 import type { Scope } from '@agent-rigger/core/types';
 
 import { buildClaudeAdapter } from './cli';
-import { scanEntries, scanPathFor } from './remote-install';
+import { scanEntries } from './remote-install';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -58,8 +58,6 @@ export interface RunUpdateOptions {
   env: Env;
   /** Absolute path to state.json (the manifest). */
   manifestPath: string;
-  /** Absolute path to the bundled artifacts directory. */
-  artifactsDir: string;
   /** Remote catalog URL. */
   catalogUrl: string;
   runner: CommandRunner;
@@ -116,7 +114,6 @@ export async function runUpdate(opts: RunUpdateOptions): Promise<UpdateResult> {
     scope,
     env,
     manifestPath,
-    artifactsDir,
     catalogUrl,
     runner,
     tmpFactory,
@@ -209,14 +206,10 @@ export async function runUpdate(opts: RunUpdateOptions): Promise<UpdateResult> {
         const { entries: effective } = mergeCatalogs([], remoteEntries);
         const resolved = resolve(staleIds, effective);
 
-        // Entries with a checkout path (skills/agents) are "remote" — their
-        // content comes from the fetched content repo. Others (guardrails, hooks)
-        // always come from the local artifacts dir.
-        const remoteIds = new Set(
-          resolved
-            .filter((e) => scanPathFor(e, dir) !== null)
-            .map((e) => e.id),
-        );
+        // All stale entries sourced from the remote checkout.
+        // Skills / agents have a scanPath; guardrails / contexts / hooks do not
+        // but still come from externalBaseDir. All are remote.
+        const remoteIds = new Set(resolved.map((e) => e.id));
 
         // 3c. Security scan — all entries that have a checkout path (uniform scan, ADR-0014).
         //     Entries without a scanPath (e.g. guardrails, hooks) are naturally skipped.
@@ -232,7 +225,7 @@ export async function runUpdate(opts: RunUpdateOptions): Promise<UpdateResult> {
         const effectiveEntries = new Map(effective.map((e) => [e.id, e]));
 
         // 3e. Build adapter with remote resolver seam (externalBaseDir = checkout dir).
-        const adapter = await buildClaudeAdapter(env, artifactsDir, {
+        const adapter = await buildClaudeAdapter(env, {
           externalIds: remoteIds,
           externalBaseDir: dir,
           effectiveEntries,

@@ -14,17 +14,24 @@
  */
 
 import type { Env } from './paths';
-import type { NatureReport, RemovalOp, Scope, WriteOp } from './types';
+import type { AppliedPayload, NatureReport, RemovalOp, Scope, WriteOp } from './types';
 
 /**
  * An installable artifact entry passed to the adapter methods.
  * Mirrors the catalog entry shape that the engine receives; kept minimal
  * here (core does not depend on packages/catalog).
+ *
+ * `applied` is set by the engine when calling planRemove / audit so that
+ * handlers can reconstruct the canonical state from the manifest payload
+ * instead of reading from an external artifacts directory.
+ * Absent on legacy entries installed before B-iii.
  */
 export interface AdapterEntry {
   id: string;
   nature: NatureReport['nature'];
   scope: Scope;
+  /** Applied payload from the manifest (set by the engine for remove/check). */
+  applied?: AppliedPayload;
 }
 
 /**

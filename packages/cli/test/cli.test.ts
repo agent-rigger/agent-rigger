@@ -25,8 +25,6 @@ import type { CliPrompts } from '../src/cli';
 // ---------------------------------------------------------------------------
 
 // packages/cli/test → packages/cli → packages → agent-rigger (repo root)
-const REPO_ROOT = path.resolve(import.meta.dirname, '../../..');
-const ARTIFACTS_DIR = path.join(REPO_ROOT, 'artifacts');
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -230,7 +228,6 @@ describe('runCli — invalid --scope', () => {
     const code = await runCli(['check', '--scope=user'], {
       print: cap.print,
       env: { RIGGER_HOME: '/tmp/nonexistent-rigger-home-test' },
-      artifactsDir: ARTIFACTS_DIR,
     });
     // Should not be 2 (scope error); any other code is acceptable
     expect(code).not.toBe(2);
@@ -241,7 +238,6 @@ describe('runCli — invalid --scope', () => {
     const code = await runCli(['check', '--scope=project'], {
       print: cap.print,
       env: { RIGGER_HOME: '/tmp/nonexistent-rigger-home-test' },
-      artifactsDir: ARTIFACTS_DIR,
     });
     expect(code).not.toBe(2);
   });
@@ -267,7 +263,6 @@ describe('runCli — check without catalogUrl → empty catalog + actionable mes
     const code = await runCli(['check'], {
       print: cap.print,
       env: { RIGGER_HOME: tmp.dir },
-      artifactsDir: ARTIFACTS_DIR,
     });
     // No catalogUrl → empty catalog → check returns 0 with actionable message
     expect(code).toBe(0);
@@ -278,7 +273,6 @@ describe('runCli — check without catalogUrl → empty catalog + actionable mes
     await runCli(['check'], {
       print: cap.print,
       env: { RIGGER_HOME: tmp.dir },
-      artifactsDir: ARTIFACTS_DIR,
     });
     const out = cap.lines.join('\n');
     expect(out).toMatch(/aucun catalog|agent-rigger init/);
@@ -305,7 +299,6 @@ describe('runCli — install without catalogUrl → actionable message, exit 0',
     const code = await runCli(['install'], {
       print: cap.print,
       env: { RIGGER_HOME: tmp.dir },
-      artifactsDir: ARTIFACTS_DIR,
       prompts: fakePrompts(),
     });
     expect(code).toBe(0);
@@ -318,7 +311,6 @@ describe('runCli — install without catalogUrl → actionable message, exit 0',
     await runCli(['install'], {
       print: cap.print,
       env: { RIGGER_HOME: tmp.dir },
-      artifactsDir: ARTIFACTS_DIR,
       prompts: fakePrompts(),
     });
     const settingsPath = path.join(tmp.dir, '.claude', 'settings.json');
@@ -332,7 +324,6 @@ describe('runCli — install without catalogUrl → actionable message, exit 0',
     const code = await runCli(['install'], {
       print: cap.print,
       env: { RIGGER_HOME: tmp.dir },
-      artifactsDir: ARTIFACTS_DIR,
       prompts: fakePrompts(),
     });
     expect(code).toBe(0);
@@ -343,7 +334,6 @@ describe('runCli — install without catalogUrl → actionable message, exit 0',
     const checkCode = await runCli(['check'], {
       print: checkCap.print,
       env: { RIGGER_HOME: tmp.dir },
-      artifactsDir: ARTIFACTS_DIR,
     });
     // Without catalogUrl, catalog is empty → actionable message, exit 0
     expect(checkCode).toBe(0);
@@ -360,7 +350,6 @@ describe('runCli — install without catalogUrl → actionable message, exit 0',
     const code = await runCli(['install'], {
       print: cap.print,
       env: { RIGGER_HOME: tmp.dir },
-      artifactsDir: ARTIFACTS_DIR,
       prompts,
     });
     // Aborted cleanly = 0 (no error, user cancelled or no catalog)
@@ -433,7 +422,6 @@ describe('runCli — ls (top-level) without catalogUrl → empty + actionable me
     const code = await runCli(['ls'], {
       print: cap.print,
       env: { RIGGER_HOME: tmp.dir },
-      artifactsDir: ARTIFACTS_DIR,
     });
     expect(code).toBe(0);
   });
@@ -443,7 +431,6 @@ describe('runCli — ls (top-level) without catalogUrl → empty + actionable me
     await runCli(['ls'], {
       print: cap.print,
       env: { RIGGER_HOME: tmp.dir },
-      artifactsDir: ARTIFACTS_DIR,
     });
     const out = cap.lines.join('\n');
     expect(out).toMatch(/aucun catalog|agent-rigger init/);
@@ -466,7 +453,6 @@ describe('runCli — skills ls (filtered) without catalogUrl → actionable mess
     const code = await runCli(['skills', 'ls'], {
       print: cap.print,
       env: { RIGGER_HOME: tmp.dir },
-      artifactsDir: ARTIFACTS_DIR,
     });
     expect(code).toBe(0);
   });
@@ -476,7 +462,6 @@ describe('runCli — skills ls (filtered) without catalogUrl → actionable mess
     await runCli(['skills', 'ls'], {
       print: cap.print,
       env: { RIGGER_HOME: tmp.dir },
-      artifactsDir: ARTIFACTS_DIR,
     });
     const out = cap.lines.join('\n');
     expect(out).toMatch(/aucun catalog|agent-rigger init/);
@@ -504,7 +489,6 @@ describe('runCli — install <id> --yes without catalogUrl → actionable messag
     const code = await runCli(['install', 'skill:some-skill', '--yes'], {
       print: cap.print,
       env: { RIGGER_HOME: tmp.dir },
-      artifactsDir: ARTIFACTS_DIR,
     });
     expect(code).toBe(0);
     const out = cap.lines.join('\n');
@@ -525,7 +509,6 @@ describe('runCli — install <id> --yes without catalogUrl → actionable messag
     await runCli(['install', 'skill:some-skill', '--yes'], {
       print: cap.print,
       env: { RIGGER_HOME: tmp.dir },
-      artifactsDir: ARTIFACTS_DIR,
       prompts,
     });
     expect(selectCalled).toBe(false);
@@ -544,7 +527,6 @@ describe('runCli — install <id> --yes without catalogUrl → actionable messag
     await runCli(['install', 'skill:some-skill', '--yes'], {
       print: cap.print,
       env: { RIGGER_HOME: tmp.dir },
-      artifactsDir: ARTIFACTS_DIR,
       prompts,
     });
     expect(confirmCalled).toBe(false);
@@ -555,7 +537,6 @@ describe('runCli — install <id> --yes without catalogUrl → actionable messag
     await runCli(['install', 'skill:some-skill'], {
       print: cap.print,
       env: { RIGGER_HOME: tmp.dir },
-      artifactsDir: ARTIFACTS_DIR,
       prompts: fakePrompts(),
     });
     // With no catalogUrl, install resolves empty catalog → actionable message, exit 0
@@ -611,7 +592,6 @@ describe('runCli — <resource> add <id> validation', () => {
     const code = await runCli(['skills', 'add', 'guardrail:main'], {
       print: cap.print,
       env: { RIGGER_HOME: tmp.dir },
-      artifactsDir: ARTIFACTS_DIR,
       remote: {
         run: makeSuccessRunner(),
         tmpFactory: makeFakeTmpFactory(catalogDir, fixtureEntries),
@@ -635,7 +615,6 @@ describe('runCli — <resource> add <id> validation', () => {
     await runCli(['skills', 'add', 'guardrail:main'], {
       print: cap.print,
       env: { RIGGER_HOME: tmp.dir },
-      artifactsDir: ARTIFACTS_DIR,
       remote: {
         run: makeSuccessRunner(),
         tmpFactory: makeFakeTmpFactory(catalogDir, fixtureEntries),
@@ -660,7 +639,6 @@ describe('runCli — <resource> add <id> validation', () => {
     const code = await runCli(['guardrails', 'add', 'guardrail:main', '--yes'], {
       print: cap.print,
       env: { RIGGER_HOME: tmp.dir },
-      artifactsDir: ARTIFACTS_DIR,
       remote: {
         run: makeSuccessRunner(),
         tmpFactory: makeFakeTmpFactory(catalogDir, fixtureEntries),
@@ -708,7 +686,6 @@ describe('runCli — <resource> info <id>', () => {
     const code = await runCli(['guardrails', 'info', 'guardrail:main'], {
       print: cap.print,
       env: { RIGGER_HOME: tmp.dir },
-      artifactsDir: ARTIFACTS_DIR,
       remote: {
         run: makeSuccessRunner(),
         tmpFactory: makeFakeTmpFactory(catalogDir, fixtureEntries),
@@ -731,7 +708,6 @@ describe('runCli — <resource> info <id>', () => {
     await runCli(['guardrails', 'info', 'guardrail:main'], {
       print: cap.print,
       env: { RIGGER_HOME: tmp.dir },
-      artifactsDir: ARTIFACTS_DIR,
       remote: {
         run: makeSuccessRunner(),
         tmpFactory: makeFakeTmpFactory(catalogDir, fixtureEntries),
@@ -756,7 +732,6 @@ describe('runCli — <resource> info <id>', () => {
     const code = await runCli(['guardrails', 'info', 'does-not-exist'], {
       print: cap.print,
       env: { RIGGER_HOME: tmp.dir },
-      artifactsDir: ARTIFACTS_DIR,
       remote: {
         run: makeSuccessRunner(),
         tmpFactory: makeFakeTmpFactory(catalogDir, fixtureEntries),
@@ -779,7 +754,6 @@ describe('runCli — <resource> info <id>', () => {
     await runCli(['guardrails', 'info', 'does-not-exist'], {
       print: cap.print,
       env: { RIGGER_HOME: tmp.dir },
-      artifactsDir: ARTIFACTS_DIR,
       remote: {
         run: makeSuccessRunner(),
         tmpFactory: makeFakeTmpFactory(catalogDir, fixtureEntries),
@@ -796,7 +770,6 @@ describe('runCli — <resource> info <id>', () => {
       const code = await runCli(['guardrails', 'info', 'guardrail:main'], {
         print: cap.print,
         env: { RIGGER_HOME: tmpNoCatalog.dir },
-        artifactsDir: ARTIFACTS_DIR,
       });
       // catalog vide → unknown id → exit 2 OR actionable message with 0
       // Accept either: no catalog → print actionable msg
@@ -850,7 +823,6 @@ describe('runCli — <resource> check', () => {
     const code = await runCli(['guardrails', 'check'], {
       print: cap.print,
       env: { RIGGER_HOME: tmp.dir },
-      artifactsDir: ARTIFACTS_DIR,
       remote: {
         run: makeSuccessRunner(),
         tmpFactory: makeFakeTmpFactory(catalogDir, [GUARDRAIL_ENTRY]),
@@ -865,7 +837,6 @@ describe('runCli — <resource> check', () => {
     await runCli(['guardrails', 'add', 'guardrail:main', '--yes'], {
       print: installCap.print,
       env: { RIGGER_HOME: tmp.dir },
-      artifactsDir: ARTIFACTS_DIR,
       remote: {
         run: makeSuccessRunner(),
         tmpFactory: makeFakeTmpFactory(catalogDir, [GUARDRAIL_ENTRY]),
@@ -879,7 +850,6 @@ describe('runCli — <resource> check', () => {
       const code = await runCli(['guardrails', 'check'], {
         print: checkCap.print,
         env: { RIGGER_HOME: tmp.dir },
-        artifactsDir: ARTIFACTS_DIR,
         remote: {
           run: makeSuccessRunner(),
           tmpFactory: makeFakeTmpFactory(catalogDir2, [GUARDRAIL_ENTRY]),
@@ -898,7 +868,6 @@ describe('runCli — <resource> check', () => {
       const code = await runCli(['guardrails', 'check'], {
         print: cap.print,
         env: { RIGGER_HOME: tmpNoCatalog.dir },
-        artifactsDir: ARTIFACTS_DIR,
       });
       expect(code).toBe(0);
       const out = cap.lines.join('\n');
@@ -1000,7 +969,6 @@ describe('runCli — <resource> remove <id...>', () => {
     await runCli(['guardrails', 'add', 'guardrail:main', '--yes'], {
       print: makeCapture().print,
       env: { RIGGER_HOME: tmp.dir },
-      artifactsDir: ARTIFACTS_DIR,
       remote: makeRemote(catalogDir),
     });
 
@@ -1011,7 +979,6 @@ describe('runCli — <resource> remove <id...>', () => {
       const code = await runCli(['guardrails', 'remove', 'guardrail:main', '--yes'], {
         print: cap.print,
         env: { RIGGER_HOME: tmp.dir },
-        artifactsDir: ARTIFACTS_DIR,
         remote: makeRemote(catalogDir2),
       });
       expect(code).toBe(0);
@@ -1025,7 +992,6 @@ describe('runCli — <resource> remove <id...>', () => {
     const code = await runCli(['guardrails', 'remove'], {
       print: cap.print,
       env: { RIGGER_HOME: tmp.dir },
-      artifactsDir: ARTIFACTS_DIR,
     });
     expect(code).toBe(2);
   });
@@ -1035,7 +1001,6 @@ describe('runCli — <resource> remove <id...>', () => {
     await runCli(['guardrails', 'remove'], {
       print: cap.print,
       env: { RIGGER_HOME: tmp.dir },
-      artifactsDir: ARTIFACTS_DIR,
     });
     const out = cap.lines.join('\n');
     expect(out.toLowerCase()).toMatch(/remove|id|argument/);
@@ -1049,7 +1014,6 @@ describe('runCli — <resource> remove <id...>', () => {
       const code = await runCli(['skills', 'remove', 'context:main', '--yes'], {
         print: cap.print,
         env: { RIGGER_HOME: tmp.dir },
-        artifactsDir: ARTIFACTS_DIR,
         remote: makeRemote(catalogDir3),
       });
       expect(code).toBe(2);
@@ -1068,7 +1032,6 @@ describe('runCli — <resource> remove <id...>', () => {
       await runCli(['guardrails', 'add', 'guardrail:main', '--yes'], {
         print: makeCapture().print,
         env: { RIGGER_HOME: tmp.dir },
-        artifactsDir: ARTIFACTS_DIR,
         remote: makeRemote(cDir1),
       });
 
@@ -1076,7 +1039,6 @@ describe('runCli — <resource> remove <id...>', () => {
       await runCli(['guardrails', 'remove', 'guardrail:main', '--yes'], {
         print: makeCapture().print,
         env: { RIGGER_HOME: tmp.dir },
-        artifactsDir: ARTIFACTS_DIR,
         remote: makeRemote(cDir2),
       });
 
@@ -1085,7 +1047,6 @@ describe('runCli — <resource> remove <id...>', () => {
       const code = await runCli(['guardrails', 'check'], {
         print: cap.print,
         env: { RIGGER_HOME: tmp.dir },
-        artifactsDir: ARTIFACTS_DIR,
         remote: makeRemote(cDir3),
       });
       expect(code).toBe(3);
@@ -1133,7 +1094,6 @@ describe('runCli — top-level remove <id...>', () => {
       await runCli(['install', 'guardrail:main', '--yes'], {
         print: makeCapture().print,
         env: { RIGGER_HOME: tmp.dir },
-        artifactsDir: ARTIFACTS_DIR,
         remote: {
           run: makeSuccessRunner(),
           tmpFactory: makeFakeTmpFactory(cDir1, [GUARDRAIL_FIXTURE_TL]),
@@ -1144,7 +1104,6 @@ describe('runCli — top-level remove <id...>', () => {
       const code = await runCli(['remove', 'guardrail:main', '--yes'], {
         print: cap.print,
         env: { RIGGER_HOME: tmp.dir },
-        artifactsDir: ARTIFACTS_DIR,
         remote: {
           run: makeSuccessRunner(),
           tmpFactory: makeFakeTmpFactory(cDir2, [GUARDRAIL_FIXTURE_TL]),
@@ -1162,7 +1121,6 @@ describe('runCli — top-level remove <id...>', () => {
     const code = await runCli(['remove'], {
       print: cap.print,
       env: { RIGGER_HOME: tmp.dir },
-      artifactsDir: ARTIFACTS_DIR,
     });
     expect(code).toBe(2);
   });
@@ -1257,7 +1215,6 @@ describe('runCli — non-regression interactive install', () => {
     await runCli(['install'], {
       print: cap.print,
       env: { RIGGER_HOME: tmp.dir },
-      artifactsDir: ARTIFACTS_DIR,
       prompts,
       remote: {
         run: makeSuccessRunner(),
@@ -1283,7 +1240,6 @@ describe('runCli — non-regression interactive install', () => {
       await runCli(['install'], {
         print: cap.print,
         env: { RIGGER_HOME: tmpNoCatalog.dir },
-        artifactsDir: ARTIFACTS_DIR,
         prompts,
       });
       // Without catalogUrl, catalog is empty → selectArtifacts must NOT be called
@@ -1317,12 +1273,35 @@ function makeRemoteEntry(id: string): CatalogEntry {
 /**
  * Builds a fake TmpDirFactory that writes catalog.json into dir and returns
  * a no-op cleanup (dir is owned by the test and cleaned up in afterEach).
+ *
+ * Also writes minimal guardrail fixtures for any guardrail entries so that
+ * buildClaudeAdapter can call loadCanonicalDeny without throwing EmptyDenyArtifactError.
  */
 function makeFakeTmpFactory(dir: string, entries: CatalogEntry[]): TmpDirFactory {
   return async () => {
     await Bun.write(
       path.join(dir, 'catalog.json'),
       JSON.stringify({ meta: { name: 'cli-test-catalog' }, entries }),
+    );
+    // Write minimal deny.json for each guardrail entry so loadCanonicalDeny succeeds.
+    const guardrailEntries = entries.filter(
+      (e): e is CatalogEntry & { nature: 'guardrail' } =>
+        e.kind === 'artifact' && (e as { nature: string }).nature === 'guardrail',
+    );
+    await Promise.all(
+      guardrailEntries.map(async (e) => {
+        const name = e.id.replace(/^guardrail:/, '');
+        const guardrailDir = path.join(dir, 'guardrails', name);
+        await fs.mkdir(guardrailDir, { recursive: true });
+        await Bun.write(
+          path.join(guardrailDir, 'deny.json'),
+          JSON.stringify({ deny: ['fake-deny-rule'] }),
+        );
+        await Bun.write(
+          path.join(guardrailDir, 'allow.json'),
+          JSON.stringify({ allow: [] }),
+        );
+      }),
     );
     return { path: dir, cleanup: async () => {} };
   };
@@ -1383,7 +1362,6 @@ describe('runCli — ls with remote catalog configured', () => {
     const code = await runCli(['ls'], {
       print: cap.print,
       env: { RIGGER_HOME: tmp.dir },
-      artifactsDir: ARTIFACTS_DIR,
       remote: {
         run: makeSuccessRunner(),
         tmpFactory: makeFakeTmpFactory(catalogDir, remoteEntries),
@@ -1403,7 +1381,6 @@ describe('runCli — ls with remote catalog configured', () => {
     const code = await runCli(['catalog', 'ls'], {
       print: cap.print,
       env: { RIGGER_HOME: tmp.dir },
-      artifactsDir: ARTIFACTS_DIR,
       remote: {
         run: makeSuccessRunner(),
         tmpFactory: makeFakeTmpFactory(catalogDir, remoteEntries),
@@ -1433,7 +1410,6 @@ describe('runCli — ls without catalogUrl configured → empty + actionable mes
     const code = await runCli(['ls'], {
       print: cap.print,
       env: { RIGGER_HOME: tmp.dir },
-      artifactsDir: ARTIFACTS_DIR,
     });
     expect(code).toBe(0);
     const out = cap.lines.join('\n');
@@ -1465,7 +1441,6 @@ describe('runCli — ls with catalogUrl configured but remote fails', () => {
     const code = await runCli(['ls'], {
       print: cap.print,
       env: { RIGGER_HOME: tmp.dir },
-      artifactsDir: ARTIFACTS_DIR,
       remote: { run: alwaysFailRunner },
     });
 
@@ -1481,7 +1456,6 @@ describe('runCli — ls with catalogUrl configured but remote fails', () => {
     await runCli(['ls'], {
       print: cap.print,
       env: { RIGGER_HOME: tmp.dir },
-      artifactsDir: ARTIFACTS_DIR,
       remote: { run: alwaysFailRunner },
     });
 
@@ -1526,7 +1500,6 @@ describe('runCli — ls with multiple remote catalog entries', () => {
     const code = await runCli(['ls'], {
       print: cap.print,
       env: { RIGGER_HOME: tmp.dir },
-      artifactsDir: ARTIFACTS_DIR,
       remote: {
         run: makeSuccessRunner(),
         tmpFactory: makeFakeTmpFactory(catalogDir, remoteEntries),
@@ -1546,7 +1519,6 @@ describe('runCli — ls with multiple remote catalog entries', () => {
     await runCli(['ls'], {
       print: cap.print,
       env: { RIGGER_HOME: tmp.dir },
-      artifactsDir: ARTIFACTS_DIR,
       remote: {
         run: makeSuccessRunner(),
         tmpFactory: makeFakeTmpFactory(catalogDir, remoteEntries),
@@ -1565,7 +1537,6 @@ describe('runCli — ls with multiple remote catalog entries', () => {
     await runCli(['ls'], {
       print: cap.print,
       env: { RIGGER_HOME: tmp.dir },
-      artifactsDir: ARTIFACTS_DIR,
       remote: {
         run: makeSuccessRunner(),
         tmpFactory: makeFakeTmpFactory(catalogDir, remoteEntries),

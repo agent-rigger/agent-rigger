@@ -30,9 +30,6 @@ import type { CliPrompts } from '../src/cli';
 // Repo root
 // ---------------------------------------------------------------------------
 
-const REPO_ROOT = path.resolve(import.meta.dirname, '../../..');
-const ARTIFACTS_DIR = path.join(REPO_ROOT, 'artifacts');
-
 // ---------------------------------------------------------------------------
 // Fixed fixtures
 // ---------------------------------------------------------------------------
@@ -204,7 +201,6 @@ describe('interactive install — with catalogUrl', () => {
     await runCli(['install'], {
       print: () => {},
       env: iso.env,
-      artifactsDir: ARTIFACTS_DIR,
       prompts,
       remote: { run: iso.makeRunner(), tmpFactory: iso.makeTmpFactory(), scanner: stubScanner },
     });
@@ -228,7 +224,6 @@ describe('interactive install — with catalogUrl', () => {
     const code = await runCli(['install'], {
       print: () => {},
       env: iso.env,
-      artifactsDir: ARTIFACTS_DIR,
       prompts,
       remote: { run: iso.makeRunner(), tmpFactory: iso.makeTmpFactory(), scanner: stubScanner },
     });
@@ -248,7 +243,6 @@ describe('interactive install — with catalogUrl', () => {
     await runCli(['install'], {
       print: () => {},
       env: iso.env,
-      artifactsDir: ARTIFACTS_DIR,
       prompts,
       remote: { run: iso.makeRunner(), tmpFactory: iso.makeTmpFactory(), scanner: stubScanner },
     });
@@ -275,7 +269,6 @@ describe('interactive install — with catalogUrl', () => {
     await runCli(['install'], {
       print: () => {},
       env: iso.env,
-      artifactsDir: ARTIFACTS_DIR,
       prompts,
       remote: { run: iso.makeRunner(), tmpFactory: iso.makeTmpFactory(), scanner: stubScanner },
     });
@@ -311,7 +304,6 @@ describe('interactive install — without catalogUrl', () => {
       await runCli(['install'], {
         print: () => {},
         env: noUrlIso.env,
-        artifactsDir: ARTIFACTS_DIR,
         prompts,
         remote: {
           run: noUrlIso.makeRunner(),
@@ -343,7 +335,6 @@ describe('interactive install — without catalogUrl', () => {
       const code = await runCli(['install'], {
         print: (msg) => lines.push(msg),
         env: noUrlIso.env,
-        artifactsDir: ARTIFACTS_DIR,
         prompts,
       });
 
@@ -373,7 +364,6 @@ describe('interactive install — empty selection', () => {
     const code = await runCli(['install'], {
       print: () => {},
       env: iso.env,
-      artifactsDir: ARTIFACTS_DIR,
       prompts,
       remote: { run: iso.makeRunner(), tmpFactory: iso.makeTmpFactory(), scanner: stubScanner },
     });
@@ -395,7 +385,6 @@ describe('interactive install — empty selection', () => {
     await runCli(['install'], {
       print: (msg) => lines.push(msg),
       env: iso.env,
-      artifactsDir: ARTIFACTS_DIR,
       prompts,
       remote: { run: iso.makeRunner(), tmpFactory: iso.makeTmpFactory(), scanner: stubScanner },
     });
