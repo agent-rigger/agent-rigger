@@ -4,12 +4,9 @@
  * Extracted from cli.ts so that both the CLI entry point and the remote-install
  * orchestrator share a single, consistent adapter construction path.
  *
- * The previous duplication (buildClaudeAdapter in cli.ts +
- * buildClaudeAdapterForRemote in remote-install.ts) caused remote installs of
- * hook entries to fail because the private copy lacked hookSpec.
- *
  * Responsibilities:
- * - Load denyRef + agentsContent from artifactsDir.
+ * - Load denyRef + agentsContent from externalBaseDir (checkout) when provided,
+ *   or from artifactsDir as a local fallback for non-remote installs.
  * - Build all source/spec closures: skillSource, agentSource, pluginSource, hookSpec.
  * - Accept an optional pluginRunner so callers can inject a CommandRunner-based
  *   runner (remote-install.ts) without coupling to the default PluginRunner.
@@ -17,6 +14,7 @@
  * Constraints:
  * - No circular imports: does not import from cli.ts or remote-install.ts.
  * - exactOptionalPropertyTypes: never assigns undefined to optional fields.
+ * - No BUILTIN_CATALOG dependency: all hook resolution must come from effectiveEntries.
  */
 
 import path from 'node:path';
@@ -35,7 +33,6 @@ import type { Env } from '@agent-rigger/core/paths';
 import { resolveUserTargets } from '@agent-rigger/core/paths';
 import { stubScanner } from '@agent-rigger/core/scan';
 
-import { BUILTIN_CATALOG } from '@agent-rigger/catalog';
 import type { CatalogEntry } from '@agent-rigger/catalog';
 
 // ---------------------------------------------------------------------------
@@ -61,9 +58,9 @@ import type { CatalogEntry } from '@agent-rigger/catalog';
  *                         uses its default runner (Bun.spawn). Set this in tests or in
  *                         remote-install.ts to avoid invoking the real `claude` binary.
  * @param effectiveEntries Lookup map (id → CatalogEntry) for the resolved effective catalog.
- *                         Used by hookSpec to resolve event/matcher/timeout for any hook entry
- *                         (builtin or external) without depending on BUILTIN_CATALOG.find.
- *                         When absent, hookSpec falls back to BUILTIN_CATALOG.
+ *                         Used by hookSpec to resolve event/matcher/timeout for any hook entry.
+ *                         Required when any hook entry needs to be installed — hookSpec will
+ *                         throw an actionable error if the entry is not found in this map.
  */
 export interface BuildClaudeAdapterOpts {
   externalIds?: Set<string>;
@@ -80,19 +77,24 @@ export interface BuildClaudeAdapterOpts {
 /**
  * Build a ClaudeAdapter from the artifacts directory.
  *
- * - denyRef       : loaded from <artifactsDir>/claude/deny.json
- * - agentsContent : loaded from <artifactsDir>/shared/AGENTS.md
+ * - denyRef       : loaded from <externalBaseDir>/guardrails/<n>/deny.json when external,
+ *                   otherwise from <artifactsDir>/claude/deny.json
+ * - agentsContent : loaded from <externalBaseDir>/contexts/<n>/AGENTS.md when external,
+ *                   otherwise from <artifactsDir>/shared/AGENTS.md
  * - skillSource   : resolves id → <artifactsDir>/claude/skills/<id>
  *                   or <externalBaseDir>/skills/<id> when id is in externalIds
  * - agentSource   : resolves id → <artifactsDir>/claude/agents/<agentId>.md
  *                   or <externalBaseDir>/agents/<agentId>.md when id is in externalIds
  * - pluginSource  : resolves id → { plugin: <pluginId>, marketplace: <cwd>/.claude-plugin/marketplace.json }
  *                   or { plugin: <pluginId>, marketplace: catalogUrl } for external plugin entries
- * - hookSpec      : resolves built-in hook entries to ResolvedHook (event/matcher/command/scriptSource/scriptStore)
- * - scanner       : stubScanner (M0: always passes)
+ * - hookSpec      : resolves hook entries to ResolvedHook (event/matcher/command/scriptSource/scriptStore)
+ *                   using effectiveEntries map. Throws actionable error if entry not found.
+ * - scanner       : stubScanner (always passes)
  *
- * @param opts  Optional external-resolver seam for remote installs.
- *              Omitting opts → existing behaviour unchanged (100% rétro-compatible).
+ * @param env          Injectable environment for path resolution.
+ * @param artifactsDir Absolute path to the local artifacts directory (fallback for non-external entries).
+ * @param opts         Optional external-resolver seam for remote installs.
+ *                     Omitting opts → existing behaviour unchanged (100% rétro-compatible).
  */
 export async function buildClaudeAdapter(
   env: Env,
@@ -100,7 +102,7 @@ export async function buildClaudeAdapter(
   opts?: BuildClaudeAdapterOpts,
 ): Promise<Adapter> {
   // ---------------------------------------------------------------------------
-  // Resolve denyRef + allowRef: external guardrail from checkout OR builtin fallback
+  // Resolve denyRef + allowRef: external guardrail from checkout OR local fallback
   // ---------------------------------------------------------------------------
 
   const externalGuardrailId = opts?.externalIds === undefined
@@ -127,7 +129,7 @@ export async function buildClaudeAdapter(
   }
 
   // ---------------------------------------------------------------------------
-  // Resolve agentsContent: external context from checkout OR builtin fallback
+  // Resolve agentsContent: external context from checkout OR local fallback
   // ---------------------------------------------------------------------------
 
   const externalContextId = opts?.externalIds === undefined
@@ -148,13 +150,11 @@ export async function buildClaudeAdapter(
   }
 
   // ---------------------------------------------------------------------------
-  // hookSpec: resolves event/matcher/timeout from effectiveEntries OR BUILTIN_CATALOG
+  // hookSpec: resolves event/matcher/timeout from effectiveEntries ONLY
   // ---------------------------------------------------------------------------
 
   const hookSpec = (entry: AdapterEntry): ResolvedHook => {
-    // Look up from effectiveEntries if provided, else fall back to BUILTIN_CATALOG
-    const catalogEntry = opts?.effectiveEntries?.get(entry.id)
-      ?? BUILTIN_CATALOG.find((e) => e.id === entry.id);
+    const catalogEntry = opts?.effectiveEntries?.get(entry.id);
 
     if (
       catalogEntry === undefined
@@ -162,7 +162,8 @@ export async function buildClaudeAdapter(
       || catalogEntry.nature !== 'hook'
     ) {
       throw new Error(
-        `hookSpec: cannot resolve hook "${entry.id}" — entry not found in effective catalog.`,
+        `hookSpec: cannot resolve hook "${entry.id}" — entry not found in effective catalog. `
+          + 'Pass effectiveEntries with the hook entry when calling buildClaudeAdapter.',
       );
     }
 
@@ -178,7 +179,7 @@ export async function buildClaudeAdapter(
     assertSafeArtifactName(name, entry.id);
 
     // Path: external hook (in externalIds AND externalBaseDir set) → externalBaseDir/hooks
-    // else → artifactsDir/claude/hooks (builtin fallback)
+    // else → artifactsDir/claude/hooks (local fallback)
     const hooksDir = opts?.externalIds?.has(entry.id) === true && opts.externalBaseDir !== undefined
       ? path.join(opts.externalBaseDir, 'hooks')
       : path.join(artifactsDir, 'claude', 'hooks');
@@ -233,8 +234,6 @@ export async function buildClaudeAdapter(
     pluginSource: (entry) => {
       const plugin = entry.id.replace(/^plugin:/, '');
       // External plugin: use the content repo URL as the marketplace.
-      // This lets `claude plugin marketplace add <url>` register the remote
-      // repository, then `claude plugin install <plugin>` installs from it.
       if (
         opts?.externalIds?.has(entry.id) === true
         && opts.catalogUrl !== undefined

@@ -288,18 +288,18 @@ describe('interactive install — with catalogUrl', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Scenario 2: interactive without catalogUrl → built-in only, local install
+// Scenario 2: interactive without catalogUrl → empty catalog + actionable message
 // ---------------------------------------------------------------------------
 
 describe('interactive install — without catalogUrl', () => {
-  it('selectArtifacts receives built-in catalog only (no external entries)', async () => {
+  it('selectArtifacts is NOT called when no catalogUrl (empty catalog)', async () => {
     const noUrlIso = await makeIsolatedEnv({ withCatalogUrl: false });
-    let capturedEntries: CatalogEntry[] | null = null;
+    let selectCalled = false;
 
     try {
       const prompts: CliPrompts = {
-        selectArtifacts: async (entries) => {
-          capturedEntries = entries as CatalogEntry[];
+        selectArtifacts: async () => {
+          selectCalled = true;
           return [];
         },
         selectScope: async () => 'user',
@@ -320,25 +320,20 @@ describe('interactive install — without catalogUrl', () => {
         },
       });
 
-      expect(capturedEntries).not.toBeNull();
-      // The remote-demo fixture entry must NOT appear in the built-in-only catalog.
-      // We assert on the specific remote fixture id.
-      // capturedEntries is non-null at this point (asserted above).
-      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-      const remoteFixtureEntries = capturedEntries!.filter((e) => e.id === 'skill:remote-demo');
-      expect(remoteFixtureEntries).toHaveLength(0);
+      // Without catalogUrl, catalog is empty → selectArtifacts must NOT be called
+      expect(selectCalled).toBe(false);
     } finally {
       await noUrlIso.cleanupAll();
     }
   });
 
-  it('installs a built-in skill locally (manifest has no remote ref)', async () => {
+  it('exits 0 with actionable message when no catalogUrl configured', async () => {
     const noUrlIso = await makeIsolatedEnv({ withCatalogUrl: false });
-    const noUrlTargets = resolveUserTargets(noUrlIso.env);
+    const lines: string[] = [];
 
     try {
       const prompts: CliPrompts = {
-        selectArtifacts: async () => ['guardrails-claude'],
+        selectArtifacts: async () => [],
         selectScope: async () => 'user',
         confirmApply: async () => true,
         askUrl: async () => '',
@@ -346,22 +341,15 @@ describe('interactive install — without catalogUrl', () => {
       };
 
       const code = await runCli(['install'], {
-        print: () => {},
+        print: (msg) => lines.push(msg),
         env: noUrlIso.env,
         artifactsDir: ARTIFACTS_DIR,
         prompts,
-        // remote.run deliberately absent — should never be called for local install.
       });
 
       expect(code).toBe(0);
-
-      const raw = await fs.readFile(noUrlTargets.stateJson, 'utf8');
-      const manifest = JSON.parse(raw) as {
-        artifacts: Array<{ id: string; ref: string; sha: string }>;
-      };
-      const entry = manifest.artifacts.find((a) => a.id === 'guardrails-claude');
-      expect(entry?.ref).toBe('v0.0.0');
-      expect(entry?.sha).toBe('');
+      const out = lines.join('\n');
+      expect(out).toMatch(/aucun catalog|agent-rigger init/);
     } finally {
       await noUrlIso.cleanupAll();
     }

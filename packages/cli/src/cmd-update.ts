@@ -27,7 +27,6 @@
  */
 
 import {
-  BUILTIN_CATALOG,
   isUpdateAvailable,
   mergeCatalogs,
   readCatalogDir,
@@ -207,7 +206,7 @@ export async function runUpdate(opts: RunUpdateOptions): Promise<UpdateResult> {
         }
 
         // 3b. Resolve ids against effective catalog (UnknownEntryError → abort before remove).
-        const { entries: effective } = mergeCatalogs(BUILTIN_CATALOG, remoteEntries);
+        const { entries: effective } = mergeCatalogs([], remoteEntries);
         const resolved = resolve(staleIds, effective);
 
         // Entries with a checkout path (skills/agents) are "remote" — their
@@ -229,10 +228,14 @@ export async function runUpdate(opts: RunUpdateOptions): Promise<UpdateResult> {
           force,
         });
 
-        // 3d. Build adapter with remote resolver seam (externalBaseDir = checkout dir).
+        // 3d. Build effectiveEntries map for hookSpec resolution
+        const effectiveEntries = new Map(effective.map((e) => [e.id, e]));
+
+        // 3e. Build adapter with remote resolver seam (externalBaseDir = checkout dir).
         const adapter = await buildClaudeAdapter(env, artifactsDir, {
           externalIds: remoteIds,
           externalBaseDir: dir,
+          effectiveEntries,
         });
 
         // AdapterEntries for remove+apply (exclude tool-nature entries).

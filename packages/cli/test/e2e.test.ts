@@ -25,7 +25,7 @@ import type { AdapterEntry } from '@agent-rigger/core/adapter';
 import { resolveUserTargets } from '@agent-rigger/core/paths';
 import type { Env } from '@agent-rigger/core/paths';
 
-import { BUILTIN_CATALOG } from '@agent-rigger/catalog';
+import type { CatalogEntry } from '@agent-rigger/catalog';
 
 import { buildClaudeAdapter, runCli } from '../src/cli';
 import { runCheck } from '../src/cmd-check';
@@ -40,7 +40,30 @@ const REPO_ROOT = path.resolve(import.meta.dirname, '../../..');
 const ARTIFACTS_DIR = path.join(REPO_ROOT, 'artifacts');
 
 // ---------------------------------------------------------------------------
-// Adapter entries for guardrail + context (the two M0 builtin artifacts)
+// Fixture catalog (replaces E2E_FIXTURE_CATALOG — no built-in content)
+// Provides the minimum entries needed for e2e install/check tests.
+// ids map to real artifact files in artifacts/ (deny.json, AGENTS.md).
+// ---------------------------------------------------------------------------
+
+const E2E_FIXTURE_CATALOG: CatalogEntry[] = [
+  {
+    kind: 'artifact',
+    id: 'guardrails-claude',
+    nature: 'guardrail',
+    targets: ['claude'],
+    scopes: ['user'],
+  },
+  {
+    kind: 'artifact',
+    id: 'context-claude',
+    nature: 'context',
+    targets: ['claude'],
+    scopes: ['user'],
+  },
+];
+
+// ---------------------------------------------------------------------------
+// Adapter entries for guardrail + context (the two e2e fixture artifacts)
 // ---------------------------------------------------------------------------
 
 const GUARDRAIL_ENTRY: AdapterEntry = {
@@ -107,7 +130,7 @@ describe('e2e — install → check = 0', () => {
     const adapter = await buildClaudeAdapter(env, ARTIFACTS_DIR);
 
     const result = await runInstall({
-      catalog: BUILTIN_CATALOG,
+      catalog: E2E_FIXTURE_CATALOG,
       adapter,
       scope: 'user',
       env,
@@ -124,7 +147,7 @@ describe('e2e — install → check = 0', () => {
     const adapter = await buildClaudeAdapter(env, ARTIFACTS_DIR);
 
     await runInstall({
-      catalog: BUILTIN_CATALOG,
+      catalog: E2E_FIXTURE_CATALOG,
       adapter,
       scope: 'user',
       env,
@@ -146,7 +169,7 @@ describe('e2e — install → check = 0', () => {
     const adapter = await buildClaudeAdapter(env, ARTIFACTS_DIR);
 
     await runInstall({
-      catalog: BUILTIN_CATALOG,
+      catalog: E2E_FIXTURE_CATALOG,
       adapter,
       scope: 'user',
       env,
@@ -164,7 +187,7 @@ describe('e2e — install → check = 0', () => {
     const adapter = await buildClaudeAdapter(env, ARTIFACTS_DIR);
 
     await runInstall({
-      catalog: BUILTIN_CATALOG,
+      catalog: E2E_FIXTURE_CATALOG,
       adapter,
       scope: 'user',
       env,
@@ -181,7 +204,7 @@ describe('e2e — install → check = 0', () => {
     const adapter = await buildClaudeAdapter(env, ARTIFACTS_DIR);
 
     await runInstall({
-      catalog: BUILTIN_CATALOG,
+      catalog: E2E_FIXTURE_CATALOG,
       adapter,
       scope: 'user',
       env,
@@ -204,7 +227,7 @@ describe('e2e — install → check = 0', () => {
     const adapter = await buildClaudeAdapter(env, ARTIFACTS_DIR);
 
     await runInstall({
-      catalog: BUILTIN_CATALOG,
+      catalog: E2E_FIXTURE_CATALOG,
       adapter,
       scope: 'user',
       env,
@@ -275,7 +298,7 @@ describe('e2e — idempotence install×2', () => {
   it('second install returns applied:false', async () => {
     const adapter = await buildClaudeAdapter(env, ARTIFACTS_DIR);
     const installOpts = {
-      catalog: BUILTIN_CATALOG,
+      catalog: E2E_FIXTURE_CATALOG,
       adapter,
       scope: 'user' as const,
       env,
@@ -293,7 +316,7 @@ describe('e2e — idempotence install×2', () => {
   it('second install output indicates up-to-date', async () => {
     const adapter = await buildClaudeAdapter(env, ARTIFACTS_DIR);
     const installOpts = {
-      catalog: BUILTIN_CATALOG,
+      catalog: E2E_FIXTURE_CATALOG,
       adapter,
       scope: 'user' as const,
       env,
@@ -311,7 +334,7 @@ describe('e2e — idempotence install×2', () => {
   it('second install creates no .bak files', async () => {
     const adapter = await buildClaudeAdapter(env, ARTIFACTS_DIR);
     const installOpts = {
-      catalog: BUILTIN_CATALOG,
+      catalog: E2E_FIXTURE_CATALOG,
       adapter,
       scope: 'user' as const,
       env,
@@ -329,7 +352,7 @@ describe('e2e — idempotence install×2', () => {
   it('settings.json is unchanged byte-for-byte after second install', async () => {
     const adapter = await buildClaudeAdapter(env, ARTIFACTS_DIR);
     const installOpts = {
-      catalog: BUILTIN_CATALOG,
+      catalog: E2E_FIXTURE_CATALOG,
       adapter,
       scope: 'user' as const,
       env,
@@ -350,7 +373,7 @@ describe('e2e — idempotence install×2', () => {
   it('check returns 0 after two installs', async () => {
     const adapter = await buildClaudeAdapter(env, ARTIFACTS_DIR);
     const installOpts = {
-      catalog: BUILTIN_CATALOG,
+      catalog: E2E_FIXTURE_CATALOG,
       adapter,
       scope: 'user' as const,
       env,
@@ -386,7 +409,7 @@ describe('e2e — drift detected after install', () => {
 
     // Install first
     await runInstall({
-      catalog: BUILTIN_CATALOG,
+      catalog: E2E_FIXTURE_CATALOG,
       adapter,
       scope: 'user',
       env,
@@ -419,7 +442,7 @@ describe('e2e — drift detected after install', () => {
     const adapter = await buildClaudeAdapter(env, ARTIFACTS_DIR);
 
     await runInstall({
-      catalog: BUILTIN_CATALOG,
+      catalog: E2E_FIXTURE_CATALOG,
       adapter,
       scope: 'user',
       env,
@@ -455,7 +478,7 @@ describe('e2e — drift detected after install', () => {
     const adapter = await buildClaudeAdapter(env, ARTIFACTS_DIR);
 
     await runInstall({
-      catalog: BUILTIN_CATALOG,
+      catalog: E2E_FIXTURE_CATALOG,
       adapter,
       scope: 'user',
       env,
@@ -486,11 +509,11 @@ describe('e2e — drift detected after install', () => {
 // ---------------------------------------------------------------------------
 // Scenario 5 (optional): via runCli
 // Validates end-to-end wiring of the binary entry point.
-// check on complete HOME → 0 ; check on empty HOME → 3.
+// Without catalogUrl: check → 0 (empty catalog + actionable message).
 // ---------------------------------------------------------------------------
 
 describe('e2e — via runCli', () => {
-  it('check on empty HOME returns exit code 3', async () => {
+  it('check on empty HOME without catalogUrl returns exit code 0 (empty catalog → actionable)', async () => {
     const cap = makeCapture();
 
     const code = await runCli(['check'], {
@@ -499,32 +522,24 @@ describe('e2e — via runCli', () => {
       artifactsDir: ARTIFACTS_DIR,
     });
 
-    expect(code).toBe(3);
+    // Without catalogUrl → effective catalog is [] → check returns 0 with actionable message
+    expect(code).toBe(0);
+    const out = cap.lines.join('\n');
+    expect(out).toMatch(/aucun catalog|agent-rigger init/);
   });
 
-  it('check on full HOME (after install) returns exit code 0', async () => {
-    const installCap = makeCapture();
-    const checkCap = makeCapture();
+  it('direct runCheck on empty HOME returns exit code 3 (no catalog involvement)', async () => {
+    // runCheck is called directly with known entries — bypasses catalog
+    const adapter = await buildClaudeAdapter(env, ARTIFACTS_DIR);
 
-    await runCli(['install'], {
-      print: installCap.print,
+    const result = await runCheck({
+      adapter,
+      entries: ENTRIES,
+      scope: 'user',
       env,
-      artifactsDir: ARTIFACTS_DIR,
-      prompts: {
-        selectArtifacts: async () => ['guardrails-claude', 'context-claude'],
-        selectScope: async () => 'user',
-        confirmApply: async () => true,
-        askUrl: async () => 'https://example.com/catalog.git',
-        askMethod: async () => 'https',
-      },
     });
 
-    const code = await runCli(['check'], {
-      print: checkCap.print,
-      env,
-      artifactsDir: ARTIFACTS_DIR,
-    });
-
-    expect(code).toBe(0);
+    // No catalog needed for runCheck — directly checks files → exit 3 (not installed)
+    expect(result.exitCode).toBe(3);
   });
 });

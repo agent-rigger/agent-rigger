@@ -37,7 +37,6 @@ import type { Scope } from '@agent-rigger/core/types';
 
 import {
   type ArtifactEntry,
-  BUILTIN_CATALOG,
   mergeCatalogs,
   readCatalogDir,
   resolveVersion,
@@ -238,14 +237,13 @@ export async function runRemoteInstall(opts: {
         }
       }
 
-      const { entries: effective } = mergeCatalogs(BUILTIN_CATALOG, remoteEntries);
+      const { entries: effective } = mergeCatalogs([], remoteEntries);
       const resolved = resolve(ids, effective);
 
       // Entries with a checkout path (skills/agents) are "remote" — they come
       // from the fetched content repo. Others (guardrails, contexts, hooks)
       // always come from the local artifacts dir.
-      // Plugin entries that appear in remoteEntries (not in builtin) are also
-      // considered remote: they use catalogUrl as their marketplace URL.
+      // Plugin entries that appear in remoteEntries are also considered remote.
       const remoteEntryIds = new Set(remoteEntries.map((e) => e.id));
       const remoteIds = new Set(
         resolved
@@ -266,11 +264,15 @@ export async function runRemoteInstall(opts: {
         force,
       });
 
+      // Build effectiveEntries map for hookSpec resolution
+      const effectiveEntries = new Map(effective.map((e) => [e.id, e]));
+
       const adapter = await buildClaudeAdapter(env, artifactsDir, {
         externalIds: remoteIds,
         externalBaseDir: dir,
         catalogUrl,
         pluginRunner,
+        effectiveEntries,
       });
 
       const versionFor = (

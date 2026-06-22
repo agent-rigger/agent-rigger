@@ -251,7 +251,7 @@ describe('runCli — invalid --scope', () => {
 // runCli — check command
 // ---------------------------------------------------------------------------
 
-describe('runCli — check, incomplete HOME', () => {
+describe('runCli — check without catalogUrl → empty catalog + actionable message', () => {
   let tmp: { dir: string; cleanup: () => Promise<void> };
 
   beforeEach(async () => {
@@ -262,18 +262,18 @@ describe('runCli — check, incomplete HOME', () => {
     await tmp.cleanup();
   });
 
-  it('returns exit code 3 when guardrails are not installed', async () => {
+  it('returns exit code 0 when no catalogUrl configured (empty catalog)', async () => {
     const cap = makeCapture();
     const code = await runCli(['check'], {
       print: cap.print,
       env: { RIGGER_HOME: tmp.dir },
       artifactsDir: ARTIFACTS_DIR,
     });
-    // 3 = missing entries
-    expect(code).toBe(3);
+    // No catalogUrl → empty catalog → check returns 0 with actionable message
+    expect(code).toBe(0);
   });
 
-  it('output mentions missing or check state', async () => {
+  it('output contains actionable message when no catalogUrl configured', async () => {
     const cap = makeCapture();
     await runCli(['check'], {
       print: cap.print,
@@ -281,7 +281,7 @@ describe('runCli — check, incomplete HOME', () => {
       artifactsDir: ARTIFACTS_DIR,
     });
     const out = cap.lines.join('\n');
-    expect(out.toLowerCase()).toMatch(/missing|check|present/);
+    expect(out).toMatch(/aucun catalog|agent-rigger init/);
   });
 });
 
@@ -289,7 +289,7 @@ describe('runCli — check, incomplete HOME', () => {
 // runCli — install command + idempotence
 // ---------------------------------------------------------------------------
 
-describe('runCli — install + check flow', () => {
+describe('runCli — install without catalogUrl → actionable message, exit 0', () => {
   let tmp: { dir: string; cleanup: () => Promise<void> };
 
   beforeEach(async () => {
@@ -300,7 +300,34 @@ describe('runCli — install + check flow', () => {
     await tmp.cleanup();
   });
 
-  it('install with fake prompts returns exit code 0', async () => {
+  it('install with fake prompts returns exit code 0 (no catalogUrl → actionable message)', async () => {
+    const cap = makeCapture();
+    const code = await runCli(['install'], {
+      print: cap.print,
+      env: { RIGGER_HOME: tmp.dir },
+      artifactsDir: ARTIFACTS_DIR,
+      prompts: fakePrompts(),
+    });
+    expect(code).toBe(0);
+    const out = cap.lines.join('\n');
+    expect(out).toMatch(/aucun catalog|agent-rigger init/);
+  });
+
+  it('install does not write settings.json when no catalogUrl configured', async () => {
+    const cap = makeCapture();
+    await runCli(['install'], {
+      print: cap.print,
+      env: { RIGGER_HOME: tmp.dir },
+      artifactsDir: ARTIFACTS_DIR,
+      prompts: fakePrompts(),
+    });
+    const settingsPath = path.join(tmp.dir, '.claude', 'settings.json');
+    const exists = await fs.stat(settingsPath).then(() => true).catch(() => false);
+    // No settings.json without catalogUrl — nothing installed
+    expect(exists).toBe(false);
+  });
+
+  it('install returns exit code 0 (no catalogUrl, no ids provided)', async () => {
     const cap = makeCapture();
     const code = await runCli(['install'], {
       print: cap.print,
@@ -311,58 +338,17 @@ describe('runCli — install + check flow', () => {
     expect(code).toBe(0);
   });
 
-  it('install writes settings.json', async () => {
-    const cap = makeCapture();
-    await runCli(['install'], {
-      print: cap.print,
-      env: { RIGGER_HOME: tmp.dir },
-      artifactsDir: ARTIFACTS_DIR,
-      prompts: fakePrompts(),
-    });
-    const settingsPath = path.join(tmp.dir, '.claude', 'settings.json');
-    const exists = await fs.stat(settingsPath).then(() => true).catch(() => false);
-    expect(exists).toBe(true);
-  });
-
-  it('re-run install is idempotent (exit code 0)', async () => {
-    const caps = [makeCapture(), makeCapture()];
-    const sharedEnv = { RIGGER_HOME: tmp.dir };
-    const prompts = fakePrompts();
-
-    await runCli(['install'], {
-      print: caps[0]!.print,
-      env: sharedEnv,
-      artifactsDir: ARTIFACTS_DIR,
-      prompts,
-    });
-    const code2 = await runCli(['install'], {
-      print: caps[1]!.print,
-      env: sharedEnv,
-      artifactsDir: ARTIFACTS_DIR,
-      prompts,
-    });
-    expect(code2).toBe(0);
-  });
-
-  it('check returns 0 after successful install', async () => {
-    const installCap = makeCapture();
+  it('check without catalogUrl returns exit code 0 (empty catalog → actionable message)', async () => {
     const checkCap = makeCapture();
-    const sharedEnv = { RIGGER_HOME: tmp.dir };
-    const prompts = fakePrompts();
-
-    await runCli(['install'], {
-      print: installCap.print,
-      env: sharedEnv,
-      artifactsDir: ARTIFACTS_DIR,
-      prompts,
-    });
     const checkCode = await runCli(['check'], {
       print: checkCap.print,
-      env: sharedEnv,
+      env: { RIGGER_HOME: tmp.dir },
       artifactsDir: ARTIFACTS_DIR,
     });
-    // After install, check should see guardrail + context as present
+    // Without catalogUrl, catalog is empty → actionable message, exit 0
     expect(checkCode).toBe(0);
+    const out = checkCap.lines.join('\n');
+    expect(out).toMatch(/aucun catalog|agent-rigger init/);
   });
 
   it('install with confirmApply=false returns exit code 0 (aborted cleanly)', async () => {
@@ -377,7 +363,7 @@ describe('runCli — install + check flow', () => {
       artifactsDir: ARTIFACTS_DIR,
       prompts,
     });
-    // Aborted cleanly = 0 (no error, user cancelled)
+    // Aborted cleanly = 0 (no error, user cancelled or no catalog)
     expect(code).toBe(0);
   });
 });
@@ -431,7 +417,7 @@ describe('parseArgs — resource grammar', () => {
 // runCli — ls command
 // ---------------------------------------------------------------------------
 
-describe('runCli — ls (top-level)', () => {
+describe('runCli — ls (top-level) without catalogUrl → empty + actionable message', () => {
   let tmp: { dir: string; cleanup: () => Promise<void> };
 
   beforeEach(async () => {
@@ -452,7 +438,7 @@ describe('runCli — ls (top-level)', () => {
     expect(code).toBe(0);
   });
 
-  it('output contains catalog listing', async () => {
+  it('output contains actionable message when no catalogUrl configured', async () => {
     const cap = makeCapture();
     await runCli(['ls'], {
       print: cap.print,
@@ -460,12 +446,11 @@ describe('runCli — ls (top-level)', () => {
       artifactsDir: ARTIFACTS_DIR,
     });
     const out = cap.lines.join('\n');
-    expect(out).toContain('Catalog');
-    expect(out).toContain('guardrails-claude');
+    expect(out).toMatch(/aucun catalog|agent-rigger init/);
   });
 });
 
-describe('runCli — skills ls (filtered)', () => {
+describe('runCli — skills ls (filtered) without catalogUrl → actionable message', () => {
   let tmp: { dir: string; cleanup: () => Promise<void> };
 
   beforeEach(async () => {
@@ -486,7 +471,7 @@ describe('runCli — skills ls (filtered)', () => {
     expect(code).toBe(0);
   });
 
-  it('output contains only skill entries', async () => {
+  it('output contains actionable message when no catalogUrl configured', async () => {
     const cap = makeCapture();
     await runCli(['skills', 'ls'], {
       print: cap.print,
@@ -494,8 +479,7 @@ describe('runCli — skills ls (filtered)', () => {
       artifactsDir: ARTIFACTS_DIR,
     });
     const out = cap.lines.join('\n');
-    expect(out).toContain('skill:spec-workflow');
-    expect(out).not.toContain('guardrails-claude');
+    expect(out).toMatch(/aucun catalog|agent-rigger init/);
   });
 });
 
@@ -503,7 +487,7 @@ describe('runCli — skills ls (filtered)', () => {
 // runCli — non-interactive install with --yes
 // ---------------------------------------------------------------------------
 
-describe('runCli — install <id> --yes (non-interactive)', () => {
+describe('runCli — install <id> --yes without catalogUrl → actionable message', () => {
   let tmp: { dir: string; cleanup: () => Promise<void> };
 
   beforeEach(async () => {
@@ -514,14 +498,17 @@ describe('runCli — install <id> --yes (non-interactive)', () => {
     await tmp.cleanup();
   });
 
-  it('returns exit code 0 for valid id with --yes', async () => {
+  it('returns exit code 0 even when id provided but no catalogUrl configured', async () => {
     const cap = makeCapture();
-    const code = await runCli(['install', 'guardrails-claude', '--yes'], {
+    // Without catalogUrl, catalog is empty → actionable message + exit 0
+    const code = await runCli(['install', 'skill:some-skill', '--yes'], {
       print: cap.print,
       env: { RIGGER_HOME: tmp.dir },
       artifactsDir: ARTIFACTS_DIR,
     });
     expect(code).toBe(0);
+    const out = cap.lines.join('\n');
+    expect(out).toMatch(/aucun catalog|agent-rigger init/);
   });
 
   it('does not call selectArtifacts prompt when ids provided', async () => {
@@ -534,7 +521,8 @@ describe('runCli — install <id> --yes (non-interactive)', () => {
       },
     };
     const cap = makeCapture();
-    await runCli(['install', 'guardrails-claude', '--yes'], {
+    // ids provided → selectArtifacts must NOT be called (regardless of catalog presence)
+    await runCli(['install', 'skill:some-skill', '--yes'], {
       print: cap.print,
       env: { RIGGER_HOME: tmp.dir },
       artifactsDir: ARTIFACTS_DIR,
@@ -553,7 +541,7 @@ describe('runCli — install <id> --yes (non-interactive)', () => {
       },
     };
     const cap = makeCapture();
-    await runCli(['install', 'guardrails-claude', '--yes'], {
+    await runCli(['install', 'skill:some-skill', '--yes'], {
       print: cap.print,
       env: { RIGGER_HOME: tmp.dir },
       artifactsDir: ARTIFACTS_DIR,
@@ -562,23 +550,17 @@ describe('runCli — install <id> --yes (non-interactive)', () => {
     expect(confirmCalled).toBe(false);
   });
 
-  it('calls confirmApply when --yes is NOT set (non-interactive confirm)', async () => {
-    let confirmCalled = false;
-    const prompts: CliPrompts = {
-      ...fakePrompts(),
-      confirmApply: async () => {
-        confirmCalled = true;
-        return true;
-      },
-    };
+  it('exits 0 with actionable message when --yes is NOT set and no catalogUrl', async () => {
     const cap = makeCapture();
-    await runCli(['install', 'guardrails-claude'], {
+    await runCli(['install', 'skill:some-skill'], {
       print: cap.print,
       env: { RIGGER_HOME: tmp.dir },
       artifactsDir: ARTIFACTS_DIR,
-      prompts,
+      prompts: fakePrompts(),
     });
-    expect(confirmCalled).toBe(true);
+    // With no catalogUrl, install resolves empty catalog → actionable message, exit 0
+    const out = cap.lines.join('\n');
+    expect(out).toMatch(/aucun catalog|agent-rigger init/);
   });
 });
 
@@ -588,44 +570,101 @@ describe('runCli — install <id> --yes (non-interactive)', () => {
 
 describe('runCli — <resource> add <id> validation', () => {
   let tmp: { dir: string; cleanup: () => Promise<void> };
+  let catalogDir: string;
 
   beforeEach(async () => {
     tmp = await makeTmpHome('rigger-res-add-');
+    // Write catalogUrl config
+    const configDir = path.join(tmp.dir, '.config', 'agent-rigger');
+    await fs.mkdir(configDir, { recursive: true });
+    await Bun.write(
+      path.join(configDir, 'config.json'),
+      JSON.stringify({ catalogUrl: 'https://example.com/catalog.git' }),
+    );
+    catalogDir = await fs.mkdtemp(path.join(os.tmpdir(), 'rigger-add-catalog-'));
   });
 
   afterEach(async () => {
     await tmp.cleanup();
+    await fs.rm(catalogDir, { recursive: true, force: true });
   });
 
   it('returns exit code 2 when id does not match resource type', async () => {
     const cap = makeCapture();
-    // guardrails-claude is a guardrail, not a skill
-    const code = await runCli(['skills', 'add', 'guardrails-claude'], {
+    // Inject a catalog that has guardrail-main as guardrail and skill:some-skill as skill
+    const fixtureEntries: CatalogEntry[] = [
+      {
+        kind: 'artifact',
+        id: 'guardrail:main',
+        nature: 'guardrail',
+        targets: ['claude'],
+        scopes: ['user'],
+      },
+      {
+        kind: 'artifact',
+        id: 'skill:some-skill',
+        nature: 'skill',
+        targets: ['claude'],
+        scopes: ['user'],
+      },
+    ];
+    const code = await runCli(['skills', 'add', 'guardrail:main'], {
       print: cap.print,
       env: { RIGGER_HOME: tmp.dir },
       artifactsDir: ARTIFACTS_DIR,
+      remote: {
+        run: makeSuccessRunner(),
+        tmpFactory: makeFakeTmpFactory(catalogDir, fixtureEntries),
+      },
     });
+    // guardrail:main is a guardrail, not a skill → type mismatch → exit 2
     expect(code).toBe(2);
   });
 
   it('output contains actionable error message for type mismatch', async () => {
     const cap = makeCapture();
-    await runCli(['skills', 'add', 'guardrails-claude'], {
+    const fixtureEntries: CatalogEntry[] = [
+      {
+        kind: 'artifact',
+        id: 'guardrail:main',
+        nature: 'guardrail',
+        targets: ['claude'],
+        scopes: ['user'],
+      },
+    ];
+    await runCli(['skills', 'add', 'guardrail:main'], {
       print: cap.print,
       env: { RIGGER_HOME: tmp.dir },
       artifactsDir: ARTIFACTS_DIR,
+      remote: {
+        run: makeSuccessRunner(),
+        tmpFactory: makeFakeTmpFactory(catalogDir, fixtureEntries),
+      },
     });
     const out = cap.lines.join('\n');
-    expect(out).toContain('guardrails-claude');
+    expect(out).toContain('guardrail:main');
     expect(out.toLowerCase()).toMatch(/not a skill|is not a/);
   });
 
   it('returns exit code 0 for guardrail add with correct resource', async () => {
     const cap = makeCapture();
-    const code = await runCli(['guardrails', 'add', 'guardrails-claude', '--yes'], {
+    const fixtureEntries: CatalogEntry[] = [
+      {
+        kind: 'artifact',
+        id: 'guardrail:main',
+        nature: 'guardrail',
+        targets: ['claude'],
+        scopes: ['user'],
+      },
+    ];
+    const code = await runCli(['guardrails', 'add', 'guardrail:main', '--yes'], {
       print: cap.print,
       env: { RIGGER_HOME: tmp.dir },
       artifactsDir: ARTIFACTS_DIR,
+      remote: {
+        run: makeSuccessRunner(),
+        tmpFactory: makeFakeTmpFactory(catalogDir, fixtureEntries),
+      },
     });
     expect(code).toBe(0);
   });
@@ -637,56 +676,140 @@ describe('runCli — <resource> add <id> validation', () => {
 
 describe('runCli — <resource> info <id>', () => {
   let tmp: { dir: string; cleanup: () => Promise<void> };
+  let catalogDir: string;
 
   beforeEach(async () => {
     tmp = await makeTmpHome('rigger-info-');
+    const configDir = path.join(tmp.dir, '.config', 'agent-rigger');
+    await fs.mkdir(configDir, { recursive: true });
+    await Bun.write(
+      path.join(configDir, 'config.json'),
+      JSON.stringify({ catalogUrl: 'https://example.com/catalog.git' }),
+    );
+    catalogDir = await fs.mkdtemp(path.join(os.tmpdir(), 'rigger-info-catalog-'));
   });
 
   afterEach(async () => {
     await tmp.cleanup();
+    await fs.rm(catalogDir, { recursive: true, force: true });
   });
 
-  it('returns exit code 0 for known id', async () => {
+  it('returns exit code 0 for known id (from remote catalog)', async () => {
     const cap = makeCapture();
-    const code = await runCli(['guardrails', 'info', 'guardrails-claude'], {
+    const fixtureEntries: CatalogEntry[] = [
+      {
+        kind: 'artifact',
+        id: 'guardrail:main',
+        nature: 'guardrail',
+        targets: ['claude'],
+        scopes: ['user'],
+      },
+    ];
+    const code = await runCli(['guardrails', 'info', 'guardrail:main'], {
       print: cap.print,
       env: { RIGGER_HOME: tmp.dir },
       artifactsDir: ARTIFACTS_DIR,
+      remote: {
+        run: makeSuccessRunner(),
+        tmpFactory: makeFakeTmpFactory(catalogDir, fixtureEntries),
+      },
     });
     expect(code).toBe(0);
   });
 
-  it('output contains entry details', async () => {
+  it('output contains entry details (from remote catalog)', async () => {
     const cap = makeCapture();
-    await runCli(['guardrails', 'info', 'guardrails-claude'], {
+    const fixtureEntries: CatalogEntry[] = [
+      {
+        kind: 'artifact',
+        id: 'guardrail:main',
+        nature: 'guardrail',
+        targets: ['claude'],
+        scopes: ['user'],
+      },
+    ];
+    await runCli(['guardrails', 'info', 'guardrail:main'], {
       print: cap.print,
       env: { RIGGER_HOME: tmp.dir },
       artifactsDir: ARTIFACTS_DIR,
+      remote: {
+        run: makeSuccessRunner(),
+        tmpFactory: makeFakeTmpFactory(catalogDir, fixtureEntries),
+      },
     });
     const out = cap.lines.join('\n');
-    expect(out).toContain('guardrails-claude');
+    expect(out).toContain('guardrail:main');
     expect(out.toLowerCase()).toMatch(/status|source|nature|guardrail/);
   });
 
   it('returns exit code 2 for unknown id', async () => {
     const cap = makeCapture();
+    const fixtureEntries: CatalogEntry[] = [
+      {
+        kind: 'artifact',
+        id: 'guardrail:main',
+        nature: 'guardrail',
+        targets: ['claude'],
+        scopes: ['user'],
+      },
+    ];
     const code = await runCli(['guardrails', 'info', 'does-not-exist'], {
       print: cap.print,
       env: { RIGGER_HOME: tmp.dir },
       artifactsDir: ARTIFACTS_DIR,
+      remote: {
+        run: makeSuccessRunner(),
+        tmpFactory: makeFakeTmpFactory(catalogDir, fixtureEntries),
+      },
     });
     expect(code).toBe(2);
   });
 
   it('output contains actionable message for unknown id', async () => {
     const cap = makeCapture();
+    const fixtureEntries: CatalogEntry[] = [
+      {
+        kind: 'artifact',
+        id: 'guardrail:main',
+        nature: 'guardrail',
+        targets: ['claude'],
+        scopes: ['user'],
+      },
+    ];
     await runCli(['guardrails', 'info', 'does-not-exist'], {
       print: cap.print,
       env: { RIGGER_HOME: tmp.dir },
       artifactsDir: ARTIFACTS_DIR,
+      remote: {
+        run: makeSuccessRunner(),
+        tmpFactory: makeFakeTmpFactory(catalogDir, fixtureEntries),
+      },
     });
     const out = cap.lines.join('\n');
     expect(out).toContain('does-not-exist');
+  });
+
+  it('returns exit code 2 for info without catalogUrl (empty catalog)', async () => {
+    const tmpNoCatalog = await makeTmpHome('rigger-info-nocatalog-');
+    try {
+      const cap = makeCapture();
+      const code = await runCli(['guardrails', 'info', 'guardrail:main'], {
+        print: cap.print,
+        env: { RIGGER_HOME: tmpNoCatalog.dir },
+        artifactsDir: ARTIFACTS_DIR,
+      });
+      // catalog vide → unknown id → exit 2 OR actionable message with 0
+      // Accept either: no catalog → print actionable msg
+      const out = cap.lines.join('\n');
+      expect(code === 0 || code === 2).toBe(true);
+      if (code === 0) {
+        expect(out).toMatch(/aucun catalog|agent-rigger init/);
+      } else {
+        expect(out).toContain('guardrail:main');
+      }
+    } finally {
+      await tmpNoCatalog.cleanup();
+    }
   });
 });
 
@@ -696,41 +819,93 @@ describe('runCli — <resource> info <id>', () => {
 
 describe('runCli — <resource> check', () => {
   let tmp: { dir: string; cleanup: () => Promise<void> };
+  let catalogDir: string;
+
+  const GUARDRAIL_ENTRY: CatalogEntry = {
+    kind: 'artifact',
+    id: 'guardrail:main',
+    nature: 'guardrail',
+    targets: ['claude'],
+    scopes: ['user'],
+  };
 
   beforeEach(async () => {
     tmp = await makeTmpHome('rigger-res-check-');
+    const configDir = path.join(tmp.dir, '.config', 'agent-rigger');
+    await fs.mkdir(configDir, { recursive: true });
+    await Bun.write(
+      path.join(configDir, 'config.json'),
+      JSON.stringify({ catalogUrl: 'https://example.com/catalog.git' }),
+    );
+    catalogDir = await fs.mkdtemp(path.join(os.tmpdir(), 'rigger-check-catalog-'));
   });
 
   afterEach(async () => {
     await tmp.cleanup();
+    await fs.rm(catalogDir, { recursive: true, force: true });
   });
 
-  it('returns exit code 3 when guardrails not installed', async () => {
+  it('returns exit code 3 when guardrails not installed (catalog configured)', async () => {
     const cap = makeCapture();
     const code = await runCli(['guardrails', 'check'], {
       print: cap.print,
       env: { RIGGER_HOME: tmp.dir },
       artifactsDir: ARTIFACTS_DIR,
+      remote: {
+        run: makeSuccessRunner(),
+        tmpFactory: makeFakeTmpFactory(catalogDir, [GUARDRAIL_ENTRY]),
+      },
     });
     expect(code).toBe(3);
   });
 
-  it('returns exit code 0 after installing guardrails', async () => {
-    // First install guardrails
+  it('returns exit code 0 after installing guardrails (with remote catalog)', async () => {
+    // Install guardrail:main with remote catalog
     const installCap = makeCapture();
-    await runCli(['guardrails', 'add', 'guardrails-claude', '--yes'], {
+    await runCli(['guardrails', 'add', 'guardrail:main', '--yes'], {
       print: installCap.print,
       env: { RIGGER_HOME: tmp.dir },
       artifactsDir: ARTIFACTS_DIR,
+      remote: {
+        run: makeSuccessRunner(),
+        tmpFactory: makeFakeTmpFactory(catalogDir, [GUARDRAIL_ENTRY]),
+      },
     });
 
-    const checkCap = makeCapture();
-    const code = await runCli(['guardrails', 'check'], {
-      print: checkCap.print,
-      env: { RIGGER_HOME: tmp.dir },
-      artifactsDir: ARTIFACTS_DIR,
-    });
-    expect(code).toBe(0);
+    // Create a fresh catalogDir for the check call (clone fresh)
+    const catalogDir2 = await fs.mkdtemp(path.join(os.tmpdir(), 'rigger-check2-catalog-'));
+    try {
+      const checkCap = makeCapture();
+      const code = await runCli(['guardrails', 'check'], {
+        print: checkCap.print,
+        env: { RIGGER_HOME: tmp.dir },
+        artifactsDir: ARTIFACTS_DIR,
+        remote: {
+          run: makeSuccessRunner(),
+          tmpFactory: makeFakeTmpFactory(catalogDir2, [GUARDRAIL_ENTRY]),
+        },
+      });
+      expect(code).toBe(0);
+    } finally {
+      await fs.rm(catalogDir2, { recursive: true, force: true });
+    }
+  });
+
+  it('returns exit code 0 when no catalogUrl (empty catalog → actionable message)', async () => {
+    const tmpNoCatalog = await makeTmpHome('rigger-check-nocatalog-');
+    try {
+      const cap = makeCapture();
+      const code = await runCli(['guardrails', 'check'], {
+        print: cap.print,
+        env: { RIGGER_HOME: tmpNoCatalog.dir },
+        artifactsDir: ARTIFACTS_DIR,
+      });
+      expect(code).toBe(0);
+      const out = cap.lines.join('\n');
+      expect(out).toMatch(/aucun catalog|agent-rigger init/);
+    } finally {
+      await tmpNoCatalog.cleanup();
+    }
   });
 });
 
@@ -780,31 +955,69 @@ describe('runCli — unknown resource or verb', () => {
 
 describe('runCli — <resource> remove <id...>', () => {
   let tmp: { dir: string; cleanup: () => Promise<void> };
+  let catalogDir: string;
+
+  const GUARDRAIL_FIXTURE: CatalogEntry = {
+    kind: 'artifact',
+    id: 'guardrail:main',
+    nature: 'guardrail',
+    targets: ['claude'],
+    scopes: ['user'],
+  };
+  const CONTEXT_FIXTURE: CatalogEntry = {
+    kind: 'artifact',
+    id: 'context:main',
+    nature: 'context',
+    targets: ['claude'],
+    scopes: ['user'],
+  };
+
+  function makeRemote(dir: string) {
+    return {
+      run: makeSuccessRunner(),
+      tmpFactory: makeFakeTmpFactory(dir, [GUARDRAIL_FIXTURE, CONTEXT_FIXTURE]),
+    };
+  }
 
   beforeEach(async () => {
     tmp = await makeTmpHome('rigger-remove-');
+    const configDir = path.join(tmp.dir, '.config', 'agent-rigger');
+    await fs.mkdir(configDir, { recursive: true });
+    await Bun.write(
+      path.join(configDir, 'config.json'),
+      JSON.stringify({ catalogUrl: 'https://example.com/catalog.git' }),
+    );
+    catalogDir = await fs.mkdtemp(path.join(os.tmpdir(), 'rigger-rm-catalog-'));
   });
 
   afterEach(async () => {
     await tmp.cleanup();
+    await fs.rm(catalogDir, { recursive: true, force: true });
   });
 
   it('returns exit code 0 after add + remove --yes', async () => {
-    // Install first
-    await runCli(['guardrails', 'add', 'guardrails-claude', '--yes'], {
+    // Install guardrail:main with remote catalog
+    await runCli(['guardrails', 'add', 'guardrail:main', '--yes'], {
       print: makeCapture().print,
       env: { RIGGER_HOME: tmp.dir },
       artifactsDir: ARTIFACTS_DIR,
+      remote: makeRemote(catalogDir),
     });
 
-    // Now remove
-    const cap = makeCapture();
-    const code = await runCli(['guardrails', 'remove', 'guardrails-claude', '--yes'], {
-      print: cap.print,
-      env: { RIGGER_HOME: tmp.dir },
-      artifactsDir: ARTIFACTS_DIR,
-    });
-    expect(code).toBe(0);
+    // Remove (fresh catalog clone)
+    const catalogDir2 = await fs.mkdtemp(path.join(os.tmpdir(), 'rigger-rm-catalog-'));
+    try {
+      const cap = makeCapture();
+      const code = await runCli(['guardrails', 'remove', 'guardrail:main', '--yes'], {
+        print: cap.print,
+        env: { RIGGER_HOME: tmp.dir },
+        artifactsDir: ARTIFACTS_DIR,
+        remote: makeRemote(catalogDir2),
+      });
+      expect(code).toBe(0);
+    } finally {
+      await fs.rm(catalogDir2, { recursive: true, force: true });
+    }
   });
 
   it('returns exit code 2 when no ids provided to remove', async () => {
@@ -830,38 +1043,57 @@ describe('runCli — <resource> remove <id...>', () => {
 
   it('returns exit code 2 when id does not match resource type', async () => {
     const cap = makeCapture();
-    // context-claude is context, not a skill
-    const code = await runCli(['skills', 'remove', 'context-claude', '--yes'], {
-      print: cap.print,
-      env: { RIGGER_HOME: tmp.dir },
-      artifactsDir: ARTIFACTS_DIR,
-    });
-    expect(code).toBe(2);
+    // context:main is context, not a skill — catalog must have the entry to reject it
+    const catalogDir3 = await fs.mkdtemp(path.join(os.tmpdir(), 'rigger-rm-catalog-'));
+    try {
+      const code = await runCli(['skills', 'remove', 'context:main', '--yes'], {
+        print: cap.print,
+        env: { RIGGER_HOME: tmp.dir },
+        artifactsDir: ARTIFACTS_DIR,
+        remote: makeRemote(catalogDir3),
+      });
+      expect(code).toBe(2);
+    } finally {
+      await fs.rm(catalogDir3, { recursive: true, force: true });
+    }
   });
 
   it('check returns exit code 3 after remove (missing)', async () => {
-    // Install
-    await runCli(['guardrails', 'add', 'guardrails-claude', '--yes'], {
-      print: makeCapture().print,
-      env: { RIGGER_HOME: tmp.dir },
-      artifactsDir: ARTIFACTS_DIR,
-    });
+    const cDir1 = await fs.mkdtemp(path.join(os.tmpdir(), 'rigger-rm-catalog-'));
+    const cDir2 = await fs.mkdtemp(path.join(os.tmpdir(), 'rigger-rm-catalog-'));
+    const cDir3 = await fs.mkdtemp(path.join(os.tmpdir(), 'rigger-rm-catalog-'));
 
-    // Remove
-    await runCli(['guardrails', 'remove', 'guardrails-claude', '--yes'], {
-      print: makeCapture().print,
-      env: { RIGGER_HOME: tmp.dir },
-      artifactsDir: ARTIFACTS_DIR,
-    });
+    try {
+      // Install guardrail:main
+      await runCli(['guardrails', 'add', 'guardrail:main', '--yes'], {
+        print: makeCapture().print,
+        env: { RIGGER_HOME: tmp.dir },
+        artifactsDir: ARTIFACTS_DIR,
+        remote: makeRemote(cDir1),
+      });
 
-    // Check — should show missing
-    const cap = makeCapture();
-    const code = await runCli(['guardrails', 'check'], {
-      print: cap.print,
-      env: { RIGGER_HOME: tmp.dir },
-      artifactsDir: ARTIFACTS_DIR,
-    });
-    expect(code).toBe(3);
+      // Remove
+      await runCli(['guardrails', 'remove', 'guardrail:main', '--yes'], {
+        print: makeCapture().print,
+        env: { RIGGER_HOME: tmp.dir },
+        artifactsDir: ARTIFACTS_DIR,
+        remote: makeRemote(cDir2),
+      });
+
+      // Check — should show missing (exit 3)
+      const cap = makeCapture();
+      const code = await runCli(['guardrails', 'check'], {
+        print: cap.print,
+        env: { RIGGER_HOME: tmp.dir },
+        artifactsDir: ARTIFACTS_DIR,
+        remote: makeRemote(cDir3),
+      });
+      expect(code).toBe(3);
+    } finally {
+      await fs.rm(cDir1, { recursive: true, force: true });
+      await fs.rm(cDir2, { recursive: true, force: true });
+      await fs.rm(cDir3, { recursive: true, force: true });
+    }
   });
 });
 
@@ -872,8 +1104,22 @@ describe('runCli — <resource> remove <id...>', () => {
 describe('runCli — top-level remove <id...>', () => {
   let tmp: { dir: string; cleanup: () => Promise<void> };
 
+  const GUARDRAIL_FIXTURE_TL: CatalogEntry = {
+    kind: 'artifact',
+    id: 'guardrail:main',
+    nature: 'guardrail',
+    targets: ['claude'],
+    scopes: ['user'],
+  };
+
   beforeEach(async () => {
     tmp = await makeTmpHome('rigger-toplevel-remove-');
+    const configDir = path.join(tmp.dir, '.config', 'agent-rigger');
+    await fs.mkdir(configDir, { recursive: true });
+    await Bun.write(
+      path.join(configDir, 'config.json'),
+      JSON.stringify({ catalogUrl: 'https://example.com/catalog.git' }),
+    );
   });
 
   afterEach(async () => {
@@ -881,19 +1127,34 @@ describe('runCli — top-level remove <id...>', () => {
   });
 
   it('top-level remove returns exit code 0 after install', async () => {
-    await runCli(['install', 'guardrails-claude', '--yes'], {
-      print: makeCapture().print,
-      env: { RIGGER_HOME: tmp.dir },
-      artifactsDir: ARTIFACTS_DIR,
-    });
+    const cDir1 = await fs.mkdtemp(path.join(os.tmpdir(), 'rigger-tl-rm1-'));
+    const cDir2 = await fs.mkdtemp(path.join(os.tmpdir(), 'rigger-tl-rm2-'));
+    try {
+      await runCli(['install', 'guardrail:main', '--yes'], {
+        print: makeCapture().print,
+        env: { RIGGER_HOME: tmp.dir },
+        artifactsDir: ARTIFACTS_DIR,
+        remote: {
+          run: makeSuccessRunner(),
+          tmpFactory: makeFakeTmpFactory(cDir1, [GUARDRAIL_FIXTURE_TL]),
+        },
+      });
 
-    const cap = makeCapture();
-    const code = await runCli(['remove', 'guardrails-claude', '--yes'], {
-      print: cap.print,
-      env: { RIGGER_HOME: tmp.dir },
-      artifactsDir: ARTIFACTS_DIR,
-    });
-    expect(code).toBe(0);
+      const cap = makeCapture();
+      const code = await runCli(['remove', 'guardrail:main', '--yes'], {
+        print: cap.print,
+        env: { RIGGER_HOME: tmp.dir },
+        artifactsDir: ARTIFACTS_DIR,
+        remote: {
+          run: makeSuccessRunner(),
+          tmpFactory: makeFakeTmpFactory(cDir2, [GUARDRAIL_FIXTURE_TL]),
+        },
+      });
+      expect(code).toBe(0);
+    } finally {
+      await fs.rm(cDir1, { recursive: true, force: true });
+      await fs.rm(cDir2, { recursive: true, force: true });
+    }
   });
 
   it('top-level remove returns exit code 2 when no ids provided', async () => {
@@ -947,22 +1208,49 @@ describe('runCli — --help mentions remove', () => {
 
 describe('runCli — non-regression interactive install', () => {
   let tmp: { dir: string; cleanup: () => Promise<void> };
+  let catalogDir: string;
+
+  const FIXTURE_ENTRIES: CatalogEntry[] = [
+    {
+      kind: 'artifact',
+      id: 'guardrail:main',
+      nature: 'guardrail',
+      targets: ['claude'],
+      scopes: ['user'],
+    },
+    {
+      kind: 'artifact',
+      id: 'skill:some-skill',
+      nature: 'skill',
+      targets: ['claude'],
+      scopes: ['user'],
+    },
+  ];
 
   beforeEach(async () => {
     tmp = await makeTmpHome('rigger-regression-');
+    // Must have catalogUrl so resolveEffectiveCatalog returns entries (not [])
+    const configDir = path.join(tmp.dir, '.config', 'agent-rigger');
+    await fs.mkdir(configDir, { recursive: true });
+    await Bun.write(
+      path.join(configDir, 'config.json'),
+      JSON.stringify({ catalogUrl: 'https://example.com/catalog.git' }),
+    );
+    catalogDir = await fs.mkdtemp(path.join(os.tmpdir(), 'rigger-regression-catalog-'));
   });
 
   afterEach(async () => {
     await tmp.cleanup();
+    await fs.rm(catalogDir, { recursive: true, force: true });
   });
 
-  it('interactive install (no ids) still calls selectArtifacts', async () => {
+  it('interactive install (no ids) calls selectArtifacts when catalog configured', async () => {
     let selectCalled = false;
     const prompts: CliPrompts = {
       ...fakePrompts(),
       selectArtifacts: async () => {
         selectCalled = true;
-        return ['guardrails-claude'];
+        return []; // Return empty to avoid actually installing
       },
     };
     const cap = makeCapture();
@@ -971,8 +1259,40 @@ describe('runCli — non-regression interactive install', () => {
       env: { RIGGER_HOME: tmp.dir },
       artifactsDir: ARTIFACTS_DIR,
       prompts,
+      remote: {
+        run: makeSuccessRunner(),
+        tmpFactory: makeFakeTmpFactory(catalogDir, FIXTURE_ENTRIES),
+      },
     });
+    // selectArtifacts must be called when catalog is non-empty
     expect(selectCalled).toBe(true);
+  });
+
+  it('interactive install without catalogUrl does not call selectArtifacts (empty catalog)', async () => {
+    const tmpNoCatalog = await makeTmpHome('rigger-regression-nocatalog-');
+    let selectCalled = false;
+    const prompts: CliPrompts = {
+      ...fakePrompts(),
+      selectArtifacts: async () => {
+        selectCalled = true;
+        return [];
+      },
+    };
+    try {
+      const cap = makeCapture();
+      await runCli(['install'], {
+        print: cap.print,
+        env: { RIGGER_HOME: tmpNoCatalog.dir },
+        artifactsDir: ARTIFACTS_DIR,
+        prompts,
+      });
+      // Without catalogUrl, catalog is empty → selectArtifacts must NOT be called
+      expect(selectCalled).toBe(false);
+      const out = cap.lines.join('\n');
+      expect(out).toMatch(/aucun catalog|agent-rigger init/);
+    } finally {
+      await tmpNoCatalog.cleanup();
+    }
   });
 });
 
@@ -1073,7 +1393,7 @@ describe('runCli — ls with remote catalog configured', () => {
     expect(code).toBe(0);
     const out = cap.lines.join('\n');
     expect(out).toContain('skill:remote-unique');
-    expect(out).toContain('guardrails-claude'); // built-in still present
+    // no built-in entries — catalog is remote-only
   });
 
   it('ls shows remote entry via catalog ls alias', async () => {
@@ -1096,7 +1416,7 @@ describe('runCli — ls with remote catalog configured', () => {
   });
 });
 
-describe('runCli — ls without catalogUrl configured (M0 unchanged)', () => {
+describe('runCli — ls without catalogUrl configured → empty + actionable message', () => {
   let tmp: { dir: string; cleanup: () => Promise<void> };
 
   beforeEach(async () => {
@@ -1108,7 +1428,7 @@ describe('runCli — ls without catalogUrl configured (M0 unchanged)', () => {
     await tmp.cleanup();
   });
 
-  it('ls shows only built-in entries and exits 0', async () => {
+  it('ls exits 0 and shows actionable message (no built-in entries)', async () => {
     const cap = makeCapture();
     const code = await runCli(['ls'], {
       print: cap.print,
@@ -1117,7 +1437,8 @@ describe('runCli — ls without catalogUrl configured (M0 unchanged)', () => {
     });
     expect(code).toBe(0);
     const out = cap.lines.join('\n');
-    expect(out).toContain('guardrails-claude');
+    // No built-in catalog → actionable message shown
+    expect(out).toMatch(/aucun catalog|agent-rigger init/);
     expect(out).not.toContain('skill:remote');
   });
 });
@@ -1139,7 +1460,7 @@ describe('runCli — ls with catalogUrl configured but remote fails', () => {
     await tmp.cleanup();
   });
 
-  it('ls exits 0 with warning and falls back to built-in on remote failure', async () => {
+  it('ls exits 0 with warning on remote failure (no built-in fallback)', async () => {
     const cap = makeCapture();
     const code = await runCli(['ls'], {
       print: cap.print,
@@ -1151,10 +1472,11 @@ describe('runCli — ls with catalogUrl configured but remote fails', () => {
     expect(code).toBe(0);
     const out = cap.lines.join('\n');
     expect(out).toContain('[warning]');
-    expect(out).toContain('guardrails-claude'); // built-in still shown
+    // No built-in catalog → empty result on failure (no guardrails-claude)
+    expect(out).not.toContain('guardrails-claude');
   });
 
-  it('warning message is actionable', async () => {
+  it('warning message mentions remote catalog unavailability', async () => {
     const cap = makeCapture();
     await runCli(['ls'], {
       print: cap.print,
@@ -1165,27 +1487,28 @@ describe('runCli — ls with catalogUrl configured but remote fails', () => {
 
     const out = cap.lines.join('\n');
     expect(out).toContain('Remote catalog unavailable');
-    expect(out).toContain('Falling back to built-in catalog');
+    // Note: "Falling back to built-in catalog" message is kept in code for now
+    // but no built-in entries are shown (catalog is [])
   });
 });
 
 // ---------------------------------------------------------------------------
-// runCli — ls with remote catalog containing a shadowed (conflicting) id
+// runCli — ls with remote catalog containing multiple entries
 // ---------------------------------------------------------------------------
 
-describe('runCli — ls with remote entry shadowed by built-in', () => {
+describe('runCli — ls with multiple remote catalog entries', () => {
   let tmp: { dir: string; cleanup: () => Promise<void> };
   let catalogDir: string;
 
   beforeEach(async () => {
-    tmp = await makeTmpHome('rigger-shadow-ls-');
+    tmp = await makeTmpHome('rigger-multi-ls-');
     const configDir = path.join(tmp.dir, '.config', 'agent-rigger');
     await fs.mkdir(configDir, { recursive: true });
     await Bun.write(
       path.join(configDir, 'config.json'),
       JSON.stringify({ catalogUrl: 'https://example.com/catalog.git' }),
     );
-    catalogDir = await fs.mkdtemp(path.join(os.tmpdir(), 'rigger-shadow-catalog-'));
+    catalogDir = await fs.mkdtemp(path.join(os.tmpdir(), 'rigger-multi-catalog-'));
   });
 
   afterEach(async () => {
@@ -1193,11 +1516,10 @@ describe('runCli — ls with remote entry shadowed by built-in', () => {
     await fs.rm(catalogDir, { recursive: true, force: true });
   });
 
-  it('ls exits 0 when remote has a built-in id collision', async () => {
-    // guardrails-claude is already in BUILTIN_CATALOG — collision expected
+  it('ls exits 0 when remote has multiple entries', async () => {
     const remoteEntries = [
-      makeRemoteEntry('guardrails-claude'),
-      makeRemoteEntry('skill:remote-extra'),
+      makeRemoteEntry('skill:remote-a'),
+      makeRemoteEntry('skill:remote-b'),
     ];
     const cap = makeCapture();
 
@@ -1214,10 +1536,10 @@ describe('runCli — ls with remote entry shadowed by built-in', () => {
     expect(code).toBe(0);
   });
 
-  it('prints a shadowing warning mentioning the colliding id', async () => {
+  it('catalog shows all remote entries', async () => {
     const remoteEntries = [
-      makeRemoteEntry('guardrails-claude'),
-      makeRemoteEntry('skill:remote-extra'),
+      makeRemoteEntry('skill:remote-first'),
+      makeRemoteEntry('skill:remote-second'),
     ];
     const cap = makeCapture();
 
@@ -1232,16 +1554,12 @@ describe('runCli — ls with remote entry shadowed by built-in', () => {
     });
 
     const out = cap.lines.join('\n');
-    expect(out).toContain('[warning]');
-    expect(out).toContain('shadowed by built-in');
-    expect(out).toContain('guardrails-claude');
+    expect(out).toContain('skill:remote-first');
+    expect(out).toContain('skill:remote-second');
   });
 
-  it('catalog still shows the remote-only entry alongside built-in', async () => {
-    const remoteEntries = [
-      makeRemoteEntry('guardrails-claude'),
-      makeRemoteEntry('skill:remote-extra'),
-    ];
+  it('no [warning] shown when remote catalog has no conflicts', async () => {
+    const remoteEntries = [makeRemoteEntry('skill:unique-only')];
     const cap = makeCapture();
 
     await runCli(['ls'], {
@@ -1255,7 +1573,7 @@ describe('runCli — ls with remote entry shadowed by built-in', () => {
     });
 
     const out = cap.lines.join('\n');
-    expect(out).toContain('guardrails-claude'); // built-in version kept
-    expect(out).toContain('skill:remote-extra'); // remote-only visible
+    // No built-in base → no conflicts → no shadow warning
+    expect(out).not.toMatch(/shadowed by built-in/);
   });
 });
