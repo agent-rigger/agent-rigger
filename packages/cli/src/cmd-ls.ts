@@ -40,6 +40,8 @@ export const RESOURCE_NATURE_MAP: Record<string, string> = {
   contexts: 'context',
   plugin: 'plugin',
   plugins: 'plugin',
+  hook: 'hook',
+  hooks: 'hook',
   tool: 'tool',
   tools: 'tool',
   pack: 'pack',

@@ -36,6 +36,7 @@ import type {
   WriteOp,
   WriteOpMergeHooks,
 } from '@agent-rigger/core';
+import { syncToStore } from '@agent-rigger/core/linker';
 
 // ---------------------------------------------------------------------------
 // ResolvedHook
@@ -58,6 +59,10 @@ export interface ResolvedHook {
   command: string;
   /** Optional timeout in seconds for the hook command. */
   timeout?: number;
+  /** Source directory to copy scripts from at install time. Absent when not needed. */
+  scriptSource?: string;
+  /** Destination directory in the store for the scripts. Absent when not needed. */
+  scriptStore?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -149,27 +154,17 @@ export async function planHook(
     return [];
   }
 
-  // exactOptionalPropertyTypes: build the op object without timeout when not set.
-  if (spec.timeout === undefined) {
-    return [
-      {
-        kind: 'merge-hooks',
-        path: settingsPath,
-        event: spec.event,
-        matcher: spec.matcher,
-        command: spec.command,
-      },
-    ];
-  }
-
+  // exactOptionalPropertyTypes: only include optional fields when they are defined.
   return [
     {
-      kind: 'merge-hooks',
+      kind: 'merge-hooks' as const,
       path: settingsPath,
       event: spec.event,
       matcher: spec.matcher,
       command: spec.command,
-      timeout: spec.timeout,
+      ...(spec.timeout === undefined ? {} : { timeout: spec.timeout }),
+      ...(spec.scriptSource === undefined ? {} : { scriptSource: spec.scriptSource }),
+      ...(spec.scriptStore === undefined ? {} : { scriptStore: spec.scriptStore }),
     },
   ];
 }
@@ -199,6 +194,13 @@ export async function applyHook(ops: WriteOp[], _env: Env): Promise<void> {
       continue;
     }
     const mergeOp = op as WriteOpMergeHooks;
+
+    // Deposit guard scripts to the store before merging settings.json.
+    // exactOptionalPropertyTypes: both fields must be present (not merely defined).
+    if (mergeOp.scriptSource !== undefined && mergeOp.scriptStore !== undefined) {
+      await syncToStore(mergeOp.scriptSource, mergeOp.scriptStore);
+    }
+
     const settings = await readJson(mergeOp.path);
 
     // exactOptionalPropertyTypes: only include timeout when defined.

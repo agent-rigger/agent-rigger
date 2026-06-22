@@ -16,6 +16,8 @@ export {
   loadCanonicalDeny,
   planGuardrail,
 } from './claude/guardrails';
+export { applyHook, auditHook, planHook } from './claude/hooks';
+export type { ResolvedHook } from './claude/hooks';
 export {
   applyPlugin,
   auditPlugin,
