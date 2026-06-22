@@ -187,8 +187,16 @@ removed afterwards. A built-in (`internal`) artifact installs from the local
 tree and records the tool's own version. Without a catalog URL, install uses the
 built-in catalog only (no network).
 
-> Interactive `install` (no ids) currently lists the built-in catalog only;
-> remote selection from the interactive picker is a follow-up.
+Interactive `install` (no ids) lists the **effective catalog** too: when a
+catalog URL is configured, remote entries appear in the multiselect and install
+through the same remote path.
+
+**Installing hooks.** A `hook` artifact (e.g. `hook:guard-secret`, or the whole
+set via `pack:harness` / `pack:baseline`) merges its `event`/`matcher` into
+`settings.json` under `hooks` and deposits its script into the managed hook store
+(`~/.config/agent-rigger/hooks/`); the registered command runs that deposited
+script. Removing a hook reverts the `settings.json` entry (the shared scripts are
+left in the store).
 
 ### `remove` — uninstall artifacts
 
@@ -343,12 +351,14 @@ These properties hold across all commands:
 - **Security scanner is a stub.** The scan step that gates skill and plugin
   installation always passes in M0. A real implementation (Trivy, Gitleaks, or
   similar) is the security milestone.
-- **Remote catalog is non-interactive (M1).** `ls` reads the remote catalog
-  (M1-a), `install <id…>` / `<resource> add <id>` install `external` artifacts
-  with real `ref`/`sha` (M1-b), and `update` / `check` compare installed vs
-  latest (M1-c). Still pending: remote selection from the **interactive**
-  `install` picker. The security scanner that gates remote content is still a
-  stub (see below).
+- **Remote catalog (M1).** `ls` reads the remote catalog, `install`/`add`
+  install `external` artifacts with real `ref`/`sha`, `update`/`check` compare
+  installed vs latest, and the interactive picker lists remote entries. A single
+  catalog URL is supported (built-in ∪ one remote); multi-catalog is a follow-up.
+- **Hook scripts and logs are shared.** Installing a `hook` deposits the whole
+  hook script set into `~/.config/agent-rigger/hooks/` (a re-sync on each hook
+  install). Any runtime log files the guard scripts write next to themselves are
+  reset on the next hook install — treat the in-store hook logs as volatile.
 - **No standalone binary distribution.** The compiled binary resolves artifacts
   relative to the cloned repository. Bundling artifacts into the binary is a
   prerequisite for distributing `agent-rigger` as a single file.
