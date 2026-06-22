@@ -45,7 +45,6 @@ const REMOTE_PLUGIN_ENTRY: CatalogEntry = {
   kind: 'artifact',
   id: 'plugin:demo-plugin',
   nature: 'plugin',
-  source: 'external',
   targets: ['claude'],
   scopes: ['user'],
 };
@@ -248,7 +247,7 @@ describe('H6 — external plugin: runner receives catalogUrl as marketplace URL'
     expect(addIdx).toBeLessThan(installIdx);
   });
 
-  it('manifest entry has source:external', async () => {
+  it('manifest entry has real ref/sha (remote install)', async () => {
     await runRemoteInstall({
       ids: ['plugin:demo-plugin'],
       catalogUrl: CATALOG_URL,
@@ -264,11 +263,10 @@ describe('H6 — external plugin: runner receives catalogUrl as marketplace URL'
     const raw = await fs.readFile(ctx.manifestPath, 'utf8').catch(() => null);
     expect(raw).not.toBeNull();
     const manifest = JSON.parse(raw!) as {
-      artifacts: Array<{ id: string; source?: string; ref?: string; sha?: string }>;
+      artifacts: Array<{ id: string; ref?: string; sha?: string }>;
     };
     const entry = manifest.artifacts.find((a) => a.id === 'plugin:demo-plugin');
     expect(entry).toBeDefined();
-    expect(entry?.source).toBe('external');
     expect(entry?.ref).toBe(TAG_NAME);
     expect(entry?.sha).toBe(SHA);
   });

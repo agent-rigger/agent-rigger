@@ -14,7 +14,6 @@ const GUARDRAILS_CLAUDE: CatalogEntry = {
   kind: 'artifact',
   id: 'guardrails-claude',
   nature: 'guardrail',
-  source: 'internal',
   targets: ['claude'],
   scopes: ['user', 'project'],
 };
@@ -23,7 +22,6 @@ const CONTEXT_CLAUDE: CatalogEntry = {
   kind: 'artifact',
   id: 'context-claude',
   nature: 'context',
-  source: 'internal',
   targets: ['claude'],
   scopes: ['user', 'project'],
 };
@@ -37,7 +35,6 @@ const TOOL_GLAB: CatalogEntry = {
   kind: 'artifact',
   id: 'tool:glab',
   nature: 'tool',
-  source: 'external',
   targets: ['claude'],
   scopes: ['user'],
   level: 'required',
@@ -57,7 +54,6 @@ const SKILL_SPEC_WORKFLOW: CatalogEntry = {
   kind: 'artifact',
   id: 'skill:spec-workflow',
   nature: 'skill',
-  source: 'internal',
   targets: ['claude'],
   scopes: ['user', 'project'],
   requires: ['tool:glab'],
@@ -72,7 +68,6 @@ const AGENT_TECH_LEAD: CatalogEntry = {
   kind: 'artifact',
   id: 'agent:tech-lead',
   nature: 'agent',
-  source: 'internal',
   targets: ['claude'],
   scopes: ['user', 'project'],
 };
@@ -81,7 +76,6 @@ const AGENT_PM: CatalogEntry = {
   kind: 'artifact',
   id: 'agent:pm',
   nature: 'agent',
-  source: 'internal',
   targets: ['claude'],
   scopes: ['user', 'project'],
 };
@@ -90,7 +84,6 @@ const AGENT_REVIEWER: CatalogEntry = {
   kind: 'artifact',
   id: 'agent:reviewer',
   nature: 'agent',
-  source: 'internal',
   targets: ['claude'],
   scopes: ['user', 'project'],
 };
@@ -104,7 +97,6 @@ const AGENT_REVIEWER: CatalogEntry = {
 const PACK_SPEC_WORKFLOW: CatalogEntry = {
   kind: 'pack',
   id: 'pack:spec-workflow',
-  source: 'internal',
   targets: ['claude'],
   scopes: ['user', 'project'],
   members: ['skill:spec-workflow', 'agent:tech-lead', 'agent:pm', 'agent:reviewer'],
@@ -118,7 +110,6 @@ const HOOK_GUARD_COMMAND: CatalogEntry = {
   kind: 'artifact',
   id: 'hook:guard-command',
   nature: 'hook',
-  source: 'internal',
   targets: ['claude'],
   scopes: ['user', 'project'],
   event: 'PreToolUse',
@@ -130,7 +121,6 @@ const HOOK_GUARD_SECRET: CatalogEntry = {
   kind: 'artifact',
   id: 'hook:guard-secret',
   nature: 'hook',
-  source: 'internal',
   targets: ['claude'],
   scopes: ['user', 'project'],
   event: 'PreToolUse',
@@ -142,7 +132,6 @@ const HOOK_GUARD_WRITE_SECRET: CatalogEntry = {
   kind: 'artifact',
   id: 'hook:guard-write-secret',
   nature: 'hook',
-  source: 'internal',
   targets: ['claude'],
   scopes: ['user', 'project'],
   event: 'PreToolUse',
@@ -154,7 +143,6 @@ const HOOK_GUARD_PROMPT: CatalogEntry = {
   kind: 'artifact',
   id: 'hook:guard-prompt',
   nature: 'hook',
-  source: 'internal',
   targets: ['claude'],
   scopes: ['user', 'project'],
   event: 'UserPromptSubmit',
@@ -170,7 +158,6 @@ const HOOK_GUARD_PROMPT: CatalogEntry = {
 const PACK_HARNESS: CatalogEntry = {
   kind: 'pack',
   id: 'pack:harness',
-  source: 'internal',
   targets: ['claude'],
   scopes: ['user', 'project'],
   members: [
@@ -189,7 +176,6 @@ const PACK_HARNESS: CatalogEntry = {
 const PACK_BASELINE: CatalogEntry = {
   kind: 'pack',
   id: 'pack:baseline',
-  source: 'internal',
   targets: ['claude'],
   scopes: ['user', 'project'],
   members: ['pack:harness', 'guardrails-claude', 'context-claude'],

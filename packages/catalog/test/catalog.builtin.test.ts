@@ -131,9 +131,10 @@ describe('BUILTIN_CATALOG — tool:glab', () => {
     expect((tool.check ?? '').length).toBeGreaterThan(0);
   });
 
-  it('has source external', () => {
+  it('has level required', () => {
     const tool = findEntry('tool:glab');
-    expect(tool?.source).toBe('external');
+    if (tool?.kind !== 'artifact') return;
+    expect(tool.level).toBe('required');
   });
 });
 

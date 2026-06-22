@@ -57,7 +57,6 @@ const GUARDRAIL_CATALOG_ENTRY: CatalogEntry = {
   kind: 'artifact',
   id: 'guardrails-claude',
   nature: 'guardrail',
-  source: 'internal',
   targets: ['claude'],
   scopes: ['user', 'project'],
 };
@@ -66,7 +65,6 @@ const CONTEXT_CATALOG_ENTRY: CatalogEntry = {
   kind: 'artifact',
   id: 'context-claude',
   nature: 'context',
-  source: 'internal',
   targets: ['claude'],
   scopes: ['user', 'project'],
 };

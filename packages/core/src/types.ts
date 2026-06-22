@@ -43,7 +43,6 @@ export interface Artifact {
  * One record in the local manifest (~/.config/agent-rigger/state.json).
  * Tracks what is installed, where it came from, and what it wrote to disk.
  *
- * - source: 'internal' for tool-coupled artefacts, 'external' for remote ones.
  * - ref: semver tag (human version).
  * - sha: resolved commit sha (reproducibility + drift detection).
  * - installedAt: ISO-8601 timestamp string.
@@ -52,7 +51,6 @@ export interface Artifact {
 export interface ManifestEntry {
   id: string;
   nature: Nature;
-  source: 'internal' | 'external';
   ref: string;
   sha: string;
   scope: Scope;

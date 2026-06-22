@@ -5,7 +5,8 @@
  * - Read the manifest to find installed external entries.
  * - If `ids` is empty, target all external entries for the given scope.
  * - For each candidate id: classify as stale, upToDate, or skipped.
- *   - not in manifest (or source !== 'external')  → skipped
+ *   - not in manifest                              → skipped
+ *   - not present in the remote catalog (no remote ref) → skipped (no remote version)
  *   - resolveVersion says newer (isUpdateAvailable) → stale
  *   - already at latest ref                        → upToDate
  * - For stale entries: transactional checkout-first pipeline:
@@ -45,7 +46,7 @@ import type { Scanner } from '@agent-rigger/core/scan';
 import type { Scope } from '@agent-rigger/core/types';
 
 import { buildClaudeAdapter } from './cli';
-import { scanExternalEntries } from './remote-install';
+import { scanEntries, scanPathFor } from './remote-install';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -84,7 +85,7 @@ export interface UpdateResult {
   updated: string[];
   /** ids that are already at the latest version. */
   upToDate: string[];
-  /** ids that were skipped (not installed, internal, or aborted). */
+  /** ids that were skipped (not installed, no remote version, or aborted). */
   skipped: string[];
 }
 
@@ -129,9 +130,11 @@ export async function runUpdate(opts: RunUpdateOptions): Promise<UpdateResult> {
   const manifest = await readManifest(manifestPath);
 
   // Determine the candidate id set.
+  // When ids is empty: all installed artifacts for the given scope are candidates.
+  // Classification below filters out those without a remote version.
   const candidateIds: string[] = ids.length === 0
     ? manifest.artifacts
-      .filter((e) => e.scope === scope && e.source === 'external')
+      .filter((e) => e.scope === scope)
       .map((e) => e.id)
     : ids;
 
@@ -162,7 +165,9 @@ export async function runUpdate(opts: RunUpdateOptions): Promise<UpdateResult> {
       continue;
     }
 
-    if (entry.source !== 'external') {
+    // Entries installed without a remote ref (ref 'v0.0.0', sha '') have no
+    // remote version — they are not candidates for update.
+    if (entry.ref === 'v0.0.0' && entry.sha === '') {
       skippedIds.push(id);
       skipReasons.set(id, 'no remote version');
       continue;
@@ -205,23 +210,28 @@ export async function runUpdate(opts: RunUpdateOptions): Promise<UpdateResult> {
         const { entries: effective } = mergeCatalogs(BUILTIN_CATALOG, remoteEntries);
         const resolved = resolve(staleIds, effective);
 
-        const externalIds = new Set(
-          resolved.filter((e) => e.source === 'external').map((e) => e.id),
+        // Entries with a checkout path (skills/agents) are "remote" — their
+        // content comes from the fetched content repo. Others (guardrails, hooks)
+        // always come from the local artifacts dir.
+        const remoteIds = new Set(
+          resolved
+            .filter((e) => scanPathFor(e, dir) !== null)
+            .map((e) => e.id),
         );
 
-        // 3c. Security scan — external entries only (ADR-0014).
+        // 3c. Security scan — all entries that have a checkout path (uniform scan, ADR-0014).
+        //     Entries without a scanPath (e.g. guardrails, hooks) are naturally skipped.
         //     Must be BEFORE remove so a blocked scan leaves the artifact intact.
-        const externalResolved = resolved.filter((e) => e.source === 'external');
-        const { warnings: scanWarnings } = await scanExternalEntries({
-          entries: externalResolved,
+        const { warnings: scanWarnings } = await scanEntries({
+          entries: resolved,
           baseDir: dir,
           scanner,
           force,
         });
 
-        // 3d. Build adapter with external resolver seam (externalBaseDir = checkout dir).
+        // 3d. Build adapter with remote resolver seam (externalBaseDir = checkout dir).
         const adapter = await buildClaudeAdapter(env, artifactsDir, {
-          externalIds,
+          externalIds: remoteIds,
           externalBaseDir: dir,
         });
 
@@ -230,14 +240,14 @@ export async function runUpdate(opts: RunUpdateOptions): Promise<UpdateResult> {
           .filter((e) => e.nature !== 'tool')
           .map((e) => ({ id: e.id, nature: e.nature, scope }));
 
-        // 3e. versionFor seam: external → real ref/sha, internal → v0.0.0/''.
+        // 3e. versionFor seam: remote (has checkout path) → real ref/sha, others → v0.0.0/''.
         const versionFor = (
           entry: { id: string },
-        ): { source: 'internal' | 'external'; ref: string; sha: string } => {
-          if (externalIds.has(entry.id)) {
-            return { source: 'external', ref: remote.ref, sha: remote.sha };
+        ): { ref: string; sha: string } => {
+          if (remoteIds.has(entry.id)) {
+            return { ref: remote.ref, sha: remote.sha };
           }
-          return { source: 'internal', ref: 'v0.0.0', sha: '' };
+          return { ref: 'v0.0.0', sha: '' };
         };
 
         // 3g. Confirm BEFORE remove — abort with zero writes if user declines.

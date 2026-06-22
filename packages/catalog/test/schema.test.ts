@@ -46,7 +46,6 @@ const minimalArtifact = {
   kind: 'artifact',
   id: 'tool:glab',
   nature: 'tool',
-  source: 'internal',
   targets: ['claude'],
   scopes: ['user'],
 } as const;
@@ -56,7 +55,6 @@ const fullArtifact = {
   kind: 'artifact',
   id: 'plugin:prettier',
   nature: 'plugin',
-  source: 'external',
   level: 'recommended',
   targets: ['claude', 'opencode'],
   scopes: ['user', 'project'],
@@ -74,7 +72,6 @@ const fullArtifact = {
 const minimalPack = {
   kind: 'pack',
   id: 'pack:dev-tools',
-  source: 'internal',
   targets: ['claude'],
   scopes: ['user'],
   members: ['tool:glab', 'tool:gh'],
@@ -105,7 +102,6 @@ describe('CatalogEntrySchema — artifact minimal valid', () => {
     expect(result.success).toBe(true);
     if (!result.success) return;
     expect(result.data.id).toBe('tool:glab');
-    expect(result.data.source).toBe('internal');
     expect(result.data.targets).toEqual(['claude']);
     expect(result.data.scopes).toEqual(['user']);
   });
@@ -276,11 +272,6 @@ describe('CatalogEntrySchema — rejections: common fields', () => {
     expect(result.success).toBe(false);
   });
 
-  it('rejects invalid source on artifact', () => {
-    const result = CatalogEntrySchema.safeParse({ ...minimalArtifact, source: 'interne' });
-    expect(result.success).toBe(false);
-  });
-
   it('rejects empty targets array on artifact', () => {
     const result = CatalogEntrySchema.safeParse({ ...minimalArtifact, targets: [] });
     expect(result.success).toBe(false);
@@ -416,7 +407,6 @@ const hookArtifact = {
   kind: 'artifact',
   id: 'hook:guard-x',
   nature: 'hook',
-  source: 'internal',
   targets: ['claude'],
   scopes: ['user'],
   event: 'PreToolUse',
@@ -458,7 +448,6 @@ describe('ArtifactEntrySchema — hook fields are optional', () => {
       kind: 'artifact',
       id: 'hook:guard-y',
       nature: 'hook',
-      source: 'internal',
       targets: ['claude'],
       scopes: ['user'],
     });
@@ -470,7 +459,6 @@ describe('ArtifactEntrySchema — hook fields are optional', () => {
       kind: 'artifact',
       id: 'hook:guard-y',
       nature: 'hook',
-      source: 'internal',
       targets: ['claude'],
       scopes: ['user'],
     });

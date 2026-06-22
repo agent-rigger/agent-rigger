@@ -20,12 +20,11 @@ import type { CatalogEntry } from './schema';
 // Fixture helpers
 // ---------------------------------------------------------------------------
 
-function makeArtifact(id: string, source: 'internal' | 'external' = 'external'): CatalogEntry {
+function makeArtifact(id: string): CatalogEntry {
   return {
     kind: 'artifact',
     id,
     nature: 'skill',
-    source,
     targets: ['claude'],
     scopes: ['user'],
   };
@@ -37,22 +36,22 @@ function makeArtifact(id: string, source: 'internal' | 'external' = 'external'):
 
 describe('mergeCatalogs — id collision: built-in wins, remote shadowed', () => {
   it('entries length equals built-in length (collision removed)', () => {
-    const builtin = [makeArtifact('a', 'internal')];
-    const remote = [makeArtifact('a', 'external')];
+    const builtin = [makeArtifact('a')];
+    const remote = [makeArtifact('a')];
     const { entries } = mergeCatalogs(builtin, remote);
     expect(entries).toHaveLength(1);
   });
 
-  it('entry kept is the built-in one (source: internal)', () => {
-    const builtinEntry = makeArtifact('guardrails-claude', 'internal');
-    const remoteEntry = makeArtifact('guardrails-claude', 'external');
+  it('entry kept is the built-in one (id matches)', () => {
+    const builtinEntry = makeArtifact('guardrails-claude');
+    const remoteEntry = makeArtifact('guardrails-claude');
     const { entries } = mergeCatalogs([builtinEntry], [remoteEntry]);
-    expect(entries[0]?.source).toBe('internal');
+    expect(entries[0]?.id).toBe('guardrails-claude');
   });
 
   it('colliding id appears in conflicts', () => {
-    const builtin = [makeArtifact('guardrails-claude', 'internal')];
-    const remote = [makeArtifact('guardrails-claude', 'external')];
+    const builtin = [makeArtifact('guardrails-claude')];
+    const remote = [makeArtifact('guardrails-claude')];
     const { conflicts } = mergeCatalogs(builtin, remote);
     expect(conflicts).toContain('guardrails-claude');
   });
@@ -78,22 +77,22 @@ describe('mergeCatalogs — id collision: built-in wins, remote shadowed', () =>
 
 describe('mergeCatalogs — remote-only entry appended after built-in', () => {
   it('entries contains built-in + remote-only', () => {
-    const builtin = [makeArtifact('guardrails-claude', 'internal')];
-    const remote = [makeArtifact('skill:remote-only', 'external')];
+    const builtin = [makeArtifact('guardrails-claude')];
+    const remote = [makeArtifact('skill:remote-only')];
     const { entries } = mergeCatalogs(builtin, remote);
     expect(entries).toHaveLength(2);
   });
 
   it('built-in entry comes first', () => {
-    const builtin = [makeArtifact('guardrails-claude', 'internal')];
-    const remote = [makeArtifact('skill:remote-only', 'external')];
+    const builtin = [makeArtifact('guardrails-claude')];
+    const remote = [makeArtifact('skill:remote-only')];
     const { entries } = mergeCatalogs(builtin, remote);
     expect(entries[0]?.id).toBe('guardrails-claude');
   });
 
   it('remote-only entry comes after built-in', () => {
-    const builtin = [makeArtifact('guardrails-claude', 'internal')];
-    const remote = [makeArtifact('skill:remote-only', 'external')];
+    const builtin = [makeArtifact('guardrails-claude')];
+    const remote = [makeArtifact('skill:remote-only')];
     const { entries } = mergeCatalogs(builtin, remote);
     expect(entries[1]?.id).toBe('skill:remote-only');
   });
@@ -112,12 +111,11 @@ describe('mergeCatalogs — duplicate id within remote (absent from built-in): o
   });
 
   it('the kept entry is the first occurrence', () => {
-    const firstRemote: CatalogEntry = { ...makeArtifact('skill:dupe'), source: 'external' };
+    const firstRemote: CatalogEntry = makeArtifact('skill:dupe');
     const secondRemote: CatalogEntry = {
       kind: 'artifact',
       id: 'skill:dupe',
       nature: 'agent',
-      source: 'external',
       targets: ['claude'],
       scopes: ['user'],
     };

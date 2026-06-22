@@ -13,7 +13,6 @@ function artifact(id: string, requires?: string[]): CatalogEntry {
     kind: 'artifact',
     id,
     nature: 'tool',
-    source: 'internal',
     targets: ['claude'],
     scopes: ['user'],
     ...(requires ? { requires } : {}),
@@ -24,7 +23,6 @@ function pack(id: string, members: string[], requires?: string[]): CatalogEntry 
   return {
     kind: 'pack',
     id,
-    source: 'internal',
     targets: ['claude'],
     scopes: ['user'],
     members,

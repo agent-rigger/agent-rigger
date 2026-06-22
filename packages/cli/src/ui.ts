@@ -296,7 +296,6 @@ export interface RenderEntryInfoOpts {
  * Format:
  *   <id>  (<nature>)
  *     status:   installed | available
- *     source:   internal | external
  *     targets:  claude, ...
  *     scopes:   user, project, ...
  *     level:    required | recommended   (artifact only, when present)
@@ -312,7 +311,6 @@ export function renderEntryInfo(entry: CatalogEntry, opts: RenderEntryInfoOpts =
 
   lines.push(`${entry.id}  (${natureLabel})`);
   lines.push(`  status:   ${status}`);
-  lines.push(`  source:   ${entry.source}`);
   lines.push(`  targets:  ${entry.targets.join(', ')}`);
   lines.push(`  scopes:   ${entry.scopes.join(', ')}`);
 
@@ -403,7 +401,7 @@ export interface RenderCatalogListOpts {
  *
  * Hint:
  *   - artifact with level  → level string (e.g. "required").
- *   - artifact without level → source string (e.g. "internal").
+ *   - artifact without level → empty string.
  *   - pack                 → "(N members)".
  *
  * Header: "Catalog (N entries):" or "<label> (N):" when label is provided.
@@ -436,7 +434,7 @@ export function renderCatalogList(
     const nature = entry.kind === 'pack' ? 'pack' : entry.nature;
     const hint = entry.kind === 'pack'
       ? `(${entry.members.length} members)`
-      : (entry.level ?? entry.source);
+      : (entry.level ?? '');
     return { tag: tagFor(entry.id), id: entry.id, nature, hint };
   });
 

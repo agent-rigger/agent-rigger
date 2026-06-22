@@ -5,7 +5,7 @@
  *  - kind:'artifact'  A single installable artefact with a concrete nature.
  *  - kind:'pack'      A named bundle that groups other artefact ids.
  *
- * Common fields (id, source, targets, scopes, requires?) live in both variants.
+ * Common fields (id, targets, scopes, requires?) live in both variants.
  * Variant-specific fields are isolated to their branch of the union.
  */
 
@@ -69,9 +69,6 @@ const ScopesSchema = z.array(z.enum(SCOPES)).min(1);
 const CommonFieldsSchema = z.object({
   /** Unique, non-empty artefact identifier (e.g. "tool:glab", "pack:dev-tools"). */
   id: z.string().min(1),
-
-  /** Whether the entry ships with the tool ("internal") or comes from a remote source ("external"). */
-  source: z.enum(['internal', 'external']),
 
   /** Non-empty list of AI assistants this entry is compatible with. */
   targets: TargetsSchema,

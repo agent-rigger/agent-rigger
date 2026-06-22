@@ -69,7 +69,6 @@ const GUARDRAIL_CATALOG_ENTRY: CatalogEntry = {
   kind: 'artifact',
   id: 'guardrails-claude',
   nature: 'guardrail',
-  source: 'internal',
   targets: ['claude'],
   scopes: ['user', 'project'],
 };
@@ -79,7 +78,6 @@ const CONTEXT_CATALOG_ENTRY: CatalogEntry = {
   kind: 'artifact',
   id: 'context-claude',
   nature: 'context',
-  source: 'internal',
   targets: ['claude'],
   scopes: ['user', 'project'],
 };
@@ -89,7 +87,6 @@ const REQUIRED_TOOL_ENTRY: CatalogEntry = {
   kind: 'artifact',
   id: 'tool:glab',
   nature: 'tool',
-  source: 'external',
   targets: ['claude'],
   scopes: ['user'],
   level: 'required',
@@ -548,7 +545,6 @@ describe('runInstall — pack resolution', () => {
     const miniPack: CatalogEntry = {
       kind: 'pack',
       id: 'pack:mini',
-      source: 'internal',
       targets: ['claude'],
       scopes: ['user'],
       members: ['guardrails-claude', 'context-claude'],
@@ -713,7 +709,6 @@ describe('runInstall — scan blocking (optional)', () => {
       kind: 'artifact',
       id: 'skill:spec-workflow',
       nature: 'skill',
-      source: 'internal',
       targets: ['claude'],
       scopes: ['user'],
     };

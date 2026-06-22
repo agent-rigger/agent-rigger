@@ -39,7 +39,6 @@ function makeArtifact(
     kind: 'artifact',
     id,
     nature,
-    source: 'internal',
     targets: ['claude'],
     scopes: ['user'],
   };
@@ -49,7 +48,6 @@ function makePack(id: string, members: string[]): CatalogEntry {
   return {
     kind: 'pack',
     id,
-    source: 'internal',
     targets: ['claude'],
     scopes: ['user'],
     members,
@@ -158,7 +156,6 @@ describe('renderCatalogList — artifact hints', () => {
       kind: 'artifact',
       id: 'tool:glab',
       nature: 'tool',
-      source: 'external',
       targets: ['claude'],
       scopes: ['user'],
       level: 'required',
@@ -167,18 +164,17 @@ describe('renderCatalogList — artifact hints', () => {
     expect(result).toContain('required');
   });
 
-  it('renders source hint for artifact without level', () => {
+  it('renders empty hint for artifact without level', () => {
     const entry: CatalogEntry = {
       kind: 'artifact',
       id: 'skill:spec-workflow',
       nature: 'skill',
-      source: 'internal',
       targets: ['claude'],
       scopes: ['user'],
     };
     const result = renderCatalogList([entry]);
-    // Should render source when no level
-    expect(result).toContain('internal');
+    // No level → hint is empty; check entry id is still present
+    expect(result).toContain('skill:spec-workflow');
   });
 });
 
@@ -192,7 +188,6 @@ describe('renderEntryInfo — artifact', () => {
       kind: 'artifact',
       id: 'guardrails-claude',
       nature: 'guardrail',
-      source: 'internal',
       targets: ['claude'],
       scopes: ['user', 'project'],
     };
@@ -206,7 +201,6 @@ describe('renderEntryInfo — artifact', () => {
       kind: 'artifact',
       id: 'skill:spec-workflow',
       nature: 'skill',
-      source: 'internal',
       targets: ['claude'],
       scopes: ['user'],
     };
@@ -219,7 +213,6 @@ describe('renderEntryInfo — artifact', () => {
       kind: 'artifact',
       id: 'guardrails-claude',
       nature: 'guardrail',
-      source: 'internal',
       targets: ['claude'],
       scopes: ['user'],
     };
@@ -228,26 +221,11 @@ describe('renderEntryInfo — artifact', () => {
     expect(result).not.toContain('available');
   });
 
-  it('renders source field', () => {
-    const entry: CatalogEntry = {
-      kind: 'artifact',
-      id: 'tool:glab',
-      nature: 'tool',
-      source: 'external',
-      targets: ['claude'],
-      scopes: ['user'],
-      level: 'required',
-    };
-    const result = renderEntryInfo(entry);
-    expect(result).toContain('external');
-  });
-
   it('renders level field when present', () => {
     const entry: CatalogEntry = {
       kind: 'artifact',
       id: 'tool:glab',
       nature: 'tool',
-      source: 'external',
       targets: ['claude'],
       scopes: ['user'],
       level: 'required',
@@ -261,7 +239,6 @@ describe('renderEntryInfo — artifact', () => {
       kind: 'artifact',
       id: 'skill:spec-workflow',
       nature: 'skill',
-      source: 'internal',
       targets: ['claude'],
       scopes: ['user'],
       requires: ['tool:glab'],
@@ -275,7 +252,6 @@ describe('renderEntryInfo — artifact', () => {
       kind: 'artifact',
       id: 'guardrails-claude',
       nature: 'guardrail',
-      source: 'internal',
       targets: ['claude'],
       scopes: ['user'],
     };
@@ -289,7 +265,6 @@ describe('renderEntryInfo — pack', () => {
     const entry: CatalogEntry = {
       kind: 'pack',
       id: 'pack:spec-workflow',
-      source: 'internal',
       targets: ['claude'],
       scopes: ['user'],
       members: ['skill:spec-workflow', 'agent:pm'],
@@ -302,7 +277,6 @@ describe('renderEntryInfo — pack', () => {
     const entry: CatalogEntry = {
       kind: 'pack',
       id: 'pack:spec-workflow',
-      source: 'internal',
       targets: ['claude'],
       scopes: ['user'],
       members: ['skill:spec-workflow', 'agent:pm'],

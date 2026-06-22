@@ -989,7 +989,6 @@ function makeRemoteEntry(id: string): CatalogEntry {
     kind: 'artifact',
     id,
     nature: 'skill',
-    source: 'external',
     targets: ['claude'],
     scopes: ['user'],
   };
