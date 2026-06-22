@@ -395,11 +395,88 @@ export async function withRemoteCheckout<T>(
   }
 }
 
+// ---------------------------------------------------------------------------
+// readCatalogDir — read + validate catalog.json from a directory
+// ---------------------------------------------------------------------------
+
+/**
+ * Read and validate `catalog.json` from `dir`.
+ *
+ * - Reads `<dir>/catalog.json`.
+ * - Parses the JSON, checks it is an array.
+ * - Validates each element via Zod (CatalogEntrySchema).
+ * - Returns the validated entries.
+ *
+ * Throws CatalogParseError when:
+ *  - catalog.json is absent.
+ *  - the file contains invalid JSON.
+ *  - the root value is not an array.
+ *  - one or more entries fail Zod validation (issues array populated).
+ */
+export async function readCatalogDir(dir: string): Promise<CatalogEntry[]> {
+  // Step 1 — read catalog.json from the directory.
+  const catalogPath = join(dir, 'catalog.json');
+  const catalogFile = Bun.file(catalogPath);
+  const fileExists = await catalogFile.exists();
+  if (!fileExists) {
+    throw new CatalogParseError('catalog.json introuvable dans le content repo', [
+      'catalog.json introuvable',
+    ]);
+  }
+
+  // Step 2 — parse JSON.
+  let raw: unknown;
+  try {
+    const text = await catalogFile.text();
+    raw = JSON.parse(text);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    throw new CatalogParseError(msg, [msg]);
+  }
+
+  // Step 3 — must be an array.
+  if (!Array.isArray(raw)) {
+    throw new CatalogParseError("catalog.json doit être un tableau d'entrées", [
+      "catalog.json doit être un tableau d'entrées",
+    ]);
+  }
+
+  // Step 4 — validate each entry via Zod.
+  const entries: CatalogEntry[] = [];
+  const issues: string[] = [];
+
+  for (let i = 0; i < raw.length; i++) {
+    const parsed = CatalogEntrySchema.safeParse(raw[i]);
+    if (parsed.success) {
+      entries.push(parsed.data);
+    } else {
+      for (const issue of parsed.error.issues) {
+        const issuePath = issue.path.join('.');
+        issues.push(`index ${i}: ${issuePath} ${issue.message}`);
+      }
+    }
+  }
+
+  if (issues.length > 0) {
+    throw new CatalogParseError(
+      `catalog.json contient des entrées invalides: ${issues.join('; ')}`,
+      issues,
+    );
+  }
+
+  return entries;
+}
+
+// ---------------------------------------------------------------------------
+// fetchCatalog — shallow clone + catalog.json validation
+// ---------------------------------------------------------------------------
+
 /**
  * Clones a git repository at `ref` (shallow, depth 1), reads and validates
  * `catalog.json` from the clone root, then returns the parsed entries and HEAD sha.
  *
  * Delegates clone lifecycle to `withRemoteCheckout` (cleanup guaranteed).
+ * Delegates catalog reading to `readCatalogDir`.
  *
  * Throws RemoteFetchError when any git command exits non-zero.
  * Throws CatalogParseError when catalog.json is absent, malformed, or invalid.
@@ -412,57 +489,9 @@ export async function fetchCatalog(
   opts: { tmpFactory: TmpDirFactory },
 ): Promise<FetchedCatalog> {
   return withRemoteCheckout(url, ref, run, opts, async (dir) => {
-    // Step 1 — read catalog.json from the clone root.
-    const catalogPath = join(dir, 'catalog.json');
-    const catalogFile = Bun.file(catalogPath);
-    const fileExists = await catalogFile.exists();
-    if (!fileExists) {
-      throw new CatalogParseError('catalog.json introuvable dans le content repo', [
-        'catalog.json introuvable',
-      ]);
-    }
+    const entries = await readCatalogDir(dir);
 
-    // Step 2 — parse JSON.
-    let raw: unknown;
-    try {
-      const text = await catalogFile.text();
-      raw = JSON.parse(text);
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      throw new CatalogParseError(msg, [msg]);
-    }
-
-    // Step 3 — must be an array.
-    if (!Array.isArray(raw)) {
-      throw new CatalogParseError("catalog.json doit être un tableau d'entrées", [
-        "catalog.json doit être un tableau d'entrées",
-      ]);
-    }
-
-    // Step 4 — validate each entry via Zod.
-    const entries: CatalogEntry[] = [];
-    const issues: string[] = [];
-
-    for (let i = 0; i < raw.length; i++) {
-      const parsed = CatalogEntrySchema.safeParse(raw[i]);
-      if (parsed.success) {
-        entries.push(parsed.data);
-      } else {
-        for (const issue of parsed.error.issues) {
-          const path = issue.path.join('.');
-          issues.push(`index ${i}: ${path} ${issue.message}`);
-        }
-      }
-    }
-
-    if (issues.length > 0) {
-      throw new CatalogParseError(
-        `catalog.json contient des entrées invalides: ${issues.join('; ')}`,
-        issues,
-      );
-    }
-
-    // Step 5 — resolve HEAD sha of the clone.
+    // Resolve HEAD sha of the clone.
     const revParseResult = await run('git', ['-C', dir, 'rev-parse', 'HEAD']);
     if (revParseResult.exitCode !== 0) {
       throw new RemoteFetchError(url, revParseResult.stderr ?? '');

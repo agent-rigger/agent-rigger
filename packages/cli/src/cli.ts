@@ -31,11 +31,16 @@ import type { Env } from '@agent-rigger/core/paths';
 import { resolveUserTargets } from '@agent-rigger/core/paths';
 import { stubScanner } from '@agent-rigger/core/scan';
 
-import { BUILTIN_CATALOG } from '@agent-rigger/catalog';
-import { DependencyCycleError, UnknownEntryError } from '@agent-rigger/catalog/resolver';
-
-import type { TmpDirFactory } from '@agent-rigger/catalog';
-import type { CommandRunner } from '@agent-rigger/catalog/tool-check';
+import {
+  BUILTIN_CATALOG,
+  mergeCatalogs,
+  readCatalogDir,
+  resolveVersion,
+  type TmpDirFactory,
+  withRemoteCheckout,
+} from '@agent-rigger/catalog';
+import { DependencyCycleError, resolve, UnknownEntryError } from '@agent-rigger/catalog/resolver';
+import { type CommandRunner, defaultRunner } from '@agent-rigger/catalog/tool-check';
 import { runCheck } from './cmd-check';
 import { runInit } from './cmd-init';
 import { runInstall } from './cmd-install';
@@ -44,7 +49,7 @@ import { RESOURCE_NATURE_MAP, runLs } from './cmd-ls';
 import { runRemove, UnknownRemoveIdError } from './cmd-remove';
 import { loadConfig } from './config';
 import { PreflightAuthError } from './preflight-auth';
-import { fetchRemoteCatalog, mergeCatalogs } from './remote';
+import { defaultTmpFactory, fetchRemoteCatalog } from './remote';
 import { renderEntryInfo } from './ui';
 
 // ---------------------------------------------------------------------------
@@ -358,6 +363,26 @@ function resolveConfigPath(env: Env): string {
 }
 
 // ---------------------------------------------------------------------------
+// loadCliConfig — load resolved config for the current env
+// ---------------------------------------------------------------------------
+
+/**
+ * Load the effective CLI config from user + project config files and env vars.
+ *
+ * Shared by resolveEffectiveCatalog and handleInstall to avoid duplicating
+ * the path-resolution + loadConfig plumbing.
+ */
+async function loadCliConfig(env: Env): Promise<Awaited<ReturnType<typeof loadConfig>>> {
+  const userConfigPath = resolveConfigPath(env);
+  const projectConfigPath = path.join(process.cwd(), '.agent-rigger', 'config.json');
+  return loadConfig({
+    userConfigPath,
+    projectConfigPath,
+    env: env as Record<string, string | undefined>,
+  });
+}
+
+// ---------------------------------------------------------------------------
 // resolveEffectiveCatalog — built-in ∪ remote (best-effort)
 // ---------------------------------------------------------------------------
 
@@ -376,15 +401,7 @@ async function resolveEffectiveCatalog(
   print: (msg: string) => void,
   remote: CliDeps['remote'],
 ): Promise<typeof BUILTIN_CATALOG> {
-  const userConfigPath = resolveConfigPath(env);
-  // projectConfigPath: cwd-relative fallback (no project concept in M1-a)
-  const projectConfigPath = path.join(process.cwd(), '.agent-rigger', 'config.json');
-
-  const config = await loadConfig({
-    userConfigPath,
-    projectConfigPath,
-    env: env as Record<string, string | undefined>,
-  });
+  const config = await loadCliConfig(env);
 
   if (!config.catalogUrl) {
     return BUILTIN_CATALOG;
@@ -731,7 +748,6 @@ async function handleInstall(opts: HandleInstallOpts): Promise<number> {
 
   // Non-interactive: ids provided on the command line
   if (ids.length > 0) {
-    const adapter = await buildClaudeAdapter(env, artifactsDir);
     const manifestPath = resolveManifestPath(env);
 
     // Determine confirmation strategy
@@ -744,6 +760,62 @@ async function handleInstall(opts: HandleInstallOpts): Promise<number> {
       const prompts = deps.prompts ?? (await importUiPrompts());
       confirm = (planText: string) => prompts.confirmApply(planText);
     }
+
+    // Load config to check for a remote catalog URL.
+    const config = await loadCliConfig(env);
+
+    if (config.catalogUrl !== undefined && config.catalogUrl !== '') {
+      // Remote install path: checkout the content repo, merge catalogs, install.
+      const catalogUrl = config.catalogUrl;
+      const runner: CommandRunner = deps.remote?.run ?? defaultRunner;
+      const tmpFactory: TmpDirFactory = deps.remote?.tmpFactory ?? defaultTmpFactory;
+
+      const version = await resolveVersion(catalogUrl, runner);
+
+      const result = await withRemoteCheckout(
+        catalogUrl,
+        version.ref,
+        runner,
+        { tmpFactory },
+        async (dir) => {
+          const remoteEntries = await readCatalogDir(dir);
+          const { entries: effective } = mergeCatalogs(BUILTIN_CATALOG, remoteEntries);
+          const resolved = resolve(ids, effective);
+          const externalIds = new Set(
+            resolved.filter((e) => e.source === 'external').map((e) => e.id),
+          );
+          const adapter = await buildClaudeAdapter(env, artifactsDir, {
+            externalIds,
+            externalBaseDir: dir,
+          });
+          const versionFor = (
+            entry: { id: string },
+          ): { source: 'internal' | 'external'; ref: string; sha: string } => {
+            if (externalIds.has(entry.id)) {
+              return { source: 'external', ref: version.ref, sha: version.sha };
+            }
+            return { source: 'internal', ref: 'v0.0.0', sha: '' };
+          };
+          return runInstall({
+            catalog: effective,
+            adapter,
+            scope,
+            env,
+            manifestPath,
+            selectedIds: ids,
+            confirm,
+            versionFor,
+            toolRunner: runner,
+          });
+        },
+      );
+
+      print(result.output);
+      return 0;
+    }
+
+    // Local install path (no catalogUrl configured): use BUILTIN_CATALOG.
+    const adapter = await buildClaudeAdapter(env, artifactsDir);
 
     const result = await runInstall({
       catalog: BUILTIN_CATALOG,
