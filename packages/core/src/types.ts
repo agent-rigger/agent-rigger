@@ -164,6 +164,16 @@ export interface WriteOpMergeHooks {
   command: string;
   /** Optional timeout in seconds for the hook command. */
   timeout?: number;
+  /**
+   * Source directory to copy scripts from (e.g. artifacts/claude/hooks).
+   * Absent when script deposit is not needed (e.g. external hooks in future).
+   */
+  scriptSource?: string;
+  /**
+   * Destination directory in the store for the scripts
+   * (e.g. ~/.config/agent-rigger/hooks). Absent when script deposit is not needed.
+   */
+  scriptStore?: string;
 }
 
 export type WriteOp =

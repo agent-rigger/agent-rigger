@@ -115,6 +115,76 @@ const PACK_SPEC_WORKFLOW: CatalogEntry = {
 };
 
 // ---------------------------------------------------------------------------
+// Hook guards — built-in command/file/prompt safety guards
+// ---------------------------------------------------------------------------
+
+const HOOK_GUARD_COMMAND: CatalogEntry = {
+  kind: 'artifact',
+  id: 'hook:guard-command',
+  nature: 'hook',
+  source: 'internal',
+  targets: ['claude'],
+  scopes: ['user', 'project'],
+  event: 'PreToolUse',
+  matcher: 'Bash',
+  timeout: 5,
+};
+
+const HOOK_GUARD_SECRET: CatalogEntry = {
+  kind: 'artifact',
+  id: 'hook:guard-secret',
+  nature: 'hook',
+  source: 'internal',
+  targets: ['claude'],
+  scopes: ['user', 'project'],
+  event: 'PreToolUse',
+  matcher: 'Read|Edit|MultiEdit|Write|NotebookEdit|Grep|Glob|Bash',
+  timeout: 5,
+};
+
+const HOOK_GUARD_WRITE_SECRET: CatalogEntry = {
+  kind: 'artifact',
+  id: 'hook:guard-write-secret',
+  nature: 'hook',
+  source: 'internal',
+  targets: ['claude'],
+  scopes: ['user', 'project'],
+  event: 'PreToolUse',
+  matcher: 'Write|Edit|MultiEdit',
+  timeout: 5,
+};
+
+const HOOK_GUARD_PROMPT: CatalogEntry = {
+  kind: 'artifact',
+  id: 'hook:guard-prompt',
+  nature: 'hook',
+  source: 'internal',
+  targets: ['claude'],
+  scopes: ['user', 'project'],
+  event: 'UserPromptSubmit',
+  matcher: '*',
+  timeout: 5,
+};
+
+// ---------------------------------------------------------------------------
+// Packs — harness bundle installs all 4 guards in one shot
+// ---------------------------------------------------------------------------
+
+const PACK_HARNESS: CatalogEntry = {
+  kind: 'pack',
+  id: 'pack:harness',
+  source: 'internal',
+  targets: ['claude'],
+  scopes: ['user', 'project'],
+  members: [
+    'hook:guard-command',
+    'hook:guard-secret',
+    'hook:guard-write-secret',
+    'hook:guard-prompt',
+  ],
+};
+
+// ---------------------------------------------------------------------------
 // Full built-in catalog
 // ---------------------------------------------------------------------------
 
@@ -129,4 +199,9 @@ export const BUILTIN_CATALOG: CatalogEntry[] = [
   AGENT_REVIEWER,
   TOOL_GLAB,
   PACK_SPEC_WORKFLOW,
+  HOOK_GUARD_COMMAND,
+  HOOK_GUARD_SECRET,
+  HOOK_GUARD_WRITE_SECRET,
+  HOOK_GUARD_PROMPT,
+  PACK_HARNESS,
 ];

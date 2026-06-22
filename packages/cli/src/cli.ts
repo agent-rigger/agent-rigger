@@ -25,6 +25,7 @@ import {
   PluginInstallError,
   SkillScanBlockedError,
 } from '@agent-rigger/adapters';
+import type { ResolvedHook } from '@agent-rigger/adapters';
 import type { Adapter, AdapterEntry } from '@agent-rigger/core/adapter';
 import { assertSafeArtifactName, UnsafeArtifactNameError } from '@agent-rigger/core/artifact-name';
 import { InvalidJsonError } from '@agent-rigger/core/fs-json';
@@ -314,6 +315,40 @@ export async function buildClaudeAdapter(
     loadCanonicalContext(agentsMdPath),
   ]);
 
+  // hookSpec resolves built-in hook entries to their concrete ResolvedHook specification.
+  // External hooks (not in BUILTIN_CATALOG) are not yet supported — throw an actionable error.
+  const hookSpec = (entry: AdapterEntry): ResolvedHook => {
+    const catalogEntry = BUILTIN_CATALOG.find((e) => e.id === entry.id);
+    if (
+      catalogEntry === undefined
+      || catalogEntry.kind !== 'artifact'
+      || catalogEntry.nature !== 'hook'
+    ) {
+      throw new Error(
+        `hookSpec: external hooks not yet supported — "${entry.id}" is not a built-in hook entry. `
+          + 'Install built-in hooks only (hook:guard-command, hook:guard-secret, '
+          + 'hook:guard-write-secret, hook:guard-prompt).',
+      );
+    }
+    const name = entry.id.replace(/^hook:/, '');
+    // Depth-in-defence: guard before any path.join.
+    assertSafeArtifactName(name, entry.id);
+    const scriptSource = path.join(artifactsDir, 'claude', 'hooks');
+    const scriptStore = path.join(path.dirname(resolveUserTargets(_env).stateJson), 'hooks');
+    const command = `bun run ${scriptStore}/${name}.ts`;
+    const base: ResolvedHook = {
+      event: catalogEntry.event ?? '',
+      matcher: catalogEntry.matcher ?? '',
+      command,
+      scriptSource,
+      scriptStore,
+    };
+    if (catalogEntry.timeout !== undefined) {
+      return { ...base, timeout: catalogEntry.timeout };
+    }
+    return base;
+  };
+
   return createClaudeAdapter({
     denyRef,
     agentsContent,
@@ -347,6 +382,7 @@ export async function buildClaudeAdapter(
       plugin: entry.id.replace(/^plugin:/, ''),
       marketplace: path.join(process.cwd(), '.claude-plugin', 'marketplace.json'),
     }),
+    hookSpec,
   });
 }
 
