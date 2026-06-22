@@ -14,7 +14,8 @@
  *   versionFor → runInstall.
  *
  * Security policy (ADR-0014):
- * - ONLY external entries are scanned (built-in content is trusted).
+ * - All fetched content is scanned uniformly: skills and agents by their checkout path,
+ *   hooks by the entire hooks/ directory (guards + shared libs).
  * - Scan occurs BEFORE plan/apply — no files are written if scan blocks.
  * - Without --force: a blocking verdict throws ScanBlockedError (fail-closed).
  * - With --force: a blocking verdict emits a warning and install proceeds.
@@ -87,7 +88,11 @@ export function scanPathFor(entry: ArtifactEntry, baseDir: string): string | nul
     const name = entry.id.replace(/^agent:/, '');
     return path.join(baseDir, 'agents', name + '.md');
   }
-  // hook and others not yet supported for scanning
+  if (entry.nature === 'hook') {
+    // The entire hooks/ directory is scanned so that guard scripts AND shared
+    // libs (e.g. _shared/hook-lib.ts) are covered by the composite scanner.
+    return path.join(baseDir, 'hooks');
+  }
   return null;
 }
 
@@ -123,17 +128,26 @@ export async function scanEntries(opts: {
     return { warnings: [] };
   }
 
-  const scanTargets = entries
+  const rawTargets = entries
     .map((entry) => ({ entry, scanPath: scanPathFor(entry, baseDir) }))
     .filter((t): t is { entry: ArtifactEntry; scanPath: string } => t.scanPath !== null);
 
-  if (scanTargets.length === 0) {
+  if (rawTargets.length === 0) {
     return { warnings: [] };
   }
 
-  const verdicts = await Promise.all(
-    scanTargets.map(({ scanPath }) => scanner.scan(scanPath)),
-  );
+  // Deduplicate scan paths: multiple hook entries share the same hooks/ directory;
+  // scanning it once is sufficient and avoids redundant scanner invocations.
+  const seenPaths = new Set<string>();
+  const uniquePaths: string[] = [];
+  for (const { scanPath } of rawTargets) {
+    if (!seenPaths.has(scanPath)) {
+      seenPaths.add(scanPath);
+      uniquePaths.push(scanPath);
+    }
+  }
+
+  const verdicts = await Promise.all(uniquePaths.map((p) => scanner.scan(p)));
 
   const allFindings = verdicts.flatMap((v) => v.findings ?? []);
   const anyBlocked = verdicts.some((v) => !v.ok);

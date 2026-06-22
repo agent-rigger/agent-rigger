@@ -357,13 +357,15 @@ async function resolveEffectiveCatalog(
       print(
         `[warning] ${effective.conflicts.length} remote entr${
           effective.conflicts.length === 1 ? 'y' : 'ies'
-        } shadowed by built-in: ${effective.conflicts.join(', ')}`,
+        } deduplicated (duplicate ids discarded): ${effective.conflicts.join(', ')}`,
       );
     }
     return effective.entries;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    print(`[warning] Remote catalog unavailable (${msg}). Falling back to built-in catalog.`);
+    print(
+      `[warning] Catalog distant indisponible (${msg}). Vérifie l'URL ou relance \`agent-rigger init\`.`,
+    );
     return [];
   }
 }
