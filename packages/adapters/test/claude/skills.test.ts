@@ -101,9 +101,9 @@ describe('skillName', () => {
     expect(skillName(entry)).toBe('my-skill');
   });
 
-  it('handles ids with multiple colons (keeps everything after first skill:)', () => {
+  it('throws UnsafeArtifactNameError for ids with multiple colons (path traversal guard)', () => {
     const entry: AdapterEntry = { id: 'skill:a:b', nature: 'skill', scope: 'user' };
-    expect(skillName(entry)).toBe('a:b');
+    expect(() => skillName(entry)).toThrow();
   });
 });
 

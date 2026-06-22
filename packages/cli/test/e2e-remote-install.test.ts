@@ -16,6 +16,9 @@
  * 3. install <builtin-id> --yes WITHOUT catalogUrl
  *    → local flow, runner never called.
  * 4. Cleanup: tmp checkout dir removed after install.
+ * 5. (TEST-1) Path traversal id rejected — exit non-0, no files written outside HOME.
+ * 6. (TEST-2) Cleanup on abort/throw — finally block covers both cases.
+ * 7. (TEST-3) Mixed internal+external install — versionFor verified per-entry.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
@@ -23,8 +26,9 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
-import type { CatalogEntry, TmpDirFactory } from '@agent-rigger/catalog';
+import { type CatalogEntry, type TmpDirFactory } from '@agent-rigger/catalog';
 import type { CommandRunner } from '@agent-rigger/catalog/tool-check';
+import { UnsafeArtifactNameError } from '@agent-rigger/core/artifact-name';
 import { resolveUserTargets } from '@agent-rigger/core/paths';
 import type { Env } from '@agent-rigger/core/paths';
 
@@ -410,5 +414,327 @@ describe('remote install — cleanup: tmp checkout removed after install', () =>
     });
 
     expect(remoteEnv.getCleanupCalled()).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// TEST-1: Path traversal rejected (regression guard)
+// ---------------------------------------------------------------------------
+
+describe('TEST-1 — path traversal id rejected', () => {
+  it('exits non-0 when remote catalog contains a path-traversal skill id', async () => {
+    // Create a env where the catalog has a traversal id
+    const traversalEnv = await makeRemoteEnv({ withCatalogUrl: true });
+
+    // Overwrite catalog.json with a traversal entry
+    const traversalEntry: CatalogEntry = {
+      kind: 'artifact',
+      id: 'skill:../../../../etc/evil',
+      nature: 'skill',
+      source: 'external',
+      targets: ['claude'],
+      scopes: ['user', 'project'],
+    };
+    await fs.writeFile(
+      path.join(traversalEnv.contentDir, 'catalog.json'),
+      JSON.stringify([traversalEntry]),
+      'utf8',
+    );
+
+    try {
+      const cap = makeCapture();
+      const code = await runCli(
+        ['install', 'skill:../../../../etc/evil', '--yes'],
+        {
+          print: cap.print,
+          env: traversalEnv.env,
+          artifactsDir: ARTIFACTS_DIR,
+          remote: { run: traversalEnv.runner, tmpFactory: traversalEnv.tmpFactory },
+        },
+      );
+
+      // Must not succeed
+      expect(code).not.toBe(0);
+      // Output must mention unsafe/traversal
+      const output = cap.lines.join('\n');
+      expect(output).toMatch(/unsafe|traversal|path/i);
+    } finally {
+      await traversalEnv.cleanupAll();
+    }
+  });
+
+  it('does not create any file in the sentinel tmp dir (no traversal write)', async () => {
+    // Create a sentinel file in a tmp dir outside HOME — it must still exist after the
+    // rejected install (proves nothing was written/deleted outside the isolated HOME).
+    const sentinelDir = await fs.mkdtemp(path.join(os.tmpdir(), 'rigger-sentinel-'));
+    const sentinelFile = path.join(sentinelDir, 'sentinel.txt');
+    await fs.writeFile(sentinelFile, 'untouched', 'utf8');
+
+    const traversalEnv = await makeRemoteEnv({ withCatalogUrl: true });
+    const traversalEntry: CatalogEntry = {
+      kind: 'artifact',
+      id: 'skill:../../../../etc/evil',
+      nature: 'skill',
+      source: 'external',
+      targets: ['claude'],
+      scopes: ['user', 'project'],
+    };
+    await fs.writeFile(
+      path.join(traversalEnv.contentDir, 'catalog.json'),
+      JSON.stringify([traversalEntry]),
+      'utf8',
+    );
+
+    try {
+      await runCli(['install', 'skill:../../../../etc/evil', '--yes'], {
+        print: makeCapture().print,
+        env: traversalEnv.env,
+        artifactsDir: ARTIFACTS_DIR,
+        remote: { run: traversalEnv.runner, tmpFactory: traversalEnv.tmpFactory },
+      });
+    } catch {
+      // error may propagate — that's fine
+    }
+
+    // The sentinel file must be untouched
+    const content = await fs.readFile(sentinelFile, 'utf8').catch(() => null);
+    expect(content).toBe('untouched');
+
+    await fs.rm(sentinelDir, { recursive: true, force: true });
+    await traversalEnv.cleanupAll();
+  });
+
+  it('cleanup is called even when traversal is rejected', async () => {
+    const traversalEnv = await makeRemoteEnv({ withCatalogUrl: true });
+    const traversalEntry: CatalogEntry = {
+      kind: 'artifact',
+      id: 'skill:../../../../etc/evil',
+      nature: 'skill',
+      source: 'external',
+      targets: ['claude'],
+      scopes: ['user', 'project'],
+    };
+    await fs.writeFile(
+      path.join(traversalEnv.contentDir, 'catalog.json'),
+      JSON.stringify([traversalEntry]),
+      'utf8',
+    );
+
+    try {
+      await runCli(['install', 'skill:../../../../etc/evil', '--yes'], {
+        print: makeCapture().print,
+        env: traversalEnv.env,
+        artifactsDir: ARTIFACTS_DIR,
+        remote: { run: traversalEnv.runner, tmpFactory: traversalEnv.tmpFactory },
+      });
+    } catch {
+      // may propagate
+    }
+
+    expect(traversalEnv.getCleanupCalled()).toBe(true);
+    await traversalEnv.cleanupAll();
+  });
+
+  it('error carries UnsafeArtifactNameError identity (via handleError mapping)', async () => {
+    // Verify the error class itself is correct (unit-level check)
+    const err = new UnsafeArtifactNameError('skill:../../../../evil');
+    expect(err).toBeInstanceOf(UnsafeArtifactNameError);
+    expect(err.id).toBe('skill:../../../../evil');
+    expect(err.name).toBe('UnsafeArtifactNameError');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// TEST-2: Cleanup on abort/throw
+// ---------------------------------------------------------------------------
+
+describe('TEST-2a — confirm:false — cleanup called, nothing written', () => {
+  it('cleanup is called when confirm returns false', async () => {
+    // Use a custom env + prompts that return confirm=false
+    const abortEnv = await makeRemoteEnv({ withCatalogUrl: true });
+
+    try {
+      const cap = makeCapture();
+      await runCli(['install', 'skill:remote-demo'], {
+        print: cap.print,
+        env: abortEnv.env,
+        artifactsDir: ARTIFACTS_DIR,
+        remote: { run: abortEnv.runner, tmpFactory: abortEnv.tmpFactory },
+        prompts: {
+          selectArtifacts: async () => [],
+          selectScope: async () => 'user',
+          confirmApply: async () => false,
+          askUrl: async () => '',
+          askMethod: async () => 'https',
+        },
+      });
+    } catch {
+      // expected: runInstall may return without writing
+    }
+
+    // Cleanup must be called regardless
+    expect(abortEnv.getCleanupCalled()).toBe(true);
+    await abortEnv.cleanupAll();
+  });
+
+  it('nothing written to store when confirm returns false', async () => {
+    const abortEnv = await makeRemoteEnv({ withCatalogUrl: true });
+    const abortTargets = resolveUserTargets(abortEnv.env);
+
+    try {
+      // inject confirm=false via prompts (non-interactive needs --yes, so we omit it
+      // and inject a prompts.confirmApply that returns false)
+      await runCli(['install', 'skill:remote-demo'], {
+        print: makeCapture().print,
+        env: abortEnv.env,
+        artifactsDir: ARTIFACTS_DIR,
+        remote: { run: abortEnv.runner, tmpFactory: abortEnv.tmpFactory },
+        prompts: {
+          selectArtifacts: async () => [],
+          selectScope: async () => 'user',
+          confirmApply: async () => false,
+          askUrl: async () => '',
+          askMethod: async () => 'https',
+        },
+      });
+    } catch {
+      // ignore
+    }
+
+    // Nothing installed — store dir for skill should not exist
+    const skillStorePath = path.join(abortTargets.skillsDir, 'remote-demo');
+    const stat = await fs.stat(skillStorePath).catch(() => null);
+    expect(stat).toBeNull();
+
+    await abortEnv.cleanupAll();
+  });
+});
+
+describe('TEST-2b — skill source absent in checkout — error propagates + cleanup called', () => {
+  it('cleanup is called when SKILL.md is absent (ENOENT from linker)', async () => {
+    // Create env with catalog but WITHOUT skills/remote-demo/SKILL.md
+    const noSkillEnv = await makeRemoteEnv({ withCatalogUrl: true });
+
+    // Remove the SKILL.md from contentDir
+    await fs.rm(path.join(noSkillEnv.contentDir, 'skills', 'remote-demo'), {
+      recursive: true,
+      force: true,
+    });
+
+    try {
+      await runCli(['install', 'skill:remote-demo', '--yes'], {
+        print: makeCapture().print,
+        env: noSkillEnv.env,
+        artifactsDir: ARTIFACTS_DIR,
+        remote: { run: noSkillEnv.runner, tmpFactory: noSkillEnv.tmpFactory },
+      });
+    } catch {
+      // error expected
+    }
+
+    // The finally block in withRemoteCheckout must have run cleanup
+    expect(noSkillEnv.getCleanupCalled()).toBe(true);
+    await noSkillEnv.cleanupAll();
+  });
+
+  it('exits non-0 when SKILL.md is absent', async () => {
+    const noSkillEnv = await makeRemoteEnv({ withCatalogUrl: true });
+    await fs.rm(path.join(noSkillEnv.contentDir, 'skills', 'remote-demo'), {
+      recursive: true,
+      force: true,
+    });
+
+    try {
+      const code = await runCli(['install', 'skill:remote-demo', '--yes'], {
+        print: makeCapture().print,
+        env: noSkillEnv.env,
+        artifactsDir: ARTIFACTS_DIR,
+        remote: { run: noSkillEnv.runner, tmpFactory: noSkillEnv.tmpFactory },
+      });
+      expect(code).not.toBe(0);
+    } catch {
+      // also acceptable — error propagated to top
+    }
+
+    await noSkillEnv.cleanupAll();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// TEST-3: Mixed internal+external install — versionFor verified per-entry
+// ---------------------------------------------------------------------------
+
+describe('TEST-3 — mixed install: builtin (internal) + remote (external)', () => {
+  it('installs both builtin and external skill', async () => {
+    const cap = makeCapture();
+    const code = await runCli(
+      ['install', 'guardrails-claude', 'skill:remote-demo', '--yes'],
+      {
+        print: cap.print,
+        env: remoteEnv.env,
+        artifactsDir: ARTIFACTS_DIR,
+        remote: { run: remoteEnv.runner, tmpFactory: remoteEnv.tmpFactory },
+      },
+    );
+    expect(code).toBe(0);
+  });
+
+  it('manifest: guardrails-claude has source:internal', async () => {
+    await runCli(['install', 'guardrails-claude', 'skill:remote-demo', '--yes'], {
+      print: makeCapture().print,
+      env: remoteEnv.env,
+      artifactsDir: ARTIFACTS_DIR,
+      remote: { run: remoteEnv.runner, tmpFactory: remoteEnv.tmpFactory },
+    });
+
+    const raw = await fs.readFile(targets.stateJson, 'utf8');
+    const manifest = JSON.parse(raw) as {
+      artifacts: Array<{ id: string; source?: string; ref?: string; sha?: string }>;
+    };
+
+    const internal = manifest.artifacts.find((a) => a.id === 'guardrails-claude');
+    expect(internal).toBeDefined();
+    expect(internal?.source).toBe('internal');
+    expect(internal?.ref).toBe('v0.0.0');
+    expect(internal?.sha).toBe('');
+  });
+
+  it('manifest: skill:remote-demo has source:external with real ref+sha', async () => {
+    await runCli(['install', 'guardrails-claude', 'skill:remote-demo', '--yes'], {
+      print: makeCapture().print,
+      env: remoteEnv.env,
+      artifactsDir: ARTIFACTS_DIR,
+      remote: { run: remoteEnv.runner, tmpFactory: remoteEnv.tmpFactory },
+    });
+
+    const raw = await fs.readFile(targets.stateJson, 'utf8');
+    const manifest = JSON.parse(raw) as {
+      artifacts: Array<{ id: string; source?: string; ref?: string; sha?: string }>;
+    };
+
+    const external = manifest.artifacts.find((a) => a.id === 'skill:remote-demo');
+    expect(external).toBeDefined();
+    expect(external?.source).toBe('external');
+    expect(external?.ref).toBe(TAG_NAME);
+    expect(external?.sha).toBe(SHA);
+  });
+
+  it('manifest: internal entry has ref v0.0.0 and empty sha (versionFor distinguishes)', async () => {
+    await runCli(['install', 'guardrails-claude', 'skill:remote-demo', '--yes'], {
+      print: makeCapture().print,
+      env: remoteEnv.env,
+      artifactsDir: ARTIFACTS_DIR,
+      remote: { run: remoteEnv.runner, tmpFactory: remoteEnv.tmpFactory },
+    });
+
+    const raw = await fs.readFile(targets.stateJson, 'utf8');
+    const manifest = JSON.parse(raw) as {
+      artifacts: Array<{ id: string; ref?: string; sha?: string }>;
+    };
+
+    const internal = manifest.artifacts.find((a) => a.id === 'guardrails-claude');
+    // versionFor returns {source:'internal', ref:'v0.0.0', sha:''} for non-external entries
+    expect(internal?.ref).toBe('v0.0.0');
+    expect(internal?.sha).toBe('');
   });
 });

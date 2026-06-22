@@ -1,4 +1,5 @@
 export * from './adapter';
+export * from './artifact-name';
 export * from './backup';
 export * from './deny';
 export * from './engine';

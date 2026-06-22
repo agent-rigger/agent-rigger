@@ -81,9 +81,9 @@ describe('agentName', () => {
     expect(agentName(entry)).toBe('my-agent');
   });
 
-  it('handles ids with multiple colons (keeps everything after first agent:)', () => {
+  it('throws UnsafeArtifactNameError for ids with multiple colons (path traversal guard)', () => {
     const entry: AdapterEntry = { id: 'agent:a:b', nature: 'agent', scope: 'user' };
-    expect(agentName(entry)).toBe('a:b');
+    expect(() => agentName(entry)).toThrow();
   });
 });
 
