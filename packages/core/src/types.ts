@@ -8,8 +8,16 @@
 // Primitives
 // ---------------------------------------------------------------------------
 
-/** 7 natures of installable artefacts. */
-export type Nature = 'plugin' | 'guardrail' | 'context' | 'skill' | 'agent' | 'mcp' | 'tool';
+/** 8 natures of installable artefacts. */
+export type Nature =
+  | 'plugin'
+  | 'guardrail'
+  | 'context'
+  | 'skill'
+  | 'agent'
+  | 'mcp'
+  | 'tool'
+  | 'hook';
 
 /** Installation scope: user-level (~/) or project-level (cwd). */
 export type Scope = 'user' | 'project';
@@ -139,13 +147,33 @@ export interface WriteOpPluginInstall {
   marketplace: string;
 }
 
+/**
+ * Merge a hook entry into settings.json under hooks.<event>.
+ * Only the hooks section is touched; all other keys (e.g. permissions.deny) are preserved.
+ * Idempotent: re-applying with the same (event, matcher, command) is a no-op.
+ */
+export interface WriteOpMergeHooks {
+  kind: 'merge-hooks';
+  /** Absolute path to settings.json. */
+  path: string;
+  /** Claude Code hook event (e.g. "PreToolUse", "UserPromptSubmit"). */
+  event: string;
+  /** Matcher string (e.g. "Bash", "*"). */
+  matcher: string;
+  /** Shell command to register as a hook. */
+  command: string;
+  /** Optional timeout in seconds for the hook command. */
+  timeout?: number;
+}
+
 export type WriteOp =
   | WriteOpWriteJson
   | WriteOpWriteText
   | WriteOpMergeDeny
   | WriteOpEnsureImport
   | WriteOpLink
-  | WriteOpPluginInstall;
+  | WriteOpPluginInstall
+  | WriteOpMergeHooks;
 
 // ---------------------------------------------------------------------------
 // RemovalOp — planned removal operations (for diff display and apply)
@@ -205,12 +233,30 @@ export interface RemovalOpPluginUninstall {
   plugin: string;
 }
 
+/**
+ * Remove a hook command from settings.json under hooks.<event>.
+ * Cleans up empty matchers, events, and the hooks key itself if they become empty.
+ * No-op if the specified hook is absent.
+ */
+export interface RemovalOpRemoveHooks {
+  kind: 'remove-hooks';
+  /** Absolute path to settings.json. */
+  path: string;
+  /** Claude Code hook event (e.g. "PreToolUse", "UserPromptSubmit"). */
+  event: string;
+  /** Matcher string (e.g. "Bash", "*"). */
+  matcher: string;
+  /** Shell command to remove. */
+  command: string;
+}
+
 export type RemovalOp =
   | RemovalOpRemoveDeny
   | RemovalOpRemoveBlock
   | RemovalOpDeleteFile
   | RemovalOpUnlink
-  | RemovalOpPluginUninstall;
+  | RemovalOpPluginUninstall
+  | RemovalOpRemoveHooks;
 
 // ---------------------------------------------------------------------------
 // Scanner / Verdict
