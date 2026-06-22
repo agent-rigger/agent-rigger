@@ -234,8 +234,8 @@ export interface WriteOpMergeHooks {
   /** Optional timeout in seconds for the hook command. */
   timeout?: number;
   /**
-   * Source directory to copy scripts from (e.g. artifacts/claude/hooks).
-   * Absent when script deposit is not needed (e.g. external hooks in future).
+   * Source directory to copy scripts from (e.g. hooks/ sub-dir from the catalog checkout).
+   * Absent when script deposit is not needed.
    */
   scriptSource?: string;
   /**
