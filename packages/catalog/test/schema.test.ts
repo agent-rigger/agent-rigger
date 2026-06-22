@@ -24,6 +24,7 @@ import {
   ArtifactEntrySchema,
   type CatalogEntry,
   CatalogEntrySchema,
+  type HookEvent,
   type PackEntry,
   PackEntrySchema,
   parseCatalogEntry,
@@ -398,4 +399,127 @@ describe('exported types', () => {
     const _entry: PackEntry = result.data;
     expect(_entry.kind).toBe('pack');
   });
+});
+
+// ---------------------------------------------------------------------------
+// ArtifactEntrySchema — hook-specific fields (event, matcher, timeout)
+// ---------------------------------------------------------------------------
+
+/** A fully populated hook artifact entry. */
+const hookArtifact = {
+  kind: 'artifact',
+  id: 'hook:guard-x',
+  nature: 'hook',
+  source: 'internal',
+  targets: ['claude'],
+  scopes: ['user'],
+  event: 'PreToolUse',
+  matcher: 'Bash',
+  timeout: 5,
+} as const;
+
+describe('ArtifactEntrySchema — hook artifact with event/matcher/timeout parses OK', () => {
+  it('parses a complete hook entry successfully', () => {
+    const result = ArtifactEntrySchema.safeParse(hookArtifact);
+    expect(result.success).toBe(true);
+  });
+
+  it('event field is preserved', () => {
+    const result = ArtifactEntrySchema.safeParse(hookArtifact);
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    expect(result.data.event).toBe('PreToolUse');
+  });
+
+  it('matcher field is preserved', () => {
+    const result = ArtifactEntrySchema.safeParse(hookArtifact);
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    expect(result.data.matcher).toBe('Bash');
+  });
+
+  it('timeout field is preserved', () => {
+    const result = ArtifactEntrySchema.safeParse(hookArtifact);
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    expect(result.data.timeout).toBe(5);
+  });
+});
+
+describe('ArtifactEntrySchema — hook fields are optional', () => {
+  it('parses without event/matcher/timeout (all optional)', () => {
+    const result = ArtifactEntrySchema.safeParse({
+      kind: 'artifact',
+      id: 'hook:guard-y',
+      nature: 'hook',
+      source: 'internal',
+      targets: ['claude'],
+      scopes: ['user'],
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('event is absent when not provided', () => {
+    const result = ArtifactEntrySchema.safeParse({
+      kind: 'artifact',
+      id: 'hook:guard-y',
+      nature: 'hook',
+      source: 'internal',
+      targets: ['claude'],
+      scopes: ['user'],
+    });
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    expect(result.data.event).toBeUndefined();
+  });
+});
+
+describe('ArtifactEntrySchema — invalid event is rejected', () => {
+  it('rejects unknown event value "Foo"', () => {
+    const result = ArtifactEntrySchema.safeParse({ ...hookArtifact, event: 'Foo' });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects lowercase event value "preToolUse"', () => {
+    const result = ArtifactEntrySchema.safeParse({ ...hookArtifact, event: 'preToolUse' });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe('ArtifactEntrySchema — invalid timeout is rejected', () => {
+  it('rejects negative timeout', () => {
+    const result = ArtifactEntrySchema.safeParse({ ...hookArtifact, timeout: -1 });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects zero timeout (not positive)', () => {
+    const result = ArtifactEntrySchema.safeParse({ ...hookArtifact, timeout: 0 });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects non-integer timeout (float)', () => {
+    const result = ArtifactEntrySchema.safeParse({ ...hookArtifact, timeout: 1.5 });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe('ArtifactEntrySchema — all HookEvent values are valid', () => {
+  const events: HookEvent[] = [
+    'PreToolUse',
+    'PostToolUse',
+    'UserPromptSubmit',
+    'Stop',
+    'SubagentStop',
+    'SessionStart',
+    'SessionEnd',
+    'Notification',
+    'PreCompact',
+  ];
+
+  for (const event of events) {
+    it(`accepts event '${event}'`, () => {
+      const result = ArtifactEntrySchema.safeParse({ ...hookArtifact, event });
+      expect(result.success).toBe(true);
+    });
+  }
 });

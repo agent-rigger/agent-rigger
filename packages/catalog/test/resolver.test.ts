@@ -268,3 +268,52 @@ describe('resolve — sélection vide', () => {
     expect(resolve([], BUILTIN_CATALOG)).toEqual([]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Case 15 — pack:baseline (BUILTIN) expansion récursive
+// ---------------------------------------------------------------------------
+
+describe('resolve — pack:baseline (BUILTIN)', () => {
+  it('développe pack:baseline en 6 artefacts (4 guards + guardrails + context), aucun pack en sortie', () => {
+    const result = resolve(['pack:baseline'], BUILTIN_CATALOG);
+    const ids = result.map((e) => e.id);
+
+    // Aucun pack dans la sortie
+    expect(ids).not.toContain('pack:baseline');
+    expect(ids).not.toContain('pack:harness');
+
+    // 4 hook guards (via pack:harness expansé récursivement)
+    expect(ids).toContain('hook:guard-command');
+    expect(ids).toContain('hook:guard-secret');
+    expect(ids).toContain('hook:guard-write-secret');
+    expect(ids).toContain('hook:guard-prompt');
+
+    // guardrails et context
+    expect(ids).toContain('guardrails-claude');
+    expect(ids).toContain('context-claude');
+  });
+
+  it('retourne exactement 6 artefacts (dédupliqués)', () => {
+    const result = resolve(['pack:baseline'], BUILTIN_CATALOG);
+    expect(result).toHaveLength(6);
+  });
+
+  it('tous les éléments de la sortie sont des ArtifactEntry (kind artifact)', () => {
+    const result = resolve(['pack:baseline'], BUILTIN_CATALOG);
+    expect(result.every((e) => e.kind === 'artifact')).toBe(true);
+  });
+
+  it('pack:baseline + pack:harness déduplique les guards (pas de doublon)', () => {
+    const result = resolve(['pack:baseline', 'pack:harness'], BUILTIN_CATALOG);
+    const ids = result.map((e) => e.id);
+    const guardIds = [
+      'hook:guard-command',
+      'hook:guard-secret',
+      'hook:guard-write-secret',
+      'hook:guard-prompt',
+    ];
+    for (const id of guardIds) {
+      expect(ids.filter((x) => x === id)).toHaveLength(1);
+    }
+  });
+});
