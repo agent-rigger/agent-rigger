@@ -57,6 +57,8 @@ reports what is missing; it does not install tools itself.
 
 - **Bun >= 1.3** — the runtime and package manager.
 - **Claude Code** — the assistant this harness configures.
+- **git** — required for remote catalog operations (`ls` against a configured
+  catalog URL). agent-rigger shells out to `git ls-remote` and `git clone`.
 - **`glab` or `gh`** — required if the catalog references GitLab or GitHub
   resources. `init` probes ambient auth first; it asks for the method only if
   the probe fails.
@@ -238,6 +240,34 @@ The wizard:
 `init` is idempotent: re-running it merges the new URL and method on top of the
 existing config.
 
+### `ls` — list catalog entries (remote-aware)
+
+Lists catalog entries with their install status. When a catalog URL is
+configured (via `init`), `ls` also fetches the **remote** catalog and shows its
+entries alongside the built-in ones.
+
+```
+agent-rigger ls               # all entries
+agent-rigger catalog ls       # same
+agent-rigger skills ls        # filtered by resource type
+```
+
+How the remote fetch works:
+
+1. Resolves the current version of the content repo — the highest semver **tag**,
+   or the default-branch **HEAD sha** when the repo has no tags.
+2. Shallow-clones that version into a temporary directory (`git clone --depth 1
+   --branch <ref>`), reads and validates `catalog.json`, then removes the
+   temporary directory (always — success or failure).
+3. Merges remote entries with the built-in catalog; **built-in entries win** on
+   an id collision.
+
+`ls` is **best-effort**: if the remote is unreachable (network, auth, bad ref),
+it prints a warning and falls back to the built-in catalog (exit 0). Remote
+access uses **ambient git credentials** (credential helper / ssh-agent). Installing
+or updating _from_ the remote is a later milestone (M1-b / M1-c); at this stage
+the remote is **read-only** through `ls`.
+
 ---
 
 ## Invariants
@@ -262,9 +292,11 @@ These properties hold across all commands:
 - **Security scanner is a stub.** The scan step that gates skill and plugin
   installation always passes in M0. A real implementation (Trivy, Gitleaks, or
   similar) is the security milestone.
-- **Built-in catalog only.** The catalog is compiled into the binary. Fetching
-  from a remote content repository — so teams can publish their own artifacts
-  — is a planned M1 feature. `init` saves the catalog URL for that future path.
+- **Remote catalog is read-only (M1-a).** `ls` reads a remote content
+  repository when a catalog URL is configured, so teams can see published
+  artifacts. Installing and updating _from_ the remote (`add`/`update` against
+  remote entries, real `ref`/`sha` in the manifest) land in M1-b / M1-c. Until
+  then, `install`/`add` operate on the built-in catalog only.
 - **No standalone binary distribution.** The compiled binary resolves artifacts
   relative to the cloned repository. Bundling artifacts into the binary is a
   prerequisite for distributing `agent-rigger` as a single file.
