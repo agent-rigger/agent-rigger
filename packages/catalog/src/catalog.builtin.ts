@@ -167,7 +167,8 @@ const HOOK_GUARD_PROMPT: CatalogEntry = {
 };
 
 // ---------------------------------------------------------------------------
-// Packs — harness bundle installs all 4 guards in one shot
+// Packs — harness bundle installs all 4 guards in one shot;
+//         baseline bundle installs the full required team setup.
 // ---------------------------------------------------------------------------
 
 const PACK_HARNESS: CatalogEntry = {
@@ -182,6 +183,20 @@ const PACK_HARNESS: CatalogEntry = {
     'hook:guard-write-secret',
     'hook:guard-prompt',
   ],
+};
+
+/**
+ * Team baseline pack — installs the full required set in one shot:
+ * the 4 hook guards (via pack:harness) + guardrails + context.
+ * pack:harness is expanded recursively by the resolver.
+ */
+const PACK_BASELINE: CatalogEntry = {
+  kind: 'pack',
+  id: 'pack:baseline',
+  source: 'internal',
+  targets: ['claude'],
+  scopes: ['user', 'project'],
+  members: ['pack:harness', 'guardrails-claude', 'context-claude'],
 };
 
 // ---------------------------------------------------------------------------
@@ -204,4 +219,5 @@ export const BUILTIN_CATALOG: CatalogEntry[] = [
   HOOK_GUARD_WRITE_SECRET,
   HOOK_GUARD_PROMPT,
   PACK_HARNESS,
+  PACK_BASELINE,
 ];
