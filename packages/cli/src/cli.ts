@@ -32,7 +32,13 @@ import type { Env } from '@agent-rigger/core/paths';
 import { resolveUserTargets } from '@agent-rigger/core/paths';
 import { stubScanner } from '@agent-rigger/core/scan';
 
-import { BUILTIN_CATALOG, mergeCatalogs, type TmpDirFactory } from '@agent-rigger/catalog';
+import {
+  BUILTIN_CATALOG,
+  isUpdateAvailable,
+  mergeCatalogs,
+  resolveVersion,
+  type TmpDirFactory,
+} from '@agent-rigger/catalog';
 import { DependencyCycleError, UnknownEntryError } from '@agent-rigger/catalog/resolver';
 import { type CommandRunner, defaultRunner } from '@agent-rigger/catalog/tool-check';
 import { runCheck } from './cmd-check';
@@ -41,9 +47,10 @@ import { runInstall } from './cmd-install';
 import type { RunLsResult } from './cmd-ls';
 import { RESOURCE_NATURE_MAP, runLs } from './cmd-ls';
 import { runRemove, UnknownRemoveIdError } from './cmd-remove';
+import { runUpdate } from './cmd-update';
 import { loadConfig } from './config';
 import { PreflightAuthError } from './preflight-auth';
-import { defaultTmpFactory, fetchRemoteCatalog } from './remote';
+import { CatalogUrlMissingError, defaultTmpFactory, fetchRemoteCatalog } from './remote';
 import { runRemoteInstall } from './remote-install';
 import { renderEntryInfo } from './ui';
 
@@ -147,6 +154,12 @@ export function parseArgs(argv: string[]): ParsedArgs {
     return { command, resourceVerb: undefined, resourceIds, flags };
   }
 
+  // Top-level update with optional ids: update [<id...>]
+  if (command === 'update') {
+    resourceIds.push(...positionals.slice(1));
+    return { command, resourceVerb: undefined, resourceIds, flags };
+  }
+
   // All other commands (check, init, ls, --help, --version, unknown)
   return { command, resourceVerb: undefined, resourceIds, flags };
 }
@@ -173,7 +186,12 @@ Discovery commands:
   ls                       List all catalog entries with install status.
   catalog ls               Same as ls.
 
-Resource commands (available verbs: ls, add, info, check, remove):
+Update commands:
+  update <id...>           Update specified external artifact ids to the latest remote version.
+  update <id...> --yes     Update without confirmation prompt.
+  update                   Update all installed external artifacts.
+
+Resource commands (available verbs: ls, add, info, check, remove, update):
   <resource> ls            List entries filtered by resource type.
   <resource> add <id...>   Install ids validated against the resource type.
   <resource> add <id...> --yes
@@ -184,11 +202,12 @@ Resource commands (available verbs: ls, add, info, check, remove):
                            Uninstall specified artifact ids.
   <resource> remove <id...> --yes
                            Uninstall without confirmation prompt.
+  <resource> update <id...>
+                           Update specified artifact ids (remote catalog required).
+  <resource> update <id...> --yes
+                           Update without confirmation prompt.
   remove <id...>           Uninstall ids (any resource type).
   remove <id...> --yes     Uninstall without confirmation prompt.
-
-Planned (not yet implemented):
-  <resource> update <id>   Update an installed artifact.
 
 Resources:
   skill | skills           Workflow skills.
@@ -213,6 +232,8 @@ Examples:
   agent-rigger guardrails info guardrails-claude
   agent-rigger guardrails check
   agent-rigger install --scope=user
+  agent-rigger update --yes
+  agent-rigger skills update skill:remote-demo --yes
   agent-rigger init
 `;
 
@@ -515,6 +536,14 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
       });
 
       print(result.output);
+
+      // Best-effort update-available annotation (R22.4).
+      // Never throws: failures are silently swallowed so check exit code is unaffected.
+      const updateLines = await resolveUpdateAvailable(env, scope, deps.remote);
+      if (updateLines.length > 0) {
+        print(updateLines.join('\n'));
+      }
+
       return result.exitCode;
     }
 
@@ -534,6 +563,19 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
     // ----- remove -----
     if (command === 'remove') {
       return await handleRemove({
+        ids: resourceIds,
+        flags,
+        scope,
+        env,
+        artifactsDir,
+        print,
+        deps,
+      });
+    }
+
+    // ----- update -----
+    if (command === 'update') {
+      return await handleUpdate({
         ids: resourceIds,
         flags,
         scope,
@@ -693,7 +735,60 @@ async function handleResourceCommand(opts: ResourceCommandOpts): Promise<number>
     });
 
     print(result.output);
+
+    // Best-effort update-available annotation (same as top-level check).
+    const updateLines = await resolveUpdateAvailable(env, scope, deps.remote);
+    if (updateLines.length > 0) {
+      print(updateLines.join('\n'));
+    }
+
     return result.exitCode;
+  }
+
+  // ----- <resource> update <id...> -----
+  if (verb === 'update') {
+    if (ids.length === 0) {
+      print(`[error] "${resource} update" requires at least one artifact id.\n\n${USAGE}`);
+      return 2;
+    }
+
+    // Validate each id belongs to the resource.
+    // For builtin entries: check via catalog kind/nature.
+    // For external entries (not in BUILTIN_CATALOG): infer nature from id prefix (skill:, agent:, etc.)
+    // so `guardrails update skill:x` is rejected even if skill:x is unknown to the built-in catalog.
+    const singular = resource.replace(/s$/, '');
+    const invalidIds = ids.filter((id) => {
+      const builtinEntry = BUILTIN_CATALOG.find((e) => e.id === id);
+      if (builtinEntry !== undefined) {
+        if (natureMapped === 'pack') return builtinEntry.kind !== 'pack';
+        return builtinEntry.kind !== 'artifact' || builtinEntry.nature !== natureMapped;
+      }
+      // For external ids: infer nature from known prefixes.
+      const PREFIX_TO_NATURE: Record<string, string> = {
+        'skill:': 'skill',
+        'agent:': 'agent',
+        'guardrail:': 'guardrail',
+        'context:': 'context',
+        'plugin:': 'plugin',
+        'tool:': 'tool',
+        'pack:': 'pack',
+      };
+      for (const [prefix, nature] of Object.entries(PREFIX_TO_NATURE)) {
+        if (id.startsWith(prefix)) {
+          return nature !== natureMapped;
+        }
+      }
+      return false; // unknown prefix → let runUpdate handle it
+    });
+
+    if (invalidIds.length > 0) {
+      for (const id of invalidIds) {
+        print(`[error] id "${id}" is not a ${singular}`);
+      }
+      return 2;
+    }
+
+    return await handleUpdate({ ids, flags, scope, env, artifactsDir, print, deps });
   }
 
   // ----- <resource> remove <id...> -----
@@ -879,10 +974,105 @@ async function handleRemove(opts: HandleRemoveOpts): Promise<number> {
 }
 
 // ---------------------------------------------------------------------------
+// handleUpdate — shared update logic
+// ---------------------------------------------------------------------------
+
+interface HandleUpdateOpts {
+  ids: string[];
+  flags: Record<string, string | boolean>;
+  scope: 'user' | 'project';
+  env: Env;
+  artifactsDir: string;
+  print: (msg: string) => void;
+  deps: CliDeps;
+}
+
+async function handleUpdate(opts: HandleUpdateOpts): Promise<number> {
+  const { ids, flags, scope, env, artifactsDir, print, deps } = opts;
+
+  const config = await loadCliConfig(env);
+
+  if (!config.catalogUrl) {
+    throw new CatalogUrlMissingError();
+  }
+
+  const yes = flags['yes'] === true;
+  const runner: CommandRunner = deps.remote?.run ?? defaultRunner;
+  const tmpFactory: TmpDirFactory = deps.remote?.tmpFactory ?? defaultTmpFactory;
+
+  let confirm: boolean | ((planText: string) => Promise<boolean>);
+  if (yes) {
+    confirm = true;
+  } else {
+    const prompts = deps.prompts ?? (await importUiPrompts());
+    confirm = (planText: string) => prompts.confirmApply(planText);
+  }
+
+  const result = await runUpdate({
+    ids,
+    scope,
+    env,
+    manifestPath: resolveManifestPath(env),
+    artifactsDir,
+    catalogUrl: config.catalogUrl,
+    runner,
+    tmpFactory,
+    confirm,
+  });
+
+  print(result.output);
+  return 0;
+}
+
+// ---------------------------------------------------------------------------
+// resolveUpdateAvailable — best-effort update-available annotation for check
+// ---------------------------------------------------------------------------
+
+/**
+ * Returns formatted lines listing external entries with newer remote versions.
+ * Best-effort: any error → returns [] (never throws).
+ * Zero writes.
+ */
+async function resolveUpdateAvailable(
+  env: Env,
+  scope: 'user' | 'project',
+  remote: CliDeps['remote'],
+): Promise<string[]> {
+  try {
+    const config = await loadCliConfig(env);
+    if (!config.catalogUrl) return [];
+
+    const runner: CommandRunner = remote?.run ?? defaultRunner;
+    const remoteVersion = await resolveVersion(config.catalogUrl, runner);
+
+    const { readManifest } = await import('@agent-rigger/core/manifest');
+    const manifestPath = resolveManifestPath(env);
+    const manifest = await readManifest(manifestPath);
+
+    const staleIds = manifest.artifacts
+      .filter((e) => e.scope === scope && e.source === 'external')
+      .filter((e) => isUpdateAvailable(e.ref, remoteVersion))
+      .map((e) => `  [update available]  ${e.id}  ${e.ref} → ${remoteVersion.ref}`);
+
+    if (staleIds.length === 0) return [];
+
+    return ['', '--- Updates ---', ...staleIds];
+  } catch {
+    return [];
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Error handler — maps typed errors to actionable messages + exit codes
 // ---------------------------------------------------------------------------
 
 function handleError(err: unknown, print: (msg: string) => void): number {
+  if (err instanceof CatalogUrlMissingError) {
+    print('[error] No catalog URL configured.');
+    print('  Run `agent-rigger init` to configure the catalog URL.');
+    return 2;
+  }
+
   if (err instanceof EmptyDenyArtifactError) {
     print(`[error] Canonical deny artifact missing or empty: ${err.path}`);
     print('  Ensure deny.json exists and contains at least one rule in the "deny" array.');

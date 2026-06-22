@@ -735,11 +735,12 @@ describe('runCli — <resource> check', () => {
 });
 
 // ---------------------------------------------------------------------------
-// runCli — planned verbs (update) → code 2
+// runCli — <resource> update without catalogUrl → exit 2
 // ---------------------------------------------------------------------------
 
-describe('runCli — planned verbs (update) return code 2', () => {
-  it('returns exit code 2 for <resource> update', async () => {
+describe('runCli — <resource> update without catalogUrl', () => {
+  it('returns exit code 2 when no catalog URL configured', async () => {
+    // No env/catalogUrl → CatalogUrlMissingError → exit 2
     const cap = makeCapture();
     const code = await runCli(['guardrails', 'update', 'guardrails-claude'], {
       print: cap.print,
@@ -928,11 +929,15 @@ describe('runCli — --help mentions remove', () => {
     expect(plannedSection).not.toMatch(/remove/i);
   });
 
-  it('--help output contains "update" in planned section', async () => {
+  it('--help output lists "update" as an active command (not planned)', async () => {
     const cap = makeCapture();
     await runCli(['--help'], { print: cap.print });
     const out = cap.lines.join('\n');
-    expect(out.toLowerCase()).toMatch(/update.*planned|planned.*update/s);
+    // update must appear in the active commands section
+    expect(out.toLowerCase()).toMatch(/update/);
+    // the Planned section must NOT mention update
+    const plannedSection = out.match(/planned[^\n]*\n([\s\S]*?)(?:\n\n[A-Z]|$)/i)?.[1] ?? '';
+    expect(plannedSection.toLowerCase()).not.toMatch(/update/);
   });
 });
 
