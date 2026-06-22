@@ -6,6 +6,7 @@
  * - Probe access via preflightAuth (injectable run + askMethod).
  * - Persist the resolved config (catalogUrl + authMethod) to configPath.
  * - Idempotent: reads existing config first, merges new values on top.
+ * - After successful persist + in interactive mode: fetch catalog, propose install.
  *
  * Design invariants:
  * - No process.exit — exitCode / ok is returned, the bin (F5) decides what to do.
@@ -13,6 +14,8 @@
  * - No TTY/real network in this module — all I/O is injected via opts.
  * - PreflightAuthError is caught → ok:false + actionable output; config is NOT persisted.
  * - Config is only persisted after a successful preflightAuth.
+ * - fetchCatalogFn / proposeInstall failures are caught non-fatally: config stays saved,
+ *   output gets an actionable hint to re-run `install` later.
  *
  * Error handling:
  * - PreflightAuthError → captured, returned as { ok: false, output: <PreflightAuthError.message> }.
@@ -23,6 +26,8 @@
  * - Merges: { ...DEFAULT_CONFIG, ...existing, catalogUrl: <from askUrl>, authMethod: <from preflight> }.
  * - A second runInit starts from the existing state and only updates the provided fields.
  */
+
+import type { CatalogEntry, CatalogMeta } from '@agent-rigger/catalog';
 
 import { DEFAULT_CONFIG, loadConfigFile, persistConfig } from './config';
 import type { Config } from './config';
@@ -43,6 +48,12 @@ export interface InitResult {
   output: string;
 }
 
+/** Payload passed to proposeInstall. */
+export interface CatalogProposal {
+  meta: CatalogMeta;
+  entries: CatalogEntry[];
+}
+
 /** Options for runInit. All I/O is injectable for testability. */
 export interface RunInitOpts {
   /** Absolute path to the config file to read/write. */
@@ -57,6 +68,72 @@ export interface RunInitOpts {
   env?: Record<string, string | undefined>;
   /** Default scope when no existing config is present. Defaults to 'user'. */
   defaultScope?: Config['defaultScope'];
+  /**
+   * Injected catalog fetcher (TTY / interactive mode).
+   * Called after successful config persist with the saved catalogUrl.
+   * When absent (non-TTY), the proposal step is skipped entirely.
+   * Failures are caught non-fatally — config stays saved.
+   */
+  fetchCatalogFn?: (url: string) => Promise<CatalogProposal>;
+  /**
+   * Injected picker + install orchestration (TTY / interactive mode).
+   * Receives the fetched catalog; returns the list of ids the user selected.
+   * An empty array means the user cancelled or selected nothing.
+   * Only called when fetchCatalogFn is also present.
+   * Failures are caught non-fatally — config stays saved.
+   */
+  proposeInstall?: (catalog: CatalogProposal) => Promise<string[]>;
+}
+
+// ---------------------------------------------------------------------------
+// Pure helpers — exported for unit testing without TTY
+// ---------------------------------------------------------------------------
+
+/**
+ * Compute the initial multiselect state for the post-init picker.
+ *
+ * Returns:
+ * - `initial`    : ids that should be pre-checked (required ∪ recommended).
+ * - `requiredSet`: ids that must always be included in the final result (cannot be unchecked).
+ *
+ * Entries that appear in neither set start unchecked.
+ */
+export function buildInitialSelection(
+  entries: CatalogEntry[],
+  opts: { required: Set<string>; recommended: Set<string> },
+): { initial: string[]; requiredSet: Set<string> } {
+  const { required, recommended } = opts;
+  const initial: string[] = [];
+
+  for (const entry of entries) {
+    if (required.has(entry.id) || recommended.has(entry.id)) {
+      initial.push(entry.id);
+    }
+  }
+
+  return { initial, requiredSet: new Set(required) };
+}
+
+/**
+ * Enforce that all required ids are present in a picker result.
+ *
+ * Re-adds any required ids that the user may have unchecked (or that the picker
+ * dropped). Deduplicates: if a required id is already in `selected`, it appears
+ * exactly once in the output.
+ *
+ * Pure function — does not mutate inputs.
+ */
+export function enforceRequired(selected: string[], required: Set<string>): string[] {
+  const seen = new Set(selected);
+  const result = [...selected];
+
+  for (const id of required) {
+    if (!seen.has(id)) {
+      result.push(id);
+    }
+  }
+
+  return result;
 }
 
 // ---------------------------------------------------------------------------
@@ -72,9 +149,21 @@ export interface RunInitOpts {
  * 4. On success: merge + persist config → return { ok: true, config, output }.
  * 5. On PreflightAuthError: return { ok: false, config: <partial>, output: <error.message> }.
  *    Config is NOT persisted.
+ * 6. After successful persist + when both fetchCatalogFn and proposeInstall are set:
+ *    fetch catalog → proposeInstall → run install on selected ids.
+ *    Failures here are caught non-fatally: config stays saved, output gets actionable hint.
  */
 export async function runInit(opts: RunInitOpts): Promise<InitResult> {
-  const { configPath, askUrl, askMethod, run, env, defaultScope = 'user' } = opts;
+  const {
+    configPath,
+    askUrl,
+    askMethod,
+    run,
+    env,
+    defaultScope = 'user',
+    fetchCatalogFn,
+    proposeInstall,
+  } = opts;
 
   // Step 1 — read existing config (graceful: missing file → {})
   const existing = await loadConfigFile(configPath);
@@ -129,11 +218,24 @@ export async function runInit(opts: RunInitOpts): Promise<InitResult> {
 
   await persistConfig(configPath, config);
 
-  // Step 5 — compose output
+  // Step 5 — compose base output
   const methodLine = authMethod === undefined
     ? ''
     : `\nAuth method : ${authMethod}`;
-  const output = `Catalog URL  : ${url}${methodLine}\nConfig saved : ${configPath}`;
+  let output = `Catalog URL  : ${url}${methodLine}\nConfig saved : ${configPath}`;
+
+  // Step 6 — post-init catalog proposal (interactive / TTY mode only)
+  // Both fetchCatalogFn and proposeInstall must be provided; otherwise skip silently.
+  if (fetchCatalogFn !== undefined && proposeInstall !== undefined) {
+    try {
+      const catalog = await fetchCatalogFn(url);
+      await proposeInstall(catalog);
+    } catch {
+      // Non-fatal: config is already saved. Give the user an actionable hint.
+      output +=
+        '\n\nCatalog fetch failed. Run `install` later to install artifacts from the catalog.';
+    }
+  }
 
   return { config, ok: true, output };
 }
