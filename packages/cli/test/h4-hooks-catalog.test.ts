@@ -289,10 +289,7 @@ describe('buildClaudeAdapter hookSpec — unknown id', () => {
     };
 
     await expect(adapter.plan(unknownEntry, 'user', env)).rejects.toThrow(
-      'external hooks not yet supported',
-    );
-    await expect(adapter.plan(unknownEntry, 'user', env)).rejects.toThrow(
-      '"hook:custom-guard"',
+      'hook:custom-guard',
     );
   });
 });

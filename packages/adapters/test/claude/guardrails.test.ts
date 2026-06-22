@@ -22,10 +22,13 @@ import type { Env } from '@agent-rigger/core/paths';
 
 import {
   applyGuardrail,
+  applyRemoveGuardrail,
   auditGuardrail,
   EmptyDenyArtifactError,
+  loadCanonicalAllow,
   loadCanonicalDeny,
   planGuardrail,
+  planRemoveGuardrail,
 } from '../../src/claude/guardrails';
 
 // Inline isolation helper — avoids cross-package imports, mirrors core/test/tmp-home.ts pattern.
@@ -346,5 +349,274 @@ describe('applyGuardrail', () => {
 
     const result = await readJson(targets.claudeSettings);
     expect(result['model']).toBe('sonnet');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// loadCanonicalAllow
+// ---------------------------------------------------------------------------
+
+describe('loadCanonicalAllow', () => {
+  it('returns [] when the file does not exist', async () => {
+    const allowPath = path.join(tmp.dir, 'nonexistent-allow.json');
+    const result = await loadCanonicalAllow(allowPath);
+    expect(result).toEqual([]);
+  });
+
+  it('reads allow array from a valid allow.json file', async () => {
+    const allowPath = path.join(tmp.dir, 'allow.json');
+    await writeJson(allowPath, { allow: ['Bash(git status)', 'Read(./README.md)'] });
+    const result = await loadCanonicalAllow(allowPath);
+    expect(result).toEqual(['Bash(git status)', 'Read(./README.md)']);
+  });
+
+  it('returns [] when allow field is absent', async () => {
+    const allowPath = path.join(tmp.dir, 'allow.json');
+    await writeJson(allowPath, { other: 'value' });
+    const result = await loadCanonicalAllow(allowPath);
+    expect(result).toEqual([]);
+  });
+
+  it('returns [] when allow array is empty (empty allow is valid)', async () => {
+    const allowPath = path.join(tmp.dir, 'allow.json');
+    await writeJson(allowPath, { allow: [] });
+    const result = await loadCanonicalAllow(allowPath);
+    expect(result).toEqual([]);
+  });
+
+  it('returns [] when allow is not an array', async () => {
+    const allowPath = path.join(tmp.dir, 'allow.json');
+    await writeJson(allowPath, { allow: 'not-an-array' });
+    const result = await loadCanonicalAllow(allowPath);
+    expect(result).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// guardrail allow support (B-i.2)
+// ---------------------------------------------------------------------------
+
+const REF_ALLOW = ['Bash(git log)', 'Read(./docs/**)'];
+
+describe('auditGuardrail — allow support', () => {
+  it('reports present when deny and allow rules are both fully present', async () => {
+    const targets = resolveUserTargets(env);
+    await fs.mkdir(path.dirname(targets.claudeSettings), { recursive: true });
+    await writeJson(targets.claudeSettings, {
+      permissions: { deny: REF_DENY, allow: REF_ALLOW },
+    });
+
+    const report = await auditGuardrail('user', env, REF_DENY, undefined, REF_ALLOW);
+    expect(report.state).toBe('present');
+  });
+
+  it('reports missing when allow rules are absent (deny fully present)', async () => {
+    const targets = resolveUserTargets(env);
+    await fs.mkdir(path.dirname(targets.claudeSettings), { recursive: true });
+    await writeJson(targets.claudeSettings, {
+      permissions: { deny: REF_DENY },
+    });
+
+    const report = await auditGuardrail('user', env, REF_DENY, undefined, REF_ALLOW);
+    expect(report.state).toBe('missing');
+  });
+
+  it('reports present when allowRef is [] regardless of current allow', async () => {
+    const targets = resolveUserTargets(env);
+    await fs.mkdir(path.dirname(targets.claudeSettings), { recursive: true });
+    await writeJson(targets.claudeSettings, {
+      permissions: { deny: REF_DENY },
+    });
+
+    const report = await auditGuardrail('user', env, REF_DENY, undefined, []);
+    expect(report.state).toBe('present');
+  });
+});
+
+describe('planGuardrail — allow support', () => {
+  it('produces a merge-allow op when allow rules are missing', async () => {
+    const ops = await planGuardrail('user', env, REF_DENY, undefined, REF_ALLOW);
+    const allowOp = ops.find((op) => op.kind === 'merge-allow');
+    expect(allowOp).toBeDefined();
+    expect((allowOp as { kind: string; toAdd: string[] }).toAdd).toEqual(REF_ALLOW);
+  });
+
+  it('produces no merge-allow op when allowRef is []', async () => {
+    const ops = await planGuardrail('user', env, REF_DENY, undefined, []);
+    const allowOp = ops.find((op) => op.kind === 'merge-allow');
+    expect(allowOp).toBeUndefined();
+  });
+
+  it('produces both merge-deny and merge-allow ops when both missing', async () => {
+    const ops = await planGuardrail('user', env, REF_DENY, undefined, REF_ALLOW);
+    expect(ops.some((op) => op.kind === 'merge-deny')).toBe(true);
+    expect(ops.some((op) => op.kind === 'merge-allow')).toBe(true);
+  });
+
+  it('produces no merge-allow op when allow rules already present', async () => {
+    const targets = resolveUserTargets(env);
+    await fs.mkdir(path.dirname(targets.claudeSettings), { recursive: true });
+    await writeJson(targets.claudeSettings, {
+      permissions: { deny: REF_DENY, allow: REF_ALLOW },
+    });
+
+    const ops = await planGuardrail('user', env, REF_DENY, undefined, REF_ALLOW);
+    expect(ops).toHaveLength(0);
+  });
+});
+
+describe('applyGuardrail — allow support', () => {
+  it('writes allow rules to settings.json', async () => {
+    const targets = resolveUserTargets(env);
+    await fs.mkdir(path.dirname(targets.claudeSettings), { recursive: true });
+    await writeJson(targets.claudeSettings, { permissions: { deny: [], allow: [] } });
+
+    const ops = [
+      { kind: 'merge-deny' as const, path: targets.claudeSettings, toAdd: REF_DENY },
+      { kind: 'merge-allow' as const, path: targets.claudeSettings, toAdd: REF_ALLOW },
+    ];
+    await applyGuardrail(ops, env);
+
+    const result = await readJson(targets.claudeSettings);
+    const perms = result['permissions'] as Record<string, unknown>;
+    const allow = perms['allow'] as string[];
+    for (const rule of REF_ALLOW) {
+      expect(allow).toContain(rule);
+    }
+  });
+
+  it('preserves deny rules when applying allow', async () => {
+    const targets = resolveUserTargets(env);
+    await fs.mkdir(path.dirname(targets.claudeSettings), { recursive: true });
+    await writeJson(targets.claudeSettings, { permissions: { deny: REF_DENY } });
+
+    const ops = [
+      { kind: 'merge-allow' as const, path: targets.claudeSettings, toAdd: REF_ALLOW },
+    ];
+    await applyGuardrail(ops, env);
+
+    const result = await readJson(targets.claudeSettings);
+    const perms = result['permissions'] as Record<string, unknown>;
+    const deny = perms['deny'] as string[];
+    for (const rule of REF_DENY) {
+      expect(deny).toContain(rule);
+    }
+  });
+
+  it('is idempotent for allow: applying twice yields same allow array', async () => {
+    const targets = resolveUserTargets(env);
+    await fs.mkdir(path.dirname(targets.claudeSettings), { recursive: true });
+    await writeJson(targets.claudeSettings, { permissions: { deny: [], allow: [] } });
+
+    const ops = [
+      { kind: 'merge-allow' as const, path: targets.claudeSettings, toAdd: REF_ALLOW },
+    ];
+    await applyGuardrail(ops, env);
+    const after1 = await readJson(targets.claudeSettings);
+    const allow1 = ((after1['permissions'] as Record<string, unknown>)['allow']) as string[];
+
+    await applyGuardrail(ops, env);
+    const after2 = await readJson(targets.claudeSettings);
+    const allow2 = ((after2['permissions'] as Record<string, unknown>)['allow']) as string[];
+
+    expect(allow2).toEqual(allow1);
+  });
+});
+
+describe('planRemoveGuardrail — allow support', () => {
+  it('produces a remove-allow op when allow rules are present', async () => {
+    const targets = resolveUserTargets(env);
+    await fs.mkdir(path.dirname(targets.claudeSettings), { recursive: true });
+    await writeJson(targets.claudeSettings, {
+      permissions: { deny: REF_DENY, allow: REF_ALLOW },
+    });
+
+    const ops = await planRemoveGuardrail('user', env, REF_DENY, undefined, REF_ALLOW);
+    expect(ops.some((op) => op.kind === 'remove-allow')).toBe(true);
+  });
+
+  it('produces no remove-allow op when allowRef is []', async () => {
+    const targets = resolveUserTargets(env);
+    await fs.mkdir(path.dirname(targets.claudeSettings), { recursive: true });
+    await writeJson(targets.claudeSettings, {
+      permissions: { deny: REF_DENY, allow: REF_ALLOW },
+    });
+
+    const ops = await planRemoveGuardrail('user', env, REF_DENY, undefined, []);
+    expect(ops.some((op) => op.kind === 'remove-allow')).toBe(false);
+  });
+
+  it('produces no remove-allow op when allow rules not present', async () => {
+    const targets = resolveUserTargets(env);
+    await fs.mkdir(path.dirname(targets.claudeSettings), { recursive: true });
+    await writeJson(targets.claudeSettings, {
+      permissions: { deny: REF_DENY },
+    });
+
+    const ops = await planRemoveGuardrail('user', env, REF_DENY, undefined, REF_ALLOW);
+    expect(ops.some((op) => op.kind === 'remove-allow')).toBe(false);
+  });
+});
+
+describe('applyRemoveGuardrail — allow support', () => {
+  it('removes allow rules from settings.json', async () => {
+    const targets = resolveUserTargets(env);
+    await fs.mkdir(path.dirname(targets.claudeSettings), { recursive: true });
+    await writeJson(targets.claudeSettings, {
+      permissions: { deny: REF_DENY, allow: REF_ALLOW },
+    });
+
+    const ops = [
+      { kind: 'remove-allow' as const, path: targets.claudeSettings, rules: REF_ALLOW },
+    ];
+    await applyRemoveGuardrail(ops, env);
+
+    const result = await readJson(targets.claudeSettings);
+    const perms = result['permissions'] as Record<string, unknown>;
+    const allow = perms['allow'] as string[];
+    for (const rule of REF_ALLOW) {
+      expect(allow).not.toContain(rule);
+    }
+  });
+
+  it('preserves deny rules when removing allow', async () => {
+    const targets = resolveUserTargets(env);
+    await fs.mkdir(path.dirname(targets.claudeSettings), { recursive: true });
+    await writeJson(targets.claudeSettings, {
+      permissions: { deny: REF_DENY, allow: REF_ALLOW },
+    });
+
+    const ops = [
+      { kind: 'remove-allow' as const, path: targets.claudeSettings, rules: REF_ALLOW },
+    ];
+    await applyRemoveGuardrail(ops, env);
+
+    const result = await readJson(targets.claudeSettings);
+    const perms = result['permissions'] as Record<string, unknown>;
+    const deny = perms['deny'] as string[];
+    for (const rule of REF_DENY) {
+      expect(deny).toContain(rule);
+    }
+  });
+
+  it('preserves user-added allow rules not in ref', async () => {
+    const targets = resolveUserTargets(env);
+    await fs.mkdir(path.dirname(targets.claudeSettings), { recursive: true });
+    await writeJson(targets.claudeSettings, {
+      permissions: { deny: REF_DENY, allow: [...REF_ALLOW, 'Bash(make build)'] },
+    });
+
+    const ops = [
+      { kind: 'remove-allow' as const, path: targets.claudeSettings, rules: REF_ALLOW },
+    ];
+    await applyRemoveGuardrail(ops, env);
+
+    const result = await readJson(targets.claudeSettings);
+    const perms = result['permissions'] as Record<string, unknown>;
+    const allow = perms['allow'] as string[];
+    expect(allow).toContain('Bash(make build)');
+    for (const rule of REF_ALLOW) {
+      expect(allow).not.toContain(rule);
+    }
   });
 });

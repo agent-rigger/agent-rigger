@@ -108,6 +108,17 @@ export interface WriteOpMergeDeny {
 }
 
 /**
+ * Merge entries into permissions.allow (settings.json).
+ * Only the allow array is touched; all other keys are preserved.
+ */
+export interface WriteOpMergeAllow {
+  kind: 'merge-allow';
+  path: string;
+  /** Allow rules that will be appended (after dedup). */
+  toAdd: string[];
+}
+
+/**
  * Ensure a managed import block exists in a Markdown file (CLAUDE.md bridge).
  * Idempotent: existing blocks are replaced in-place; no duplicate is added.
  */
@@ -178,6 +189,7 @@ export type WriteOp =
   | WriteOpWriteJson
   | WriteOpWriteText
   | WriteOpMergeDeny
+  | WriteOpMergeAllow
   | WriteOpEnsureImport
   | WriteOpLink
   | WriteOpPluginInstall
@@ -196,6 +208,18 @@ export interface RemovalOpRemoveDeny {
   /** Absolute path to settings.json. */
   path: string;
   /** The managed rules to remove (those originally added by agent-rigger). */
+  rules: string[];
+}
+
+/**
+ * Remove allow rules managed by agent-rigger from settings.json.
+ * Only the rules listed in `rules` are removed; other allow entries are kept.
+ */
+export interface RemovalOpRemoveAllow {
+  kind: 'remove-allow';
+  /** Absolute path to settings.json. */
+  path: string;
+  /** The managed allow rules to remove. */
   rules: string[];
 }
 
@@ -260,6 +284,7 @@ export interface RemovalOpRemoveHooks {
 
 export type RemovalOp =
   | RemovalOpRemoveDeny
+  | RemovalOpRemoveAllow
   | RemovalOpRemoveBlock
   | RemovalOpDeleteFile
   | RemovalOpUnlink

@@ -118,9 +118,11 @@ export type HookEvent = (typeof HOOK_EVENTS)[number];
  *  - check    Shell command to detect presence (exit 0 = already installed).
  *  - install  Package-manager specific install commands; all keys optional.
  *
- * Hook-specific optional fields (meaningful when nature === 'hook'):
+ * Hook-specific fields (required when nature === 'hook'):
  *  - event    Claude Code hook trigger event (e.g. "PreToolUse").
  *  - matcher  Tool name or pattern the hook listens for.
+ *
+ * Hook-specific optional fields:
  *  - timeout  Max execution time in seconds (positive integer).
  */
 export const ArtifactEntrySchema = CommonFieldsSchema.extend({
@@ -161,13 +163,13 @@ export const ArtifactEntrySchema = CommonFieldsSchema.extend({
     .optional(),
 
   /**
-   * Claude Code hook trigger event. Meaningful when nature === 'hook'.
+   * Claude Code hook trigger event. Required when nature === 'hook'.
    * Specifies which lifecycle event activates this hook.
    */
   event: z.enum(HOOK_EVENTS).optional(),
 
   /**
-   * Tool name or pattern this hook listens for. Meaningful when nature === 'hook'.
+   * Tool name or pattern this hook listens for. Required when nature === 'hook'.
    * Example: "Bash" to match only Bash tool calls.
    */
   matcher: z.string().optional(),
@@ -177,6 +179,22 @@ export const ArtifactEntrySchema = CommonFieldsSchema.extend({
    * Meaningful when nature === 'hook'.
    */
   timeout: z.number().int().positive().optional(),
+}).superRefine((data, ctx) => {
+  if (data.nature !== 'hook') return;
+  if (data.event === undefined) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['event'],
+      message: "hook entries require 'event'",
+    });
+  }
+  if (data.matcher === undefined) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['matcher'],
+      message: "hook entries require 'matcher'",
+    });
+  }
 });
 
 /** Inferred type for an artifact entry. */

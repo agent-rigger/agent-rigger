@@ -442,29 +442,118 @@ describe('ArtifactEntrySchema — hook artifact with event/matcher/timeout parse
   });
 });
 
-describe('ArtifactEntrySchema — hook fields are optional', () => {
-  it('parses without event/matcher/timeout (all optional)', () => {
+describe('ArtifactEntrySchema — non-hook fields event/matcher/timeout are optional', () => {
+  it('parses skill without event/matcher/timeout (all optional for non-hook)', () => {
     const result = ArtifactEntrySchema.safeParse({
       kind: 'artifact',
-      id: 'hook:guard-y',
-      nature: 'hook',
+      id: 'skill:x',
+      nature: 'skill',
       targets: ['claude'],
       scopes: ['user'],
     });
     expect(result.success).toBe(true);
   });
 
-  it('event is absent when not provided', () => {
+  it('event is absent on non-hook when not provided', () => {
     const result = ArtifactEntrySchema.safeParse({
       kind: 'artifact',
-      id: 'hook:guard-y',
-      nature: 'hook',
+      id: 'skill:x',
+      nature: 'skill',
       targets: ['claude'],
       scopes: ['user'],
     });
     expect(result.success).toBe(true);
     if (!result.success) return;
     expect(result.data.event).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// B-i.1: hook entries require event + matcher
+// ---------------------------------------------------------------------------
+
+describe('ArtifactEntrySchema — hook requires event + matcher (B-i.1)', () => {
+  it('rejects hook without event', () => {
+    const result = ArtifactEntrySchema.safeParse({
+      kind: 'artifact',
+      id: 'hook:x',
+      nature: 'hook',
+      targets: ['claude'],
+      scopes: ['user'],
+      matcher: 'Bash',
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects hook without matcher', () => {
+    const result = ArtifactEntrySchema.safeParse({
+      kind: 'artifact',
+      id: 'hook:x',
+      nature: 'hook',
+      targets: ['claude'],
+      scopes: ['user'],
+      event: 'PreToolUse',
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects hook without both event and matcher', () => {
+    const result = ArtifactEntrySchema.safeParse({
+      kind: 'artifact',
+      id: 'hook:x',
+      nature: 'hook',
+      targets: ['claude'],
+      scopes: ['user'],
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('accepts valid hook with both event and matcher', () => {
+    const result = ArtifactEntrySchema.safeParse({
+      kind: 'artifact',
+      id: 'hook:x',
+      nature: 'hook',
+      targets: ['claude'],
+      scopes: ['user'],
+      event: 'PreToolUse',
+      matcher: 'Bash',
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts non-hook without event or matcher', () => {
+    const result = ArtifactEntrySchema.safeParse({
+      kind: 'artifact',
+      id: 'skill:x',
+      nature: 'skill',
+      targets: ['claude'],
+      scopes: ['user'],
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('CatalogEntrySchema also rejects hook without event', () => {
+    const result = CatalogEntrySchema.safeParse({
+      kind: 'artifact',
+      id: 'hook:x',
+      nature: 'hook',
+      targets: ['claude'],
+      scopes: ['user'],
+      matcher: 'Bash',
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('CatalogEntrySchema also rejects hook without matcher', () => {
+    const result = CatalogEntrySchema.safeParse({
+      kind: 'artifact',
+      id: 'hook:x',
+      nature: 'hook',
+      targets: ['claude'],
+      scopes: ['user'],
+      event: 'PreToolUse',
+    });
+    expect(result.success).toBe(false);
   });
 });
 
