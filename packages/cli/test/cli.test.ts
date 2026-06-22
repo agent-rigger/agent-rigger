@@ -1001,7 +1001,10 @@ function makeRemoteEntry(id: string): CatalogEntry {
  */
 function makeFakeTmpFactory(dir: string, entries: CatalogEntry[]): TmpDirFactory {
   return async () => {
-    await Bun.write(path.join(dir, 'catalog.json'), JSON.stringify(entries));
+    await Bun.write(
+      path.join(dir, 'catalog.json'),
+      JSON.stringify({ meta: { name: 'cli-test-catalog' }, entries }),
+    );
     return { path: dir, cleanup: async () => {} };
   };
 }

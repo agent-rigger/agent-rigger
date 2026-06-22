@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 
-import { type CatalogEntry, CatalogEntrySchema } from './schema';
+import { type CatalogEntry, CatalogEntrySchema, type CatalogMeta, MetaSchema } from './schema';
 import type { CommandRunner } from './tool-check';
 
 // ---------------------------------------------------------------------------
@@ -355,6 +355,7 @@ export async function resolveVersion(url: string, run: CommandRunner): Promise<R
 
 /** The result of a successful catalog fetch. */
 export interface FetchedCatalog {
+  meta: CatalogMeta;
   entries: CatalogEntry[];
   sha: string;
 }
@@ -463,18 +464,20 @@ export async function withRemoteCheckout<T>(
 /**
  * Read and validate `catalog.json` from `dir`.
  *
- * - Reads `<dir>/catalog.json`.
- * - Parses the JSON, checks it is an array.
- * - Validates each element via Zod (CatalogEntrySchema).
- * - Returns the validated entries.
+ * Expects the file to contain an object of the form `{ meta, entries }`.
+ * A bare array or an object missing a valid `meta.name` is rejected with a
+ * `CatalogParseError`.
  *
  * Throws CatalogParseError when:
  *  - catalog.json is absent.
  *  - the file contains invalid JSON.
- *  - the root value is not an array.
+ *  - the root value is a bare array (legacy format no longer supported).
+ *  - the root object is missing `meta` or `meta.name` is empty/absent.
  *  - one or more entries fail Zod validation (issues array populated).
  */
-export async function readCatalogDir(dir: string): Promise<CatalogEntry[]> {
+export async function readCatalogDir(
+  dir: string,
+): Promise<{ meta: CatalogMeta; entries: CatalogEntry[] }> {
   // Step 1 — read catalog.json from the directory.
   const catalogPath = join(dir, 'catalog.json');
   const catalogFile = Bun.file(catalogPath);
@@ -495,19 +498,52 @@ export async function readCatalogDir(dir: string): Promise<CatalogEntry[]> {
     throw new CatalogParseError(msg, [msg]);
   }
 
-  // Step 3 — must be an array.
-  if (!Array.isArray(raw)) {
-    throw new CatalogParseError("catalog.json doit être un tableau d'entrées", [
-      "catalog.json doit être un tableau d'entrées",
-    ]);
+  // Step 3 — reject bare array (legacy format).
+  if (Array.isArray(raw)) {
+    throw new CatalogParseError(
+      'catalog.json doit être un objet wrappé {meta,entries}, pas un tableau nu',
+      ['catalog.json doit être un objet wrappé {meta,entries}, pas un tableau nu'],
+    );
   }
 
-  // Step 4 — validate each entry via Zod.
+  // Step 4 — must be an object with a valid meta block.
+  if (raw === null || typeof raw !== 'object') {
+    throw new CatalogParseError(
+      'catalog.json doit être un objet wrappé {meta,entries}',
+      ['catalog.json doit être un objet wrappé {meta,entries}'],
+    );
+  }
+
+  const obj = raw as Record<string, unknown>;
+
+  // Step 5 — validate meta via Zod.
+  const metaResult = MetaSchema.safeParse(obj['meta']);
+  if (!metaResult.success) {
+    const metaIssues = metaResult.error.issues.map(
+      (issue) => `meta.${issue.path.join('.')}: ${issue.message}`,
+    );
+    throw new CatalogParseError(
+      `catalog.json: bloc meta invalide — meta.name est requis et doit être non vide`,
+      metaIssues,
+    );
+  }
+  const meta = metaResult.data;
+
+  // Step 6 — entries must be an array.
+  const rawEntries = obj['entries'];
+  if (!Array.isArray(rawEntries)) {
+    throw new CatalogParseError(
+      'catalog.json: le champ entries doit être un tableau',
+      ['catalog.json: le champ entries doit être un tableau'],
+    );
+  }
+
+  // Step 7 — validate each entry via Zod.
   const entries: CatalogEntry[] = [];
   const issues: string[] = [];
 
-  for (let i = 0; i < raw.length; i++) {
-    const parsed = CatalogEntrySchema.safeParse(raw[i]);
+  for (let i = 0; i < rawEntries.length; i++) {
+    const parsed = CatalogEntrySchema.safeParse(rawEntries[i]);
     if (parsed.success) {
       entries.push(parsed.data);
     } else {
@@ -525,7 +561,7 @@ export async function readCatalogDir(dir: string): Promise<CatalogEntry[]> {
     );
   }
 
-  return entries;
+  return { meta, entries };
 }
 
 // ---------------------------------------------------------------------------
@@ -551,7 +587,7 @@ export async function fetchCatalog(
   opts: { tmpFactory: TmpDirFactory },
 ): Promise<FetchedCatalog> {
   return withRemoteCheckout(url, ref, isTag, run, opts, async (dir) => {
-    const entries = await readCatalogDir(dir);
+    const { meta, entries } = await readCatalogDir(dir);
 
     // Resolve HEAD sha of the clone.
     const revParseResult = await run('git', ['-C', dir, 'rev-parse', 'HEAD']);
@@ -560,7 +596,7 @@ export async function fetchCatalog(
     }
     const sha = (revParseResult.stdout ?? '').trim();
 
-    return { entries, sha };
+    return { meta, entries, sha };
   });
 }
 

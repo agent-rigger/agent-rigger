@@ -135,7 +135,7 @@ async function makeUpdateEnv(): Promise<{
 
     await fs.writeFile(
       path.join(tmpDir, 'catalog.json'),
-      JSON.stringify([REMOTE_SKILL_ENTRY]),
+      JSON.stringify({ meta: { name: 's4b-test-catalog' }, entries: [REMOTE_SKILL_ENTRY] }),
       'utf8',
     );
 

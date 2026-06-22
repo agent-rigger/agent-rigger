@@ -189,7 +189,7 @@ export async function runUpdate(opts: RunUpdateOptions): Promise<UpdateResult> {
       { tmpFactory },
       async (dir) => {
         // 3a. Read + validate remote catalog (CatalogParseError → abort before remove).
-        const remoteEntries = await readCatalogDir(dir);
+        const { entries: remoteEntries } = await readCatalogDir(dir);
 
         // Frontier guard: reject traversal ids.
         for (const entry of remoteEntries) {

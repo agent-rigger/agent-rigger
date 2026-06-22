@@ -131,7 +131,11 @@ async function makeIsolatedEnv(opts: {
   const makeTmpFactory = (): TmpDirFactory => async () => {
     const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'rigger-m1c3-checkout-'));
     tmpDirs.push(tmpDir);
-    await fs.writeFile(path.join(tmpDir, 'catalog.json'), JSON.stringify(catalog), 'utf8');
+    await fs.writeFile(
+      path.join(tmpDir, 'catalog.json'),
+      JSON.stringify({ meta: { name: 'm1c3-test-catalog' }, entries: catalog }),
+      'utf8',
+    );
     for (const skillId of skillIds) {
       await fs.mkdir(path.join(tmpDir, 'skills', skillId), { recursive: true });
       const content = SKILL_CONTENT[currentTag] ?? `# Skill ${skillId}\n${currentTag}`;

@@ -223,7 +223,7 @@ export async function runRemoteInstall(opts: {
     runner,
     { tmpFactory },
     async (dir) => {
-      const remoteEntries = await readCatalogDir(dir);
+      const { entries: remoteEntries } = await readCatalogDir(dir);
 
       // Frontier guard: reject external entries whose derived name would cause
       // a path traversal before any install operation begins.

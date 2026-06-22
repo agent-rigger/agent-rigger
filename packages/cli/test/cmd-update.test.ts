@@ -179,7 +179,11 @@ async function makeIsolatedEnv(opts: {
     tmpDirsCreated.push(tmpDir);
 
     // Write catalog.json
-    await fs.writeFile(path.join(tmpDir, 'catalog.json'), JSON.stringify(catalog), 'utf8');
+    await fs.writeFile(
+      path.join(tmpDir, 'catalog.json'),
+      JSON.stringify({ meta: { name: 'update-test-catalog' }, entries: catalog }),
+      'utf8',
+    );
 
     // Write versioned skill fixtures
     for (const skillId of skillIds) {
