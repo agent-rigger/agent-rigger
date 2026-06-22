@@ -20,7 +20,6 @@
 
 import { describe, expect, it } from 'bun:test';
 
-import { BUILTIN_CATALOG } from '../src/catalog.builtin';
 import type { ArtifactEntry, CatalogEntry } from '../src/schema';
 import {
   checkTool,
@@ -32,46 +31,37 @@ import {
 } from '../src/tool-check';
 
 // ---------------------------------------------------------------------------
-// Fake runner helpers
+// Fixture catalog (replaces BUILTIN_CATALOG)
 // ---------------------------------------------------------------------------
 
-/** Always exits 0 — tool is present. */
-const runnerPresent: CommandRunner = (_cmd) => Promise.resolve({ exitCode: 0 });
-
-/** Always exits 1 — tool is absent. */
-const runnerAbsent: CommandRunner = (_cmd) => Promise.resolve({ exitCode: 1 });
-
-/** Captures the command and exits with a given code. */
-function makeCapturingRunner(exitCode: number): { runner: CommandRunner; calls: string[] } {
-  const calls: string[] = [];
-  const runner: CommandRunner = (cmd) => {
-    calls.push(cmd);
-    return Promise.resolve({ exitCode });
-  };
-  return { runner, calls };
-}
-
-/**
- * Mixed runner for the synthetic catalog: alpha exits 0 (present),
- * all others exit 1 (absent).
- */
-const runnerMixed: CommandRunner = (cmd) =>
-  Promise.resolve({ exitCode: cmd.includes('alpha') ? 0 : 1 });
-
-// ---------------------------------------------------------------------------
-// Fixtures
-// ---------------------------------------------------------------------------
-
-/** tool:glab entry lifted directly from BUILTIN_CATALOG. */
-const glabEntry = BUILTIN_CATALOG.find((e) => e.id === 'tool:glab') as ArtifactEntry;
+/** Fixture tool entry with check command (replaces tool:glab). */
+const glabEntry: ArtifactEntry = {
+  kind: 'artifact',
+  id: 'tool:glab',
+  nature: 'tool',
+  targets: ['claude'],
+  scopes: ['user'],
+  level: 'required',
+  check: 'command -v glab',
+};
 
 /** A non-tool artifact entry (skill). */
-const skillEntry = BUILTIN_CATALOG.find(
-  (e) => e.kind === 'artifact' && (e as ArtifactEntry).nature === 'skill',
-) as ArtifactEntry;
+const skillEntry: ArtifactEntry = {
+  kind: 'artifact',
+  id: 'skill:spec-workflow',
+  nature: 'skill',
+  targets: ['claude'],
+  scopes: ['user'],
+};
 
 /** A pack entry. */
-const packEntry = BUILTIN_CATALOG.find((e) => e.kind === 'pack') as CatalogEntry;
+const packEntry: CatalogEntry = {
+  kind: 'pack',
+  id: 'pack:dev-tools',
+  targets: ['claude'],
+  scopes: ['user'],
+  members: ['tool:glab'],
+};
 
 /** A synthetic tool entry without a check command. */
 const toolNoCheck: ArtifactEntry = {
@@ -82,6 +72,13 @@ const toolNoCheck: ArtifactEntry = {
   scopes: ['user'],
   level: 'recommended',
 };
+
+/** Fixture catalog with one tool (replaces BUILTIN_CATALOG for checkTools tests). */
+const FIXTURE_CATALOG_WITH_TOOL: CatalogEntry[] = [
+  glabEntry,
+  skillEntry,
+  packEntry,
+];
 
 /** Synthetic catalog for subset tests. */
 const syntheticCatalog: CatalogEntry[] = [
@@ -134,6 +131,33 @@ const syntheticCatalog: CatalogEntry[] = [
 ];
 
 // ---------------------------------------------------------------------------
+// Fake runner helpers
+// ---------------------------------------------------------------------------
+
+/** Always exits 0 — tool is present. */
+const runnerPresent: CommandRunner = (_cmd) => Promise.resolve({ exitCode: 0 });
+
+/** Always exits 1 — tool is absent. */
+const runnerAbsent: CommandRunner = (_cmd) => Promise.resolve({ exitCode: 1 });
+
+/** Captures the command and exits with a given code. */
+function makeCapturingRunner(exitCode: number): { runner: CommandRunner; calls: string[] } {
+  const calls: string[] = [];
+  const runner: CommandRunner = (cmd) => {
+    calls.push(cmd);
+    return Promise.resolve({ exitCode });
+  };
+  return { runner, calls };
+}
+
+/**
+ * Mixed runner for the synthetic catalog: alpha exits 0 (present),
+ * all others exit 1 (absent).
+ */
+const runnerMixed: CommandRunner = (cmd) =>
+  Promise.resolve({ exitCode: cmd.includes('alpha') ? 0 : 1 });
+
+// ---------------------------------------------------------------------------
 // checkTool — present / absent
 // ---------------------------------------------------------------------------
 
@@ -184,7 +208,7 @@ describe('checkTool — throws on non-tool entry', () => {
   });
 
   it('throws when entry is a pack', async () => {
-    await expect(checkTool(packEntry as ArtifactEntry, runnerPresent)).rejects.toThrow();
+    await expect(checkTool(packEntry as unknown as ArtifactEntry, runnerPresent)).rejects.toThrow();
   });
 });
 
@@ -204,7 +228,7 @@ describe('checkTool — throws when entry has no check command', () => {
 
 describe('checkTools — filters entries', () => {
   it('returns only tool entries that have a check command', async () => {
-    const results = await checkTools(BUILTIN_CATALOG, runnerPresent);
+    const results = await checkTools(FIXTURE_CATALOG_WITH_TOOL, runnerPresent);
     const ids = results.map((r) => r.id);
     expect(ids).toContain('tool:glab');
     for (const result of results) {
@@ -213,20 +237,19 @@ describe('checkTools — filters entries', () => {
   });
 
   it('ignores pack entries', async () => {
-    const results = await checkTools(BUILTIN_CATALOG, runnerPresent);
+    const results = await checkTools(FIXTURE_CATALOG_WITH_TOOL, runnerPresent);
     const ids = results.map((r) => r.id);
-    expect(ids).not.toContain('pack:spec-workflow');
+    expect(ids).not.toContain('pack:dev-tools');
   });
 
   it('ignores non-tool artifacts', async () => {
-    const results = await checkTools(BUILTIN_CATALOG, runnerPresent);
+    const results = await checkTools(FIXTURE_CATALOG_WITH_TOOL, runnerPresent);
     const ids = results.map((r) => r.id);
     expect(ids).not.toContain('skill:spec-workflow');
-    expect(ids).not.toContain('guardrails-claude');
   });
 
   it('ignores tool entries without a check command', async () => {
-    const catalog: CatalogEntry[] = [...BUILTIN_CATALOG, toolNoCheck];
+    const catalog: CatalogEntry[] = [...FIXTURE_CATALOG_WITH_TOOL, toolNoCheck];
     const results = await checkTools(catalog, runnerPresent);
     const ids = results.map((r) => r.id);
     expect(ids).not.toContain('tool:no-check');
@@ -239,8 +262,8 @@ describe('checkTools — filters entries', () => {
 
 describe('checkTools — parallel execution', () => {
   it('returns one result per eligible tool in the catalog', async () => {
-    const results = await checkTools(BUILTIN_CATALOG, runnerPresent);
-    const eligible = BUILTIN_CATALOG.filter(
+    const results = await checkTools(FIXTURE_CATALOG_WITH_TOOL, runnerPresent);
+    const eligible = FIXTURE_CATALOG_WITH_TOOL.filter(
       (e) =>
         e.kind === 'artifact' && (e as ArtifactEntry).nature === 'tool'
         && (e as ArtifactEntry).check,
@@ -255,7 +278,7 @@ describe('checkTools — parallel execution', () => {
   });
 
   it('all results have a present field (boolean)', async () => {
-    const results = await checkTools(BUILTIN_CATALOG, runnerPresent);
+    const results = await checkTools(FIXTURE_CATALOG_WITH_TOOL, runnerPresent);
     for (const result of results) {
       expect(typeof result.present).toBe('boolean');
     }

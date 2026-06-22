@@ -256,13 +256,29 @@ describe('buildClaudeAdapter — hookSpec with effectiveEntries (B-i.3)', () => 
     expect(mergeOp.scriptSource).toBe(path.join(externalBaseDir, 'hooks'));
   });
 
-  it('falls back to BUILTIN_CATALOG for builtin hook entries when no effectiveEntries', async () => {
+  it('resolves hook entry from effectiveEntries when passed explicitly', async () => {
     const artifactsDir = await makeArtifactsDir(tmp.dir, []);
-    // Create builtin hooks dir
+    // Create hooks dir
     await fs.mkdir(path.join(artifactsDir, 'claude', 'hooks'), { recursive: true });
     await fs.writeFile(path.join(artifactsDir, 'claude', 'hooks', 'guard-command.ts'), '// hook');
 
-    const adapter = await buildClaudeAdapter(env, artifactsDir);
+    const effectiveEntries: Map<string, import('@agent-rigger/catalog').CatalogEntry> = new Map([
+      [
+        'hook:guard-command',
+        {
+          kind: 'artifact',
+          id: 'hook:guard-command',
+          nature: 'hook',
+          targets: ['claude'],
+          scopes: ['user'],
+          event: 'PreToolUse',
+          matcher: 'Bash',
+          timeout: 5,
+        },
+      ],
+    ]);
+
+    const adapter = await buildClaudeAdapter(env, artifactsDir, { effectiveEntries });
 
     const entry: AdapterEntry = { id: 'hook:guard-command', nature: 'hook', scope: 'user' };
     const ops = await adapter.plan(entry, 'user', env);
@@ -270,14 +286,13 @@ describe('buildClaudeAdapter — hookSpec with effectiveEntries (B-i.3)', () => 
     expect(ops[0]!.kind).toBe('merge-hooks');
 
     const mergeOp = ops[0] as { event: string; matcher: string; scriptSource: string };
-    // guard-command in BUILTIN_CATALOG: PreToolUse / Bash
     expect(mergeOp.event).toBe('PreToolUse');
     expect(mergeOp.matcher).toBe('Bash');
-    // scriptSource should be from artifactsDir (builtin fallback)
+    // scriptSource should be from artifactsDir (local hooks path, not external)
     expect(mergeOp.scriptSource).toBe(path.join(artifactsDir, 'claude', 'hooks'));
   });
 
-  it('throws for unknown hook not in effectiveEntries or BUILTIN_CATALOG', async () => {
+  it('throws for unknown hook not in effectiveEntries (empty map)', async () => {
     const artifactsDir = await makeArtifactsDir(tmp.dir, []);
 
     const effectiveEntries: Map<string, import('@agent-rigger/catalog').CatalogEntry> = new Map();

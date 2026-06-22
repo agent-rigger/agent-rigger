@@ -62,6 +62,99 @@ const REMOTE_SKILL_ENTRY: CatalogEntry = {
   scopes: ['user', 'project'],
 };
 
+/**
+ * Guardrail entry included in the remote catalog fixture.
+ * Required for Scenario 2 (install guardrails-claude via remote flow) and TEST-3.
+ * Nature 'guardrail' → no scan path → installed from local artifactsDir.
+ */
+const REMOTE_GUARDRAIL_ENTRY: CatalogEntry = {
+  kind: 'artifact',
+  id: 'guardrails-claude',
+  nature: 'guardrail',
+  targets: ['claude'],
+  scopes: ['user'],
+};
+
+/**
+ * Hook entries required by pack:harness (TEST-4).
+ * Ids map to scripts in artifacts/claude/hooks/:
+ *   hook:guard-command      → guard-command.ts
+ *   hook:guard-secret       → guard-secret.ts
+ *   hook:guard-write-secret → guard-write-secret.ts
+ *   hook:guard-prompt       → guard-prompt.ts
+ */
+const HOOK_GUARD_COMMAND: CatalogEntry = {
+  kind: 'artifact',
+  id: 'hook:guard-command',
+  nature: 'hook',
+  event: 'PreToolUse',
+  matcher: 'Bash',
+  timeout: 5,
+  targets: ['claude'],
+  scopes: ['user', 'project'],
+};
+
+const HOOK_GUARD_SECRET: CatalogEntry = {
+  kind: 'artifact',
+  id: 'hook:guard-secret',
+  nature: 'hook',
+  event: 'PreToolUse',
+  matcher: 'Read|Edit|MultiEdit|Write|NotebookEdit|Grep|Glob|Bash',
+  timeout: 5,
+  targets: ['claude'],
+  scopes: ['user', 'project'],
+};
+
+const HOOK_GUARD_WRITE_SECRET: CatalogEntry = {
+  kind: 'artifact',
+  id: 'hook:guard-write-secret',
+  nature: 'hook',
+  event: 'PreToolUse',
+  matcher: 'Write|Edit|MultiEdit',
+  timeout: 5,
+  targets: ['claude'],
+  scopes: ['user', 'project'],
+};
+
+const HOOK_GUARD_PROMPT: CatalogEntry = {
+  kind: 'artifact',
+  id: 'hook:guard-prompt',
+  nature: 'hook',
+  event: 'UserPromptSubmit',
+  matcher: '*',
+  timeout: 5,
+  targets: ['claude'],
+  scopes: ['user', 'project'],
+};
+
+/**
+ * pack:harness — references the four hook entries above.
+ * Adapter reads hookSpec from effectiveEntries (cabled via runRemoteInstall).
+ */
+const PACK_HARNESS: CatalogEntry = {
+  kind: 'pack',
+  id: 'pack:harness',
+  members: [
+    'hook:guard-command',
+    'hook:guard-secret',
+    'hook:guard-write-secret',
+    'hook:guard-prompt',
+  ],
+  targets: ['claude'],
+  scopes: ['user', 'project'],
+};
+
+/** Full catalog included in all makeRemoteEnv fixtures. */
+const REMOTE_CATALOG_ENTRIES: CatalogEntry[] = [
+  REMOTE_SKILL_ENTRY,
+  REMOTE_GUARDRAIL_ENTRY,
+  HOOK_GUARD_COMMAND,
+  HOOK_GUARD_SECRET,
+  HOOK_GUARD_WRITE_SECRET,
+  HOOK_GUARD_PROMPT,
+  PACK_HARNESS,
+];
+
 // ---------------------------------------------------------------------------
 // makeRemoteEnv — isolated HOME + content dir with catalog + skill fixture
 // ---------------------------------------------------------------------------
@@ -93,10 +186,10 @@ async function makeRemoteEnv(opts: { withCatalogUrl: boolean }): Promise<{
   const homeDir = await fs.mkdtemp(path.join(os.tmpdir(), 'rigger-remote-e2e-home-'));
   const contentDir = await fs.mkdtemp(path.join(os.tmpdir(), 'rigger-remote-e2e-content-'));
 
-  // Write catalog.json
+  // Write catalog.json with all fixture entries
   await fs.writeFile(
     path.join(contentDir, 'catalog.json'),
-    JSON.stringify({ meta: { name: 'e2e-test-catalog' }, entries: [REMOTE_SKILL_ENTRY] }),
+    JSON.stringify({ meta: { name: 'e2e-test-catalog' }, entries: REMOTE_CATALOG_ENTRIES }),
     'utf8',
   );
 
@@ -353,11 +446,11 @@ describe('remote install — builtin id with catalogUrl → local defaults', () 
 });
 
 // ---------------------------------------------------------------------------
-// Scenario 3: install builtin --yes WITHOUT catalogUrl → local flow, runner unused
+// Scenario 3: install --yes WITHOUT catalogUrl → actionable message, no runner called
 // ---------------------------------------------------------------------------
 
-describe('remote install — builtin id WITHOUT catalogUrl → local flow', () => {
-  it('exits 0 without calling remote runner', async () => {
+describe('remote install — install WITHOUT catalogUrl → actionable message', () => {
+  it('exits 0 without calling remote runner (no catalogUrl → no fetch needed)', async () => {
     // Create a separate env without catalogUrl
     const localEnv = await makeRemoteEnv({ withCatalogUrl: false });
 
@@ -376,13 +469,16 @@ describe('remote install — builtin id WITHOUT catalogUrl → local flow', () =
         remote: { run: countingRunner, tmpFactory: localEnv.tmpFactory, scanner: stubScanner },
       });
       expect(code).toBe(0);
+      // No catalogUrl → handleInstall exits early with actionable message → runner never called
       expect(runnerCallCount).toBe(0);
+      const out = cap.lines.join('\n');
+      expect(out).toMatch(/aucun catalog|agent-rigger init/);
     } finally {
       await localEnv.cleanupAll();
     }
   });
 
-  it('manifest entry has default ref/sha when no catalogUrl', async () => {
+  it('no manifest entry written when no catalogUrl (nothing installed)', async () => {
     const localEnv = await makeRemoteEnv({ withCatalogUrl: false });
     const localTargets = resolveUserTargets(localEnv.env);
 
@@ -394,13 +490,9 @@ describe('remote install — builtin id WITHOUT catalogUrl → local flow', () =
         remote: { run: localEnv.runner, tmpFactory: localEnv.tmpFactory, scanner: stubScanner },
       });
 
-      const raw = await fs.readFile(localTargets.stateJson, 'utf8');
-      const manifest = JSON.parse(raw) as {
-        artifacts: Array<{ id: string; ref?: string; sha?: string }>;
-      };
-      const entry = manifest.artifacts.find((a) => a.id === 'guardrails-claude');
-      expect(entry?.ref).toBe('v0.0.0');
-      expect(entry?.sha).toBe('');
+      // No manifest written — nothing installed without catalogUrl
+      const exists = await fs.stat(localTargets.stateJson).then(() => true).catch(() => false);
+      expect(exists).toBe(false);
     } finally {
       await localEnv.cleanupAll();
     }
@@ -762,8 +854,8 @@ describe('TEST-3 — mixed install: builtin (internal) + remote (external)', () 
 // ---------------------------------------------------------------------------
 
 describe('TEST-4 — pack:harness install via remote path with catalogUrl', () => {
-  // pack:harness is a built-in pack; with catalogUrl configured the request goes
-  // through runRemoteInstall → buildClaudeAdapter (unified) → hookSpec present.
+  // pack:harness is in the remote catalog fixture; with catalogUrl configured the request
+  // goes through runRemoteInstall → buildClaudeAdapter (unified) → hookSpec present.
 
   it('exits 0 when installing pack:harness with catalogUrl configured', async () => {
     const cap = makeCapture();
@@ -786,7 +878,7 @@ describe('TEST-4 — pack:harness install via remote path with catalogUrl', () =
 
     const settings = await readJson(targets.claudeSettings);
 
-    // GUARD_HOOKS matches the BUILTIN_CATALOG values exactly.
+    // GUARD_HOOKS matches the remote catalog fixture hook event/matcher values.
     const GUARD_HOOKS = [
       { event: 'PreToolUse', matcher: 'Bash' },
       { event: 'PreToolUse', matcher: 'Read|Edit|MultiEdit|Write|NotebookEdit|Grep|Glob|Bash' },

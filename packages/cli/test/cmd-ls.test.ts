@@ -6,6 +6,7 @@
  * - runLs: real filesystem via tmp HOME; manifest empty → all available;
  *   manifest populated → installed entries marked.
  * - No while loops.
+ * - No BUILTIN_CATALOG: tests use local FIXTURE_CATALOG.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
@@ -14,9 +15,54 @@ import os from 'node:os';
 import path from 'node:path';
 
 import type { CatalogEntry } from '@agent-rigger/catalog';
-import { BUILTIN_CATALOG } from '@agent-rigger/catalog';
 import { runLs } from '../src/cmd-ls';
 import { renderCatalogList, renderEntryInfo } from '../src/ui';
+
+// ---------------------------------------------------------------------------
+// Fixture catalog (replaces BUILTIN_CATALOG)
+// ---------------------------------------------------------------------------
+
+/** Minimal fixture catalog for testing runLs. */
+const FIXTURE_CATALOG: CatalogEntry[] = [
+  {
+    kind: 'artifact',
+    id: 'guardrails-claude',
+    nature: 'guardrail',
+    targets: ['claude'],
+    scopes: ['user', 'project'],
+  },
+  {
+    kind: 'artifact',
+    id: 'context-claude',
+    nature: 'context',
+    targets: ['claude'],
+    scopes: ['user', 'project'],
+  },
+  {
+    kind: 'artifact',
+    id: 'skill:spec-workflow',
+    nature: 'skill',
+    targets: ['claude'],
+    scopes: ['user', 'project'],
+    requires: ['tool:glab'],
+  },
+  {
+    kind: 'artifact',
+    id: 'tool:glab',
+    nature: 'tool',
+    targets: ['claude'],
+    scopes: ['user'],
+    level: 'required' as const,
+    check: 'command -v glab',
+  },
+  {
+    kind: 'pack',
+    id: 'pack:dev-setup',
+    targets: ['claude'],
+    scopes: ['user'],
+    members: ['guardrails-claude', 'context-claude'],
+  },
+];
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -304,7 +350,7 @@ describe('runLs — empty manifest (all available)', () => {
 
   it('returns output listing all catalog entries', async () => {
     const result = await runLs({
-      catalog: BUILTIN_CATALOG,
+      catalog: FIXTURE_CATALOG,
       env: { RIGGER_HOME: tmp.dir },
       scope: 'user',
     });
@@ -314,7 +360,7 @@ describe('runLs — empty manifest (all available)', () => {
 
   it('marks all entries as available when manifest is empty', async () => {
     const result = await runLs({
-      catalog: BUILTIN_CATALOG,
+      catalog: FIXTURE_CATALOG,
       env: { RIGGER_HOME: tmp.dir },
       scope: 'user',
     });
@@ -322,13 +368,13 @@ describe('runLs — empty manifest (all available)', () => {
     expect(result.output).toContain('[available]');
   });
 
-  it('count matches number of catalog entries', async () => {
+  it('count matches number of fixture catalog entries', async () => {
     const result = await runLs({
-      catalog: BUILTIN_CATALOG,
+      catalog: FIXTURE_CATALOG,
       env: { RIGGER_HOME: tmp.dir },
       scope: 'user',
     });
-    expect(result.count).toBe(BUILTIN_CATALOG.length);
+    expect(result.count).toBe(FIXTURE_CATALOG.length);
   });
 });
 
@@ -365,7 +411,7 @@ describe('runLs — manifest with installed entries', () => {
     );
 
     const result = await runLs({
-      catalog: BUILTIN_CATALOG,
+      catalog: FIXTURE_CATALOG,
       env: { RIGGER_HOME: tmp.dir },
       scope: 'user',
     });
@@ -392,12 +438,12 @@ describe('runLs — resourceFilter', () => {
 
   it('filters to only skill entries when resourceFilter is "skill"', async () => {
     const result = await runLs({
-      catalog: BUILTIN_CATALOG,
+      catalog: FIXTURE_CATALOG,
       env: { RIGGER_HOME: tmp.dir },
       scope: 'user',
       resourceFilter: 'skill',
     });
-    const skillEntries = BUILTIN_CATALOG.filter(
+    const skillEntries = FIXTURE_CATALOG.filter(
       (e) => e.kind === 'artifact' && e.nature === 'skill',
     );
     expect(result.count).toBe(skillEntries.length);
@@ -407,22 +453,22 @@ describe('runLs — resourceFilter', () => {
 
   it('filters to only pack entries when resourceFilter is "pack"', async () => {
     const result = await runLs({
-      catalog: BUILTIN_CATALOG,
+      catalog: FIXTURE_CATALOG,
       env: { RIGGER_HOME: tmp.dir },
       scope: 'user',
       resourceFilter: 'pack',
     });
-    const packEntries = BUILTIN_CATALOG.filter((e) => e.kind === 'pack');
+    const packEntries = FIXTURE_CATALOG.filter((e) => e.kind === 'pack');
     expect(result.count).toBe(packEntries.length);
     expect(result.output).not.toContain('guardrails-claude');
   });
 
   it('returns all entries when resourceFilter is undefined', async () => {
     const result = await runLs({
-      catalog: BUILTIN_CATALOG,
+      catalog: FIXTURE_CATALOG,
       env: { RIGGER_HOME: tmp.dir },
       scope: 'user',
     });
-    expect(result.count).toBe(BUILTIN_CATALOG.length);
+    expect(result.count).toBe(FIXTURE_CATALOG.length);
   });
 });

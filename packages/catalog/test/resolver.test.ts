@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'bun:test';
 
-import { BUILTIN_CATALOG } from '../src/catalog.builtin';
 import { DependencyCycleError, resolve, UnknownEntryError } from '../src/resolver';
 import type { CatalogEntry } from '../src/schema';
 
@@ -29,6 +28,99 @@ function pack(id: string, members: string[], requires?: string[]): CatalogEntry 
     ...(requires ? { requires } : {}),
   };
 }
+
+// ---------------------------------------------------------------------------
+// Fixture catalog (replaces BUILTIN_CATALOG for resolver tests)
+// ---------------------------------------------------------------------------
+
+const TOOL_A: CatalogEntry = artifact('tool:a');
+const TOOL_B: CatalogEntry = artifact('tool:b');
+const SKILL_X: CatalogEntry = {
+  kind: 'artifact',
+  id: 'skill:x',
+  nature: 'skill',
+  targets: ['claude'],
+  scopes: ['user'],
+  requires: ['tool:a'],
+};
+const AGENT_Y: CatalogEntry = {
+  kind: 'artifact',
+  id: 'agent:y',
+  nature: 'agent',
+  targets: ['claude'],
+  scopes: ['user'],
+};
+const PACK_SIMPLE: CatalogEntry = {
+  kind: 'pack',
+  id: 'pack:simple',
+  targets: ['claude'],
+  scopes: ['user'],
+  members: ['skill:x', 'agent:y'],
+};
+
+const HOOK_GUARD: CatalogEntry = {
+  kind: 'artifact',
+  id: 'hook:guard-cmd',
+  nature: 'hook',
+  targets: ['claude'],
+  scopes: ['user'],
+  event: 'PreToolUse',
+  matcher: 'Bash',
+  timeout: 5,
+};
+const HOOK_GUARD2: CatalogEntry = {
+  kind: 'artifact',
+  id: 'hook:guard-read',
+  nature: 'hook',
+  targets: ['claude'],
+  scopes: ['user'],
+  event: 'PreToolUse',
+  matcher: 'Read|Edit',
+  timeout: 5,
+};
+const GUARDRAIL_ENTRY: CatalogEntry = {
+  kind: 'artifact',
+  id: 'guardrails-main',
+  nature: 'guardrail',
+  targets: ['claude'],
+  scopes: ['user', 'project'],
+};
+const CONTEXT_ENTRY: CatalogEntry = {
+  kind: 'artifact',
+  id: 'context-main',
+  nature: 'context',
+  targets: ['claude'],
+  scopes: ['user', 'project'],
+};
+const PACK_HARNESS: CatalogEntry = {
+  kind: 'pack',
+  id: 'pack:harness',
+  targets: ['claude'],
+  scopes: ['user'],
+  members: ['hook:guard-cmd', 'hook:guard-read'],
+};
+const PACK_BASELINE: CatalogEntry = {
+  kind: 'pack',
+  id: 'pack:baseline',
+  targets: ['claude'],
+  scopes: ['user'],
+  members: ['pack:harness', 'guardrails-main', 'context-main'],
+};
+
+/** Local fixture catalog replacing BUILTIN_CATALOG. */
+const FIXTURE_CATALOG: CatalogEntry[] = [
+  TOOL_A,
+  TOOL_B,
+  SKILL_X,
+  AGENT_Y,
+  PACK_SIMPLE,
+  HOOK_GUARD,
+  HOOK_GUARD2,
+  GUARDRAIL_ENTRY,
+  CONTEXT_ENTRY,
+  PACK_HARNESS,
+  PACK_BASELINE,
+];
 
 // ---------------------------------------------------------------------------
 // Case 1 — single artifact without deps
@@ -72,45 +164,42 @@ describe('resolve — ordre transitif', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Case 4 — pack:spec-workflow (BUILTIN) développé en 4 membres
+// Case 4 — pack:simple (fixture) développé en ses membres
 // ---------------------------------------------------------------------------
 
-describe('resolve — pack:spec-workflow (BUILTIN)', () => {
-  it('développe le pack en ses 4 membres, pack absent de la sortie', () => {
-    const result = resolve(['pack:spec-workflow'], BUILTIN_CATALOG);
-
+describe('resolve — pack:simple (fixture) développé en ses membres', () => {
+  it('développe le pack en ses membres, pack absent de la sortie', () => {
+    const result = resolve(['pack:simple'], FIXTURE_CATALOG);
     const ids = result.map((e) => e.id);
 
     // pack lui-même absent
-    expect(ids).not.toContain('pack:spec-workflow');
+    expect(ids).not.toContain('pack:simple');
 
-    // 4 membres couverts
-    expect(ids).toContain('skill:spec-workflow');
-    expect(ids).toContain('agent:tech-lead');
-    expect(ids).toContain('agent:pm');
-    expect(ids).toContain('agent:reviewer');
+    // membres présents
+    expect(ids).toContain('skill:x');
+    expect(ids).toContain('agent:y');
 
-    // skill:spec-workflow requires tool:glab → doit aussi être inclus
-    expect(ids).toContain('tool:glab');
+    // skill:x requires tool:a → doit aussi être inclus
+    expect(ids).toContain('tool:a');
 
     // dépendances avant ceux qui les requirent
-    const gIdx = ids.indexOf('tool:glab');
-    const sIdx = ids.indexOf('skill:spec-workflow');
-    expect(gIdx).toBeLessThan(sIdx);
+    const aIdx = ids.indexOf('tool:a');
+    const xIdx = ids.indexOf('skill:x');
+    expect(aIdx).toBeLessThan(xIdx);
   });
 });
 
 // ---------------------------------------------------------------------------
-// Case 5 — skill:spec-workflow (BUILTIN) requiert tool:glab transitivement
+// Case 5 — skill:x (fixture) requiert tool:a transitivement
 // ---------------------------------------------------------------------------
 
-describe('resolve — skill:spec-workflow (BUILTIN)', () => {
-  it('inclut tool:glab via requires', () => {
-    const result = resolve(['skill:spec-workflow'], BUILTIN_CATALOG);
+describe('resolve — skill:x (fixture) avec requires', () => {
+  it('inclut tool:a via requires', () => {
+    const result = resolve(['skill:x'], FIXTURE_CATALOG);
     const ids = result.map((e) => e.id);
-    expect(ids).toContain('tool:glab');
-    expect(ids).toContain('skill:spec-workflow');
-    expect(ids.indexOf('tool:glab')).toBeLessThan(ids.indexOf('skill:spec-workflow'));
+    expect(ids).toContain('tool:a');
+    expect(ids).toContain('skill:x');
+    expect(ids.indexOf('tool:a')).toBeLessThan(ids.indexOf('skill:x'));
   });
 });
 
@@ -263,53 +352,46 @@ describe('resolve — sortie uniquement ArtifactEntry', () => {
 
 describe('resolve — sélection vide', () => {
   it('retourne un tableau vide', () => {
-    expect(resolve([], BUILTIN_CATALOG)).toEqual([]);
+    expect(resolve([], FIXTURE_CATALOG)).toEqual([]);
   });
 });
 
 // ---------------------------------------------------------------------------
-// Case 15 — pack:baseline (BUILTIN) expansion récursive
+// Case 15 — pack:baseline (fixture) expansion récursive
 // ---------------------------------------------------------------------------
 
-describe('resolve — pack:baseline (BUILTIN)', () => {
-  it('développe pack:baseline en 6 artefacts (4 guards + guardrails + context), aucun pack en sortie', () => {
-    const result = resolve(['pack:baseline'], BUILTIN_CATALOG);
+describe('resolve — pack:baseline (fixture)', () => {
+  it('développe pack:baseline en 4 artefacts (2 guards + guardrail + context), aucun pack en sortie', () => {
+    const result = resolve(['pack:baseline'], FIXTURE_CATALOG);
     const ids = result.map((e) => e.id);
 
     // Aucun pack dans la sortie
     expect(ids).not.toContain('pack:baseline');
     expect(ids).not.toContain('pack:harness');
 
-    // 4 hook guards (via pack:harness expansé récursivement)
-    expect(ids).toContain('hook:guard-command');
-    expect(ids).toContain('hook:guard-secret');
-    expect(ids).toContain('hook:guard-write-secret');
-    expect(ids).toContain('hook:guard-prompt');
+    // 2 hook guards (via pack:harness expansé récursivement)
+    expect(ids).toContain('hook:guard-cmd');
+    expect(ids).toContain('hook:guard-read');
 
-    // guardrails et context
-    expect(ids).toContain('guardrails-claude');
-    expect(ids).toContain('context-claude');
+    // guardrail et context
+    expect(ids).toContain('guardrails-main');
+    expect(ids).toContain('context-main');
   });
 
-  it('retourne exactement 6 artefacts (dédupliqués)', () => {
-    const result = resolve(['pack:baseline'], BUILTIN_CATALOG);
-    expect(result).toHaveLength(6);
+  it('retourne exactement 4 artefacts (dédupliqués)', () => {
+    const result = resolve(['pack:baseline'], FIXTURE_CATALOG);
+    expect(result).toHaveLength(4);
   });
 
   it('tous les éléments de la sortie sont des ArtifactEntry (kind artifact)', () => {
-    const result = resolve(['pack:baseline'], BUILTIN_CATALOG);
+    const result = resolve(['pack:baseline'], FIXTURE_CATALOG);
     expect(result.every((e) => e.kind === 'artifact')).toBe(true);
   });
 
   it('pack:baseline + pack:harness déduplique les guards (pas de doublon)', () => {
-    const result = resolve(['pack:baseline', 'pack:harness'], BUILTIN_CATALOG);
+    const result = resolve(['pack:baseline', 'pack:harness'], FIXTURE_CATALOG);
     const ids = result.map((e) => e.id);
-    const guardIds = [
-      'hook:guard-command',
-      'hook:guard-secret',
-      'hook:guard-write-secret',
-      'hook:guard-prompt',
-    ];
+    const guardIds = ['hook:guard-cmd', 'hook:guard-read'];
     for (const id of guardIds) {
       expect(ids.filter((x) => x === id)).toHaveLength(1);
     }

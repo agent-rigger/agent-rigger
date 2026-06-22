@@ -51,6 +51,15 @@ const REMOTE_SKILL_ENTRY: CatalogEntry = {
   scopes: ['user', 'project'],
 };
 
+/** Guardrail entry in remote catalog — used to test non-scannable (no checkout path) entries. */
+const REMOTE_GUARDRAIL_ENTRY: CatalogEntry = {
+  kind: 'artifact',
+  id: 'guardrail:main',
+  nature: 'guardrail',
+  targets: ['claude'],
+  scopes: ['user', 'project'],
+};
+
 // ---------------------------------------------------------------------------
 // makeRemoteEnv — isolated HOME + content dir
 // ---------------------------------------------------------------------------
@@ -66,10 +75,21 @@ async function makeRemoteEnv(): Promise<{
   const homeDir = await fs.mkdtemp(path.join(os.tmpdir(), 'rigger-s4-home-'));
   const contentDir = await fs.mkdtemp(path.join(os.tmpdir(), 'rigger-s4-content-'));
 
-  // Write catalog.json
+  // Write catalog.json — include both skill and guardrail entries
   await fs.writeFile(
     path.join(contentDir, 'catalog.json'),
-    JSON.stringify({ meta: { name: 's4-test-catalog' }, entries: [REMOTE_SKILL_ENTRY] }),
+    JSON.stringify({
+      meta: { name: 's4-test-catalog' },
+      entries: [REMOTE_SKILL_ENTRY, REMOTE_GUARDRAIL_ENTRY],
+    }),
+    'utf8',
+  );
+  // Write guardrail fixture for the remote guardrail entry
+  const guardrailDir = path.join(contentDir, 'guardrails', 'main');
+  await fs.mkdir(guardrailDir, { recursive: true });
+  await fs.writeFile(
+    path.join(guardrailDir, 'deny.json'),
+    JSON.stringify({ deny: ['Read(~/.ssh/**)'] }),
     'utf8',
   );
 
@@ -353,13 +373,13 @@ describe('S4 — external skill + clean scanner', () => {
 // Scenario 4: internal-only install → scanner never called
 // ---------------------------------------------------------------------------
 
-describe('S4 — internal-only install, scanner never called', () => {
-  it('does not call the scanner for internal entries', async () => {
+describe('S4 — guardrail install (no checkout path), scanner never called', () => {
+  it('does not call the scanner for guardrail entries (no scan path)', async () => {
     const { scanner, calls } = spyScanner();
 
-    // guardrails-claude is source:'internal' in BUILTIN_CATALOG
+    // guardrail:main has no checkout scan path (skills/agents only) — scanner should skip it
     await runRemoteInstall({
-      ids: ['guardrails-claude'],
+      ids: ['guardrail:main'],
       catalogUrl: 'https://example.com/catalog.git',
       scope: 'user',
       env: remoteEnv.env,
