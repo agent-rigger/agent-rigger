@@ -5,7 +5,8 @@
  * - Read the manifest to find installed external entries.
  * - If `ids` is empty, target all external entries for the given scope.
  * - For each candidate id: classify as stale, upToDate, or skipped.
- *   - not in manifest (or source !== 'external')  → skipped
+ *   - not in manifest                              → skipped
+ *   - not present in the remote catalog (no remote ref) → skipped (no remote version)
  *   - resolveVersion says newer (isUpdateAvailable) → stale
  *   - already at latest ref                        → upToDate
  * - For stale entries: transactional checkout-first pipeline:
@@ -26,7 +27,6 @@
  */
 
 import {
-  BUILTIN_CATALOG,
   isUpdateAvailable,
   mergeCatalogs,
   readCatalogDir,
@@ -45,7 +45,7 @@ import type { Scanner } from '@agent-rigger/core/scan';
 import type { Scope } from '@agent-rigger/core/types';
 
 import { buildClaudeAdapter } from './cli';
-import { scanExternalEntries } from './remote-install';
+import { scanEntries } from './remote-install';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -58,8 +58,6 @@ export interface RunUpdateOptions {
   env: Env;
   /** Absolute path to state.json (the manifest). */
   manifestPath: string;
-  /** Absolute path to the bundled artifacts directory. */
-  artifactsDir: string;
   /** Remote catalog URL. */
   catalogUrl: string;
   runner: CommandRunner;
@@ -84,7 +82,7 @@ export interface UpdateResult {
   updated: string[];
   /** ids that are already at the latest version. */
   upToDate: string[];
-  /** ids that were skipped (not installed, internal, or aborted). */
+  /** ids that were skipped (not installed, no remote version, or aborted). */
   skipped: string[];
 }
 
@@ -116,7 +114,6 @@ export async function runUpdate(opts: RunUpdateOptions): Promise<UpdateResult> {
     scope,
     env,
     manifestPath,
-    artifactsDir,
     catalogUrl,
     runner,
     tmpFactory,
@@ -129,9 +126,11 @@ export async function runUpdate(opts: RunUpdateOptions): Promise<UpdateResult> {
   const manifest = await readManifest(manifestPath);
 
   // Determine the candidate id set.
+  // When ids is empty: all installed artifacts for the given scope are candidates.
+  // Classification below filters out those without a remote version.
   const candidateIds: string[] = ids.length === 0
     ? manifest.artifacts
-      .filter((e) => e.scope === scope && e.source === 'external')
+      .filter((e) => e.scope === scope)
       .map((e) => e.id)
     : ids;
 
@@ -162,7 +161,9 @@ export async function runUpdate(opts: RunUpdateOptions): Promise<UpdateResult> {
       continue;
     }
 
-    if (entry.source !== 'external') {
+    // Entries installed without a remote ref (ref 'v0.0.0', sha '') have no
+    // remote version — they are not candidates for update.
+    if (entry.ref === 'v0.0.0' && entry.sha === '') {
       skippedIds.push(id);
       skipReasons.set(id, 'no remote version');
       continue;
@@ -184,11 +185,12 @@ export async function runUpdate(opts: RunUpdateOptions): Promise<UpdateResult> {
     const checkoutResult = await withRemoteCheckout(
       catalogUrl,
       remote.ref,
+      remote.isTag,
       runner,
       { tmpFactory },
       async (dir) => {
         // 3a. Read + validate remote catalog (CatalogParseError → abort before remove).
-        const remoteEntries = await readCatalogDir(dir);
+        const { entries: remoteEntries } = await readCatalogDir(dir);
 
         // Frontier guard: reject traversal ids.
         for (const entry of remoteEntries) {
@@ -201,27 +203,32 @@ export async function runUpdate(opts: RunUpdateOptions): Promise<UpdateResult> {
         }
 
         // 3b. Resolve ids against effective catalog (UnknownEntryError → abort before remove).
-        const { entries: effective } = mergeCatalogs(BUILTIN_CATALOG, remoteEntries);
+        const { entries: effective } = mergeCatalogs([], remoteEntries);
         const resolved = resolve(staleIds, effective);
 
-        const externalIds = new Set(
-          resolved.filter((e) => e.source === 'external').map((e) => e.id),
-        );
+        // All stale entries sourced from the remote checkout.
+        // Skills / agents have a scanPath; guardrails / contexts / hooks do not
+        // but still come from externalBaseDir. All are remote.
+        const remoteIds = new Set(resolved.map((e) => e.id));
 
-        // 3c. Security scan — external entries only (ADR-0014).
+        // 3c. Security scan — all entries that have a checkout path (uniform scan, ADR-0014).
+        //     Entries without a scanPath (e.g. guardrails, hooks) are naturally skipped.
         //     Must be BEFORE remove so a blocked scan leaves the artifact intact.
-        const externalResolved = resolved.filter((e) => e.source === 'external');
-        const { warnings: scanWarnings } = await scanExternalEntries({
-          entries: externalResolved,
+        const { warnings: scanWarnings } = await scanEntries({
+          entries: resolved,
           baseDir: dir,
           scanner,
           force,
         });
 
-        // 3d. Build adapter with external resolver seam (externalBaseDir = checkout dir).
-        const adapter = await buildClaudeAdapter(env, artifactsDir, {
-          externalIds,
+        // 3d. Build effectiveEntries map for hookSpec resolution
+        const effectiveEntries = new Map(effective.map((e) => [e.id, e]));
+
+        // 3e. Build adapter with remote resolver seam (externalBaseDir = checkout dir).
+        const adapter = await buildClaudeAdapter(env, {
+          externalIds: remoteIds,
           externalBaseDir: dir,
+          effectiveEntries,
         });
 
         // AdapterEntries for remove+apply (exclude tool-nature entries).
@@ -229,14 +236,14 @@ export async function runUpdate(opts: RunUpdateOptions): Promise<UpdateResult> {
           .filter((e) => e.nature !== 'tool')
           .map((e) => ({ id: e.id, nature: e.nature, scope }));
 
-        // 3e. versionFor seam: external → real ref/sha, internal → v0.0.0/''.
+        // 3e. versionFor seam: remote (has checkout path) → real ref/sha, others → v0.0.0/''.
         const versionFor = (
           entry: { id: string },
-        ): { source: 'internal' | 'external'; ref: string; sha: string } => {
-          if (externalIds.has(entry.id)) {
-            return { source: 'external', ref: remote.ref, sha: remote.sha };
+        ): { ref: string; sha: string } => {
+          if (remoteIds.has(entry.id)) {
+            return { ref: remote.ref, sha: remote.sha };
           }
-          return { source: 'internal', ref: 'v0.0.0', sha: '' };
+          return { ref: 'v0.0.0', sha: '' };
         };
 
         // 3g. Confirm BEFORE remove — abort with zero writes if user declines.

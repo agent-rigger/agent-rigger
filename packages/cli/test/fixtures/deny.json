@@ -1,0 +1,9 @@
+{
+  "deny": [
+    "Read(./.env)",
+    "Read(~/.ssh/**)",
+    "Write(~/.ssh/**)",
+    "Bash(curl * | bash)",
+    "Bash(wget * | sh)"
+  ]
+}

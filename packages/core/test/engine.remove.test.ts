@@ -129,7 +129,6 @@ describe('engine.remove: basic removal', () => {
     manifest = upsertEntry(manifest, {
       id: ENTRY_ID,
       nature: ENTRY_NATURE,
-      source: 'internal',
       ref: 'v0.0.0',
       sha: '',
       scope: 'user',
@@ -155,7 +154,6 @@ describe('engine.remove: basic removal', () => {
     manifest = upsertEntry(manifest, {
       id: ENTRY_ID,
       nature: ENTRY_NATURE,
-      source: 'internal',
       ref: 'v0.0.0',
       sha: '',
       scope: 'user',
@@ -187,7 +185,6 @@ describe('engine.remove: basic removal', () => {
     manifest = upsertEntry(manifest, {
       id: ENTRY_ID,
       nature: ENTRY_NATURE,
-      source: 'internal',
       ref: 'v0.0.0',
       sha: '',
       scope: 'user',
@@ -235,7 +232,6 @@ describe('engine.remove: idempotence when not installed', () => {
     manifest = upsertEntry(manifest, {
       id: 'other-entry',
       nature: 'context' as const,
-      source: 'internal',
       ref: 'v0.0.0',
       sha: '',
       scope: 'user',
@@ -303,7 +299,6 @@ describe('engine.remove: multiple entries', () => {
       manifest = upsertEntry(manifest, {
         id,
         nature: ENTRY_NATURE,
-        source: 'internal',
         ref: 'v0.0.0',
         sha: '',
         scope: 'user',

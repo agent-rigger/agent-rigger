@@ -34,9 +34,6 @@ import { ScanBlockedError } from '../src/remote-install';
 // Repo root
 // ---------------------------------------------------------------------------
 
-const REPO_ROOT = path.resolve(import.meta.dirname, '../../..');
-const ARTIFACTS_DIR = path.join(REPO_ROOT, 'artifacts');
-
 // ---------------------------------------------------------------------------
 // Fixed fixtures
 // ---------------------------------------------------------------------------
@@ -50,7 +47,6 @@ const REMOTE_SKILL_ENTRY: CatalogEntry = {
   kind: 'artifact',
   id: 'skill:remote-demo',
   nature: 'skill',
-  source: 'external',
   targets: ['claude'],
   scopes: ['user', 'project'],
 };
@@ -135,7 +131,7 @@ async function makeUpdateEnv(): Promise<{
 
     await fs.writeFile(
       path.join(tmpDir, 'catalog.json'),
-      JSON.stringify([REMOTE_SKILL_ENTRY]),
+      JSON.stringify({ meta: { name: 's4b-test-catalog' }, entries: [REMOTE_SKILL_ENTRY] }),
       'utf8',
     );
 
@@ -198,7 +194,6 @@ beforeEach(async () => {
   await runCli(['install', 'skill:remote-demo', '--yes'], {
     print: makeCapture().print,
     env,
-    artifactsDir: ARTIFACTS_DIR,
     remote: { run: makeRunner(), tmpFactory: makeTmpFactory(), scanner: stubScanner },
   });
 
@@ -222,7 +217,6 @@ describe('runUpdate — stale skill + blocking scanner, no force', () => {
         scope: 'user',
         env,
         manifestPath,
-        artifactsDir: ARTIFACTS_DIR,
         catalogUrl,
         runner: makeRunner(),
         tmpFactory: makeTmpFactory(),
@@ -239,7 +233,6 @@ describe('runUpdate — stale skill + blocking scanner, no force', () => {
       scope: 'user',
       env,
       manifestPath,
-      artifactsDir: ARTIFACTS_DIR,
       catalogUrl,
       runner: makeRunner(),
       tmpFactory: makeTmpFactory(),
@@ -260,7 +253,6 @@ describe('runUpdate — stale skill + blocking scanner, no force', () => {
       scope: 'user',
       env,
       manifestPath,
-      artifactsDir: ARTIFACTS_DIR,
       catalogUrl,
       runner: makeRunner(),
       tmpFactory: makeTmpFactory(),
@@ -287,7 +279,6 @@ describe('runUpdate — stale skill + blocking scanner, with force', () => {
         scope: 'user',
         env,
         manifestPath,
-        artifactsDir: ARTIFACTS_DIR,
         catalogUrl,
         runner: makeRunner(),
         tmpFactory: makeTmpFactory(),
@@ -304,7 +295,6 @@ describe('runUpdate — stale skill + blocking scanner, with force', () => {
       scope: 'user',
       env,
       manifestPath,
-      artifactsDir: ARTIFACTS_DIR,
       catalogUrl,
       runner: makeRunner(),
       tmpFactory: makeTmpFactory(),
@@ -325,7 +315,6 @@ describe('runUpdate — stale skill + blocking scanner, with force', () => {
       scope: 'user',
       env,
       manifestPath,
-      artifactsDir: ARTIFACTS_DIR,
       catalogUrl,
       runner: makeRunner(),
       tmpFactory: makeTmpFactory(),
@@ -350,7 +339,6 @@ describe('runUpdate — stale skill + clean scanner', () => {
       scope: 'user',
       env,
       manifestPath,
-      artifactsDir: ARTIFACTS_DIR,
       catalogUrl,
       runner: makeRunner(),
       tmpFactory: makeTmpFactory(),

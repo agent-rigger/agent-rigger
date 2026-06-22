@@ -89,8 +89,10 @@ type RemovalOpKindApply = (ops: RemovalOp[], env: Env) => Promise<void>;
 // ---------------------------------------------------------------------------
 
 export interface ClaudeAdapterConfig {
-  /** Canonical deny rules loaded from artifacts/claude/deny.json. */
+  /** Canonical deny rules loaded from the installed guardrail entry (deny.json from catalog checkout). */
   denyRef: string[];
+  /** Canonical allow rules loaded from the installed guardrail entry (allow.json from catalog checkout, default []). */
+  allowRef?: string[];
   /** Canonical AGENTS.md content for the context handler. */
   agentsContent?: string;
   /**
@@ -160,6 +162,7 @@ export interface ClaudeAdapterConfig {
 export function createClaudeAdapter(config: ClaudeAdapterConfig): Adapter {
   const agentsContent = config.agentsContent ?? '';
   const scanner = config.scanner ?? stubScanner;
+  const allowRef = config.allowRef ?? [];
 
   /**
    * Resolve the skill source for an entry, or raise a clear error when
@@ -226,15 +229,29 @@ export function createClaudeAdapter(config: ClaudeAdapterConfig): Adapter {
       {
         audit(entry, scope, env): Promise<NatureReport> {
           const cwd = entry.scope === 'project' ? process.cwd() : undefined;
-          return auditGuardrail(scope, env, config.denyRef, cwd);
+          // B-iii: prefer applied payload from manifest when available.
+          const effectiveDeny = entry.applied?.kind === 'guardrail'
+            ? entry.applied.denyRules
+            : config.denyRef;
+          const effectiveAllow = entry.applied?.kind === 'guardrail'
+            ? entry.applied.allowRules
+            : allowRef;
+          return auditGuardrail(scope, env, effectiveDeny, cwd, effectiveAllow);
         },
         plan(entry, scope, env): Promise<WriteOp[]> {
           const cwd = entry.scope === 'project' ? process.cwd() : undefined;
-          return planGuardrail(scope, env, config.denyRef, cwd);
+          return planGuardrail(scope, env, config.denyRef, cwd, allowRef);
         },
         planRemove(entry, scope, env): Promise<RemovalOp[]> {
           const cwd = entry.scope === 'project' ? process.cwd() : undefined;
-          return planRemoveGuardrail(scope, env, config.denyRef, cwd);
+          // B-iii: prefer applied payload from manifest when available.
+          const effectiveDeny = entry.applied?.kind === 'guardrail'
+            ? entry.applied.denyRules
+            : config.denyRef;
+          const effectiveAllow = entry.applied?.kind === 'guardrail'
+            ? entry.applied.allowRules
+            : allowRef;
+          return planRemoveGuardrail(scope, env, effectiveDeny, cwd, effectiveAllow);
         },
       },
     ],
@@ -243,7 +260,11 @@ export function createClaudeAdapter(config: ClaudeAdapterConfig): Adapter {
       {
         audit(entry, scope, env): Promise<NatureReport> {
           const cwd = entry.scope === 'project' ? process.cwd() : undefined;
-          return auditContext(scope, env, agentsContent, cwd);
+          // B-iii: prefer applied payload from manifest when available.
+          const effectiveContent = entry.applied?.kind === 'context'
+            ? entry.applied.block
+            : agentsContent;
+          return auditContext(scope, env, effectiveContent, cwd);
         },
         plan(entry, scope, env): Promise<WriteOp[]> {
           const cwd = entry.scope === 'project' ? process.cwd() : undefined;
@@ -251,7 +272,11 @@ export function createClaudeAdapter(config: ClaudeAdapterConfig): Adapter {
         },
         planRemove(entry, scope, env): Promise<RemovalOp[]> {
           const cwd = entry.scope === 'project' ? process.cwd() : undefined;
-          return planRemoveContext(scope, env, agentsContent, cwd);
+          // B-iii: prefer applied payload from manifest when available.
+          const effectiveContent = entry.applied?.kind === 'context'
+            ? entry.applied.block
+            : agentsContent;
+          return planRemoveContext(scope, env, effectiveContent, cwd);
         },
       },
     ],
@@ -307,13 +332,23 @@ export function createClaudeAdapter(config: ClaudeAdapterConfig): Adapter {
       'hook',
       {
         audit(entry, scope, env): Promise<NatureReport> {
+          const cwd = entry.scope === 'project' ? process.cwd() : undefined;
+          // B-iii: prefer applied payload from manifest when available.
+          if (entry.applied?.kind === 'hook') {
+            const appliedSpec: ResolvedHook = {
+              event: entry.applied.event,
+              matcher: entry.applied.matcher,
+              command: entry.applied.command,
+              ...(entry.applied.timeout === undefined ? {} : { timeout: entry.applied.timeout }),
+            };
+            return auditHook(entry, scope, env, appliedSpec, cwd);
+          }
           let spec: ResolvedHook;
           try {
             spec = resolveHookSpec(entry);
           } catch (err) {
             return Promise.reject(err);
           }
-          const cwd = entry.scope === 'project' ? process.cwd() : undefined;
           return auditHook(entry, scope, env, spec, cwd);
         },
         plan(entry, scope, env): Promise<WriteOp[]> {
@@ -327,13 +362,23 @@ export function createClaudeAdapter(config: ClaudeAdapterConfig): Adapter {
           return planHook(entry, scope, env, spec, cwd);
         },
         planRemove(entry, scope, env): Promise<RemovalOp[]> {
+          const cwd = entry.scope === 'project' ? process.cwd() : undefined;
+          // B-iii: prefer applied payload from manifest when available.
+          if (entry.applied?.kind === 'hook') {
+            const appliedSpec: ResolvedHook = {
+              event: entry.applied.event,
+              matcher: entry.applied.matcher,
+              command: entry.applied.command,
+              ...(entry.applied.timeout === undefined ? {} : { timeout: entry.applied.timeout }),
+            };
+            return planRemoveHook(entry, scope, env, appliedSpec, cwd);
+          }
           let spec: ResolvedHook;
           try {
             spec = resolveHookSpec(entry);
           } catch (err) {
             return Promise.reject(err);
           }
-          const cwd = entry.scope === 'project' ? process.cwd() : undefined;
           return planRemoveHook(entry, scope, env, spec, cwd);
         },
       },
@@ -349,6 +394,7 @@ export function createClaudeAdapter(config: ClaudeAdapterConfig): Adapter {
   // WriteOp kind → apply fn — E2-E5 add entries here
   const opKindHandlers = new Map<WriteOp['kind'], OpKindApply>([
     ['merge-deny', (ops, env) => applyGuardrail(ops, env)],
+    ['merge-allow', (ops, env) => applyGuardrail(ops, env)],
     ['write-text', (ops, env) => applyContext(ops, env)],
     ['ensure-import', (ops, env) => applyContext(ops, env)],
     ['link', (ops, env) => applySkill(ops, env, scanner)],
@@ -359,6 +405,7 @@ export function createClaudeAdapter(config: ClaudeAdapterConfig): Adapter {
   // RemovalOp kind → applyRemove fn — mirrors the install dispatch pattern
   const removalOpKindHandlers = new Map<RemovalOp['kind'], RemovalOpKindApply>([
     ['remove-deny', (ops, env) => applyRemoveGuardrail(ops, env)],
+    ['remove-allow', (ops, env) => applyRemoveGuardrail(ops, env)],
     ['delete-file', (ops, env) => applyRemoveContext(ops, env)],
     ['remove-block', (ops, env) => applyRemoveContext(ops, env)],
     ['unlink', (ops, env) => applyRemoveSkill(ops, env)],

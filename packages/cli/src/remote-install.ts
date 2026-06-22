@@ -14,7 +14,8 @@
  *   versionFor → runInstall.
  *
  * Security policy (ADR-0014):
- * - ONLY external entries are scanned (built-in content is trusted).
+ * - All fetched content is scanned uniformly: skills and agents by their checkout path,
+ *   hooks by the entire hooks/ directory (guards + shared libs).
  * - Scan occurs BEFORE plan/apply — no files are written if scan blocks.
  * - Without --force: a blocking verdict throws ScanBlockedError (fail-closed).
  * - With --force: a blocking verdict emits a warning and install proceeds.
@@ -37,7 +38,6 @@ import type { Scope } from '@agent-rigger/core/types';
 
 import {
   type ArtifactEntry,
-  BUILTIN_CATALOG,
   mergeCatalogs,
   readCatalogDir,
   resolveVersion,
@@ -79,7 +79,7 @@ export class ScanBlockedError extends Error {
 // scanPathFor — derive the filesystem path to scan inside the checkout dir
 // ---------------------------------------------------------------------------
 
-function scanPathFor(entry: ArtifactEntry, baseDir: string): string | null {
+export function scanPathFor(entry: ArtifactEntry, baseDir: string): string | null {
   if (entry.nature === 'skill') {
     const name = entry.id.replace(/^skill:/, '');
     return path.join(baseDir, 'skills', name);
@@ -88,7 +88,11 @@ function scanPathFor(entry: ArtifactEntry, baseDir: string): string | null {
     const name = entry.id.replace(/^agent:/, '');
     return path.join(baseDir, 'agents', name + '.md');
   }
-  // hook and others not yet supported for scanning
+  if (entry.nature === 'hook') {
+    // The entire hooks/ directory is scanned so that guard scripts AND shared
+    // libs (e.g. _shared/hook-lib.ts) are covered by the composite scanner.
+    return path.join(baseDir, 'hooks');
+  }
   return null;
 }
 
@@ -97,9 +101,9 @@ function scanPathFor(entry: ArtifactEntry, baseDir: string): string | null {
 // ---------------------------------------------------------------------------
 
 /**
- * Scan all external entries in the checkout directory.
+ * Scan all entries that have a resolvable checkout path in the given directory.
  *
- * - Resolves each entry to a scan path (skills/agents only; others skipped).
+ * - Resolves each entry to a scan path (skills/agents only; others skipped naturally).
  * - Runs scanner.scan() in parallel via Promise.all.
  * - If any verdict is !ok and force is false → throws ScanBlockedError.
  * - If any verdict is !ok and force is true  → returns { warnings: [...] }.
@@ -107,12 +111,12 @@ function scanPathFor(entry: ArtifactEntry, baseDir: string): string | null {
  *
  * Callers prepend the warnings to their output.
  *
- * @param opts.entries  External ArtifactEntry list to scan.
+ * @param opts.entries  ArtifactEntry list to scan (entries without a checkout path are skipped).
  * @param opts.baseDir  Root of the remote checkout directory.
  * @param opts.scanner  Scanner instance to use.
  * @param opts.force    When true, blocking scan warns instead of throwing.
  */
-export async function scanExternalEntries(opts: {
+export async function scanEntries(opts: {
   entries: ArtifactEntry[];
   baseDir: string;
   scanner: Scanner;
@@ -124,17 +128,26 @@ export async function scanExternalEntries(opts: {
     return { warnings: [] };
   }
 
-  const scanTargets = entries
+  const rawTargets = entries
     .map((entry) => ({ entry, scanPath: scanPathFor(entry, baseDir) }))
     .filter((t): t is { entry: ArtifactEntry; scanPath: string } => t.scanPath !== null);
 
-  if (scanTargets.length === 0) {
+  if (rawTargets.length === 0) {
     return { warnings: [] };
   }
 
-  const verdicts = await Promise.all(
-    scanTargets.map(({ scanPath }) => scanner.scan(scanPath)),
-  );
+  // Deduplicate scan paths: multiple hook entries share the same hooks/ directory;
+  // scanning it once is sufficient and avoids redundant scanner invocations.
+  const seenPaths = new Set<string>();
+  const uniquePaths: string[] = [];
+  for (const { scanPath } of rawTargets) {
+    if (!seenPaths.has(scanPath)) {
+      seenPaths.add(scanPath);
+      uniquePaths.push(scanPath);
+    }
+  }
+
+  const verdicts = await Promise.all(uniquePaths.map((p) => scanner.scan(p)));
 
   const allFindings = verdicts.flatMap((v) => v.findings ?? []);
   const anyBlocked = verdicts.some((v) => !v.ok);
@@ -184,7 +197,6 @@ export async function runRemoteInstall(opts: {
   scope: Scope;
   env: Env;
   manifestPath: string;
-  artifactsDir: string;
   runner: CommandRunner;
   tmpFactory: TmpDirFactory;
   confirm: boolean | ((planText: string) => Promise<boolean>);
@@ -197,7 +209,6 @@ export async function runRemoteInstall(opts: {
     scope,
     env,
     manifestPath,
-    artifactsDir,
     runner,
     tmpFactory,
     confirm,
@@ -216,69 +227,89 @@ export async function runRemoteInstall(opts: {
 
   const version = await resolveVersion(catalogUrl, runner);
 
-  return withRemoteCheckout(catalogUrl, version.ref, runner, { tmpFactory }, async (dir) => {
-    const remoteEntries = await readCatalogDir(dir);
+  return withRemoteCheckout(
+    catalogUrl,
+    version.ref,
+    version.isTag,
+    runner,
+    { tmpFactory },
+    async (dir) => {
+      const { entries: remoteEntries } = await readCatalogDir(dir);
 
-    // Frontier guard: reject external entries whose derived name would cause
-    // a path traversal before any install operation begins.
-    for (const entry of remoteEntries) {
-      if (entry.kind !== 'artifact') continue;
-      if (entry.nature === 'skill') {
-        const name = entry.id.replace(/^skill:/, '');
-        assertSafeArtifactName(name, entry.id);
-      } else if (entry.nature === 'agent') {
-        const name = entry.id.replace(/^agent:/, '');
-        assertSafeArtifactName(name, entry.id);
+      // Frontier guard: reject external entries whose derived name would cause
+      // a path traversal before any install operation begins.
+      for (const entry of remoteEntries) {
+        if (entry.kind !== 'artifact') continue;
+        if (entry.nature === 'skill') {
+          const name = entry.id.replace(/^skill:/, '');
+          assertSafeArtifactName(name, entry.id);
+        } else if (entry.nature === 'agent') {
+          const name = entry.id.replace(/^agent:/, '');
+          assertSafeArtifactName(name, entry.id);
+        }
       }
-    }
 
-    const { entries: effective } = mergeCatalogs(BUILTIN_CATALOG, remoteEntries);
-    const resolved = resolve(ids, effective);
-    const externalIds = new Set(
-      resolved.filter((e) => e.source === 'external').map((e) => e.id),
-    );
+      const { entries: effective } = mergeCatalogs([], remoteEntries);
+      const resolved = resolve(ids, effective);
 
-    // Security scan — external entries only (ADR-0014).
-    const externalResolved = resolved.filter((e) => e.source === 'external');
-    const { warnings } = await scanExternalEntries({
-      entries: externalResolved,
-      baseDir: dir,
-      scanner,
-      force,
-    });
+      // All entries from the remote catalog are sourced from the checkout.
+      // - Skills / agents: have a checkout path (scanPathFor != null).
+      // - Guardrails / contexts / hooks: no scan path but also come from checkout.
+      // - Plugins: from the remote catalog's marketplace URL.
+      // remoteIds tells buildClaudeAdapter which entries to resolve from externalBaseDir.
+      const remoteEntryIds = new Set(remoteEntries.map((e) => e.id));
+      const remoteIds = new Set(
+        resolved
+          .filter((e) => remoteEntryIds.has(e.id))
+          .map((e) => e.id),
+      );
 
-    const adapter = await buildClaudeAdapter(env, artifactsDir, {
-      externalIds,
-      externalBaseDir: dir,
-      catalogUrl,
-      pluginRunner,
-    });
+      // Security scan — all entries that have a checkout path (uniform scan, ADR-0014).
+      // Entries without a scanPath (e.g. guardrails, hooks) are naturally skipped.
+      const { warnings } = await scanEntries({
+        entries: resolved,
+        baseDir: dir,
+        scanner,
+        force,
+      });
 
-    const versionFor = (
-      entry: { id: string },
-    ): { source: 'internal' | 'external'; ref: string; sha: string } => {
-      if (externalIds.has(entry.id)) {
-        return { source: 'external', ref: version.ref, sha: version.sha };
+      // Build effectiveEntries map for hookSpec resolution
+      const effectiveEntries = new Map(effective.map((e) => [e.id, e]));
+
+      const adapter = await buildClaudeAdapter(env, {
+        externalIds: remoteIds,
+        externalBaseDir: dir,
+        catalogUrl,
+        pluginRunner,
+        effectiveEntries,
+      });
+
+      const versionFor = (
+        entry: { id: string },
+      ): { ref: string; sha: string } => {
+        if (remoteIds.has(entry.id)) {
+          return { ref: version.ref, sha: version.sha };
+        }
+        return { ref: 'v0.0.0', sha: '' };
+      };
+
+      const result = await runInstall({
+        catalog: effective,
+        adapter,
+        scope,
+        env,
+        manifestPath,
+        selectedIds: ids,
+        confirm,
+        versionFor,
+        toolRunner: runner,
+      });
+
+      if (warnings.length === 0) {
+        return result;
       }
-      return { source: 'internal', ref: 'v0.0.0', sha: '' };
-    };
 
-    const result = await runInstall({
-      catalog: effective,
-      adapter,
-      scope,
-      env,
-      manifestPath,
-      selectedIds: ids,
-      confirm,
-      versionFor,
-      toolRunner: runner,
-    });
-
-    if (warnings.length === 0) {
-      return result;
-    }
-
-    return { ...result, output: `${warnings.join('\n')}\n${result.output}` };
-  });
+      return { ...result, output: `${warnings.join('\n')}\n${result.output}` };
+    },
+  );
 }

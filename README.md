@@ -43,9 +43,10 @@ store. The built-in guards (`hook:guard-command`, `hook:guard-secret`,
 `pack:spec-workflow` (a skill + three agents), `pack:harness` (the four guard
 hooks), `pack:baseline` (a team baseline: `pack:harness` + guardrails + context).
 
-**Catalog** — the list of known artifacts and packs. agent-rigger ships a
-built-in catalog and fetches additional entries from a remote content repository
-when a catalog URL is configured (`ls`/`add`/`update`).
+**Catalog** — the list of known artifacts and packs. agent-rigger ships **no
+content of its own**: every artifact comes from a catalog you configure (`init`),
+fetched from a remote content repository (`ls`/`add`/`update`). No catalog
+configured → nothing to install.
 
 **Manifest** — `~/.config/agent-rigger/state.json`. Records what was installed
 and when. Used by `check` to detect drift.
@@ -69,8 +70,8 @@ reports what is missing; it does not install tools itself.
 - **gitleaks and/or trivy** — required to **install** `external` artifacts from a
   remote catalog: their content is scanned for secrets/misconfigurations before
   it lands on disk. With no scanner installed, a remote install is blocked
-  (fail-closed) unless you pass `--force`. Built-in artifacts are trusted and not
-  scanned.
+  (fail-closed) unless you pass `--force`. All fetched content is scanned
+  uniformly — there is no trusted built-in exception.
 - **`glab` or `gh`** — required if the catalog references GitLab or GitHub
   resources. `init` probes ambient auth first; it asks for the method only if
   the probe fails.
@@ -101,9 +102,9 @@ bun run build
 # produces packages/cli/dist/agent-rigger
 ```
 
-Note: the compiled binary does not yet bundle the `artifacts/` directory. The
-binary resolves artifacts relative to the source tree at runtime, so the
-distribution of a standalone binary is deferred to a packaging milestone.
+Note: the CLI ships no content of its own — every artifact comes from a
+configured catalog fetched at runtime. The compiled binary is therefore
+self-contained (nothing to bundle).
 
 ---
 
@@ -357,19 +358,20 @@ These properties hold across all commands:
   `external` content is scanned with gitleaks and/or trivy before install
   (fail-closed; `--force` overrides — you are responsible for what you install).
   This catches leaked secrets and misconfigurations, **not** behavioural analysis
-  of an arbitrary malicious script. Internal/built-in content is trusted and not
-  scanned.
-- **Remote catalog (M1).** `ls` reads the remote catalog, `install`/`add`
-  install `external` artifacts with real `ref`/`sha`, `update`/`check` compare
-  installed vs latest, and the interactive picker lists remote entries. A single
-  catalog URL is supported (built-in ∪ one remote); multi-catalog is a follow-up.
+  of an arbitrary malicious script. All fetched content is scanned uniformly
+  (no trusted built-in exception).
+- **Remote catalog.** `ls` reads the configured catalog, `install`/`add`
+  install artifacts with real `ref`/`sha`, `update`/`check` compare
+  installed vs latest, and the interactive picker lists catalog entries. A single
+  configured catalog is supported (no built-in); multi-catalog is a follow-up.
 - **Hook scripts and logs are shared.** Installing a `hook` deposits the whole
   hook script set into `~/.config/agent-rigger/hooks/` (a re-sync on each hook
   install). Any runtime log files the guard scripts write next to themselves are
   reset on the next hook install — treat the in-store hook logs as volatile.
-- **No standalone binary distribution.** The compiled binary resolves artifacts
-  relative to the cloned repository. Bundling artifacts into the binary is a
-  prerequisite for distributing `agent-rigger` as a single file.
+- **Reversible manifest required for offline remove.** `remove`/`check` rely on
+  the structured `applied` payload recorded at install time (ADR-0016). Entries
+  installed by an older version (legacy manifest, no `applied`) degrade to
+  best-effort — reinstall to record an exact, reversible payload.
 
 ---
 

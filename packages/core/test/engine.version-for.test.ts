@@ -2,8 +2,8 @@
  * Tests for engine.apply() — versionFor seam (M1b-3 Part A).
  *
  * Verifies:
- * 1. apply() with versionFor → manifest entry carries the provided source/ref/sha.
- * 2. apply() without versionFor → manifest entry defaults to {source:'internal', ref:'v0.0.0', sha:''}.
+ * 1. apply() with versionFor → manifest entry carries the provided ref/sha.
+ * 2. apply() without versionFor → manifest entry defaults to {ref:'v0.0.0', sha:''}.
  * 3. Existing tests (idempotence, apply result shape) remain unaffected by the new param.
  */
 
@@ -120,11 +120,11 @@ afterEach(async () => {
 // ---------------------------------------------------------------------------
 
 describe('apply() with versionFor', () => {
-  it('manifest entry source/ref/sha match what versionFor returns', async () => {
+  it('manifest entry ref/sha match what versionFor returns', async () => {
     const adapter = makeDenyAdapter();
     const entries = [makeCatalogEntry('guardrails-claude')];
 
-    const customVersion = { source: 'external' as const, ref: 'v1.2.0', sha: 'abc123' };
+    const customVersion = { ref: 'v1.2.0', sha: 'abc123' };
 
     await apply(adapter, entries, 'user', env, manifestPath, () => customVersion);
 
@@ -132,7 +132,6 @@ describe('apply() with versionFor', () => {
     const artifact = manifest.artifacts.find((a) => a.id === 'guardrails-claude');
 
     expect(artifact).toBeDefined();
-    expect(artifact!.source).toBe('external');
     expect(artifact!.ref).toBe('v1.2.0');
     expect(artifact!.sha).toBe('abc123');
   });
@@ -144,7 +143,7 @@ describe('apply() with versionFor', () => {
     const calledWith: AdapterEntry[] = [];
     const versionFor = (entry: AdapterEntry) => {
       calledWith.push(entry);
-      return { source: 'external' as const, ref: 'v2.0.0', sha: 'deadbeef' };
+      return { ref: 'v2.0.0', sha: 'deadbeef' };
     };
 
     await apply(adapter, entries, 'user', env, manifestPath, versionFor);
@@ -158,7 +157,6 @@ describe('apply() with versionFor', () => {
     const entries = [makeCatalogEntry('guardrails-claude')];
 
     await apply(adapter, entries, 'user', env, manifestPath, () => ({
-      source: 'external',
       ref: 'v1.0.0',
       sha: 'cafebabe',
     }));
@@ -173,11 +171,11 @@ describe('apply() with versionFor', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Part A-2: without versionFor → defaults to {source:'internal', ref:'v0.0.0', sha:''}
+// Part A-2: without versionFor → defaults to {ref:'v0.0.0', sha:''}
 // ---------------------------------------------------------------------------
 
 describe('apply() without versionFor', () => {
-  it('manifest entry defaults to source:internal, ref:v0.0.0, sha:""', async () => {
+  it('manifest entry defaults to ref:v0.0.0, sha:""', async () => {
     const adapter = makeDenyAdapter();
     const entries = [makeCatalogEntry('guardrails-claude')];
 
@@ -187,7 +185,6 @@ describe('apply() without versionFor', () => {
     const artifact = manifest.artifacts.find((a) => a.id === 'guardrails-claude');
 
     expect(artifact).toBeDefined();
-    expect(artifact!.source).toBe('internal');
     expect(artifact!.ref).toBe('v0.0.0');
     expect(artifact!.sha).toBe('');
   });

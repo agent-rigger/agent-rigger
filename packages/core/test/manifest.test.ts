@@ -45,7 +45,6 @@ function makeEntry(
   return {
     id,
     nature: 'guardrail',
-    source: 'internal',
     ref: 'v0.0.1',
     sha: 'abc123def456',
     scope,
@@ -135,6 +134,32 @@ describe('readManifest', () => {
     expect(stored!.sha).toBe('abc123def456');
     expect(stored!.installedAt).toBe('2026-06-21T12:00:00.000Z');
     expect(stored!.files).toEqual(['/home/user/.claude/skills/spec/SKILL.md']);
+  });
+
+  it('tolerates legacy manifest with source field (strips unknown field without error)', async () => {
+    const filePath = path.join(tmpDir, 'state.json');
+    const legacyManifest = {
+      version: 1,
+      artifacts: [
+        {
+          id: 'guardrails-claude',
+          nature: 'guardrail',
+          source: 'internal',
+          ref: 'v0.0.0',
+          sha: '',
+          scope: 'user',
+          installedAt: '2026-01-01T00:00:00.000Z',
+          files: [],
+        },
+      ],
+    };
+
+    await fs.writeFile(filePath, JSON.stringify(legacyManifest), 'utf-8');
+    const result = await readManifest(filePath);
+
+    expect(result.artifacts).toHaveLength(1);
+    expect(result.artifacts[0]!.id).toBe('guardrails-claude');
+    expect(result.artifacts[0]!.ref).toBe('v0.0.0');
   });
 });
 

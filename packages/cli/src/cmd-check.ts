@@ -66,6 +66,12 @@ export interface RunCheckOptions {
   toolRunner?: CommandRunner;
   /** Working directory (unused in M0; reserved for future project-scope checks). */
   cwd?: string;
+  /**
+   * Absolute path to state.json (the manifest). When provided, each entry is
+   * enriched with its `applied` payload so the adapter can audit against the
+   * exact canonical state recorded at install time (B-iii).
+   */
+  manifestPath?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -89,7 +95,7 @@ export interface RunCheckOptions {
  * @returns     A CheckResult with exitCode, report, toolResults, and output.
  */
 export async function runCheck(opts: RunCheckOptions): Promise<CheckResult> {
-  const { adapter, entries, scope, env, toolEntries = [], toolRunner } = opts;
+  const { adapter, entries, scope, env, toolEntries = [], toolRunner, manifestPath } = opts;
 
   // -------------------------------------------------------------------------
   // Step 1: Audit
@@ -99,7 +105,7 @@ export async function runCheck(opts: RunCheckOptions): Promise<CheckResult> {
   let exitCode: 0 | 2 | 3;
 
   try {
-    report = await check(adapter, entries, scope, env);
+    report = await check(adapter, entries, scope, env, manifestPath);
     exitCode = reportExitCode(report);
   } catch (err) {
     if (err instanceof InvalidJsonError) {

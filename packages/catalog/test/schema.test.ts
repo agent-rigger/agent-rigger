@@ -24,10 +24,16 @@ import {
   ArtifactEntrySchema,
   type CatalogEntry,
   CatalogEntrySchema,
+  type CatalogFile,
+  CatalogFileSchema,
+  type CatalogMeta,
   type HookEvent,
+  MetaSchema,
   type PackEntry,
   PackEntrySchema,
+  parseCatalog,
   parseCatalogEntry,
+  safeParseCatalog,
   safeParseCatalogEntry,
 } from '../src/schema';
 
@@ -40,7 +46,6 @@ const minimalArtifact = {
   kind: 'artifact',
   id: 'tool:glab',
   nature: 'tool',
-  source: 'internal',
   targets: ['claude'],
   scopes: ['user'],
 } as const;
@@ -50,7 +55,6 @@ const fullArtifact = {
   kind: 'artifact',
   id: 'plugin:prettier',
   nature: 'plugin',
-  source: 'external',
   level: 'recommended',
   targets: ['claude', 'opencode'],
   scopes: ['user', 'project'],
@@ -68,7 +72,6 @@ const fullArtifact = {
 const minimalPack = {
   kind: 'pack',
   id: 'pack:dev-tools',
-  source: 'internal',
   targets: ['claude'],
   scopes: ['user'],
   members: ['tool:glab', 'tool:gh'],
@@ -99,7 +102,6 @@ describe('CatalogEntrySchema — artifact minimal valid', () => {
     expect(result.success).toBe(true);
     if (!result.success) return;
     expect(result.data.id).toBe('tool:glab');
-    expect(result.data.source).toBe('internal');
     expect(result.data.targets).toEqual(['claude']);
     expect(result.data.scopes).toEqual(['user']);
   });
@@ -270,11 +272,6 @@ describe('CatalogEntrySchema — rejections: common fields', () => {
     expect(result.success).toBe(false);
   });
 
-  it('rejects invalid source on artifact', () => {
-    const result = CatalogEntrySchema.safeParse({ ...minimalArtifact, source: 'interne' });
-    expect(result.success).toBe(false);
-  });
-
   it('rejects empty targets array on artifact', () => {
     const result = CatalogEntrySchema.safeParse({ ...minimalArtifact, targets: [] });
     expect(result.success).toBe(false);
@@ -410,7 +407,6 @@ const hookArtifact = {
   kind: 'artifact',
   id: 'hook:guard-x',
   nature: 'hook',
-  source: 'internal',
   targets: ['claude'],
   scopes: ['user'],
   event: 'PreToolUse',
@@ -446,31 +442,118 @@ describe('ArtifactEntrySchema — hook artifact with event/matcher/timeout parse
   });
 });
 
-describe('ArtifactEntrySchema — hook fields are optional', () => {
-  it('parses without event/matcher/timeout (all optional)', () => {
+describe('ArtifactEntrySchema — non-hook fields event/matcher/timeout are optional', () => {
+  it('parses skill without event/matcher/timeout (all optional for non-hook)', () => {
     const result = ArtifactEntrySchema.safeParse({
       kind: 'artifact',
-      id: 'hook:guard-y',
-      nature: 'hook',
-      source: 'internal',
+      id: 'skill:x',
+      nature: 'skill',
       targets: ['claude'],
       scopes: ['user'],
     });
     expect(result.success).toBe(true);
   });
 
-  it('event is absent when not provided', () => {
+  it('event is absent on non-hook when not provided', () => {
     const result = ArtifactEntrySchema.safeParse({
       kind: 'artifact',
-      id: 'hook:guard-y',
-      nature: 'hook',
-      source: 'internal',
+      id: 'skill:x',
+      nature: 'skill',
       targets: ['claude'],
       scopes: ['user'],
     });
     expect(result.success).toBe(true);
     if (!result.success) return;
     expect(result.data.event).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// B-i.1: hook entries require event + matcher
+// ---------------------------------------------------------------------------
+
+describe('ArtifactEntrySchema — hook requires event + matcher (B-i.1)', () => {
+  it('rejects hook without event', () => {
+    const result = ArtifactEntrySchema.safeParse({
+      kind: 'artifact',
+      id: 'hook:x',
+      nature: 'hook',
+      targets: ['claude'],
+      scopes: ['user'],
+      matcher: 'Bash',
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects hook without matcher', () => {
+    const result = ArtifactEntrySchema.safeParse({
+      kind: 'artifact',
+      id: 'hook:x',
+      nature: 'hook',
+      targets: ['claude'],
+      scopes: ['user'],
+      event: 'PreToolUse',
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects hook without both event and matcher', () => {
+    const result = ArtifactEntrySchema.safeParse({
+      kind: 'artifact',
+      id: 'hook:x',
+      nature: 'hook',
+      targets: ['claude'],
+      scopes: ['user'],
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('accepts valid hook with both event and matcher', () => {
+    const result = ArtifactEntrySchema.safeParse({
+      kind: 'artifact',
+      id: 'hook:x',
+      nature: 'hook',
+      targets: ['claude'],
+      scopes: ['user'],
+      event: 'PreToolUse',
+      matcher: 'Bash',
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts non-hook without event or matcher', () => {
+    const result = ArtifactEntrySchema.safeParse({
+      kind: 'artifact',
+      id: 'skill:x',
+      nature: 'skill',
+      targets: ['claude'],
+      scopes: ['user'],
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('CatalogEntrySchema also rejects hook without event', () => {
+    const result = CatalogEntrySchema.safeParse({
+      kind: 'artifact',
+      id: 'hook:x',
+      nature: 'hook',
+      targets: ['claude'],
+      scopes: ['user'],
+      matcher: 'Bash',
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('CatalogEntrySchema also rejects hook without matcher', () => {
+    const result = CatalogEntrySchema.safeParse({
+      kind: 'artifact',
+      id: 'hook:x',
+      nature: 'hook',
+      targets: ['claude'],
+      scopes: ['user'],
+      event: 'PreToolUse',
+    });
+    expect(result.success).toBe(false);
   });
 });
 
@@ -522,4 +605,269 @@ describe('ArtifactEntrySchema — all HookEvent values are valid', () => {
       expect(result.success).toBe(true);
     });
   }
+});
+
+// ---------------------------------------------------------------------------
+// MetaSchema
+// ---------------------------------------------------------------------------
+
+/** Minimal valid meta input. */
+const minimalMeta = { name: 'my-catalog' } as const;
+
+/** Full meta input with required + recommended. */
+const fullMeta = {
+  name: 'my-catalog',
+  required: ['pack:essentials', 'tool:glab'],
+  recommended: ['pack:extras', 'skill:remote-demo'],
+} as const;
+
+describe('MetaSchema — valid inputs', () => {
+  it('parses minimal meta with only name', () => {
+    const result = MetaSchema.safeParse(minimalMeta);
+    expect(result.success).toBe(true);
+  });
+
+  it('name is preserved', () => {
+    const result = MetaSchema.safeParse(minimalMeta);
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    expect(result.data.name).toBe('my-catalog');
+  });
+
+  it('required defaults to [] when absent', () => {
+    const result = MetaSchema.safeParse(minimalMeta);
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    expect(result.data.required).toEqual([]);
+  });
+
+  it('recommended defaults to [] when absent', () => {
+    const result = MetaSchema.safeParse(minimalMeta);
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    expect(result.data.recommended).toEqual([]);
+  });
+
+  it('parses full meta with required and recommended', () => {
+    const result = MetaSchema.safeParse(fullMeta);
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    expect(result.data.required).toEqual(['pack:essentials', 'tool:glab']);
+    expect(result.data.recommended).toEqual(['pack:extras', 'skill:remote-demo']);
+  });
+
+  it('accepts arbitrary ids (pack and artifact) in required', () => {
+    const result = MetaSchema.safeParse({
+      name: 'test',
+      required: ['pack:x', 'tool:y', 'skill:z', 'arbitrary-id'],
+    });
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    expect(result.data.required).toHaveLength(4);
+  });
+
+  it('accepts arbitrary ids in recommended', () => {
+    const result = MetaSchema.safeParse({
+      name: 'test',
+      recommended: ['artifact:any', 'pack:y'],
+    });
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    expect(result.data.recommended).toHaveLength(2);
+  });
+});
+
+describe('MetaSchema — rejections', () => {
+  it('rejects missing name', () => {
+    const result = MetaSchema.safeParse({ required: [] });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects empty name', () => {
+    const result = MetaSchema.safeParse({ name: '' });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects null', () => {
+    const result = MetaSchema.safeParse(null);
+    expect(result.success).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// CatalogFileSchema
+// ---------------------------------------------------------------------------
+
+/** Minimal valid catalog file input. */
+const minimalCatalogFile = {
+  meta: { name: 'test-catalog' },
+  entries: [],
+} as const;
+
+/** Catalog file with entries. */
+const catalogFileWithEntries = {
+  meta: { name: 'test-catalog', required: ['pack:essentials'] },
+  entries: [minimalArtifact, minimalPack],
+} as const;
+
+describe('CatalogFileSchema — valid inputs', () => {
+  it('parses minimal catalog file with empty entries', () => {
+    const result = CatalogFileSchema.safeParse(minimalCatalogFile);
+    expect(result.success).toBe(true);
+  });
+
+  it('meta.name is preserved', () => {
+    const result = CatalogFileSchema.safeParse(minimalCatalogFile);
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    expect(result.data.meta.name).toBe('test-catalog');
+  });
+
+  it('parses catalog file with artifact and pack entries', () => {
+    const result = CatalogFileSchema.safeParse(catalogFileWithEntries);
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    expect(result.data.entries).toHaveLength(2);
+  });
+
+  it('meta.required is present when provided', () => {
+    const result = CatalogFileSchema.safeParse(catalogFileWithEntries);
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    expect(result.data.meta.required).toEqual(['pack:essentials']);
+  });
+
+  it('meta.required defaults to [] when absent', () => {
+    const result = CatalogFileSchema.safeParse(minimalCatalogFile);
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    expect(result.data.meta.required).toEqual([]);
+  });
+
+  it('meta.recommended defaults to [] when absent', () => {
+    const result = CatalogFileSchema.safeParse(minimalCatalogFile);
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    expect(result.data.meta.recommended).toEqual([]);
+  });
+
+  it('entries array can contain both artifact and pack', () => {
+    const result = CatalogFileSchema.safeParse(catalogFileWithEntries);
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    expect(result.data.entries[0]?.kind).toBe('artifact');
+    expect(result.data.entries[1]?.kind).toBe('pack');
+  });
+});
+
+describe('CatalogFileSchema — rejections', () => {
+  it('rejects bare array (legacy format)', () => {
+    const result = CatalogFileSchema.safeParse([minimalArtifact]);
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects object without meta', () => {
+    const result = CatalogFileSchema.safeParse({ entries: [] });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects object with meta.name missing', () => {
+    const result = CatalogFileSchema.safeParse({ meta: { required: [] }, entries: [] });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects object with meta.name empty string', () => {
+    const result = CatalogFileSchema.safeParse({ meta: { name: '' }, entries: [] });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects object without entries', () => {
+    const result = CatalogFileSchema.safeParse({ meta: { name: 'test' } });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects when an entry has invalid nature', () => {
+    const badEntry = { ...minimalArtifact, nature: 'unknown' };
+    const result = CatalogFileSchema.safeParse({ meta: { name: 'test' }, entries: [badEntry] });
+    expect(result.success).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// parseCatalog / safeParseCatalog helpers
+// ---------------------------------------------------------------------------
+
+describe('parseCatalog', () => {
+  it('returns typed CatalogFile for valid wrapped input', () => {
+    const file: CatalogFile = parseCatalog(minimalCatalogFile);
+    expect(file.meta.name).toBe('test-catalog');
+    expect(file.entries).toEqual([]);
+  });
+
+  it('throws on bare array input', () => {
+    expect(() => parseCatalog([minimalArtifact])).toThrow();
+  });
+
+  it('throws when meta.name is empty', () => {
+    expect(() => parseCatalog({ meta: { name: '' }, entries: [] })).toThrow();
+  });
+
+  it('throws on null / number / string inputs', () => {
+    expect(() => parseCatalog(null)).toThrow();
+    expect(() => parseCatalog(42)).toThrow();
+    expect(() => parseCatalog('string')).toThrow();
+  });
+});
+
+describe('safeParseCatalog', () => {
+  it('returns success=true with data for valid wrapped input', () => {
+    const result = safeParseCatalog(minimalCatalogFile);
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    expect(result.data.meta.name).toBe('test-catalog');
+  });
+
+  it('returns success=false for bare array input', () => {
+    const result = safeParseCatalog([minimalArtifact]);
+    expect(result.success).toBe(false);
+  });
+
+  it('returns success=false when meta.name is missing', () => {
+    const result = safeParseCatalog({ meta: {}, entries: [] });
+    expect(result.success).toBe(false);
+  });
+
+  it('returns success=false when meta.name is empty string', () => {
+    const result = safeParseCatalog({ meta: { name: '' }, entries: [] });
+    expect(result.success).toBe(false);
+  });
+
+  it('returns error object when parsing fails', () => {
+    const result = safeParseCatalog({ meta: { name: '' }, entries: [] });
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    expect(result.error).toBeDefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Type exports — compile-time smoke test for new types
+// ---------------------------------------------------------------------------
+
+describe('exported types — CatalogMeta and CatalogFile', () => {
+  it('CatalogMeta is assignable from parsed meta data', () => {
+    const result = MetaSchema.safeParse(fullMeta);
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    const _meta: CatalogMeta = result.data;
+    expect(_meta.name).toBe('my-catalog');
+  });
+
+  it('CatalogFile is assignable from parsed catalog file data', () => {
+    const result = CatalogFileSchema.safeParse(minimalCatalogFile);
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    const _file: CatalogFile = result.data;
+    expect(_file.meta.name).toBe('test-catalog');
+  });
 });

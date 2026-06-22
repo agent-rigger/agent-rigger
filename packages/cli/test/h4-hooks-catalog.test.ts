@@ -2,8 +2,8 @@
  * Tests for H4 — hook guards as catalog entries + pack:harness + script deposit.
  *
  * Covers:
- * - pack:harness resolves to 4 hook guard artifact entries via catalog resolver.
- * - buildClaudeAdapter hookSpec: plan produces correct merge-hooks op.
+ * - pack:harness resolves to hook guard artifact entries via catalog resolver.
+ * - buildClaudeAdapter hookSpec: plan produces correct merge-hooks op (effectiveEntries required).
  * - apply writes hook to settings.json AND deposits scripts to store/hooks/.
  * - Idempotence: 2nd plan after apply returns [].
  * - audit after apply → state present.
@@ -12,6 +12,9 @@
  * - apply preserves preexisting permissions.deny.
  *
  * Isolation: each test uses a fresh RIGGER_HOME tmp dir.
+ *
+ * Post-B-iii: hooks must come from externalBaseDir/hooks/<name>.ts.
+ * No internal artifactsDir fallback — all hook scripts source from externalBaseDir.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
@@ -25,10 +28,91 @@ import { hasHook } from '@agent-rigger/core/hooks';
 import { resolveUserTargets } from '@agent-rigger/core/paths';
 import type { Env } from '@agent-rigger/core/paths';
 
-import { BUILTIN_CATALOG } from '@agent-rigger/catalog';
+import type { CatalogEntry } from '@agent-rigger/catalog';
 import { resolve } from '@agent-rigger/catalog/resolver';
 
 import { buildClaudeAdapter } from '../src/cli';
+
+// ---------------------------------------------------------------------------
+// Fixture catalog (replaces BUILTIN_CATALOG)
+// ---------------------------------------------------------------------------
+
+const FIXTURE_HOOK_GUARD_COMMAND: CatalogEntry = {
+  kind: 'artifact',
+  id: 'hook:guard-command',
+  nature: 'hook',
+  targets: ['claude'],
+  scopes: ['user', 'project'],
+  event: 'PreToolUse',
+  matcher: 'Bash',
+  timeout: 5,
+};
+
+const FIXTURE_HOOK_GUARD_SECRET: CatalogEntry = {
+  kind: 'artifact',
+  id: 'hook:guard-secret',
+  nature: 'hook',
+  targets: ['claude'],
+  scopes: ['user', 'project'],
+  event: 'PreToolUse',
+  matcher: 'Read|Edit|MultiEdit|Write|NotebookEdit|Grep|Glob|Bash',
+  timeout: 5,
+};
+
+const FIXTURE_HOOK_GUARD_WRITE_SECRET: CatalogEntry = {
+  kind: 'artifact',
+  id: 'hook:guard-write-secret',
+  nature: 'hook',
+  targets: ['claude'],
+  scopes: ['user', 'project'],
+  event: 'PreToolUse',
+  matcher: 'Write|Edit|MultiEdit',
+  timeout: 5,
+};
+
+const FIXTURE_HOOK_GUARD_PROMPT: CatalogEntry = {
+  kind: 'artifact',
+  id: 'hook:guard-prompt',
+  nature: 'hook',
+  targets: ['claude'],
+  scopes: ['user', 'project'],
+  event: 'UserPromptSubmit',
+  matcher: '*',
+  timeout: 5,
+};
+
+const FIXTURE_PACK_HARNESS: CatalogEntry = {
+  kind: 'pack',
+  id: 'pack:harness',
+  targets: ['claude'],
+  scopes: ['user', 'project'],
+  members: [
+    'hook:guard-command',
+    'hook:guard-secret',
+    'hook:guard-write-secret',
+    'hook:guard-prompt',
+  ],
+};
+
+const FIXTURE_CATALOG: CatalogEntry[] = [
+  FIXTURE_HOOK_GUARD_COMMAND,
+  FIXTURE_HOOK_GUARD_SECRET,
+  FIXTURE_HOOK_GUARD_WRITE_SECRET,
+  FIXTURE_HOOK_GUARD_PROMPT,
+  FIXTURE_PACK_HARNESS,
+];
+
+const FIXTURE_EFFECTIVE_ENTRIES = new Map<string, CatalogEntry>(
+  FIXTURE_CATALOG.map((e) => [e.id, e]),
+);
+
+/** All hook externalIds used by h4 tests. */
+const HOOK_EXTERNAL_IDS = new Set([
+  'hook:guard-command',
+  'hook:guard-secret',
+  'hook:guard-write-secret',
+  'hook:guard-prompt',
+]);
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -45,35 +129,33 @@ async function makeTmpDir(prefix = 'rigger-h4-'): Promise<{
 }
 
 /**
- * Create a minimal artifacts directory that satisfies buildClaudeAdapter:
- * - artifacts/claude/deny.json
- * - artifacts/shared/AGENTS.md
- * - artifacts/claude/hooks/ with stub guard files + _shared/hook-lib.ts
+ * Create a minimal external checkout directory that satisfies buildClaudeAdapter
+ * hook resolution (post-B-iii: hooks come from externalBaseDir/hooks/).
+ *
+ * Layout:
+ *   <checkoutDir>/hooks/guard-command.ts
+ *   <checkoutDir>/hooks/guard-secret.ts
+ *   <checkoutDir>/hooks/guard-write-secret.ts
+ *   <checkoutDir>/hooks/guard-prompt.ts
+ *   <checkoutDir>/hooks/_shared/hook-lib.ts
  */
-async function makeArtifactsDir(baseDir: string): Promise<string> {
-  const artifactsDir = path.join(baseDir, 'artifacts');
-  await fs.mkdir(path.join(artifactsDir, 'claude', 'hooks', '_shared'), { recursive: true });
-  await fs.mkdir(path.join(artifactsDir, 'shared'), { recursive: true });
-
-  await fs.writeFile(
-    path.join(artifactsDir, 'claude', 'deny.json'),
-    JSON.stringify({ deny: ['Read(~/.ssh/**)'] }),
-  );
-  await fs.writeFile(path.join(artifactsDir, 'shared', 'AGENTS.md'), '# Agents\nFixture.');
+async function makeCheckoutDir(baseDir: string): Promise<string> {
+  const checkoutDir = path.join(baseDir, 'checkout');
+  await fs.mkdir(path.join(checkoutDir, 'hooks', '_shared'), { recursive: true });
 
   // Stub guard scripts (content doesn't matter — syncToStore just copies them)
   for (const name of ['guard-command', 'guard-secret', 'guard-write-secret', 'guard-prompt']) {
     await fs.writeFile(
-      path.join(artifactsDir, 'claude', 'hooks', `${name}.ts`),
+      path.join(checkoutDir, 'hooks', `${name}.ts`),
       `// stub ${name}`,
     );
   }
   await fs.writeFile(
-    path.join(artifactsDir, 'claude', 'hooks', '_shared', 'hook-lib.ts'),
+    path.join(checkoutDir, 'hooks', '_shared', 'hook-lib.ts'),
     '// stub hook-lib',
   );
 
-  return artifactsDir;
+  return checkoutDir;
 }
 
 // ---------------------------------------------------------------------------
@@ -97,8 +179,8 @@ afterEach(async () => {
 // ---------------------------------------------------------------------------
 
 describe('pack:harness resolves to 4 hook guards via catalog resolver', () => {
-  it('resolve(["pack:harness"], BUILTIN_CATALOG) returns 4 hook artifact entries', () => {
-    const entries = resolve(['pack:harness'], BUILTIN_CATALOG);
+  it('resolve(["pack:harness"], FIXTURE_CATALOG) returns 4 hook artifact entries', () => {
+    const entries = resolve(['pack:harness'], FIXTURE_CATALOG);
     expect(entries).toHaveLength(4);
     const ids = entries.map((e) => e.id);
     expect(ids).toContain('hook:guard-command');
@@ -124,8 +206,12 @@ describe('buildClaudeAdapter hookSpec — hook:guard-secret install/remove lifec
   };
 
   it('plan produces merge-hooks op with correct event, matcher, command, timeout', async () => {
-    const artifactsDir = await makeArtifactsDir(tmp.dir);
-    const adapter = await buildClaudeAdapter(env, artifactsDir);
+    const checkoutDir = await makeCheckoutDir(tmp.dir);
+    const adapter = await buildClaudeAdapter(env, {
+      externalIds: HOOK_EXTERNAL_IDS,
+      externalBaseDir: checkoutDir,
+      effectiveEntries: FIXTURE_EFFECTIVE_ENTRIES,
+    });
 
     const ops = await adapter.plan(ENTRY, 'user', env);
 
@@ -146,8 +232,12 @@ describe('buildClaudeAdapter hookSpec — hook:guard-secret install/remove lifec
   });
 
   it('apply writes hook to settings.json + deposits scripts to store/hooks/', async () => {
-    const artifactsDir = await makeArtifactsDir(tmp.dir);
-    const adapter = await buildClaudeAdapter(env, artifactsDir);
+    const checkoutDir = await makeCheckoutDir(tmp.dir);
+    const adapter = await buildClaudeAdapter(env, {
+      externalIds: HOOK_EXTERNAL_IDS,
+      externalBaseDir: checkoutDir,
+      effectiveEntries: FIXTURE_EFFECTIVE_ENTRIES,
+    });
     const targets = resolveUserTargets(env);
 
     const ops = await adapter.plan(ENTRY, 'user', env);
@@ -175,8 +265,12 @@ describe('buildClaudeAdapter hookSpec — hook:guard-secret install/remove lifec
   });
 
   it('is idempotent — 2nd plan after apply returns []', async () => {
-    const artifactsDir = await makeArtifactsDir(tmp.dir);
-    const adapter = await buildClaudeAdapter(env, artifactsDir);
+    const checkoutDir = await makeCheckoutDir(tmp.dir);
+    const adapter = await buildClaudeAdapter(env, {
+      externalIds: HOOK_EXTERNAL_IDS,
+      externalBaseDir: checkoutDir,
+      effectiveEntries: FIXTURE_EFFECTIVE_ENTRIES,
+    });
 
     const ops = await adapter.plan(ENTRY, 'user', env);
     await adapter.apply(ops, env);
@@ -186,8 +280,12 @@ describe('buildClaudeAdapter hookSpec — hook:guard-secret install/remove lifec
   });
 
   it('audit after apply returns state present', async () => {
-    const artifactsDir = await makeArtifactsDir(tmp.dir);
-    const adapter = await buildClaudeAdapter(env, artifactsDir);
+    const checkoutDir = await makeCheckoutDir(tmp.dir);
+    const adapter = await buildClaudeAdapter(env, {
+      externalIds: HOOK_EXTERNAL_IDS,
+      externalBaseDir: checkoutDir,
+      effectiveEntries: FIXTURE_EFFECTIVE_ENTRIES,
+    });
 
     const ops = await adapter.plan(ENTRY, 'user', env);
     await adapter.apply(ops, env);
@@ -198,8 +296,12 @@ describe('buildClaudeAdapter hookSpec — hook:guard-secret install/remove lifec
   });
 
   it('planRemove → applyRemove removes hook from settings.json; scripts remain in store', async () => {
-    const artifactsDir = await makeArtifactsDir(tmp.dir);
-    const adapter = await buildClaudeAdapter(env, artifactsDir);
+    const checkoutDir = await makeCheckoutDir(tmp.dir);
+    const adapter = await buildClaudeAdapter(env, {
+      externalIds: HOOK_EXTERNAL_IDS,
+      externalBaseDir: checkoutDir,
+      effectiveEntries: FIXTURE_EFFECTIVE_ENTRIES,
+    });
     const targets = resolveUserTargets(env);
 
     // Install
@@ -231,8 +333,12 @@ describe('buildClaudeAdapter hookSpec — hook:guard-secret install/remove lifec
   });
 
   it('check → present after install', async () => {
-    const artifactsDir = await makeArtifactsDir(tmp.dir);
-    const adapter = await buildClaudeAdapter(env, artifactsDir);
+    const checkoutDir = await makeCheckoutDir(tmp.dir);
+    const adapter = await buildClaudeAdapter(env, {
+      externalIds: HOOK_EXTERNAL_IDS,
+      externalBaseDir: checkoutDir,
+      effectiveEntries: FIXTURE_EFFECTIVE_ENTRIES,
+    });
 
     // Before install → missing
     const before = await adapter.audit(ENTRY, 'user', env);
@@ -246,8 +352,12 @@ describe('buildClaudeAdapter hookSpec — hook:guard-secret install/remove lifec
   });
 
   it('apply preserves preexisting permissions.deny', async () => {
-    const artifactsDir = await makeArtifactsDir(tmp.dir);
-    const adapter = await buildClaudeAdapter(env, artifactsDir);
+    const checkoutDir = await makeCheckoutDir(tmp.dir);
+    const adapter = await buildClaudeAdapter(env, {
+      externalIds: HOOK_EXTERNAL_IDS,
+      externalBaseDir: checkoutDir,
+      effectiveEntries: FIXTURE_EFFECTIVE_ENTRIES,
+    });
     const targets = resolveUserTargets(env);
 
     // Pre-populate settings.json with deny rules
@@ -278,9 +388,14 @@ describe('buildClaudeAdapter hookSpec — hook:guard-secret install/remove lifec
 // ---------------------------------------------------------------------------
 
 describe('buildClaudeAdapter hookSpec — unknown id', () => {
-  it('throws an actionable error for external/unknown hook ids', async () => {
-    const artifactsDir = await makeArtifactsDir(tmp.dir);
-    const adapter = await buildClaudeAdapter(env, artifactsDir);
+  it('throws an actionable error for hooks not in externalIds', async () => {
+    const checkoutDir = await makeCheckoutDir(tmp.dir);
+    // No externalIds → hook:custom-guard not routed to externalBaseDir → throws
+    const adapter = await buildClaudeAdapter(env, {
+      externalIds: new Set<string>(),
+      externalBaseDir: checkoutDir,
+      effectiveEntries: new Map(),
+    });
 
     const unknownEntry: AdapterEntry = {
       id: 'hook:custom-guard',
@@ -289,10 +404,7 @@ describe('buildClaudeAdapter hookSpec — unknown id', () => {
     };
 
     await expect(adapter.plan(unknownEntry, 'user', env)).rejects.toThrow(
-      'external hooks not yet supported',
-    );
-    await expect(adapter.plan(unknownEntry, 'user', env)).rejects.toThrow(
-      '"hook:custom-guard"',
+      'hook:custom-guard',
     );
   });
 });
