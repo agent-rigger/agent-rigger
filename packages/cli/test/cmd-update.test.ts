@@ -27,6 +27,7 @@ import type { CatalogEntry, TmpDirFactory } from '@agent-rigger/catalog';
 import type { CommandRunner } from '@agent-rigger/catalog/tool-check';
 import { resolveUserTargets } from '@agent-rigger/core/paths';
 import type { Env } from '@agent-rigger/core/paths';
+import { stubScanner } from '@agent-rigger/core/scan';
 
 import { runCli } from '../src/cli';
 import { runUpdate } from '../src/cmd-update';
@@ -246,7 +247,7 @@ async function preInstallRemote(env: Env, tag: string, sha: string) {
     print: makeCapture().print,
     env,
     artifactsDir: ARTIFACTS_DIR,
-    remote: { run: iso.makeRunner(), tmpFactory: iso.makeTmpFactory() },
+    remote: { run: iso.makeRunner(), tmpFactory: iso.makeTmpFactory(), scanner: stubScanner },
   });
 }
 
@@ -268,6 +269,7 @@ describe('runUpdate — stale: re-installs when remote is newer', () => {
       catalogUrl: 'https://example.com/catalog.git',
       runner: iso.makeRunner(),
       tmpFactory: iso.makeTmpFactory(),
+      scanner: stubScanner,
       confirm: true,
     });
 
@@ -287,6 +289,7 @@ describe('runUpdate — stale: re-installs when remote is newer', () => {
       catalogUrl: 'https://example.com/catalog.git',
       runner: iso.makeRunner(),
       tmpFactory: iso.makeTmpFactory(),
+      scanner: stubScanner,
       confirm: true,
     });
 
@@ -321,6 +324,7 @@ describe('runUpdate — stale: re-installs when remote is newer', () => {
       catalogUrl: 'https://example.com/catalog.git',
       runner: iso.makeRunner(),
       tmpFactory: iso.makeTmpFactory(),
+      scanner: stubScanner,
       confirm: true,
     });
 
@@ -343,6 +347,7 @@ describe('runUpdate — stale: re-installs when remote is newer', () => {
       catalogUrl: 'https://example.com/catalog.git',
       runner: iso.makeRunner(),
       tmpFactory: iso.makeTmpFactory(),
+      scanner: stubScanner,
       confirm: true,
     });
 
@@ -370,6 +375,7 @@ describe('runUpdate — up-to-date: no write when versions match', () => {
       catalogUrl: 'https://example.com/catalog.git',
       runner: iso.makeRunner(),
       tmpFactory: iso.makeTmpFactory(),
+      scanner: stubScanner,
       confirm: true,
     });
 
@@ -393,6 +399,7 @@ describe('runUpdate — up-to-date: no write when versions match', () => {
       catalogUrl: 'https://example.com/catalog.git',
       runner: iso.makeRunner(),
       tmpFactory: iso.makeTmpFactory(),
+      scanner: stubScanner,
       confirm: true,
     });
 
@@ -415,6 +422,7 @@ describe('runUpdate — internal entry: skipped', () => {
       catalogUrl: 'https://example.com/catalog.git',
       runner: iso.makeRunner(),
       tmpFactory: iso.makeTmpFactory(),
+      scanner: stubScanner,
       confirm: true,
     });
 
@@ -431,6 +439,7 @@ describe('runUpdate — internal entry: skipped', () => {
       catalogUrl: 'https://example.com/catalog.git',
       runner: iso.makeRunner(),
       tmpFactory: iso.makeTmpFactory(),
+      scanner: stubScanner,
       confirm: true,
     });
 
@@ -458,7 +467,11 @@ describe('runUpdate — no ids: auto-selects external installed entries', () => 
         print: makeCapture().print,
         env: dualIso.env,
         artifactsDir: ARTIFACTS_DIR,
-        remote: { run: dualIso.makeRunner(), tmpFactory: dualIso.makeTmpFactory() },
+        remote: {
+          run: dualIso.makeRunner(),
+          tmpFactory: dualIso.makeTmpFactory(),
+          scanner: stubScanner,
+        },
       });
 
       dualIso.setRemoteTag(TAG_V1_1_0, SHA_V1_1_0);
@@ -472,6 +485,7 @@ describe('runUpdate — no ids: auto-selects external installed entries', () => 
         catalogUrl: 'https://example.com/catalog.git',
         runner: dualIso.makeRunner(),
         tmpFactory: dualIso.makeTmpFactory(),
+        scanner: stubScanner,
         confirm: true,
       });
 
@@ -495,6 +509,7 @@ describe('runUpdate — no ids: auto-selects external installed entries', () => 
       catalogUrl: 'https://example.com/catalog.git',
       runner: iso.makeRunner(),
       tmpFactory: iso.makeTmpFactory(),
+      scanner: stubScanner,
       confirm: true,
     });
 
@@ -518,6 +533,7 @@ describe('runUpdate — id not installed: skipped', () => {
       catalogUrl: 'https://example.com/catalog.git',
       runner: iso.makeRunner(),
       tmpFactory: iso.makeTmpFactory(),
+      scanner: stubScanner,
       confirm: true,
     });
 
@@ -534,6 +550,7 @@ describe('runUpdate — id not installed: skipped', () => {
       catalogUrl: 'https://example.com/catalog.git',
       runner: iso.makeRunner(),
       tmpFactory: iso.makeTmpFactory(),
+      scanner: stubScanner,
       confirm: true,
     });
 
@@ -568,6 +585,7 @@ describe('runUpdate — transactional: confirm=false leaves artifact intact', ()
       catalogUrl: 'https://example.com/catalog.git',
       runner: iso.makeRunner(),
       tmpFactory: iso.makeTmpFactory(),
+      scanner: stubScanner,
       confirm: false,
     });
 
@@ -606,6 +624,7 @@ describe('runUpdate — transactional: confirm=false leaves artifact intact', ()
       catalogUrl: 'https://example.com/catalog.git',
       runner: iso.makeRunner(),
       tmpFactory: iso.makeTmpFactory(),
+      scanner: stubScanner,
       confirm: () => Promise.resolve(false),
     });
 
@@ -628,6 +647,7 @@ describe('runUpdate — transactional: confirm=false leaves artifact intact', ()
       catalogUrl: 'https://example.com/catalog.git',
       runner: iso.makeRunner(),
       tmpFactory: iso.makeTmpFactory(),
+      scanner: stubScanner,
       confirm: false,
     });
 
@@ -674,6 +694,7 @@ describe('runUpdate — transactional: clone failure leaves artifact intact', ()
         catalogUrl: 'https://example.com/catalog.git',
         runner: cloneFailRunner,
         tmpFactory: iso.makeTmpFactory(),
+        scanner: stubScanner,
         confirm: true,
       }),
     ).rejects.toThrow();
@@ -703,6 +724,7 @@ describe('runUpdate — interactive confirm: installs when confirmed', () => {
       catalogUrl: 'https://example.com/catalog.git',
       runner: iso.makeRunner(),
       tmpFactory: iso.makeTmpFactory(),
+      scanner: stubScanner,
       confirm: () => Promise.resolve(true),
     });
 
@@ -730,6 +752,7 @@ describe('runUpdate — interactive confirm: installs when confirmed', () => {
       catalogUrl: 'https://example.com/catalog.git',
       runner: iso.makeRunner(),
       tmpFactory: iso.makeTmpFactory(),
+      scanner: stubScanner,
       confirm: (planText) => {
         capturedPlanText = planText;
         return Promise.resolve(true);

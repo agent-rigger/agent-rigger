@@ -66,6 +66,11 @@ reports what is missing; it does not install tools itself.
 - **Claude Code** — the assistant this harness configures.
 - **git** — required for remote catalog operations (`ls` against a configured
   catalog URL). agent-rigger shells out to `git ls-remote` and `git clone`.
+- **gitleaks and/or trivy** — required to **install** `external` artifacts from a
+  remote catalog: their content is scanned for secrets/misconfigurations before
+  it lands on disk. With no scanner installed, a remote install is blocked
+  (fail-closed) unless you pass `--force`. Built-in artifacts are trusted and not
+  scanned.
 - **`glab` or `gh`** — required if the catalog references GitLab or GitHub
   resources. `init` probes ambient auth first; it asks for the method only if
   the probe fails.
@@ -348,9 +353,12 @@ These properties hold across all commands:
 
 - **Claude Code only.** Support for other assistants (opencode, Copilot, etc.)
   is a later milestone.
-- **Security scanner is a stub.** The scan step that gates skill and plugin
-  installation always passes in M0. A real implementation (Trivy, Gitleaks, or
-  similar) is the security milestone.
+- **Security scan covers secrets + misconfig, not arbitrary behaviour.** Remote
+  `external` content is scanned with gitleaks and/or trivy before install
+  (fail-closed; `--force` overrides — you are responsible for what you install).
+  This catches leaked secrets and misconfigurations, **not** behavioural analysis
+  of an arbitrary malicious script. Internal/built-in content is trusted and not
+  scanned.
 - **Remote catalog (M1).** `ls` reads the remote catalog, `install`/`add`
   install `external` artifacts with real `ref`/`sha`, `update`/`check` compare
   installed vs latest, and the interactive picker lists remote entries. A single
