@@ -540,3 +540,205 @@ describe('runUpdate — id not installed: skipped', () => {
     expect(result.output).toMatch(/absent|not installed/i);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Transactional safety — confirm=false and clone failure
+// ---------------------------------------------------------------------------
+
+describe('runUpdate — transactional: confirm=false leaves artifact intact', () => {
+  it('artifact stays installed at v1.0.0 when confirm returns false', async () => {
+    await preInstallRemote(iso.env, TAG_V1_0_0, SHA_V1_0_0);
+    iso.setRemoteTag(TAG_V1_1_0, SHA_V1_1_0);
+
+    const skillsDir = resolveUserTargets(iso.env).skillsDir;
+    const storeFile = path.join(skillsDir, 'remote-demo', 'SKILL.md');
+
+    // Record state before the aborted update.
+    const manifestBefore = await fs.readFile(targets.stateJson, 'utf8');
+    const contentBefore = await fs.readFile(storeFile, 'utf8');
+    expect(contentBefore).toContain('v1.0.0');
+
+    // confirm=false → user declines.
+    const result = await runUpdate({
+      ids: ['skill:remote-demo'],
+      scope: 'user',
+      env: iso.env,
+      manifestPath: targets.stateJson,
+      artifactsDir: ARTIFACTS_DIR,
+      catalogUrl: 'https://example.com/catalog.git',
+      runner: iso.makeRunner(),
+      tmpFactory: iso.makeTmpFactory(),
+      confirm: false,
+    });
+
+    // updated must be empty — nothing was reinstalled.
+    expect(result.updated).toHaveLength(0);
+
+    // Manifest ref MUST remain v1.0.0 — nothing was removed.
+    const manifestAfter = await fs.readFile(targets.stateJson, 'utf8');
+    const parsed = JSON.parse(manifestAfter) as {
+      artifacts: Array<{ id: string; ref?: string }>;
+    };
+    const entry = parsed.artifacts.find((a) => a.id === 'skill:remote-demo');
+    expect(entry?.ref).toBe(TAG_V1_0_0);
+
+    // Manifest bytes unchanged.
+    expect(manifestAfter).toBe(manifestBefore);
+
+    // Store content is still v1.0.0.
+    const contentAfter = await fs.readFile(storeFile, 'utf8');
+    expect(contentAfter).toContain('v1.0.0');
+    expect(contentAfter).toBe(contentBefore);
+  });
+
+  it('confirm callback returning false leaves artifact intact', async () => {
+    await preInstallRemote(iso.env, TAG_V1_0_0, SHA_V1_0_0);
+    iso.setRemoteTag(TAG_V1_1_0, SHA_V1_1_0);
+
+    const manifestBefore = await fs.readFile(targets.stateJson, 'utf8');
+
+    const result = await runUpdate({
+      ids: ['skill:remote-demo'],
+      scope: 'user',
+      env: iso.env,
+      manifestPath: targets.stateJson,
+      artifactsDir: ARTIFACTS_DIR,
+      catalogUrl: 'https://example.com/catalog.git',
+      runner: iso.makeRunner(),
+      tmpFactory: iso.makeTmpFactory(),
+      confirm: () => Promise.resolve(false),
+    });
+
+    expect(result.updated).toHaveLength(0);
+
+    const manifestAfter = await fs.readFile(targets.stateJson, 'utf8');
+    expect(manifestAfter).toBe(manifestBefore);
+  });
+
+  it('output mentions aborted when user declines', async () => {
+    await preInstallRemote(iso.env, TAG_V1_0_0, SHA_V1_0_0);
+    iso.setRemoteTag(TAG_V1_1_0, SHA_V1_1_0);
+
+    const result = await runUpdate({
+      ids: ['skill:remote-demo'],
+      scope: 'user',
+      env: iso.env,
+      manifestPath: targets.stateJson,
+      artifactsDir: ARTIFACTS_DIR,
+      catalogUrl: 'https://example.com/catalog.git',
+      runner: iso.makeRunner(),
+      tmpFactory: iso.makeTmpFactory(),
+      confirm: false,
+    });
+
+    expect(result.output).toMatch(/aborted/i);
+  });
+});
+
+describe('runUpdate — transactional: clone failure leaves artifact intact', () => {
+  it('artifact stays installed at v1.0.0 when git clone fails', async () => {
+    await preInstallRemote(iso.env, TAG_V1_0_0, SHA_V1_0_0);
+    iso.setRemoteTag(TAG_V1_1_0, SHA_V1_1_0);
+
+    const skillsDir = resolveUserTargets(iso.env).skillsDir;
+    const storeFile = path.join(skillsDir, 'remote-demo', 'SKILL.md');
+
+    const manifestBefore = await fs.readFile(targets.stateJson, 'utf8');
+    const contentBefore = await fs.readFile(storeFile, 'utf8');
+    expect(contentBefore).toContain('v1.0.0');
+
+    // Runner: ls-remote succeeds (resolveVersion), clone fails (withRemoteCheckout throws).
+    const cloneFailRunner: CommandRunner = (_cmd, args) => {
+      const argv = args ?? [];
+      if (argv[0] === 'ls-remote' && argv[1] === '--tags') {
+        return Promise.resolve({
+          exitCode: 0,
+          stdout: `${SHA_V1_1_0}\trefs/tags/${TAG_V1_1_0}\n`,
+          stderr: '',
+        });
+      }
+      if (argv[0] === 'clone') {
+        return Promise.resolve({ exitCode: 1, stdout: '', stderr: 'network error' });
+      }
+      return Promise.resolve({ exitCode: 0, stdout: '', stderr: '' });
+    };
+
+    // runUpdate must throw (RemoteFetchError from clone) — caller handles it.
+    await expect(
+      runUpdate({
+        ids: ['skill:remote-demo'],
+        scope: 'user',
+        env: iso.env,
+        manifestPath: targets.stateJson,
+        artifactsDir: ARTIFACTS_DIR,
+        catalogUrl: 'https://example.com/catalog.git',
+        runner: cloneFailRunner,
+        tmpFactory: iso.makeTmpFactory(),
+        confirm: true,
+      }),
+    ).rejects.toThrow();
+
+    // Manifest must be untouched — remove never executed.
+    const manifestAfter = await fs.readFile(targets.stateJson, 'utf8');
+    expect(manifestAfter).toBe(manifestBefore);
+
+    // Store content still v1.0.0.
+    const contentAfter = await fs.readFile(storeFile, 'utf8');
+    expect(contentAfter).toContain('v1.0.0');
+    expect(contentAfter).toBe(contentBefore);
+  });
+});
+
+describe('runUpdate — interactive confirm: installs when confirmed', () => {
+  it('updates skill when confirm callback returns true', async () => {
+    await preInstallRemote(iso.env, TAG_V1_0_0, SHA_V1_0_0);
+    iso.setRemoteTag(TAG_V1_1_0, SHA_V1_1_0);
+
+    const result = await runUpdate({
+      ids: ['skill:remote-demo'],
+      scope: 'user',
+      env: iso.env,
+      manifestPath: targets.stateJson,
+      artifactsDir: ARTIFACTS_DIR,
+      catalogUrl: 'https://example.com/catalog.git',
+      runner: iso.makeRunner(),
+      tmpFactory: iso.makeTmpFactory(),
+      confirm: () => Promise.resolve(true),
+    });
+
+    expect(result.updated).toContain('skill:remote-demo');
+
+    // Manifest ref bumped.
+    const raw = await fs.readFile(targets.stateJson, 'utf8');
+    const parsed = JSON.parse(raw) as { artifacts: Array<{ id: string; ref?: string }> };
+    const entry = parsed.artifacts.find((a) => a.id === 'skill:remote-demo');
+    expect(entry?.ref).toBe(TAG_V1_1_0);
+  });
+
+  it('confirm callback receives a plan text describing the update', async () => {
+    await preInstallRemote(iso.env, TAG_V1_0_0, SHA_V1_0_0);
+    iso.setRemoteTag(TAG_V1_1_0, SHA_V1_1_0);
+
+    let capturedPlanText = '';
+
+    await runUpdate({
+      ids: ['skill:remote-demo'],
+      scope: 'user',
+      env: iso.env,
+      manifestPath: targets.stateJson,
+      artifactsDir: ARTIFACTS_DIR,
+      catalogUrl: 'https://example.com/catalog.git',
+      runner: iso.makeRunner(),
+      tmpFactory: iso.makeTmpFactory(),
+      confirm: (planText) => {
+        capturedPlanText = planText;
+        return Promise.resolve(true);
+      },
+    });
+
+    // planText must mention the id and the version transition.
+    expect(capturedPlanText).toMatch(/remote-demo/i);
+    expect(capturedPlanText).toMatch(/v1\.0\.0/);
+    expect(capturedPlanText).toMatch(/v1\.1\.0/);
+  });
+});
