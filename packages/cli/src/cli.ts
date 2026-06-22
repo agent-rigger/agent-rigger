@@ -898,25 +898,56 @@ async function handleInstall(opts: HandleInstallOpts): Promise<number> {
     return 0;
   }
 
-  // Interactive: no ids — use selectArtifacts prompt
+  // Interactive: no ids — use selectArtifacts prompt with effective catalog (built-in ∪ remote).
+  // NOTE: if catalogUrl is configured, this path does a best-effort remote fetch here to build
+  // the multiselect list, then runRemoteInstall does a second checkout for the actual install.
+  // 2 checkouts in the remote-interactive path is accepted; avoids leaking a checkout handle
+  // across the prompt boundary.
   const prompts = deps.prompts ?? (await importUiPrompts());
 
-  const selectedIds = await prompts.selectArtifacts(BUILTIN_CATALOG);
+  const effective = await resolveEffectiveCatalog(env, print, deps.remote);
+
+  const selectedIds = await prompts.selectArtifacts(effective);
   if (selectedIds.length === 0) {
     print('No artifacts selected — nothing to install.');
     return 0;
   }
 
   const interactiveScope = await prompts.selectScope();
+  const interactiveManifestPath = resolveManifestPath(env);
+  const interactiveConfig = await loadCliConfig(env);
+
+  if (interactiveConfig.catalogUrl !== undefined && interactiveConfig.catalogUrl !== '') {
+    // Remote interactive path: use runRemoteInstall so external entries are sourced correctly.
+    const catalogUrl = interactiveConfig.catalogUrl;
+    const runner: CommandRunner = deps.remote?.run ?? defaultRunner;
+    const tmpFactory: TmpDirFactory = deps.remote?.tmpFactory ?? defaultTmpFactory;
+
+    const remoteResult = await runRemoteInstall({
+      ids: selectedIds,
+      catalogUrl,
+      scope: interactiveScope,
+      env,
+      manifestPath: interactiveManifestPath,
+      artifactsDir,
+      runner,
+      tmpFactory,
+      confirm: (planText) => prompts.confirmApply(planText),
+    });
+
+    print(remoteResult.output);
+    return 0;
+  }
+
+  // Local interactive path (no catalogUrl): use BUILTIN_CATALOG.
   const adapter = await buildClaudeAdapter(env, artifactsDir);
-  const manifestPath = resolveManifestPath(env);
 
   const result = await runInstall({
     catalog: BUILTIN_CATALOG,
     adapter,
     scope: interactiveScope,
     env,
-    manifestPath,
+    manifestPath: interactiveManifestPath,
     selectedIds,
     confirm: (planText) => prompts.confirmApply(planText),
   });
