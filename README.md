@@ -169,6 +169,20 @@ Example plan section:
 Tool warnings are advisory. A missing required tool is reported but does not
 block installation.
 
+**Installing from a remote catalog.** When a catalog URL is configured (via
+`init`), a **non-interactive** install (`install <id…>` / `<resource> add <id>`)
+resolves the requested ids against the **effective catalog** (built-in ∪
+remote). For an `external` artifact, agent-rigger shallow-clones the content
+repo at the resolved version, copies the artifact's content
+(`skills/<name>/`, `agents/<name>.md`) into the managed store, and records the
+real `ref` (tag) and `sha` in the manifest. The temporary clone is always
+removed afterwards. A built-in (`internal`) artifact installs from the local
+tree and records the tool's own version. Without a catalog URL, install uses the
+built-in catalog only (no network).
+
+> Interactive `install` (no ids) currently lists the built-in catalog only;
+> remote selection from the interactive picker is a follow-up.
+
 ### `remove` — uninstall artifacts
 
 Remove installed artifacts. Shows a removal plan (what will be deleted or
@@ -292,11 +306,12 @@ These properties hold across all commands:
 - **Security scanner is a stub.** The scan step that gates skill and plugin
   installation always passes in M0. A real implementation (Trivy, Gitleaks, or
   similar) is the security milestone.
-- **Remote catalog is read-only (M1-a).** `ls` reads a remote content
-  repository when a catalog URL is configured, so teams can see published
-  artifacts. Installing and updating _from_ the remote (`add`/`update` against
-  remote entries, real `ref`/`sha` in the manifest) land in M1-b / M1-c. Until
-  then, `install`/`add` operate on the built-in catalog only.
+- **Remote install is non-interactive (M1-b).** `ls` reads the remote catalog
+  (M1-a) and `install <id…>` / `<resource> add <id>` install `external`
+  artifacts from it with real `ref`/`sha` (M1-b). Still pending: `update`
+  (compare installed vs latest, re-install newer — M1-c) and remote selection
+  from the **interactive** picker. The security scanner that gates remote
+  content is still a stub (see below).
 - **No standalone binary distribution.** The compiled binary resolves artifacts
   relative to the cloned repository. Bundling artifacts into the binary is a
   prerequisite for distributing `agent-rigger` as a single file.
