@@ -26,16 +26,22 @@ import {
   SkillScanBlockedError,
 } from '@agent-rigger/adapters';
 import type { Adapter, AdapterEntry } from '@agent-rigger/core/adapter';
+import { assertSafeArtifactName, UnsafeArtifactNameError } from '@agent-rigger/core/artifact-name';
 import { InvalidJsonError } from '@agent-rigger/core/fs-json';
 import type { Env } from '@agent-rigger/core/paths';
 import { resolveUserTargets } from '@agent-rigger/core/paths';
 import { stubScanner } from '@agent-rigger/core/scan';
 
-import { BUILTIN_CATALOG } from '@agent-rigger/catalog';
-import { DependencyCycleError, UnknownEntryError } from '@agent-rigger/catalog/resolver';
-
-import type { TmpDirFactory } from '@agent-rigger/catalog';
-import type { CommandRunner } from '@agent-rigger/catalog/tool-check';
+import {
+  BUILTIN_CATALOG,
+  mergeCatalogs,
+  readCatalogDir,
+  resolveVersion,
+  type TmpDirFactory,
+  withRemoteCheckout,
+} from '@agent-rigger/catalog';
+import { DependencyCycleError, resolve, UnknownEntryError } from '@agent-rigger/catalog/resolver';
+import { type CommandRunner, defaultRunner } from '@agent-rigger/catalog/tool-check';
 import { runCheck } from './cmd-check';
 import { runInit } from './cmd-init';
 import { runInstall } from './cmd-install';
@@ -44,7 +50,7 @@ import { RESOURCE_NATURE_MAP, runLs } from './cmd-ls';
 import { runRemove, UnknownRemoveIdError } from './cmd-remove';
 import { loadConfig } from './config';
 import { PreflightAuthError } from './preflight-auth';
-import { fetchRemoteCatalog, mergeCatalogs } from './remote';
+import { defaultTmpFactory, fetchRemoteCatalog } from './remote';
 import { renderEntryInfo } from './ui';
 
 // ---------------------------------------------------------------------------
@@ -251,18 +257,39 @@ export interface CliDeps {
 // ---------------------------------------------------------------------------
 
 /**
+ * Options for the external-resolver seam in buildClaudeAdapter.
+ *
+ * @param externalIds      Set of artifact ids (e.g. 'skill:x', 'agent:y') whose
+ *                         source should be resolved from externalBaseDir instead of
+ *                         the local artifactsDir. Both fields must be provided
+ *                         together for the seam to activate.
+ * @param externalBaseDir  Absolute path to the root of a remote checkout. Expected
+ *                         layout: skills/<name>/ and agents/<name>.md.
+ */
+export interface BuildClaudeAdapterOpts {
+  externalIds?: Set<string>;
+  externalBaseDir?: string;
+}
+
+/**
  * Build a ClaudeAdapter from the artifacts directory.
  *
  * - denyRef       : loaded from <artifactsDir>/claude/deny.json
  * - agentsContent : loaded from <artifactsDir>/shared/AGENTS.md
  * - skillSource   : resolves id → <artifactsDir>/claude/skills/<id>
+ *                   or <externalBaseDir>/skills/<id> when id is in externalIds
  * - agentSource   : resolves id → <artifactsDir>/claude/agents/<agentId>.md
+ *                   or <externalBaseDir>/agents/<agentId>.md when id is in externalIds
  * - pluginSource  : resolves id → { plugin: <pluginId>, marketplace: <cwd>/.claude-plugin/marketplace.json }
  * - scanner       : stubScanner (M0: always passes)
+ *
+ * @param opts  Optional external-resolver seam for remote installs (M1b-4).
+ *              Omitting opts → existing behaviour unchanged (100% rétro-compatible).
  */
 export async function buildClaudeAdapter(
   _env: Env,
   artifactsDir: string,
+  opts?: BuildClaudeAdapterOpts,
 ): Promise<Adapter> {
   const denyJsonPath = path.join(artifactsDir, 'claude', 'deny.json');
   const agentsMdPath = path.join(artifactsDir, 'shared', 'AGENTS.md');
@@ -276,10 +303,31 @@ export async function buildClaudeAdapter(
     denyRef,
     agentsContent,
     scanner: stubScanner,
-    skillSource: (entry) =>
-      path.join(artifactsDir, 'claude', 'skills', entry.id.replace(/^skill:/, '')),
-    agentSource: (entry) =>
-      path.join(artifactsDir, 'claude', 'agents', entry.id.replace(/^agent:/, '') + '.md'),
+    skillSource: (entry) => {
+      const name = entry.id.replace(/^skill:/, '');
+      // Depth-in-defence: guard before any path.join — prevents traversal via
+      // an external catalog entry like "skill:../../../../etc/evil".
+      assertSafeArtifactName(name, entry.id);
+      if (
+        opts?.externalIds?.has(entry.id) === true
+        && opts.externalBaseDir !== undefined
+      ) {
+        return path.join(opts.externalBaseDir, 'skills', name);
+      }
+      return path.join(artifactsDir, 'claude', 'skills', name);
+    },
+    agentSource: (entry) => {
+      const name = entry.id.replace(/^agent:/, '');
+      // Depth-in-defence: guard before any path.join.
+      assertSafeArtifactName(name, entry.id);
+      if (
+        opts?.externalIds?.has(entry.id) === true
+        && opts.externalBaseDir !== undefined
+      ) {
+        return path.join(opts.externalBaseDir, 'agents', name + '.md');
+      }
+      return path.join(artifactsDir, 'claude', 'agents', name + '.md');
+    },
     pluginSource: (entry) => ({
       plugin: entry.id.replace(/^plugin:/, ''),
       marketplace: path.join(process.cwd(), '.claude-plugin', 'marketplace.json'),
@@ -321,6 +369,26 @@ function resolveConfigPath(env: Env): string {
 }
 
 // ---------------------------------------------------------------------------
+// loadCliConfig — load resolved config for the current env
+// ---------------------------------------------------------------------------
+
+/**
+ * Load the effective CLI config from user + project config files and env vars.
+ *
+ * Shared by resolveEffectiveCatalog and handleInstall to avoid duplicating
+ * the path-resolution + loadConfig plumbing.
+ */
+async function loadCliConfig(env: Env): Promise<Awaited<ReturnType<typeof loadConfig>>> {
+  const userConfigPath = resolveConfigPath(env);
+  const projectConfigPath = path.join(process.cwd(), '.agent-rigger', 'config.json');
+  return loadConfig({
+    userConfigPath,
+    projectConfigPath,
+    env: env as Record<string, string | undefined>,
+  });
+}
+
+// ---------------------------------------------------------------------------
 // resolveEffectiveCatalog — built-in ∪ remote (best-effort)
 // ---------------------------------------------------------------------------
 
@@ -339,15 +407,7 @@ async function resolveEffectiveCatalog(
   print: (msg: string) => void,
   remote: CliDeps['remote'],
 ): Promise<typeof BUILTIN_CATALOG> {
-  const userConfigPath = resolveConfigPath(env);
-  // projectConfigPath: cwd-relative fallback (no project concept in M1-a)
-  const projectConfigPath = path.join(process.cwd(), '.agent-rigger', 'config.json');
-
-  const config = await loadConfig({
-    userConfigPath,
-    projectConfigPath,
-    env: env as Record<string, string | undefined>,
-  });
+  const config = await loadCliConfig(env);
 
   if (!config.catalogUrl) {
     return BUILTIN_CATALOG;
@@ -361,7 +421,15 @@ async function resolveEffectiveCatalog(
 
   try {
     const { entries } = await fetchRemoteCatalog(remoteFetchOpts);
-    return mergeCatalogs(BUILTIN_CATALOG, entries);
+    const effective = mergeCatalogs(BUILTIN_CATALOG, entries);
+    if (effective.conflicts.length > 0) {
+      print(
+        `[warning] ${effective.conflicts.length} remote entr${
+          effective.conflicts.length === 1 ? 'y' : 'ies'
+        } shadowed by built-in: ${effective.conflicts.join(', ')}`,
+      );
+    }
+    return effective.entries;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     print(`[warning] Remote catalog unavailable (${msg}). Falling back to built-in catalog.`);
@@ -686,7 +754,6 @@ async function handleInstall(opts: HandleInstallOpts): Promise<number> {
 
   // Non-interactive: ids provided on the command line
   if (ids.length > 0) {
-    const adapter = await buildClaudeAdapter(env, artifactsDir);
     const manifestPath = resolveManifestPath(env);
 
     // Determine confirmation strategy
@@ -699,6 +766,74 @@ async function handleInstall(opts: HandleInstallOpts): Promise<number> {
       const prompts = deps.prompts ?? (await importUiPrompts());
       confirm = (planText: string) => prompts.confirmApply(planText);
     }
+
+    // Load config to check for a remote catalog URL.
+    const config = await loadCliConfig(env);
+
+    if (config.catalogUrl !== undefined && config.catalogUrl !== '') {
+      // Remote install path: checkout the content repo, merge catalogs, install.
+      const catalogUrl = config.catalogUrl;
+      const runner: CommandRunner = deps.remote?.run ?? defaultRunner;
+      const tmpFactory: TmpDirFactory = deps.remote?.tmpFactory ?? defaultTmpFactory;
+
+      const version = await resolveVersion(catalogUrl, runner);
+
+      const result = await withRemoteCheckout(
+        catalogUrl,
+        version.ref,
+        runner,
+        { tmpFactory },
+        async (dir) => {
+          const remoteEntries = await readCatalogDir(dir);
+          // Frontier guard: reject external entries whose derived name would cause
+          // a path traversal before any install operation begins.
+          for (const entry of remoteEntries) {
+            if (entry.kind !== 'artifact') continue;
+            if (entry.nature === 'skill') {
+              const name = entry.id.replace(/^skill:/, '');
+              assertSafeArtifactName(name, entry.id);
+            } else if (entry.nature === 'agent') {
+              const name = entry.id.replace(/^agent:/, '');
+              assertSafeArtifactName(name, entry.id);
+            }
+          }
+          const { entries: effective } = mergeCatalogs(BUILTIN_CATALOG, remoteEntries);
+          const resolved = resolve(ids, effective);
+          const externalIds = new Set(
+            resolved.filter((e) => e.source === 'external').map((e) => e.id),
+          );
+          const adapter = await buildClaudeAdapter(env, artifactsDir, {
+            externalIds,
+            externalBaseDir: dir,
+          });
+          const versionFor = (
+            entry: { id: string },
+          ): { source: 'internal' | 'external'; ref: string; sha: string } => {
+            if (externalIds.has(entry.id)) {
+              return { source: 'external', ref: version.ref, sha: version.sha };
+            }
+            return { source: 'internal', ref: 'v0.0.0', sha: '' };
+          };
+          return runInstall({
+            catalog: effective,
+            adapter,
+            scope,
+            env,
+            manifestPath,
+            selectedIds: ids,
+            confirm,
+            versionFor,
+            toolRunner: runner,
+          });
+        },
+      );
+
+      print(result.output);
+      return 0;
+    }
+
+    // Local install path (no catalogUrl configured): use BUILTIN_CATALOG.
+    const adapter = await buildClaudeAdapter(env, artifactsDir);
 
     const result = await runInstall({
       catalog: BUILTIN_CATALOG,
@@ -811,6 +946,13 @@ function handleError(err: unknown, print: (msg: string) => void): number {
   if (err instanceof PreflightAuthError) {
     print(`[error] Auth failed: ${err.message}`);
     return 1;
+  }
+
+  if (err instanceof UnsafeArtifactNameError) {
+    print(
+      `[error] Unsafe artifact id rejected (path traversal attempt): "${err.id}". Only names matching [a-zA-Z0-9._-] are accepted.`,
+    );
+    return 2;
   }
 
   if (err instanceof UnknownEntryError) {

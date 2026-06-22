@@ -125,6 +125,8 @@ export function reportExitCode(report: Report): 0 | 3 {
  * @param scope         Installation scope ('user' | 'project').
  * @param env           Injectable env for HOME resolution.
  * @param manifestPath  Absolute path to state.json (e.g. from resolveUserTargets).
+ * @param versionFor    Optional seam: maps an entry to its source/ref/sha for the
+ *                      manifest. When omitted the M0 defaults apply (internal/v0.0.0/'').
  */
 export async function apply(
   adapter: Adapter,
@@ -132,6 +134,9 @@ export async function apply(
   scope: Scope,
   env: Env,
   manifestPath: string,
+  versionFor?: (
+    entry: AdapterEntry,
+  ) => { source: 'internal' | 'external'; ref: string; sha: string },
 ): Promise<ApplyResult> {
   let manifest = await readManifest(manifestPath);
 
@@ -174,7 +179,8 @@ export async function apply(
     allWritten.push(...targets);
 
     // Upsert manifest entry with the files written
-    manifest = upsertEntry(manifest, buildManifestEntry(entry, scope, targets));
+    const version = versionFor === undefined ? undefined : versionFor(entry);
+    manifest = upsertEntry(manifest, buildManifestEntry(entry, scope, targets, version));
   }
 
   // Persist the manifest once after all entries have been processed
@@ -276,18 +282,26 @@ function removeEntry(manifest: Manifest, id: string, scope: Scope): Manifest {
 /**
  * Build a ManifestEntry from an AdapterEntry + the paths written.
  * M0 defaults: source 'internal', ref 'v0.0.0', sha '' (no remote fetch yet).
+ *
+ * @param version  Optional override for source/ref/sha. When omitted the M0
+ *                 defaults apply. Provided by the versionFor seam in apply().
  */
 function buildManifestEntry(
   entry: AdapterEntry,
   scope: Scope,
   files: string[],
+  version?: { source: 'internal' | 'external'; ref: string; sha: string },
 ): ManifestEntry {
+  const source = version === undefined ? 'internal' : version.source;
+  const ref = version === undefined ? 'v0.0.0' : version.ref;
+  const sha = version === undefined ? '' : version.sha;
+
   return {
     id: entry.id,
     nature: entry.nature,
-    source: 'internal',
-    ref: 'v0.0.0',
-    sha: '',
+    source,
+    ref,
+    sha,
     scope,
     installedAt: new Date().toISOString(),
     files,

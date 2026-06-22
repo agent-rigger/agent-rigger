@@ -89,6 +89,14 @@ export interface RunInstallOptions {
   toolRunner?: CommandRunner;
   /** Working directory (reserved; unused in M0). */
   cwd?: string;
+  /**
+   * Optional seam for remote installs (M1b-3/M1b-4).
+   * When provided, each entry's source/ref/sha in the manifest is derived
+   * from this function instead of the M0 defaults (internal/v0.0.0/'').
+   */
+  versionFor?: (
+    entry: AdapterEntry,
+  ) => { source: 'internal' | 'external'; ref: string; sha: string };
 }
 
 // ---------------------------------------------------------------------------
@@ -119,6 +127,7 @@ export interface RunInstallOptions {
  */
 export async function runInstall(opts: RunInstallOptions): Promise<InstallResult> {
   const { catalog, adapter, scope, env, manifestPath, selectedIds, confirm, toolRunner } = opts;
+  const { versionFor } = opts;
 
   // -------------------------------------------------------------------------
   // Step 1: Resolve selected ids → concrete artifact entries
@@ -220,7 +229,9 @@ export async function runInstall(opts: RunInstallOptions): Promise<InstallResult
   // Step 6: Apply (backup → write → manifest)
   // -------------------------------------------------------------------------
 
-  const applyResult = await apply(adapter, adapterEntries, scope, env, manifestPath);
+  const applyResult = versionFor === undefined
+    ? await apply(adapter, adapterEntries, scope, env, manifestPath)
+    : await apply(adapter, adapterEntries, scope, env, manifestPath, versionFor);
 
   // -------------------------------------------------------------------------
   // Step 7: Compose output

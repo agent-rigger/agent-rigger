@@ -6,6 +6,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./adapter": "./src/adapter.ts",
+    "./artifact-name": "./src/artifact-name.ts",
     "./backup": "./src/backup.ts",
     "./deny": "./src/deny.ts",
     "./engine": "./src/engine.ts",
