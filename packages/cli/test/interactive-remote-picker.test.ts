@@ -21,6 +21,7 @@ import type { CatalogEntry, TmpDirFactory } from '@agent-rigger/catalog';
 import type { CommandRunner } from '@agent-rigger/catalog/tool-check';
 import { resolveUserTargets } from '@agent-rigger/core/paths';
 import type { Env } from '@agent-rigger/core/paths';
+import { stubScanner } from '@agent-rigger/core/scan';
 
 import { runCli } from '../src/cli';
 import type { CliPrompts } from '../src/cli';
@@ -198,7 +199,7 @@ describe('interactive install — with catalogUrl', () => {
       env: iso.env,
       artifactsDir: ARTIFACTS_DIR,
       prompts,
-      remote: { run: iso.makeRunner(), tmpFactory: iso.makeTmpFactory() },
+      remote: { run: iso.makeRunner(), tmpFactory: iso.makeTmpFactory(), scanner: stubScanner },
     });
 
     expect(capturedEntries).not.toBeNull();
@@ -222,7 +223,7 @@ describe('interactive install — with catalogUrl', () => {
       env: iso.env,
       artifactsDir: ARTIFACTS_DIR,
       prompts,
-      remote: { run: iso.makeRunner(), tmpFactory: iso.makeTmpFactory() },
+      remote: { run: iso.makeRunner(), tmpFactory: iso.makeTmpFactory(), scanner: stubScanner },
     });
 
     expect(code).toBe(0);
@@ -242,7 +243,7 @@ describe('interactive install — with catalogUrl', () => {
       env: iso.env,
       artifactsDir: ARTIFACTS_DIR,
       prompts,
-      remote: { run: iso.makeRunner(), tmpFactory: iso.makeTmpFactory() },
+      remote: { run: iso.makeRunner(), tmpFactory: iso.makeTmpFactory(), scanner: stubScanner },
     });
 
     const raw = await fs.readFile(targets.stateJson, 'utf8');
@@ -269,7 +270,7 @@ describe('interactive install — with catalogUrl', () => {
       env: iso.env,
       artifactsDir: ARTIFACTS_DIR,
       prompts,
-      remote: { run: iso.makeRunner(), tmpFactory: iso.makeTmpFactory() },
+      remote: { run: iso.makeRunner(), tmpFactory: iso.makeTmpFactory(), scanner: stubScanner },
     });
 
     const skillsDir = resolveUserTargets(iso.env).skillsDir;
@@ -305,7 +306,11 @@ describe('interactive install — without catalogUrl', () => {
         env: noUrlIso.env,
         artifactsDir: ARTIFACTS_DIR,
         prompts,
-        remote: { run: noUrlIso.makeRunner(), tmpFactory: noUrlIso.makeTmpFactory() },
+        remote: {
+          run: noUrlIso.makeRunner(),
+          tmpFactory: noUrlIso.makeTmpFactory(),
+          scanner: stubScanner,
+        },
       });
 
       expect(capturedEntries).not.toBeNull();
@@ -376,7 +381,7 @@ describe('interactive install — empty selection', () => {
       env: iso.env,
       artifactsDir: ARTIFACTS_DIR,
       prompts,
-      remote: { run: iso.makeRunner(), tmpFactory: iso.makeTmpFactory() },
+      remote: { run: iso.makeRunner(), tmpFactory: iso.makeTmpFactory(), scanner: stubScanner },
     });
 
     expect(code).toBe(0);
@@ -398,7 +403,7 @@ describe('interactive install — empty selection', () => {
       env: iso.env,
       artifactsDir: ARTIFACTS_DIR,
       prompts,
-      remote: { run: iso.makeRunner(), tmpFactory: iso.makeTmpFactory() },
+      remote: { run: iso.makeRunner(), tmpFactory: iso.makeTmpFactory(), scanner: stubScanner },
     });
 
     expect(lines.join('\n')).toMatch(/nothing|no artifacts/i);

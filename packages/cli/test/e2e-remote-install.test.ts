@@ -35,6 +35,7 @@ import { UnsafeArtifactNameError } from '@agent-rigger/core/artifact-name';
 import { readJson } from '@agent-rigger/core/fs-json';
 import { resolveUserTargets } from '@agent-rigger/core/paths';
 import type { Env } from '@agent-rigger/core/paths';
+import { stubScanner } from '@agent-rigger/core/scan';
 
 import { runCli } from '../src/cli';
 
@@ -219,7 +220,7 @@ describe('remote install — skill:remote-demo --yes with catalogUrl', () => {
       print: cap.print,
       env: remoteEnv.env,
       artifactsDir: ARTIFACTS_DIR,
-      remote: { run: remoteEnv.runner, tmpFactory: remoteEnv.tmpFactory },
+      remote: { run: remoteEnv.runner, tmpFactory: remoteEnv.tmpFactory, scanner: stubScanner },
     });
     expect(code).toBe(0);
   });
@@ -229,7 +230,7 @@ describe('remote install — skill:remote-demo --yes with catalogUrl', () => {
       print: makeCapture().print,
       env: remoteEnv.env,
       artifactsDir: ARTIFACTS_DIR,
-      remote: { run: remoteEnv.runner, tmpFactory: remoteEnv.tmpFactory },
+      remote: { run: remoteEnv.runner, tmpFactory: remoteEnv.tmpFactory, scanner: stubScanner },
     });
 
     // store: <RIGGER_HOME>/.config/agent-rigger/skills/remote-demo
@@ -243,7 +244,7 @@ describe('remote install — skill:remote-demo --yes with catalogUrl', () => {
       print: makeCapture().print,
       env: remoteEnv.env,
       artifactsDir: ARTIFACTS_DIR,
-      remote: { run: remoteEnv.runner, tmpFactory: remoteEnv.tmpFactory },
+      remote: { run: remoteEnv.runner, tmpFactory: remoteEnv.tmpFactory, scanner: stubScanner },
     });
 
     const skillMdPath = path.join(targets.skillsDir, 'remote-demo', 'SKILL.md');
@@ -256,7 +257,7 @@ describe('remote install — skill:remote-demo --yes with catalogUrl', () => {
       print: makeCapture().print,
       env: remoteEnv.env,
       artifactsDir: ARTIFACTS_DIR,
-      remote: { run: remoteEnv.runner, tmpFactory: remoteEnv.tmpFactory },
+      remote: { run: remoteEnv.runner, tmpFactory: remoteEnv.tmpFactory, scanner: stubScanner },
     });
 
     // symlink: <RIGGER_HOME>/.claude/skills/remote-demo
@@ -271,7 +272,7 @@ describe('remote install — skill:remote-demo --yes with catalogUrl', () => {
       print: makeCapture().print,
       env: remoteEnv.env,
       artifactsDir: ARTIFACTS_DIR,
-      remote: { run: remoteEnv.runner, tmpFactory: remoteEnv.tmpFactory },
+      remote: { run: remoteEnv.runner, tmpFactory: remoteEnv.tmpFactory, scanner: stubScanner },
     });
 
     const raw = await fs.readFile(targets.stateJson, 'utf8');
@@ -288,7 +289,7 @@ describe('remote install — skill:remote-demo --yes with catalogUrl', () => {
       print: makeCapture().print,
       env: remoteEnv.env,
       artifactsDir: ARTIFACTS_DIR,
-      remote: { run: remoteEnv.runner, tmpFactory: remoteEnv.tmpFactory },
+      remote: { run: remoteEnv.runner, tmpFactory: remoteEnv.tmpFactory, scanner: stubScanner },
     });
 
     const raw = await fs.readFile(targets.stateJson, 'utf8');
@@ -304,7 +305,7 @@ describe('remote install — skill:remote-demo --yes with catalogUrl', () => {
       print: makeCapture().print,
       env: remoteEnv.env,
       artifactsDir: ARTIFACTS_DIR,
-      remote: { run: remoteEnv.runner, tmpFactory: remoteEnv.tmpFactory },
+      remote: { run: remoteEnv.runner, tmpFactory: remoteEnv.tmpFactory, scanner: stubScanner },
     });
 
     const raw = await fs.readFile(targets.stateJson, 'utf8');
@@ -327,7 +328,7 @@ describe('remote install — builtin id with catalogUrl → source:internal', ()
       print: cap.print,
       env: remoteEnv.env,
       artifactsDir: ARTIFACTS_DIR,
-      remote: { run: remoteEnv.runner, tmpFactory: remoteEnv.tmpFactory },
+      remote: { run: remoteEnv.runner, tmpFactory: remoteEnv.tmpFactory, scanner: stubScanner },
     });
     expect(code).toBe(0);
   });
@@ -337,7 +338,7 @@ describe('remote install — builtin id with catalogUrl → source:internal', ()
       print: makeCapture().print,
       env: remoteEnv.env,
       artifactsDir: ARTIFACTS_DIR,
-      remote: { run: remoteEnv.runner, tmpFactory: remoteEnv.tmpFactory },
+      remote: { run: remoteEnv.runner, tmpFactory: remoteEnv.tmpFactory, scanner: stubScanner },
     });
 
     const raw = await fs.readFile(targets.stateJson, 'utf8');
@@ -371,7 +372,7 @@ describe('remote install — builtin id WITHOUT catalogUrl → local flow', () =
         print: cap.print,
         env: localEnv.env,
         artifactsDir: ARTIFACTS_DIR,
-        remote: { run: countingRunner, tmpFactory: localEnv.tmpFactory },
+        remote: { run: countingRunner, tmpFactory: localEnv.tmpFactory, scanner: stubScanner },
       });
       expect(code).toBe(0);
       expect(runnerCallCount).toBe(0);
@@ -389,7 +390,7 @@ describe('remote install — builtin id WITHOUT catalogUrl → local flow', () =
         print: makeCapture().print,
         env: localEnv.env,
         artifactsDir: ARTIFACTS_DIR,
-        remote: { run: localEnv.runner, tmpFactory: localEnv.tmpFactory },
+        remote: { run: localEnv.runner, tmpFactory: localEnv.tmpFactory, scanner: stubScanner },
       });
 
       const raw = await fs.readFile(localTargets.stateJson, 'utf8');
@@ -414,7 +415,7 @@ describe('remote install — cleanup: tmp checkout removed after install', () =>
       print: makeCapture().print,
       env: remoteEnv.env,
       artifactsDir: ARTIFACTS_DIR,
-      remote: { run: remoteEnv.runner, tmpFactory: remoteEnv.tmpFactory },
+      remote: { run: remoteEnv.runner, tmpFactory: remoteEnv.tmpFactory, scanner: stubScanner },
     });
 
     expect(remoteEnv.getCleanupCalled()).toBe(true);
@@ -453,7 +454,11 @@ describe('TEST-1 — path traversal id rejected', () => {
           print: cap.print,
           env: traversalEnv.env,
           artifactsDir: ARTIFACTS_DIR,
-          remote: { run: traversalEnv.runner, tmpFactory: traversalEnv.tmpFactory },
+          remote: {
+            run: traversalEnv.runner,
+            tmpFactory: traversalEnv.tmpFactory,
+            scanner: stubScanner,
+          },
         },
       );
 
@@ -494,7 +499,11 @@ describe('TEST-1 — path traversal id rejected', () => {
         print: makeCapture().print,
         env: traversalEnv.env,
         artifactsDir: ARTIFACTS_DIR,
-        remote: { run: traversalEnv.runner, tmpFactory: traversalEnv.tmpFactory },
+        remote: {
+          run: traversalEnv.runner,
+          tmpFactory: traversalEnv.tmpFactory,
+          scanner: stubScanner,
+        },
       });
     } catch {
       // error may propagate — that's fine
@@ -529,7 +538,11 @@ describe('TEST-1 — path traversal id rejected', () => {
         print: makeCapture().print,
         env: traversalEnv.env,
         artifactsDir: ARTIFACTS_DIR,
-        remote: { run: traversalEnv.runner, tmpFactory: traversalEnv.tmpFactory },
+        remote: {
+          run: traversalEnv.runner,
+          tmpFactory: traversalEnv.tmpFactory,
+          scanner: stubScanner,
+        },
       });
     } catch {
       // may propagate
@@ -563,7 +576,7 @@ describe('TEST-2a — confirm:false — cleanup called, nothing written', () => 
         print: cap.print,
         env: abortEnv.env,
         artifactsDir: ARTIFACTS_DIR,
-        remote: { run: abortEnv.runner, tmpFactory: abortEnv.tmpFactory },
+        remote: { run: abortEnv.runner, tmpFactory: abortEnv.tmpFactory, scanner: stubScanner },
         prompts: {
           selectArtifacts: async () => [],
           selectScope: async () => 'user',
@@ -592,7 +605,7 @@ describe('TEST-2a — confirm:false — cleanup called, nothing written', () => 
         print: makeCapture().print,
         env: abortEnv.env,
         artifactsDir: ARTIFACTS_DIR,
-        remote: { run: abortEnv.runner, tmpFactory: abortEnv.tmpFactory },
+        remote: { run: abortEnv.runner, tmpFactory: abortEnv.tmpFactory, scanner: stubScanner },
         prompts: {
           selectArtifacts: async () => [],
           selectScope: async () => 'user',
@@ -630,7 +643,7 @@ describe('TEST-2b — skill source absent in checkout — error propagates + cle
         print: makeCapture().print,
         env: noSkillEnv.env,
         artifactsDir: ARTIFACTS_DIR,
-        remote: { run: noSkillEnv.runner, tmpFactory: noSkillEnv.tmpFactory },
+        remote: { run: noSkillEnv.runner, tmpFactory: noSkillEnv.tmpFactory, scanner: stubScanner },
       });
     } catch {
       // error expected
@@ -653,7 +666,7 @@ describe('TEST-2b — skill source absent in checkout — error propagates + cle
         print: makeCapture().print,
         env: noSkillEnv.env,
         artifactsDir: ARTIFACTS_DIR,
-        remote: { run: noSkillEnv.runner, tmpFactory: noSkillEnv.tmpFactory },
+        remote: { run: noSkillEnv.runner, tmpFactory: noSkillEnv.tmpFactory, scanner: stubScanner },
       });
       expect(code).not.toBe(0);
     } catch {
@@ -677,7 +690,7 @@ describe('TEST-3 — mixed install: builtin (internal) + remote (external)', () 
         print: cap.print,
         env: remoteEnv.env,
         artifactsDir: ARTIFACTS_DIR,
-        remote: { run: remoteEnv.runner, tmpFactory: remoteEnv.tmpFactory },
+        remote: { run: remoteEnv.runner, tmpFactory: remoteEnv.tmpFactory, scanner: stubScanner },
       },
     );
     expect(code).toBe(0);
@@ -688,7 +701,7 @@ describe('TEST-3 — mixed install: builtin (internal) + remote (external)', () 
       print: makeCapture().print,
       env: remoteEnv.env,
       artifactsDir: ARTIFACTS_DIR,
-      remote: { run: remoteEnv.runner, tmpFactory: remoteEnv.tmpFactory },
+      remote: { run: remoteEnv.runner, tmpFactory: remoteEnv.tmpFactory, scanner: stubScanner },
     });
 
     const raw = await fs.readFile(targets.stateJson, 'utf8');
@@ -708,7 +721,7 @@ describe('TEST-3 — mixed install: builtin (internal) + remote (external)', () 
       print: makeCapture().print,
       env: remoteEnv.env,
       artifactsDir: ARTIFACTS_DIR,
-      remote: { run: remoteEnv.runner, tmpFactory: remoteEnv.tmpFactory },
+      remote: { run: remoteEnv.runner, tmpFactory: remoteEnv.tmpFactory, scanner: stubScanner },
     });
 
     const raw = await fs.readFile(targets.stateJson, 'utf8');
@@ -728,7 +741,7 @@ describe('TEST-3 — mixed install: builtin (internal) + remote (external)', () 
       print: makeCapture().print,
       env: remoteEnv.env,
       artifactsDir: ARTIFACTS_DIR,
-      remote: { run: remoteEnv.runner, tmpFactory: remoteEnv.tmpFactory },
+      remote: { run: remoteEnv.runner, tmpFactory: remoteEnv.tmpFactory, scanner: stubScanner },
     });
 
     const raw = await fs.readFile(targets.stateJson, 'utf8');
@@ -761,7 +774,7 @@ describe('TEST-4 — pack:harness install via remote path with catalogUrl', () =
       print: cap.print,
       env: remoteEnv.env,
       artifactsDir: ARTIFACTS_DIR,
-      remote: { run: remoteEnv.runner, tmpFactory: remoteEnv.tmpFactory },
+      remote: { run: remoteEnv.runner, tmpFactory: remoteEnv.tmpFactory, scanner: stubScanner },
     });
     expect(code).toBe(0);
   });
@@ -771,7 +784,7 @@ describe('TEST-4 — pack:harness install via remote path with catalogUrl', () =
       print: makeCapture().print,
       env: remoteEnv.env,
       artifactsDir: ARTIFACTS_DIR,
-      remote: { run: remoteEnv.runner, tmpFactory: remoteEnv.tmpFactory },
+      remote: { run: remoteEnv.runner, tmpFactory: remoteEnv.tmpFactory, scanner: stubScanner },
     });
 
     const settings = await readJson(targets.claudeSettings);
@@ -804,7 +817,7 @@ describe('TEST-4 — pack:harness install via remote path with catalogUrl', () =
       print: makeCapture().print,
       env: remoteEnv.env,
       artifactsDir: ARTIFACTS_DIR,
-      remote: { run: remoteEnv.runner, tmpFactory: remoteEnv.tmpFactory },
+      remote: { run: remoteEnv.runner, tmpFactory: remoteEnv.tmpFactory, scanner: stubScanner },
     });
 
     const scriptStore = path.join(path.dirname(targets.stateJson), 'hooks');
@@ -821,7 +834,7 @@ describe('TEST-4 — pack:harness install via remote path with catalogUrl', () =
       print: makeCapture().print,
       env: remoteEnv.env,
       artifactsDir: ARTIFACTS_DIR,
-      remote: { run: remoteEnv.runner, tmpFactory: remoteEnv.tmpFactory },
+      remote: { run: remoteEnv.runner, tmpFactory: remoteEnv.tmpFactory, scanner: stubScanner },
     });
 
     const scriptStore = path.join(path.dirname(targets.stateJson), 'hooks');
@@ -835,7 +848,7 @@ describe('TEST-4 — pack:harness install via remote path with catalogUrl', () =
       print: makeCapture().print,
       env: remoteEnv.env,
       artifactsDir: ARTIFACTS_DIR,
-      remote: { run: remoteEnv.runner, tmpFactory: remoteEnv.tmpFactory },
+      remote: { run: remoteEnv.runner, tmpFactory: remoteEnv.tmpFactory, scanner: stubScanner },
     });
 
     const raw = await fs.readFile(targets.stateJson, 'utf8');
