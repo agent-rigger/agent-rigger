@@ -1,0 +1,153 @@
+/**
+ * Trivy-backed Scanner implementation for @agent-rigger/core.
+ *
+ * Delegates to the `trivy` CLI on the host; never shells out in tests
+ * (inject a mock ScanRunner via opts.run).
+ *
+ * Behaviour:
+ *  - trivy exit 0 → tool ran → parse JSON stdout for secrets / blocking misconfigs
+ *  - trivy exit != 0 → tool error → fail-closed { ok: false, findings: ['trivy error: <stderr>'] }
+ *
+ * Blocking conditions:
+ *  - ANY secret found in Results[].Secrets
+ *  - Misconfigurations with Severity ∈ {HIGH, CRITICAL} AND Status === 'FAIL'
+ *
+ * JSON tolerance:
+ *  - empty stdout / { Results: [] } → { ok: true }
+ *  - unparseable JSON on exit 0 → fail-closed { ok: false, findings: ['trivy: unparseable output'] }
+ */
+
+import type { Scanner } from '../scan';
+import type { Verdict } from '../types';
+import { defaultScanRunner } from './gitleaks';
+import type { ScanRunner } from './gitleaks';
+
+// ---------------------------------------------------------------------------
+// isTrivyAvailable
+// ---------------------------------------------------------------------------
+
+/**
+ * Returns true when `trivy` is found on PATH (`command -v trivy` exits 0).
+ * Inject a mock runner in tests.
+ */
+export async function isTrivyAvailable(run: ScanRunner): Promise<boolean> {
+  const { exitCode } = await run('command', ['-v', 'trivy']);
+  return exitCode === 0;
+}
+
+// ---------------------------------------------------------------------------
+// TrivyOpts
+// ---------------------------------------------------------------------------
+
+export interface TrivyOpts {
+  run?: ScanRunner;
+}
+
+// ---------------------------------------------------------------------------
+// Internal trivy JSON shape
+// ---------------------------------------------------------------------------
+
+type BlockingSeverity = 'HIGH' | 'CRITICAL';
+
+const BLOCKING_SEVERITIES = new Set<string>(['HIGH', 'CRITICAL']);
+
+interface TrivySecret {
+  RuleID: string;
+  Title: string;
+  Severity: string;
+}
+
+interface TrivyMisconfig {
+  ID: string;
+  Title: string;
+  Severity: string;
+  Status: string;
+}
+
+interface TrivyResult {
+  Target: string;
+  Secrets?: TrivySecret[];
+  Misconfigurations?: TrivyMisconfig[];
+}
+
+interface TrivyReport {
+  Results?: TrivyResult[];
+}
+
+// ---------------------------------------------------------------------------
+// Internal: parse trivy JSON output
+// ---------------------------------------------------------------------------
+
+function parseTrivyReport(stdout: string): TrivyReport | null {
+  const trimmed = stdout.trim();
+  if (trimmed === '') return { Results: [] };
+  try {
+    return JSON.parse(trimmed) as TrivyReport;
+  } catch {
+    return null;
+  }
+}
+
+function collectFindings(results: TrivyResult[]): string[] {
+  const findings: string[] = [];
+
+  for (const result of results) {
+    const target = result.Target;
+
+    for (const secret of result.Secrets ?? []) {
+      findings.push(`${secret.RuleID}: ${secret.Title} (${target})`);
+    }
+
+    for (const mc of result.Misconfigurations ?? []) {
+      if (BLOCKING_SEVERITIES.has(mc.Severity) && mc.Status === 'FAIL') {
+        findings.push(`${mc.ID} [${mc.Severity as BlockingSeverity}]: ${mc.Title} (${target})`);
+      }
+    }
+  }
+
+  return findings;
+}
+
+// ---------------------------------------------------------------------------
+// createTrivyScanner
+// ---------------------------------------------------------------------------
+
+/**
+ * Creates a Scanner backed by the trivy CLI.
+ *
+ * @param opts.run - Optional runner override; defaults to defaultScanRunner.
+ */
+export function createTrivyScanner(opts?: TrivyOpts): Scanner {
+  const run = opts?.run ?? defaultScanRunner;
+
+  return {
+    async scan(dir: string): Promise<Verdict> {
+      const { exitCode, stdout, stderr } = await run('trivy', [
+        'fs',
+        '--format',
+        'json',
+        '--scanners',
+        'secret,misconfig',
+        dir,
+      ]);
+
+      if (exitCode !== 0) {
+        return { ok: false, findings: [`trivy error: ${stderr}`] };
+      }
+
+      const report = parseTrivyReport(stdout);
+
+      if (report === null) {
+        return { ok: false, findings: ['trivy: unparseable output'] };
+      }
+
+      const findings = collectFindings(report.Results ?? []);
+
+      if (findings.length === 0) {
+        return { ok: true };
+      }
+
+      return { ok: false, findings };
+    },
+  };
+}

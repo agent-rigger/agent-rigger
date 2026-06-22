@@ -36,13 +36,16 @@ import {
 } from '@agent-rigger/catalog';
 import { resolve } from '@agent-rigger/catalog/resolver';
 import type { CommandRunner } from '@agent-rigger/catalog/tool-check';
+import { createCompositeScanner } from '@agent-rigger/core';
 import { assertSafeArtifactName } from '@agent-rigger/core/artifact-name';
 import { apply, remove } from '@agent-rigger/core/engine';
 import { readManifest } from '@agent-rigger/core/manifest';
 import type { Env } from '@agent-rigger/core/paths';
+import type { Scanner } from '@agent-rigger/core/scan';
 import type { Scope } from '@agent-rigger/core/types';
 
 import { buildClaudeAdapter } from './cli';
+import { scanExternalEntries } from './remote-install';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -62,6 +65,16 @@ export interface RunUpdateOptions {
   runner: CommandRunner;
   tmpFactory: TmpDirFactory;
   confirm: boolean | ((planText: string) => Promise<boolean>);
+  /**
+   * Optional scanner for external entries. Defaults to createCompositeScanner({ run }).
+   * Inject a fake scanner in tests to avoid spawning real security tools.
+   */
+  scanner?: Scanner;
+  /**
+   * When true, a blocking scan emits a warning in the output but update proceeds.
+   * When false/absent, a blocking scan throws ScanBlockedError (fail-closed).
+   */
+  force?: boolean;
 }
 
 export interface UpdateResult {
@@ -109,6 +122,9 @@ export async function runUpdate(opts: RunUpdateOptions): Promise<UpdateResult> {
     tmpFactory,
     confirm,
   } = opts;
+
+  const force = opts.force === true;
+  const scanner: Scanner = opts.scanner ?? createCompositeScanner();
 
   const manifest = await readManifest(manifestPath);
 
@@ -192,7 +208,17 @@ export async function runUpdate(opts: RunUpdateOptions): Promise<UpdateResult> {
           resolved.filter((e) => e.source === 'external').map((e) => e.id),
         );
 
-        // 3c. Build adapter with external resolver seam (externalBaseDir = checkout dir).
+        // 3c. Security scan — external entries only (ADR-0014).
+        //     Must be BEFORE remove so a blocked scan leaves the artifact intact.
+        const externalResolved = resolved.filter((e) => e.source === 'external');
+        const { warnings: scanWarnings } = await scanExternalEntries({
+          entries: externalResolved,
+          baseDir: dir,
+          scanner,
+          force,
+        });
+
+        // 3d. Build adapter with external resolver seam (externalBaseDir = checkout dir).
         const adapter = await buildClaudeAdapter(env, artifactsDir, {
           externalIds,
           externalBaseDir: dir,
@@ -203,7 +229,7 @@ export async function runUpdate(opts: RunUpdateOptions): Promise<UpdateResult> {
           .filter((e) => e.nature !== 'tool')
           .map((e) => ({ id: e.id, nature: e.nature, scope }));
 
-        // 3d. versionFor seam: external → real ref/sha, internal → v0.0.0/''.
+        // 3e. versionFor seam: external → real ref/sha, internal → v0.0.0/''.
         const versionFor = (
           entry: { id: string },
         ): { source: 'internal' | 'external'; ref: string; sha: string } => {
@@ -213,7 +239,7 @@ export async function runUpdate(opts: RunUpdateOptions): Promise<UpdateResult> {
           return { source: 'internal', ref: 'v0.0.0', sha: '' };
         };
 
-        // 3e. Confirm BEFORE remove — abort with zero writes if user declines.
+        // 3g. Confirm BEFORE remove — abort with zero writes if user declines.
         const installedRefs = staleIds
           .map((id) => {
             const m = manifest.artifacts.find((e) => e.id === id && e.scope === scope);
@@ -227,16 +253,16 @@ export async function runUpdate(opts: RunUpdateOptions): Promise<UpdateResult> {
         const confirmed = typeof confirm === 'boolean' ? confirm : await confirm(planText);
 
         if (!confirmed) {
-          return { aborted: true as const };
+          return { aborted: true as const, scanWarnings };
         }
 
-        // 3f. Remove old (targets absent → plan will produce link ops in apply).
+        // 3h. Remove old (targets absent → plan will produce link ops in apply).
         await remove(adapter, adapterEntries, scope, env, manifestPath);
 
-        // 3g. Apply fresh content from checkout dir + upsert manifest with ref/sha.
+        // 3i. Apply fresh content from checkout dir + upsert manifest with ref/sha.
         await apply(adapter, adapterEntries, scope, env, manifestPath, versionFor);
 
-        return { aborted: false as const };
+        return { aborted: false as const, scanWarnings };
       },
     );
 
@@ -244,6 +270,9 @@ export async function runUpdate(opts: RunUpdateOptions): Promise<UpdateResult> {
       outputParts.push('  [aborted] Update cancelled by user.');
     } else {
       updatedIds = staleIds;
+      if (checkoutResult.scanWarnings.length > 0) {
+        outputParts.push(...checkoutResult.scanWarnings);
+      }
       outputParts.push('--- Update ---');
       outputParts.push(`  [updated] ${staleIds.join(', ')} → ${remote.ref}`);
     }

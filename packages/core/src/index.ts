@@ -10,4 +10,7 @@ export * from './managed-import';
 export * from './manifest';
 export * from './paths';
 export * from './scan';
+export * from './scanners/composite';
+export * from './scanners/gitleaks';
+export * from './scanners/trivy';
 export * from './types';
