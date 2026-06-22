@@ -24,6 +24,7 @@ import type { CommandRunner } from '@agent-rigger/catalog/tool-check';
 import { resolveUserTargets } from '@agent-rigger/core/paths';
 import type { Env } from '@agent-rigger/core/paths';
 import type { Scanner } from '@agent-rigger/core/scan';
+import { stubScanner } from '@agent-rigger/core/scan';
 
 import { runCli } from '../src/cli';
 import { runUpdate } from '../src/cmd-update';
@@ -198,7 +199,7 @@ beforeEach(async () => {
     print: makeCapture().print,
     env,
     artifactsDir: ARTIFACTS_DIR,
-    remote: { run: makeRunner(), tmpFactory: makeTmpFactory() },
+    remote: { run: makeRunner(), tmpFactory: makeTmpFactory(), scanner: stubScanner },
   });
 
   // Advance remote to v1.1.0 so skill is now stale
