@@ -1,8 +1,13 @@
 import type { CatalogEntry } from './schema';
 
 // ---------------------------------------------------------------------------
-// Guardrails, contexts, and plugins — shipped internally, apply at user and
-// project scopes for Claude.
+// Guardrails, contexts — shipped internally, apply at user and project scopes.
+//
+// NOTE: The harness plugin (agent-rigger-harness) has been removed from the
+// catalog. Guard hooks are now delivered as individual hook:guard-* entries
+// (see below) and installed directly via the hooks mechanism. Keeping the
+// plugin would cause double-firing since its hooks.json registers the same
+// guards a second time.
 // ---------------------------------------------------------------------------
 
 const GUARDRAILS_CLAUDE: CatalogEntry = {
@@ -18,15 +23,6 @@ const CONTEXT_CLAUDE: CatalogEntry = {
   kind: 'artifact',
   id: 'context-claude',
   nature: 'context',
-  source: 'internal',
-  targets: ['claude'],
-  scopes: ['user', 'project'],
-};
-
-const HARNESS_PLUGIN: CatalogEntry = {
-  kind: 'artifact',
-  id: 'harness-plugin',
-  nature: 'plugin',
   source: 'internal',
   targets: ['claude'],
   scopes: ['user', 'project'],
@@ -207,7 +203,6 @@ const PACK_BASELINE: CatalogEntry = {
 export const BUILTIN_CATALOG: CatalogEntry[] = [
   GUARDRAILS_CLAUDE,
   CONTEXT_CLAUDE,
-  HARNESS_PLUGIN,
   SKILL_SPEC_WORKFLOW,
   AGENT_TECH_LEAD,
   AGENT_PM,
