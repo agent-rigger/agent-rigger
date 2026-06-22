@@ -17,8 +17,17 @@ import type { Nature, Scope } from '@agent-rigger/core';
 // Nature constants + compile-time coherence check with core.Nature
 // ---------------------------------------------------------------------------
 
-/** The 7 natures of installable artefacts. */
-const NATURES = ['plugin', 'guardrail', 'context', 'skill', 'agent', 'mcp', 'tool'] as const;
+/** The 8 natures of installable artefacts. */
+const NATURES = [
+  'plugin',
+  'guardrail',
+  'context',
+  'skill',
+  'agent',
+  'mcp',
+  'tool',
+  'hook',
+] as const;
 
 /**
  * Compile-time guard: if core's Nature and NATURES diverge, this line fails.
