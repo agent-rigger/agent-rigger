@@ -29,6 +29,7 @@ import { lstat } from 'node:fs/promises';
 import path from 'node:path';
 
 import type { AdapterEntry } from '@agent-rigger/core/adapter';
+import { assertSafeArtifactName } from '@agent-rigger/core/artifact-name';
 import { unlink } from '@agent-rigger/core/linker';
 import { resolveHome, resolveUserTargets } from '@agent-rigger/core/paths';
 import type { Env } from '@agent-rigger/core/paths';
@@ -45,16 +46,21 @@ import type {
 // ---------------------------------------------------------------------------
 
 /**
- * Derive the agent name from the entry id.
+ * Derive the agent name from the entry id and assert it is safe for filesystem use.
+ *
  * 'agent:tech-lead' → 'tech-lead'
  * 'my-agent'        → 'my-agent'
+ *
+ * Throws UnsafeArtifactNameError when the derived name contains path traversal
+ * segments, dots-only names ('.', '..'), or characters outside [a-zA-Z0-9._-].
+ * This guard runs before any path construction — plan() is rejected before any
+ * store/target path is built, so no cp/rm/symlink is ever invoked on a bad name.
  */
 export function agentName(entry: AdapterEntry): string {
   const prefix = 'agent:';
-  if (entry.id.startsWith(prefix)) {
-    return entry.id.slice(prefix.length);
-  }
-  return entry.id;
+  const name = entry.id.startsWith(prefix) ? entry.id.slice(prefix.length) : entry.id;
+  assertSafeArtifactName(name, entry.id);
+  return name;
 }
 
 // ---------------------------------------------------------------------------

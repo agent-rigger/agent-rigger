@@ -26,6 +26,7 @@ import {
   SkillScanBlockedError,
 } from '@agent-rigger/adapters';
 import type { Adapter, AdapterEntry } from '@agent-rigger/core/adapter';
+import { assertSafeArtifactName, UnsafeArtifactNameError } from '@agent-rigger/core/artifact-name';
 import { InvalidJsonError } from '@agent-rigger/core/fs-json';
 import type { Env } from '@agent-rigger/core/paths';
 import { resolveUserTargets } from '@agent-rigger/core/paths';
@@ -304,6 +305,9 @@ export async function buildClaudeAdapter(
     scanner: stubScanner,
     skillSource: (entry) => {
       const name = entry.id.replace(/^skill:/, '');
+      // Depth-in-defence: guard before any path.join — prevents traversal via
+      // an external catalog entry like "skill:../../../../etc/evil".
+      assertSafeArtifactName(name, entry.id);
       if (
         opts?.externalIds?.has(entry.id) === true
         && opts.externalBaseDir !== undefined
@@ -314,6 +318,8 @@ export async function buildClaudeAdapter(
     },
     agentSource: (entry) => {
       const name = entry.id.replace(/^agent:/, '');
+      // Depth-in-defence: guard before any path.join.
+      assertSafeArtifactName(name, entry.id);
       if (
         opts?.externalIds?.has(entry.id) === true
         && opts.externalBaseDir !== undefined
@@ -779,6 +785,18 @@ async function handleInstall(opts: HandleInstallOpts): Promise<number> {
         { tmpFactory },
         async (dir) => {
           const remoteEntries = await readCatalogDir(dir);
+          // Frontier guard: reject external entries whose derived name would cause
+          // a path traversal before any install operation begins.
+          for (const entry of remoteEntries) {
+            if (entry.kind !== 'artifact') continue;
+            if (entry.nature === 'skill') {
+              const name = entry.id.replace(/^skill:/, '');
+              assertSafeArtifactName(name, entry.id);
+            } else if (entry.nature === 'agent') {
+              const name = entry.id.replace(/^agent:/, '');
+              assertSafeArtifactName(name, entry.id);
+            }
+          }
           const { entries: effective } = mergeCatalogs(BUILTIN_CATALOG, remoteEntries);
           const resolved = resolve(ids, effective);
           const externalIds = new Set(
@@ -928,6 +946,13 @@ function handleError(err: unknown, print: (msg: string) => void): number {
   if (err instanceof PreflightAuthError) {
     print(`[error] Auth failed: ${err.message}`);
     return 1;
+  }
+
+  if (err instanceof UnsafeArtifactNameError) {
+    print(
+      `[error] Unsafe artifact id rejected (path traversal attempt): "${err.id}". Only names matching [a-zA-Z0-9._-] are accepted.`,
+    );
+    return 2;
   }
 
   if (err instanceof UnknownEntryError) {

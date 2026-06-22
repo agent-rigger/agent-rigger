@@ -22,6 +22,7 @@ import { lstat } from 'node:fs/promises';
 import path from 'node:path';
 
 import type { AdapterEntry } from '@agent-rigger/core/adapter';
+import { assertSafeArtifactName } from '@agent-rigger/core/artifact-name';
 import { link, unlink } from '@agent-rigger/core/linker';
 import { resolveUserTargets } from '@agent-rigger/core/paths';
 import type { Env } from '@agent-rigger/core/paths';
@@ -62,16 +63,22 @@ export class SkillScanBlockedError extends Error {
 // ---------------------------------------------------------------------------
 
 /**
- * Derive the skill name from the entry id.
+ * Derive the skill name from the entry id and assert it is safe for filesystem use.
+ *
  * 'skill:spec-workflow' → 'spec-workflow'
- * 'my-skill' → 'my-skill'
+ * 'my-skill'            → 'my-skill'
+ *
+ * Throws UnsafeArtifactNameError when the derived name contains path traversal
+ * segments (e.g. '../../../../etc/evil'), dots-only names ('.', '..'), or
+ * characters outside [a-zA-Z0-9._-]. This guard runs before any path construction,
+ * making it impossible to construct a store, target, or symlink path outside the
+ * expected directories.
  */
 export function skillName(entry: AdapterEntry): string {
   const prefix = 'skill:';
-  if (entry.id.startsWith(prefix)) {
-    return entry.id.slice(prefix.length);
-  }
-  return entry.id;
+  const name = entry.id.startsWith(prefix) ? entry.id.slice(prefix.length) : entry.id;
+  assertSafeArtifactName(name, entry.id);
+  return name;
 }
 
 // ---------------------------------------------------------------------------
