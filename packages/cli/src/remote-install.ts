@@ -216,69 +216,76 @@ export async function runRemoteInstall(opts: {
 
   const version = await resolveVersion(catalogUrl, runner);
 
-  return withRemoteCheckout(catalogUrl, version.ref, runner, { tmpFactory }, async (dir) => {
-    const remoteEntries = await readCatalogDir(dir);
+  return withRemoteCheckout(
+    catalogUrl,
+    version.ref,
+    version.isTag,
+    runner,
+    { tmpFactory },
+    async (dir) => {
+      const remoteEntries = await readCatalogDir(dir);
 
-    // Frontier guard: reject external entries whose derived name would cause
-    // a path traversal before any install operation begins.
-    for (const entry of remoteEntries) {
-      if (entry.kind !== 'artifact') continue;
-      if (entry.nature === 'skill') {
-        const name = entry.id.replace(/^skill:/, '');
-        assertSafeArtifactName(name, entry.id);
-      } else if (entry.nature === 'agent') {
-        const name = entry.id.replace(/^agent:/, '');
-        assertSafeArtifactName(name, entry.id);
+      // Frontier guard: reject external entries whose derived name would cause
+      // a path traversal before any install operation begins.
+      for (const entry of remoteEntries) {
+        if (entry.kind !== 'artifact') continue;
+        if (entry.nature === 'skill') {
+          const name = entry.id.replace(/^skill:/, '');
+          assertSafeArtifactName(name, entry.id);
+        } else if (entry.nature === 'agent') {
+          const name = entry.id.replace(/^agent:/, '');
+          assertSafeArtifactName(name, entry.id);
+        }
       }
-    }
 
-    const { entries: effective } = mergeCatalogs(BUILTIN_CATALOG, remoteEntries);
-    const resolved = resolve(ids, effective);
-    const externalIds = new Set(
-      resolved.filter((e) => e.source === 'external').map((e) => e.id),
-    );
+      const { entries: effective } = mergeCatalogs(BUILTIN_CATALOG, remoteEntries);
+      const resolved = resolve(ids, effective);
+      const externalIds = new Set(
+        resolved.filter((e) => e.source === 'external').map((e) => e.id),
+      );
 
-    // Security scan — external entries only (ADR-0014).
-    const externalResolved = resolved.filter((e) => e.source === 'external');
-    const { warnings } = await scanExternalEntries({
-      entries: externalResolved,
-      baseDir: dir,
-      scanner,
-      force,
-    });
+      // Security scan — external entries only (ADR-0014).
+      const externalResolved = resolved.filter((e) => e.source === 'external');
+      const { warnings } = await scanExternalEntries({
+        entries: externalResolved,
+        baseDir: dir,
+        scanner,
+        force,
+      });
 
-    const adapter = await buildClaudeAdapter(env, artifactsDir, {
-      externalIds,
-      externalBaseDir: dir,
-      catalogUrl,
-      pluginRunner,
-    });
+      const adapter = await buildClaudeAdapter(env, artifactsDir, {
+        externalIds,
+        externalBaseDir: dir,
+        catalogUrl,
+        pluginRunner,
+      });
 
-    const versionFor = (
-      entry: { id: string },
-    ): { source: 'internal' | 'external'; ref: string; sha: string } => {
-      if (externalIds.has(entry.id)) {
-        return { source: 'external', ref: version.ref, sha: version.sha };
+      const versionFor = (
+        entry: { id: string },
+      ): { source: 'internal' | 'external'; ref: string; sha: string } => {
+        if (externalIds.has(entry.id)) {
+          return { source: 'external', ref: version.ref, sha: version.sha };
+        }
+        return { source: 'internal', ref: 'v0.0.0', sha: '' };
+      };
+
+      const result = await runInstall({
+        catalog: effective,
+        adapter,
+        scope,
+        env,
+        manifestPath,
+        selectedIds: ids,
+        confirm,
+        versionFor,
+        toolRunner: runner,
+      });
+
+      if (warnings.length === 0) {
+        return result;
       }
-      return { source: 'internal', ref: 'v0.0.0', sha: '' };
-    };
 
-    const result = await runInstall({
-      catalog: effective,
-      adapter,
-      scope,
-      env,
-      manifestPath,
-      selectedIds: ids,
-      confirm,
-      versionFor,
-      toolRunner: runner,
-    });
-
-    if (warnings.length === 0) {
-      return result;
-    }
-
-    return { ...result, output: `${warnings.join('\n')}\n${result.output}` };
-  });
+      return { ...result, output: `${warnings.join('\n')}\n${result.output}` };
+    },
+  );
 }
