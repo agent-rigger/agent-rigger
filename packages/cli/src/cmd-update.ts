@@ -5,12 +5,19 @@
  * - Read the manifest to find installed external entries.
  * - If `ids` is empty, target all external entries for the given scope.
  * - For each candidate id: classify as stale, upToDate, or skipped.
- *   - not in manifest (or source !== 'external')  → skipped ("not installed" or "no remote version")
+ *   - not in manifest (or source !== 'external')  → skipped
  *   - resolveVersion says newer (isUpdateAvailable) → stale
  *   - already at latest ref                        → upToDate
- * - For stale entries: remove → runRemoteInstall (so planSkill sees the target absent
- *   and produces a link op; engine.apply copies fresh content and upserts ref/sha).
- * - Return UpdateResult { output, updated, upToDate, skipped }.
+ * - For stale entries: transactional checkout-first pipeline:
+ *   1. resolveVersion (once).
+ *   2. withRemoteCheckout → readCatalogDir → resolve → buildClaudeAdapter.
+ *   3. Confirm BEFORE any destructive operation.
+ *   4. If confirmed: remove (unlink old) then apply (link fresh content).
+ *
+ * Transactional guarantee:
+ *   - A network failure, CatalogParseError, or resolve error aborts BEFORE the remove.
+ *   - confirm=false → nothing is removed or written; artifact stays at old version.
+ *   - resolveVersion is called exactly once.
  *
  * Constraints:
  * - No while loops.
@@ -18,15 +25,24 @@
  * - exactOptionalPropertyTypes: never assign undefined to optional fields.
  */
 
-import { isUpdateAvailable, resolveVersion, type TmpDirFactory } from '@agent-rigger/catalog';
+import {
+  BUILTIN_CATALOG,
+  isUpdateAvailable,
+  mergeCatalogs,
+  readCatalogDir,
+  resolveVersion,
+  type TmpDirFactory,
+  withRemoteCheckout,
+} from '@agent-rigger/catalog';
+import { resolve } from '@agent-rigger/catalog/resolver';
 import type { CommandRunner } from '@agent-rigger/catalog/tool-check';
-import { remove } from '@agent-rigger/core/engine';
+import { assertSafeArtifactName } from '@agent-rigger/core/artifact-name';
+import { apply, remove } from '@agent-rigger/core/engine';
 import { readManifest } from '@agent-rigger/core/manifest';
 import type { Env } from '@agent-rigger/core/paths';
 import type { Scope } from '@agent-rigger/core/types';
 
 import { buildClaudeAdapter } from './cli';
-import { runRemoteInstall } from './remote-install';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -55,7 +71,7 @@ export interface UpdateResult {
   updated: string[];
   /** ids that are already at the latest version. */
   upToDate: string[];
-  /** ids that were skipped (not installed or internal). */
+  /** ids that were skipped (not installed, internal, or aborted). */
   skipped: string[];
 }
 
@@ -66,18 +82,20 @@ export interface UpdateResult {
 /**
  * Execute the update command end-to-end.
  *
- * Pipeline:
- * 1. readManifest → determine candidates.
- * 2. If ids is empty, candidates = all external entries in manifest for scope.
- *    Otherwise, filter requested ids through the manifest.
- * 3. resolveVersion(catalogUrl) → remote version.
- * 4. For each candidate: isUpdateAvailable(installed.ref, remote) → stale vs upToDate.
- *    Non-installed or internal entries → skipped.
- * 5. For stale entries:
- *    a. Build a local adapter (no external-resolver seam — only needed for plan/apply).
- *    b. remove(adapter, staleEntries, scope, env, manifestPath) → unlink + drop from manifest.
- *    c. runRemoteInstall({ids: staleIds, …}) → fresh checkout + link + manifest upsert with ref/sha.
- * 6. Compose and return UpdateResult.
+ * Transactional pipeline for stale entries (all steps within withRemoteCheckout):
+ * 1. resolveVersion(catalogUrl) → remote (called once).
+ * 2. Classify candidates → staleIds / upToDateIds / skippedIds.
+ * 3. withRemoteCheckout(catalogUrl, remote.ref, runner, {tmpFactory}, async (dir) => {
+ *      readCatalogDir(dir) → frontier guard → mergeCatalogs → resolve →
+ *      buildClaudeAdapter({externalIds, externalBaseDir: dir}) →
+ *      confirm (planText summarising the update) BEFORE any write →
+ *      remove(adapter, staleEntries, scope, env, manifestPath) →
+ *      apply(adapter, staleEntries, scope, env, manifestPath, versionFor)
+ *    })
+ * 4. Compose and return UpdateResult.
+ *
+ * If the checkout fails, catalog is invalid, confirm=false, or any step throws,
+ * the artifact is never removed — it stays at the installed version.
  */
 export async function runUpdate(opts: RunUpdateOptions): Promise<UpdateResult> {
   const {
@@ -106,14 +124,15 @@ export async function runUpdate(opts: RunUpdateOptions): Promise<UpdateResult> {
     return { output, updated: [], upToDate: [], skipped: [] };
   }
 
-  // Resolve remote version once for all candidates.
+  // Step 1 — resolveVersion once. Any network error aborts here (nothing removed).
   const remote = await resolveVersion(catalogUrl, runner);
 
-  // Classify candidates.
+  // Step 2 — classify candidates.
   const staleIds: string[] = [];
-  const staleAdapterEntries: Array<
-    { id: string; nature: import('@agent-rigger/core/types').Nature; scope: Scope }
-  > = [];
+  const staleManifestNatures: Map<
+    string,
+    import('@agent-rigger/core/types').Nature
+  > = new Map();
   const upToDateIds: string[] = [];
   const skippedIds: string[] = [];
   const skipReasons: Map<string, string> = new Map();
@@ -135,40 +154,99 @@ export async function runUpdate(opts: RunUpdateOptions): Promise<UpdateResult> {
 
     if (isUpdateAvailable(entry.ref, remote)) {
       staleIds.push(id);
-      staleAdapterEntries.push({ id: entry.id, nature: entry.nature, scope });
+      staleManifestNatures.set(entry.id, entry.nature);
     } else {
       upToDateIds.push(id);
     }
   }
 
-  // Remove stale entries, then re-install fresh from remote checkout.
   const outputParts: string[] = [];
+  let updatedIds: string[] = [];
 
+  // Step 3 — transactional update for stale entries.
   if (staleIds.length > 0) {
-    // Step 5a — local adapter (no external seam; planRemove only needs name → store/target).
-    const localAdapter = await buildClaudeAdapter(env, artifactsDir);
-
-    // Step 5b — unlink store+target + drop manifest entries so plan() returns ops on reinstall.
-    await remove(localAdapter, staleAdapterEntries, scope, env, manifestPath);
-
-    // Step 5c — re-install from remote checkout; engine.apply copies fresh content and
-    // writes manifest with ref/sha via the versionFor seam in runRemoteInstall.
-    const installResult = await runRemoteInstall({
-      ids: staleIds,
+    const checkoutResult = await withRemoteCheckout(
       catalogUrl,
-      scope,
-      env,
-      manifestPath,
-      artifactsDir,
+      remote.ref,
       runner,
-      tmpFactory,
-      confirm,
-    });
+      { tmpFactory },
+      async (dir) => {
+        // 3a. Read + validate remote catalog (CatalogParseError → abort before remove).
+        const remoteEntries = await readCatalogDir(dir);
 
-    outputParts.push('--- Update ---');
-    outputParts.push(`  [updated] ${staleIds.join(', ')} → ${remote.ref}`);
-    outputParts.push('');
-    outputParts.push(installResult.output);
+        // Frontier guard: reject traversal ids.
+        for (const entry of remoteEntries) {
+          if (entry.kind !== 'artifact') continue;
+          if (entry.nature === 'skill') {
+            assertSafeArtifactName(entry.id.replace(/^skill:/, ''), entry.id);
+          } else if (entry.nature === 'agent') {
+            assertSafeArtifactName(entry.id.replace(/^agent:/, ''), entry.id);
+          }
+        }
+
+        // 3b. Resolve ids against effective catalog (UnknownEntryError → abort before remove).
+        const { entries: effective } = mergeCatalogs(BUILTIN_CATALOG, remoteEntries);
+        const resolved = resolve(staleIds, effective);
+
+        const externalIds = new Set(
+          resolved.filter((e) => e.source === 'external').map((e) => e.id),
+        );
+
+        // 3c. Build adapter with external resolver seam (externalBaseDir = checkout dir).
+        const adapter = await buildClaudeAdapter(env, artifactsDir, {
+          externalIds,
+          externalBaseDir: dir,
+        });
+
+        // AdapterEntries for remove+apply (exclude tool-nature entries).
+        const adapterEntries = resolved
+          .filter((e) => e.nature !== 'tool')
+          .map((e) => ({ id: e.id, nature: e.nature, scope }));
+
+        // 3d. versionFor seam: external → real ref/sha, internal → v0.0.0/''.
+        const versionFor = (
+          entry: { id: string },
+        ): { source: 'internal' | 'external'; ref: string; sha: string } => {
+          if (externalIds.has(entry.id)) {
+            return { source: 'external', ref: remote.ref, sha: remote.sha };
+          }
+          return { source: 'internal', ref: 'v0.0.0', sha: '' };
+        };
+
+        // 3e. Confirm BEFORE remove — abort with zero writes if user declines.
+        const installedRefs = staleIds
+          .map((id) => {
+            const m = manifest.artifacts.find((e) => e.id === id && e.scope === scope);
+            return m === undefined
+              ? `  ${id}  → ${remote.ref}`
+              : `  ${id}  ${m.ref} → ${remote.ref}`;
+          })
+          .join('\n');
+        const planText = `Update ${staleIds.length} artifact(s):\n${installedRefs}`;
+
+        const confirmed = typeof confirm === 'boolean' ? confirm : await confirm(planText);
+
+        if (!confirmed) {
+          return { aborted: true as const };
+        }
+
+        // 3f. Remove old (targets absent → plan will produce link ops in apply).
+        await remove(adapter, adapterEntries, scope, env, manifestPath);
+
+        // 3g. Apply fresh content from checkout dir + upsert manifest with ref/sha.
+        await apply(adapter, adapterEntries, scope, env, manifestPath, versionFor);
+
+        return { aborted: false as const };
+      },
+    );
+
+    if (checkoutResult.aborted) {
+      outputParts.push('  [aborted] Update cancelled by user.');
+    } else {
+      updatedIds = staleIds;
+      outputParts.push('--- Update ---');
+      outputParts.push(`  [updated] ${staleIds.join(', ')} → ${remote.ref}`);
+    }
   }
 
   if (upToDateIds.length > 0) {
@@ -184,7 +262,7 @@ export async function runUpdate(opts: RunUpdateOptions): Promise<UpdateResult> {
 
   return {
     output,
-    updated: staleIds,
+    updated: updatedIds,
     upToDate: upToDateIds,
     skipped: skippedIds,
   };
