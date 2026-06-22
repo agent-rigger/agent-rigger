@@ -159,15 +159,17 @@ describe('BUILTIN_CATALOG — skill:spec-workflow', () => {
 // ---------------------------------------------------------------------------
 
 describe('BUILTIN_CATALOG — total count', () => {
-  it('has exactly 15 entries (12 artifacts + 3 packs including hook guards and baseline)', () => {
-    // 8 artifacts: guardrails-claude, context-claude, harness-plugin,
+  it('has exactly 14 entries (11 artifacts + 3 packs; harness-plugin removed)', () => {
+    // 7 artifacts: guardrails-claude, context-claude,
     //              skill:spec-workflow, agent:tech-lead, agent:pm, agent:reviewer,
     //              tool:glab
     // 4 hook artifacts: hook:guard-command, hook:guard-secret,
     //                   hook:guard-write-secret, hook:guard-prompt
     // 3 packs: pack:spec-workflow, pack:harness, pack:baseline
-    // Total = 15
-    expect(BUILTIN_CATALOG).toHaveLength(15);
+    // Total = 14
+    // (harness-plugin removed: guards are now hook:guard-* entries; keeping the
+    //  plugin would cause double-firing via its hooks.json)
+    expect(BUILTIN_CATALOG).toHaveLength(14);
   });
 });
 
