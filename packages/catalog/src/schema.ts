@@ -5,7 +5,7 @@
  *  - kind:'artifact'  A single installable artefact with a concrete nature.
  *  - kind:'pack'      A named bundle that groups other artefact ids.
  *
- * Common fields (id, source, targets, scopes, requires?) live in both variants.
+ * Common fields (id, targets, scopes, requires?) live in both variants.
  * Variant-specific fields are isolated to their branch of the union.
  */
 
@@ -70,9 +70,6 @@ const CommonFieldsSchema = z.object({
   /** Unique, non-empty artefact identifier (e.g. "tool:glab", "pack:dev-tools"). */
   id: z.string().min(1),
 
-  /** Whether the entry ships with the tool ("internal") or comes from a remote source ("external"). */
-  source: z.enum(['internal', 'external']),
-
   /** Non-empty list of AI assistants this entry is compatible with. */
   targets: TargetsSchema,
 
@@ -121,9 +118,11 @@ export type HookEvent = (typeof HOOK_EVENTS)[number];
  *  - check    Shell command to detect presence (exit 0 = already installed).
  *  - install  Package-manager specific install commands; all keys optional.
  *
- * Hook-specific optional fields (meaningful when nature === 'hook'):
+ * Hook-specific fields (required when nature === 'hook'):
  *  - event    Claude Code hook trigger event (e.g. "PreToolUse").
  *  - matcher  Tool name or pattern the hook listens for.
+ *
+ * Hook-specific optional fields:
  *  - timeout  Max execution time in seconds (positive integer).
  */
 export const ArtifactEntrySchema = CommonFieldsSchema.extend({
@@ -164,13 +163,13 @@ export const ArtifactEntrySchema = CommonFieldsSchema.extend({
     .optional(),
 
   /**
-   * Claude Code hook trigger event. Meaningful when nature === 'hook'.
+   * Claude Code hook trigger event. Required when nature === 'hook'.
    * Specifies which lifecycle event activates this hook.
    */
   event: z.enum(HOOK_EVENTS).optional(),
 
   /**
-   * Tool name or pattern this hook listens for. Meaningful when nature === 'hook'.
+   * Tool name or pattern this hook listens for. Required when nature === 'hook'.
    * Example: "Bash" to match only Bash tool calls.
    */
   matcher: z.string().optional(),
@@ -180,6 +179,22 @@ export const ArtifactEntrySchema = CommonFieldsSchema.extend({
    * Meaningful when nature === 'hook'.
    */
   timeout: z.number().int().positive().optional(),
+}).superRefine((data, ctx) => {
+  if (data.nature !== 'hook') return;
+  if (data.event === undefined) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['event'],
+      message: "hook entries require 'event'",
+    });
+  }
+  if (data.matcher === undefined) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['matcher'],
+      message: "hook entries require 'matcher'",
+    });
+  }
 });
 
 /** Inferred type for an artifact entry. */
@@ -238,6 +253,60 @@ export const CatalogEntrySchema = z.discriminatedUnion('kind', [
 export type CatalogEntry = z.infer<typeof CatalogEntrySchema>;
 
 // ---------------------------------------------------------------------------
+// CatalogFileSchema — top-level wrapper {meta, entries}
+// ---------------------------------------------------------------------------
+
+/**
+ * Schema for the top-level `meta` object in `catalog.json`.
+ *
+ * - `name`        : non-empty string identifying this catalog.
+ * - `required`    : optional list of entry ids (pack or artefact) deemed required.
+ * - `recommended` : optional list of entry ids (pack or artefact) deemed recommended.
+ *
+ * No referential validation is performed — ids are arbitrary strings.
+ */
+export const MetaSchema = z.object({
+  /** Non-empty catalog name. */
+  name: z.string().min(1),
+
+  /**
+   * Entry ids (pack or artefact) that are considered required.
+   * Arbitrary ids — no referential check performed here.
+   */
+  required: z.array(z.string()).optional().default([]),
+
+  /**
+   * Entry ids (pack or artefact) that are considered recommended.
+   * Arbitrary ids — no referential check performed here.
+   */
+  recommended: z.array(z.string()).optional().default([]),
+});
+
+/** Inferred type for the catalog meta block. */
+export type CatalogMeta = z.infer<typeof MetaSchema>;
+
+/**
+ * Schema for a complete `catalog.json` file.
+ *
+ * Expected shape:
+ * ```json
+ * {
+ *   "meta": { "name": "...", "required": [], "recommended": [] },
+ *   "entries": [ ... ]
+ * }
+ * ```
+ */
+export const CatalogFileSchema = z.object({
+  /** Catalog metadata. */
+  meta: MetaSchema,
+  /** Array of catalog entries (artifact or pack). */
+  entries: z.array(CatalogEntrySchema),
+});
+
+/** Inferred type for a complete catalog file. */
+export type CatalogFile = z.infer<typeof CatalogFileSchema>;
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
@@ -258,4 +327,23 @@ export type SafeParseCatalogResult = ReturnType<(typeof CatalogEntrySchema)['saf
  */
 export function safeParseCatalogEntry(input: unknown): SafeParseCatalogResult {
   return CatalogEntrySchema.safeParse(input);
+}
+
+/**
+ * Parse `input` as a CatalogFile (the full `catalog.json` wrapper).
+ * Throws a ZodError if validation fails.
+ */
+export function parseCatalog(input: unknown): CatalogFile {
+  return CatalogFileSchema.parse(input);
+}
+
+/** Return type of safeParseCatalog. */
+export type SafeParseCatalogFileResult = ReturnType<(typeof CatalogFileSchema)['safeParse']>;
+
+/**
+ * Attempt to parse `input` as a CatalogFile without throwing.
+ * Returns `{ success: true, data }` on success or `{ success: false, error }` on failure.
+ */
+export function safeParseCatalog(input: unknown): SafeParseCatalogFileResult {
+  return CatalogFileSchema.safeParse(input);
 }

@@ -4,36 +4,33 @@
  * Extracted from cli.ts so that both the CLI entry point and the remote-install
  * orchestrator share a single, consistent adapter construction path.
  *
- * The previous duplication (buildClaudeAdapter in cli.ts +
- * buildClaudeAdapterForRemote in remote-install.ts) caused remote installs of
- * hook entries to fail because the private copy lacked hookSpec.
- *
  * Responsibilities:
- * - Load denyRef + agentsContent from artifactsDir.
+ * - Load denyRef + agentsContent from externalBaseDir (checkout) when provided.
  * - Build all source/spec closures: skillSource, agentSource, pluginSource, hookSpec.
+ * - Accept an optional manifest to build a getApplied resolver for reversible
+ *   remove/check (B-iii): adapter reads canonical payload from the manifest instead
+ *   of from local artifact files.
  * - Accept an optional pluginRunner so callers can inject a CommandRunner-based
  *   runner (remote-install.ts) without coupling to the default PluginRunner.
  *
  * Constraints:
  * - No circular imports: does not import from cli.ts or remote-install.ts.
  * - exactOptionalPropertyTypes: never assigns undefined to optional fields.
+ * - No BUILTIN_CATALOG dependency: all hook resolution must come from effectiveEntries.
  */
 
 import path from 'node:path';
 
-import {
-  createClaudeAdapter,
-  loadCanonicalContext,
-  loadCanonicalDeny,
-} from '@agent-rigger/adapters';
+import { createClaudeAdapter, loadCanonicalAllow, loadCanonicalDeny } from '@agent-rigger/adapters';
 import type { PluginRunner, ResolvedHook } from '@agent-rigger/adapters';
 import type { Adapter, AdapterEntry } from '@agent-rigger/core/adapter';
 import { assertSafeArtifactName } from '@agent-rigger/core/artifact-name';
+import { readText } from '@agent-rigger/core/fs-json';
 import type { Env } from '@agent-rigger/core/paths';
 import { resolveUserTargets } from '@agent-rigger/core/paths';
 import { stubScanner } from '@agent-rigger/core/scan';
 
-import { BUILTIN_CATALOG } from '@agent-rigger/catalog';
+import type { CatalogEntry } from '@agent-rigger/catalog';
 
 // ---------------------------------------------------------------------------
 // BuildClaudeAdapterOpts
@@ -43,11 +40,12 @@ import { BUILTIN_CATALOG } from '@agent-rigger/catalog';
  * Options for the external-resolver seam in buildClaudeAdapter.
  *
  * @param externalIds      Set of artifact ids (e.g. 'skill:x', 'agent:y') whose
- *                         source should be resolved from externalBaseDir instead of
- *                         the local artifactsDir. Both fields must be provided
- *                         together for the seam to activate.
+ *                         source should be resolved from externalBaseDir.
+ *                         Both fields must be provided together for the seam to activate.
  * @param externalBaseDir  Absolute path to the root of a remote checkout. Expected
- *                         layout: skills/<name>/ and agents/<name>.md.
+ *                         layout: skills/<name>/, agents/<name>.md,
+ *                         hooks/<name>.ts, guardrails/<n>/deny.json + allow.json,
+ *                         contexts/<n>/AGENTS.md.
  * @param catalogUrl       URL of the content repo (used as the marketplace URL for
  *                         external plugin installs). When provided alongside externalIds,
  *                         plugin entries in externalIds use this URL as their marketplace
@@ -55,12 +53,17 @@ import { BUILTIN_CATALOG } from '@agent-rigger/catalog';
  * @param pluginRunner     Optional PluginRunner to inject. When omitted, createClaudeAdapter
  *                         uses its default runner (Bun.spawn). Set this in tests or in
  *                         remote-install.ts to avoid invoking the real `claude` binary.
+ * @param effectiveEntries Lookup map (id → CatalogEntry) for the resolved effective catalog.
+ *                         Used by hookSpec to resolve event/matcher/timeout for any hook entry.
+ *                         Required when any hook entry needs to be installed — hookSpec will
+ *                         throw an actionable error if the entry is not found in this map.
  */
 export interface BuildClaudeAdapterOpts {
   externalIds?: Set<string>;
   externalBaseDir?: string;
   catalogUrl?: string;
   pluginRunner?: PluginRunner;
+  effectiveEntries?: Map<string, CatalogEntry>;
 }
 
 // ---------------------------------------------------------------------------
@@ -68,78 +71,160 @@ export interface BuildClaudeAdapterOpts {
 // ---------------------------------------------------------------------------
 
 /**
- * Build a ClaudeAdapter from the artifacts directory.
+ * Build a ClaudeAdapter.
  *
- * - denyRef       : loaded from <artifactsDir>/claude/deny.json
- * - agentsContent : loaded from <artifactsDir>/shared/AGENTS.md
- * - skillSource   : resolves id → <artifactsDir>/claude/skills/<id>
- *                   or <externalBaseDir>/skills/<id> when id is in externalIds
- * - agentSource   : resolves id → <artifactsDir>/claude/agents/<agentId>.md
- *                   or <externalBaseDir>/agents/<agentId>.md when id is in externalIds
- * - pluginSource  : resolves id → { plugin: <pluginId>, marketplace: <cwd>/.claude-plugin/marketplace.json }
- *                   or { plugin: <pluginId>, marketplace: catalogUrl } for external plugin entries
- * - hookSpec      : resolves built-in hook entries to ResolvedHook (event/matcher/command/scriptSource/scriptStore)
- * - scanner       : stubScanner (M0: always passes)
+ * All artifact content comes from externalBaseDir when externalIds are present:
+ * - denyRef       : loaded from <externalBaseDir>/guardrails/<n>/deny.json
+ * - agentsContent : loaded from <externalBaseDir>/contexts/<n>/AGENTS.md
+ * - skillSource   : resolves id → <externalBaseDir>/skills/<id>
+ * - agentSource   : resolves id → <externalBaseDir>/agents/<agentId>.md
+ * - hookSpec      : resolves hook entries to ResolvedHook using effectiveEntries map
  *
- * @param opts  Optional external-resolver seam for remote installs.
- *              Omitting opts → existing behaviour unchanged (100% rétro-compatible).
+ * For remove/check without a checkout: pass `manifest` in opts. The adapter
+ * reads canonical payload from ManifestEntry.applied (B-iii reversibility).
+ *
+ * Without externalBaseDir and without manifest: denyRef=[], agentsContent=''.
+ * Audit/planRemove fall back to empty defaults (graceful degradation for legacy entries).
+ *
+ * @param env   Injectable environment for path resolution.
+ * @param opts  Optional seam for remote installs, check, and remove.
  */
 export async function buildClaudeAdapter(
   env: Env,
-  artifactsDir: string,
   opts?: BuildClaudeAdapterOpts,
 ): Promise<Adapter> {
-  const denyJsonPath = path.join(artifactsDir, 'claude', 'deny.json');
-  const agentsMdPath = path.join(artifactsDir, 'shared', 'AGENTS.md');
+  // ---------------------------------------------------------------------------
+  // Resolve denyRef + allowRef: external guardrail from checkout OR empty default
+  //
+  // Matching: prefer 'guardrail:'-prefixed ids first (canonical form).
+  // Fallback: look up nature via effectiveEntries for legacy ids (e.g. 'guardrails-claude').
+  // ---------------------------------------------------------------------------
 
-  const [denyRef, agentsContent] = await Promise.all([
-    loadCanonicalDeny(denyJsonPath),
-    loadCanonicalContext(agentsMdPath),
-  ]);
+  const externalGuardrailId = opts?.externalIds === undefined
+    ? undefined
+    : (
+      // Primary: id with 'guardrail:' prefix
+      [...opts.externalIds].find((id) => id.startsWith('guardrail:'))
+        // Fallback: any external id whose catalog entry has nature 'guardrail'
+        ?? [...opts.externalIds].find((id) =>
+          opts.effectiveEntries?.get(id)?.kind === 'artifact'
+          && (opts.effectiveEntries.get(id) as { nature: string }).nature === 'guardrail'
+        )
+    );
 
-  // hookSpec resolves built-in hook entries to their concrete ResolvedHook specification.
-  // External hooks (not in BUILTIN_CATALOG) are not yet supported — throw an actionable error.
+  let denyRef: string[];
+  let allowRef: string[];
+
+  if (externalGuardrailId !== undefined && opts?.externalBaseDir !== undefined) {
+    // Derive the directory name from the id:
+    // 'guardrail:<name>' → <name>; legacy ids (e.g. 'guardrails-claude') → id itself.
+    const name = externalGuardrailId.startsWith('guardrail:')
+      ? externalGuardrailId.replace(/^guardrail:/, '')
+      : externalGuardrailId;
+    assertSafeArtifactName(name, externalGuardrailId);
+    const guardrailDir = path.join(opts.externalBaseDir, 'guardrails', name);
+    const [extDeny, extAllow] = await Promise.all([
+      loadCanonicalDeny(path.join(guardrailDir, 'deny.json')),
+      loadCanonicalAllow(path.join(guardrailDir, 'allow.json')),
+    ]);
+    denyRef = extDeny;
+    allowRef = extAllow;
+  } else {
+    denyRef = [];
+    allowRef = [];
+  }
+
+  // ---------------------------------------------------------------------------
+  // Resolve agentsContent: external context from checkout OR empty default
+  //
+  // Matching: prefer 'context:'-prefixed ids; fallback to effectiveEntries lookup.
+  // ---------------------------------------------------------------------------
+
+  const externalContextId = opts?.externalIds === undefined
+    ? undefined
+    : (
+      [...opts.externalIds].find((id) => id.startsWith('context:'))
+        ?? [...opts.externalIds].find((id) =>
+          opts.effectiveEntries?.get(id)?.kind === 'artifact'
+          && (opts.effectiveEntries.get(id) as { nature: string }).nature === 'context'
+        )
+    );
+
+  let agentsContent: string;
+
+  if (externalContextId !== undefined && opts?.externalBaseDir !== undefined) {
+    const name = externalContextId.startsWith('context:')
+      ? externalContextId.replace(/^context:/, '')
+      : externalContextId;
+    assertSafeArtifactName(name, externalContextId);
+    agentsContent = await readText(
+      path.join(opts.externalBaseDir, 'contexts', name, 'AGENTS.md'),
+    );
+  } else {
+    agentsContent = '';
+  }
+
+  // ---------------------------------------------------------------------------
+  // hookSpec: resolves event/matcher/timeout from effectiveEntries ONLY
+  // ---------------------------------------------------------------------------
+
   const hookSpec = (entry: AdapterEntry): ResolvedHook => {
-    const catalogEntry = BUILTIN_CATALOG.find((e) => e.id === entry.id);
+    const catalogEntry = opts?.effectiveEntries?.get(entry.id);
+
     if (
       catalogEntry === undefined
       || catalogEntry.kind !== 'artifact'
       || catalogEntry.nature !== 'hook'
     ) {
       throw new Error(
-        `hookSpec: external hooks not yet supported — "${entry.id}" is not a built-in hook entry. `
-          + 'Install built-in hooks only (hook:guard-command, hook:guard-secret, '
-          + 'hook:guard-write-secret, hook:guard-prompt).',
+        `hookSpec: cannot resolve hook "${entry.id}" — entry not found in effective catalog. `
+          + 'Pass effectiveEntries with the hook entry when calling buildClaudeAdapter.',
       );
     }
+
+    // Defence-in-depth: event and matcher are required by schema but verify at runtime
+    if (!catalogEntry.event || !catalogEntry.matcher) {
+      throw new Error(
+        `hookSpec: hook entry "${entry.id}" is missing event or matcher fields.`,
+      );
+    }
+
     const name = entry.id.replace(/^hook:/, '');
     // Depth-in-defence: guard before any path.join.
     assertSafeArtifactName(name, entry.id);
-    const scriptSource = path.join(artifactsDir, 'claude', 'hooks');
-    const scriptStore = path.join(path.dirname(resolveUserTargets(env).stateJson), 'hooks');
-    const command = `bun run ${scriptStore}/${name}.ts`;
-    const base: ResolvedHook = {
-      event: catalogEntry.event ?? '',
-      matcher: catalogEntry.matcher ?? '',
-      command,
-      scriptSource,
-      scriptStore,
-    };
-    if (catalogEntry.timeout !== undefined) {
-      return { ...base, timeout: catalogEntry.timeout };
+
+    if (opts?.externalIds?.has(entry.id) === true && opts.externalBaseDir !== undefined) {
+      const hooksDir = path.join(opts.externalBaseDir, 'hooks');
+      const scriptStore = path.join(path.dirname(resolveUserTargets(env).stateJson), 'hooks');
+      const command = `bun run ${scriptStore}/${name}.ts`;
+
+      const base: ResolvedHook = {
+        event: catalogEntry.event,
+        matcher: catalogEntry.matcher,
+        command,
+        scriptSource: hooksDir,
+        scriptStore,
+      };
+      if (catalogEntry.timeout !== undefined) {
+        return { ...base, timeout: catalogEntry.timeout };
+      }
+      return base;
     }
-    return base;
+
+    throw new Error(
+      `hookSpec: hook "${entry.id}" is not in externalIds. `
+        + 'All hooks must come from the remote checkout (externalBaseDir).',
+    );
   };
 
   const createOpts: Parameters<typeof createClaudeAdapter>[0] = {
     denyRef,
+    allowRef,
     agentsContent,
     scanner: stubScanner,
     hookSpec,
     skillSource: (entry) => {
       const name = entry.id.replace(/^skill:/, '');
-      // Depth-in-defence: guard before any path.join — prevents traversal via
-      // an external catalog entry like "skill:../../../../etc/evil".
       assertSafeArtifactName(name, entry.id);
       if (
         opts?.externalIds?.has(entry.id) === true
@@ -147,11 +232,13 @@ export async function buildClaudeAdapter(
       ) {
         return path.join(opts.externalBaseDir, 'skills', name);
       }
-      return path.join(artifactsDir, 'claude', 'skills', name);
+      throw new Error(
+        `skillSource: skill "${entry.id}" is not in externalIds. `
+          + 'All skills must come from the remote checkout (externalBaseDir).',
+      );
     },
     agentSource: (entry) => {
       const name = entry.id.replace(/^agent:/, '');
-      // Depth-in-defence: guard before any path.join.
       assertSafeArtifactName(name, entry.id);
       if (
         opts?.externalIds?.has(entry.id) === true
@@ -159,13 +246,13 @@ export async function buildClaudeAdapter(
       ) {
         return path.join(opts.externalBaseDir, 'agents', name + '.md');
       }
-      return path.join(artifactsDir, 'claude', 'agents', name + '.md');
+      throw new Error(
+        `agentSource: agent "${entry.id}" is not in externalIds. `
+          + 'All agents must come from the remote checkout (externalBaseDir).',
+      );
     },
     pluginSource: (entry) => {
       const plugin = entry.id.replace(/^plugin:/, '');
-      // External plugin: use the content repo URL as the marketplace.
-      // This lets `claude plugin marketplace add <url>` register the remote
-      // repository, then `claude plugin install <plugin>` installs from it.
       if (
         opts?.externalIds?.has(entry.id) === true
         && opts.catalogUrl !== undefined

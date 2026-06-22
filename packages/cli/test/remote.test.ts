@@ -33,7 +33,6 @@ function makeEntry(id: string): CatalogEntry {
     kind: 'artifact',
     id,
     nature: 'skill',
-    source: 'external',
     targets: ['claude'],
     scopes: ['user'],
   };
@@ -147,7 +146,10 @@ describe('fetchRemoteCatalog — success', () => {
     const result = await fetchRemoteCatalog({
       catalogUrl: 'https://example.com/catalog.git',
       run: makeRunner(tagsStdout),
-      tmpFactory: makeFakeTmpFactory(dir, remoteEntries),
+      tmpFactory: makeFakeTmpFactory(dir, {
+        meta: { name: 'remote-test-catalog' },
+        entries: remoteEntries,
+      }),
     });
 
     expect(result.entries).toHaveLength(1);
@@ -177,7 +179,7 @@ describe('fetchRemoteCatalog — RemoteFetchError propagation', () => {
       fetchRemoteCatalog({
         catalogUrl: 'https://example.com/catalog.git',
         run: makeRunner(tagsStdout, 1), // clone exits 1
-        tmpFactory: makeFakeTmpFactory(dir, []),
+        tmpFactory: makeFakeTmpFactory(dir, { meta: { name: 'fail-test-catalog' }, entries: [] }),
       }),
     ).rejects.toBeInstanceOf(RemoteFetchError);
 
@@ -221,7 +223,6 @@ describe('mergeCatalogs', () => {
       kind: 'artifact',
       id: 'guardrails-claude',
       nature: 'guardrail',
-      source: 'internal',
       targets: ['claude'],
       scopes: ['user', 'project'],
     };
@@ -229,13 +230,12 @@ describe('mergeCatalogs', () => {
       kind: 'artifact',
       id: 'guardrails-claude',
       nature: 'guardrail',
-      source: 'external', // different source — remote version
       targets: ['claude'],
       scopes: ['user'],
     };
     const { entries, conflicts } = mergeCatalogs([builtinEntry], [remoteEntry]);
     expect(entries).toHaveLength(1);
-    expect(entries[0]?.source).toBe('internal'); // built-in kept
+    expect(entries[0]?.id).toBe('guardrails-claude'); // built-in kept
     expect(conflicts).toContain('guardrails-claude');
   });
 

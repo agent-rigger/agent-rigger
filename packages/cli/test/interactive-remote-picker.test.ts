@@ -30,9 +30,6 @@ import type { CliPrompts } from '../src/cli';
 // Repo root
 // ---------------------------------------------------------------------------
 
-const REPO_ROOT = path.resolve(import.meta.dirname, '../../..');
-const ARTIFACTS_DIR = path.join(REPO_ROOT, 'artifacts');
-
 // ---------------------------------------------------------------------------
 // Fixed fixtures
 // ---------------------------------------------------------------------------
@@ -44,7 +41,6 @@ const EXTERNAL_SKILL_ENTRY: CatalogEntry = {
   kind: 'artifact',
   id: 'skill:remote-demo',
   nature: 'skill',
-  source: 'external',
   targets: ['claude'],
   scopes: ['user', 'project'],
 };
@@ -77,7 +73,11 @@ async function makeIsolatedEnv(opts: {
   const contentDir = await fs.mkdtemp(path.join(os.tmpdir(), 'rigger-picker-content-'));
 
   // Write catalog.json for the remote content repo.
-  await fs.writeFile(path.join(contentDir, 'catalog.json'), JSON.stringify(catalog), 'utf8');
+  await fs.writeFile(
+    path.join(contentDir, 'catalog.json'),
+    JSON.stringify({ meta: { name: 'picker-test-catalog' }, entries: catalog }),
+    'utf8',
+  );
 
   // Write skill fixtures.
   for (const skillId of skillIds) {
@@ -131,7 +131,11 @@ async function makeIsolatedEnv(opts: {
     const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'rigger-picker-checkout-'));
     tmpDirs.push(tmpDir);
     // Copy catalog + skills into fresh tmpDir so each checkout is independent.
-    await fs.writeFile(path.join(tmpDir, 'catalog.json'), JSON.stringify(catalog), 'utf8');
+    await fs.writeFile(
+      path.join(tmpDir, 'catalog.json'),
+      JSON.stringify({ meta: { name: 'picker-test-catalog' }, entries: catalog }),
+      'utf8',
+    );
     for (const skillId of skillIds) {
       await fs.mkdir(path.join(tmpDir, 'skills', skillId), { recursive: true });
       await fs.writeFile(
@@ -197,7 +201,6 @@ describe('interactive install — with catalogUrl', () => {
     await runCli(['install'], {
       print: () => {},
       env: iso.env,
-      artifactsDir: ARTIFACTS_DIR,
       prompts,
       remote: { run: iso.makeRunner(), tmpFactory: iso.makeTmpFactory(), scanner: stubScanner },
     });
@@ -221,7 +224,6 @@ describe('interactive install — with catalogUrl', () => {
     const code = await runCli(['install'], {
       print: () => {},
       env: iso.env,
-      artifactsDir: ARTIFACTS_DIR,
       prompts,
       remote: { run: iso.makeRunner(), tmpFactory: iso.makeTmpFactory(), scanner: stubScanner },
     });
@@ -229,7 +231,7 @@ describe('interactive install — with catalogUrl', () => {
     expect(code).toBe(0);
   });
 
-  it('manifest entry has source:external after interactive remote install', async () => {
+  it('manifest entry has real ref/sha after interactive remote install', async () => {
     const prompts: CliPrompts = {
       selectArtifacts: async () => ['skill:remote-demo'],
       selectScope: async () => 'user',
@@ -241,19 +243,18 @@ describe('interactive install — with catalogUrl', () => {
     await runCli(['install'], {
       print: () => {},
       env: iso.env,
-      artifactsDir: ARTIFACTS_DIR,
       prompts,
       remote: { run: iso.makeRunner(), tmpFactory: iso.makeTmpFactory(), scanner: stubScanner },
     });
 
     const raw = await fs.readFile(targets.stateJson, 'utf8');
     const manifest = JSON.parse(raw) as {
-      artifacts: Array<{ id: string; source: string; ref?: string }>;
+      artifacts: Array<{ id: string; ref?: string; sha?: string }>;
     };
     const entry = manifest.artifacts.find((a) => a.id === 'skill:remote-demo');
     expect(entry).toBeDefined();
-    expect(entry?.source).toBe('external');
     expect(entry?.ref).toBe(TAG_V1_0_0);
+    expect(entry?.sha).not.toBe('');
   });
 
   it('store SKILL.md is written after interactive remote install', async () => {
@@ -268,7 +269,6 @@ describe('interactive install — with catalogUrl', () => {
     await runCli(['install'], {
       print: () => {},
       env: iso.env,
-      artifactsDir: ARTIFACTS_DIR,
       prompts,
       remote: { run: iso.makeRunner(), tmpFactory: iso.makeTmpFactory(), scanner: stubScanner },
     });
@@ -281,18 +281,18 @@ describe('interactive install — with catalogUrl', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Scenario 2: interactive without catalogUrl → built-in only, local install
+// Scenario 2: interactive without catalogUrl → empty catalog + actionable message
 // ---------------------------------------------------------------------------
 
 describe('interactive install — without catalogUrl', () => {
-  it('selectArtifacts receives built-in catalog only (no external entries)', async () => {
+  it('selectArtifacts is NOT called when no catalogUrl (empty catalog)', async () => {
     const noUrlIso = await makeIsolatedEnv({ withCatalogUrl: false });
-    let capturedEntries: CatalogEntry[] | null = null;
+    let selectCalled = false;
 
     try {
       const prompts: CliPrompts = {
-        selectArtifacts: async (entries) => {
-          capturedEntries = entries as CatalogEntry[];
+        selectArtifacts: async () => {
+          selectCalled = true;
           return [];
         },
         selectScope: async () => 'user',
@@ -304,7 +304,6 @@ describe('interactive install — without catalogUrl', () => {
       await runCli(['install'], {
         print: () => {},
         env: noUrlIso.env,
-        artifactsDir: ARTIFACTS_DIR,
         prompts,
         remote: {
           run: noUrlIso.makeRunner(),
@@ -313,27 +312,20 @@ describe('interactive install — without catalogUrl', () => {
         },
       });
 
-      expect(capturedEntries).not.toBeNull();
-      // The remote-demo fixture entry must NOT appear in the built-in-only catalog.
-      // NOTE: BUILTIN_CATALOG itself contains source:'external' entries (e.g. tool:glab — host
-      // tools that must be present on the system), so filtering on source alone would give false
-      // positives. We assert on the specific remote fixture id instead.
-      // capturedEntries is non-null at this point (asserted above).
-      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-      const remoteFixtureEntries = capturedEntries!.filter((e) => e.id === 'skill:remote-demo');
-      expect(remoteFixtureEntries).toHaveLength(0);
+      // Without catalogUrl, catalog is empty → selectArtifacts must NOT be called
+      expect(selectCalled).toBe(false);
     } finally {
       await noUrlIso.cleanupAll();
     }
   });
 
-  it('installs a built-in skill locally (manifest source:internal)', async () => {
+  it('exits 0 with actionable message when no catalogUrl configured', async () => {
     const noUrlIso = await makeIsolatedEnv({ withCatalogUrl: false });
-    const noUrlTargets = resolveUserTargets(noUrlIso.env);
+    const lines: string[] = [];
 
     try {
       const prompts: CliPrompts = {
-        selectArtifacts: async () => ['guardrails-claude'],
+        selectArtifacts: async () => [],
         selectScope: async () => 'user',
         confirmApply: async () => true,
         askUrl: async () => '',
@@ -341,21 +333,14 @@ describe('interactive install — without catalogUrl', () => {
       };
 
       const code = await runCli(['install'], {
-        print: () => {},
+        print: (msg) => lines.push(msg),
         env: noUrlIso.env,
-        artifactsDir: ARTIFACTS_DIR,
         prompts,
-        // remote.run deliberately absent — should never be called for local install.
       });
 
       expect(code).toBe(0);
-
-      const raw = await fs.readFile(noUrlTargets.stateJson, 'utf8');
-      const manifest = JSON.parse(raw) as {
-        artifacts: Array<{ id: string; source: string }>;
-      };
-      const entry = manifest.artifacts.find((a) => a.id === 'guardrails-claude');
-      expect(entry?.source).toBe('internal');
+      const out = lines.join('\n');
+      expect(out).toMatch(/aucun catalog|agent-rigger init/);
     } finally {
       await noUrlIso.cleanupAll();
     }
@@ -379,7 +364,6 @@ describe('interactive install — empty selection', () => {
     const code = await runCli(['install'], {
       print: () => {},
       env: iso.env,
-      artifactsDir: ARTIFACTS_DIR,
       prompts,
       remote: { run: iso.makeRunner(), tmpFactory: iso.makeTmpFactory(), scanner: stubScanner },
     });
@@ -401,7 +385,6 @@ describe('interactive install — empty selection', () => {
     await runCli(['install'], {
       print: (msg) => lines.push(msg),
       env: iso.env,
-      artifactsDir: ARTIFACTS_DIR,
       prompts,
       remote: { run: iso.makeRunner(), tmpFactory: iso.makeTmpFactory(), scanner: stubScanner },
     });

@@ -21,7 +21,7 @@
  * - An empty `ref` always returns `[]`.
  * - An empty `current` returns `ref` deduplicated.
  *
- * @param ref     - The canonical set of rules (e.g. from artifacts/claude/deny.json).
+ * @param ref     - The canonical set of rules loaded from the installed guardrail entry.
  * @param current - The rules already present in the target settings.json.
  */
 export function computeMissingDeny(ref: string[], current: string[]): string[] {

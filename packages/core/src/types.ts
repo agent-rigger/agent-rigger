@@ -36,6 +36,62 @@ export interface Artifact {
 }
 
 // ---------------------------------------------------------------------------
+// AppliedPayload — the mutations actually applied during install
+// ---------------------------------------------------------------------------
+
+/**
+ * Payload recorded when a guardrail is installed.
+ * Captures the exact deny + allow rules that were merged into settings.json.
+ */
+export interface AppliedGuardrail {
+  kind: 'guardrail';
+  /** Deny rules that were added (the full canonical set, not just the delta). */
+  denyRules: string[];
+  /** Allow rules that were added (the full canonical set). */
+  allowRules: string[];
+}
+
+/**
+ * Payload recorded when a context artifact is installed.
+ * Captures the AGENTS.md content that was written.
+ */
+export interface AppliedContext {
+  kind: 'context';
+  /** Full UTF-8 content of the AGENTS.md file that was written. */
+  block: string;
+}
+
+/**
+ * Payload recorded when a hook is installed.
+ * Captures the exact event/matcher/command registered in settings.json.
+ */
+export interface AppliedHook {
+  kind: 'hook';
+  event: string;
+  matcher: string;
+  command: string;
+  timeout?: number;
+}
+
+/**
+ * Payload recorded when a skill or agent is installed via a link op.
+ * The `files` field mirrors ManifestEntry.files for link-type artifacts.
+ */
+export interface AppliedLink {
+  kind: 'link';
+  /** Absolute paths of files/dirs written (target + store). */
+  files: string[];
+}
+
+/**
+ * Discriminated union of per-nature applied payloads.
+ *
+ * Present on ManifestEntry.applied after B-iii.
+ * Absent on legacy entries installed before B-iii → remove/check degrade gracefully.
+ */
+export type AppliedPayload = AppliedGuardrail | AppliedContext | AppliedHook | AppliedLink;
+
+// ---------------------------------------------------------------------------
 // Manifest
 // ---------------------------------------------------------------------------
 
@@ -43,21 +99,23 @@ export interface Artifact {
  * One record in the local manifest (~/.config/agent-rigger/state.json).
  * Tracks what is installed, where it came from, and what it wrote to disk.
  *
- * - source: 'internal' for tool-coupled artefacts, 'external' for remote ones.
  * - ref: semver tag (human version).
  * - sha: resolved commit sha (reproducibility + drift detection).
  * - installedAt: ISO-8601 timestamp string.
  * - files: absolute paths of files written or managed.
+ * - applied: structured payload of the mutations applied at install time.
+ *   Optional for backward compatibility with manifests written before B-iii.
  */
 export interface ManifestEntry {
   id: string;
   nature: Nature;
-  source: 'internal' | 'external';
   ref: string;
   sha: string;
   scope: Scope;
   installedAt: string;
   files: string[];
+  /** Structured payload of the mutations applied at install time. Added in B-iii. */
+  applied?: AppliedPayload;
 }
 
 /**
@@ -106,6 +164,17 @@ export interface WriteOpMergeDeny {
   kind: 'merge-deny';
   path: string;
   /** Deny rules that will be appended (after dedup). */
+  toAdd: string[];
+}
+
+/**
+ * Merge entries into permissions.allow (settings.json).
+ * Only the allow array is touched; all other keys are preserved.
+ */
+export interface WriteOpMergeAllow {
+  kind: 'merge-allow';
+  path: string;
+  /** Allow rules that will be appended (after dedup). */
   toAdd: string[];
 }
 
@@ -165,8 +234,8 @@ export interface WriteOpMergeHooks {
   /** Optional timeout in seconds for the hook command. */
   timeout?: number;
   /**
-   * Source directory to copy scripts from (e.g. artifacts/claude/hooks).
-   * Absent when script deposit is not needed (e.g. external hooks in future).
+   * Source directory to copy scripts from (e.g. hooks/ sub-dir from the catalog checkout).
+   * Absent when script deposit is not needed.
    */
   scriptSource?: string;
   /**
@@ -180,6 +249,7 @@ export type WriteOp =
   | WriteOpWriteJson
   | WriteOpWriteText
   | WriteOpMergeDeny
+  | WriteOpMergeAllow
   | WriteOpEnsureImport
   | WriteOpLink
   | WriteOpPluginInstall
@@ -198,6 +268,18 @@ export interface RemovalOpRemoveDeny {
   /** Absolute path to settings.json. */
   path: string;
   /** The managed rules to remove (those originally added by agent-rigger). */
+  rules: string[];
+}
+
+/**
+ * Remove allow rules managed by agent-rigger from settings.json.
+ * Only the rules listed in `rules` are removed; other allow entries are kept.
+ */
+export interface RemovalOpRemoveAllow {
+  kind: 'remove-allow';
+  /** Absolute path to settings.json. */
+  path: string;
+  /** The managed allow rules to remove. */
   rules: string[];
 }
 
@@ -262,6 +344,7 @@ export interface RemovalOpRemoveHooks {
 
 export type RemovalOp =
   | RemovalOpRemoveDeny
+  | RemovalOpRemoveAllow
   | RemovalOpRemoveBlock
   | RemovalOpDeleteFile
   | RemovalOpUnlink

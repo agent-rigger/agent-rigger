@@ -45,7 +45,6 @@ const REMOTE_PLUGIN_ENTRY: CatalogEntry = {
   kind: 'artifact',
   id: 'plugin:demo-plugin',
   nature: 'plugin',
-  source: 'external',
   targets: ['claude'],
   scopes: ['user'],
 };
@@ -53,9 +52,6 @@ const REMOTE_PLUGIN_ENTRY: CatalogEntry = {
 // ---------------------------------------------------------------------------
 // Repo root + artifacts dir
 // ---------------------------------------------------------------------------
-
-const REPO_ROOT = path.resolve(import.meta.dirname, '../../..');
-const ARTIFACTS_DIR = path.join(REPO_ROOT, 'artifacts');
 
 // ---------------------------------------------------------------------------
 // makePluginEnv — isolated HOME + content dir with plugin catalog fixture
@@ -77,7 +73,7 @@ async function makePluginEnv(): Promise<{
   // Write catalog.json with the external plugin entry
   await fs.writeFile(
     path.join(contentDir, 'catalog.json'),
-    JSON.stringify([REMOTE_PLUGIN_ENTRY]),
+    JSON.stringify({ meta: { name: 'h6-test-catalog' }, entries: [REMOTE_PLUGIN_ENTRY] }),
     'utf8',
   );
 
@@ -191,7 +187,6 @@ describe('H6 — external plugin: runner receives catalogUrl as marketplace URL'
       scope: 'user',
       env: ctx.env,
       manifestPath: ctx.manifestPath,
-      artifactsDir: ARTIFACTS_DIR,
       runner: ctx.runner,
       tmpFactory: ctx.tmpFactory,
       confirm: true,
@@ -211,7 +206,6 @@ describe('H6 — external plugin: runner receives catalogUrl as marketplace URL'
       scope: 'user',
       env: ctx.env,
       manifestPath: ctx.manifestPath,
-      artifactsDir: ARTIFACTS_DIR,
       runner: ctx.runner,
       tmpFactory: ctx.tmpFactory,
       confirm: true,
@@ -231,7 +225,6 @@ describe('H6 — external plugin: runner receives catalogUrl as marketplace URL'
       scope: 'user',
       env: ctx.env,
       manifestPath: ctx.manifestPath,
-      artifactsDir: ARTIFACTS_DIR,
       runner: ctx.runner,
       tmpFactory: ctx.tmpFactory,
       confirm: true,
@@ -248,14 +241,13 @@ describe('H6 — external plugin: runner receives catalogUrl as marketplace URL'
     expect(addIdx).toBeLessThan(installIdx);
   });
 
-  it('manifest entry has source:external', async () => {
+  it('manifest entry has real ref/sha (remote install)', async () => {
     await runRemoteInstall({
       ids: ['plugin:demo-plugin'],
       catalogUrl: CATALOG_URL,
       scope: 'user',
       env: ctx.env,
       manifestPath: ctx.manifestPath,
-      artifactsDir: ARTIFACTS_DIR,
       runner: ctx.runner,
       tmpFactory: ctx.tmpFactory,
       confirm: true,
@@ -264,11 +256,10 @@ describe('H6 — external plugin: runner receives catalogUrl as marketplace URL'
     const raw = await fs.readFile(ctx.manifestPath, 'utf8').catch(() => null);
     expect(raw).not.toBeNull();
     const manifest = JSON.parse(raw!) as {
-      artifacts: Array<{ id: string; source?: string; ref?: string; sha?: string }>;
+      artifacts: Array<{ id: string; ref?: string; sha?: string }>;
     };
     const entry = manifest.artifacts.find((a) => a.id === 'plugin:demo-plugin');
     expect(entry).toBeDefined();
-    expect(entry?.source).toBe('external');
     expect(entry?.ref).toBe(TAG_NAME);
     expect(entry?.sha).toBe(SHA);
   });
@@ -292,7 +283,7 @@ describe('H6 — internal/local plugin: pluginSource uses local marketplace.json
     const localEnv: Env = { RIGGER_HOME: tmpHomeDir };
 
     try {
-      const adapter = await buildClaudeAdapter(localEnv, ARTIFACTS_DIR, {
+      const adapter = await buildClaudeAdapter(localEnv, {
         externalIds: new Set(['skill:something-else']), // plugin:demo-plugin NOT in externalIds
         catalogUrl: CATALOG_URL,
       });

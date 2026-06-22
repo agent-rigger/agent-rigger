@@ -296,7 +296,6 @@ export interface RenderEntryInfoOpts {
  * Format:
  *   <id>  (<nature>)
  *     status:   installed | available
- *     source:   internal | external
  *     targets:  claude, ...
  *     scopes:   user, project, ...
  *     level:    required | recommended   (artifact only, when present)
@@ -312,7 +311,6 @@ export function renderEntryInfo(entry: CatalogEntry, opts: RenderEntryInfoOpts =
 
   lines.push(`${entry.id}  (${natureLabel})`);
   lines.push(`  status:   ${status}`);
-  lines.push(`  source:   ${entry.source}`);
   lines.push(`  targets:  ${entry.targets.join(', ')}`);
   lines.push(`  scopes:   ${entry.scopes.join(', ')}`);
 
@@ -355,6 +353,78 @@ export async function selectArtifacts(entries: CatalogEntry[]): Promise<string[]
   }
 
   return result;
+}
+
+// ---------------------------------------------------------------------------
+// selectArtifactsWithDefaults — post-init catalog proposal picker
+// ---------------------------------------------------------------------------
+
+/**
+ * Options for selectArtifactsWithDefaults.
+ *
+ * - required     : ids that are forced into the result (cannot be effectively unchecked).
+ *                  Displayed as pre-checked in the picker; re-added to the result even
+ *                  if the user unchecks them.
+ * - recommended  : ids that are pre-checked but can be deselected by the user.
+ */
+export interface SelectWithDefaultsOpts {
+  required: Set<string>;
+  recommended: Set<string>;
+}
+
+/**
+ * Post-init multiselect picker with pre-checked defaults and forced required ids.
+ *
+ * Behaviour:
+ * - Entries in `required`    → initially checked; always included in the returned ids
+ *   (enforced after the picker returns, so even if the user unchecks them they come back).
+ *   On CANCEL the full proposal is abandoned — returns [] (no install at all).
+ * - Entries in `recommended` → initially checked; can be unchecked by the user.
+ * - Remaining entries        → initially unchecked.
+ *
+ * Cancellation (isCancel): returns [] — the user chose to install nothing.
+ * The `required` enforcement only applies to a CONFIRMED selection, not an abort.
+ *
+ * Note: `enforceRequired` is inlined to avoid a circular dependency with
+ * cmd-init; callers (bin/cli.ts) should use this together with cmd-init's helpers.
+ */
+export async function selectArtifactsWithDefaults(
+  entries: CatalogEntry[],
+  opts: SelectWithDefaultsOpts,
+): Promise<string[]> {
+  const { required, recommended } = opts;
+
+  // Build the picker: pre-check required ∪ recommended; mark required with a hint.
+  const initialChecked = new Set([...required, ...recommended]);
+  const options = entries.map((e) =>
+    required.has(e.id)
+      ? { value: e.id, label: `${e.id}  [required]`, hint: 'required' }
+      : { value: e.id, label: e.id }
+  );
+
+  const result = await multiselect<string>({
+    message: 'Select artifacts to install (required items are always included):',
+    options,
+    initialValues: entries.filter((e) => initialChecked.has(e.id)).map((e) => e.id),
+    required: false,
+  });
+
+  if (isCancel(result)) {
+    cancel('Operation cancelled.');
+    // Abort = install nothing at all (the user opted out of the entire proposal).
+    // `required` enforcement only applies to a confirmed selection, not an abort.
+    return [];
+  }
+
+  // Enforce: re-add any required ids that were unchecked.
+  const seen = new Set(result);
+  const enforced = [...result];
+  for (const id of required) {
+    if (!seen.has(id)) {
+      enforced.push(id);
+    }
+  }
+  return enforced;
 }
 
 /**
@@ -403,7 +473,7 @@ export interface RenderCatalogListOpts {
  *
  * Hint:
  *   - artifact with level  → level string (e.g. "required").
- *   - artifact without level → source string (e.g. "internal").
+ *   - artifact without level → empty string.
  *   - pack                 → "(N members)".
  *
  * Header: "Catalog (N entries):" or "<label> (N):" when label is provided.
@@ -436,7 +506,7 @@ export function renderCatalogList(
     const nature = entry.kind === 'pack' ? 'pack' : entry.nature;
     const hint = entry.kind === 'pack'
       ? `(${entry.members.length} members)`
-      : (entry.level ?? entry.source);
+      : (entry.level ?? '');
     return { tag: tagFor(entry.id), id: entry.id, nature, hint };
   });
 

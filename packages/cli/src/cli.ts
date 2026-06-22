@@ -13,6 +13,8 @@
  * - No while loops.
  * - No process.exit inside runCli.
  * - All I/O is injectable via CliDeps for test isolation.
+ * - No BUILTIN_CATALOG: all content comes from the fetched remote catalog.
+ *   Without catalogUrl → catalog is empty (actionable message).
  */
 
 import path from 'node:path';
@@ -30,7 +32,8 @@ import { resolveUserTargets } from '@agent-rigger/core/paths';
 import type { Scanner } from '@agent-rigger/core/scan';
 
 import {
-  BUILTIN_CATALOG,
+  type CatalogEntry,
+  fetchCatalog,
   isUpdateAvailable,
   mergeCatalogs,
   resolveVersion,
@@ -43,7 +46,7 @@ export { buildClaudeAdapter } from './adapter-builder';
 export type { BuildClaudeAdapterOpts } from './adapter-builder';
 import { runCheck } from './cmd-check';
 import { runInit } from './cmd-init';
-import { runInstall } from './cmd-install';
+import type { CatalogProposal } from './cmd-init';
 import type { RunLsResult } from './cmd-ls';
 import { RESOURCE_NATURE_MAP, runLs } from './cmd-ls';
 import { runRemove, UnknownRemoveIdError } from './cmd-remove';
@@ -243,11 +246,20 @@ Examples:
 
 /** Prompt callbacks injected by the CLI entry or tests. */
 export interface CliPrompts {
-  selectArtifacts: (entries: typeof BUILTIN_CATALOG) => Promise<string[]>;
+  selectArtifacts: (entries: CatalogEntry[]) => Promise<string[]>;
   selectScope: () => Promise<'user' | 'project'>;
   confirmApply: (planText: string) => Promise<boolean>;
   askUrl: () => Promise<string>;
   askMethod: () => Promise<'provider-cli' | 'https' | 'ssh'>;
+  /**
+   * Optional post-init picker + install orchestration (injectable for tests).
+   *
+   * When set, `runCli` will provide this as `proposeInstall` to `runInit`,
+   * which calls it after a successful config persist.
+   * When absent and in a real TTY, `runCli` builds the real picker + install fn.
+   * When absent and NOT in a TTY, `runInit` receives no `proposeInstall` (config-only).
+   */
+  proposeInstall?: (catalog: CatalogProposal) => Promise<string[]>;
 }
 
 /** All injectable dependencies for runCli. */
@@ -256,8 +268,6 @@ export interface CliDeps {
   print?: (msg: string) => void;
   /** Environment variables. Defaults to Bun.env. */
   env?: Env;
-  /** Absolute path to the artifacts directory. Defaults to resolved from __dirname. */
-  artifactsDir?: string;
   /** Interactive prompt overrides (for tests). */
   prompts?: CliPrompts;
   /**
@@ -271,21 +281,6 @@ export interface CliDeps {
 
 // buildClaudeAdapter + BuildClaudeAdapterOpts are defined and exported from adapter-builder.ts.
 // They are re-exported at the top of this file so existing consumers of "cli.ts" are unaffected.
-
-// ---------------------------------------------------------------------------
-// resolveArtifactsDir — find repo artifacts relative to this file
-// ---------------------------------------------------------------------------
-
-/**
- * Resolve the default artifacts directory.
- * In dev (src/): walk up to repo root, then artifacts/.
- * In compiled binary: same relative path from dist/.
- */
-function resolveArtifactsDir(): string {
-  // Walk up: packages/cli/src/ → packages/cli/ → packages/ → repo root (agent-rigger/)
-  const thisDir = path.dirname(import.meta.path);
-  return path.resolve(thisDir, '..', '..', '..', 'artifacts');
-}
 
 // ---------------------------------------------------------------------------
 // resolveUserStatePath — manifest path for install
@@ -326,28 +321,27 @@ async function loadCliConfig(env: Env): Promise<Awaited<ReturnType<typeof loadCo
 }
 
 // ---------------------------------------------------------------------------
-// resolveEffectiveCatalog — built-in ∪ remote (best-effort)
+// resolveEffectiveCatalog — remote only (no builtin fallback)
 // ---------------------------------------------------------------------------
 
 /**
  * Resolve the effective catalog for ls commands.
  *
  * - Loads the user config to check for a catalogUrl.
- * - If catalogUrl is configured, attempts to fetch the remote catalog and
- *   merges it with the built-in (built-in entries win on id collision).
- * - If the fetch fails for any reason, prints a warning and falls back to
- *   the built-in catalog. Exit 0 is preserved — ls is best-effort.
- * - If no catalogUrl is configured, returns BUILTIN_CATALOG unchanged.
+ * - If catalogUrl is configured, attempts to fetch the remote catalog.
+ *   On fetch failure: prints a warning and returns [] (empty, actionable).
+ * - If no catalogUrl is configured: returns [] with an actionable message.
  */
 async function resolveEffectiveCatalog(
   env: Env,
   print: (msg: string) => void,
   remote: CliDeps['remote'],
-): Promise<typeof BUILTIN_CATALOG> {
+): Promise<CatalogEntry[]> {
   const config = await loadCliConfig(env);
 
   if (!config.catalogUrl) {
-    return BUILTIN_CATALOG;
+    print('aucun catalog configuré — lance `agent-rigger init`');
+    return [];
   }
 
   const remoteFetchOpts: Parameters<typeof fetchRemoteCatalog>[0] = {
@@ -358,19 +352,21 @@ async function resolveEffectiveCatalog(
 
   try {
     const { entries } = await fetchRemoteCatalog(remoteFetchOpts);
-    const effective = mergeCatalogs(BUILTIN_CATALOG, entries);
+    const effective = mergeCatalogs([], entries);
     if (effective.conflicts.length > 0) {
       print(
         `[warning] ${effective.conflicts.length} remote entr${
           effective.conflicts.length === 1 ? 'y' : 'ies'
-        } shadowed by built-in: ${effective.conflicts.join(', ')}`,
+        } deduplicated (duplicate ids discarded): ${effective.conflicts.join(', ')}`,
       );
     }
     return effective.entries;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    print(`[warning] Remote catalog unavailable (${msg}). Falling back to built-in catalog.`);
-    return BUILTIN_CATALOG;
+    print(
+      `[warning] Catalog distant indisponible (${msg}). Vérifie l'URL ou relance \`agent-rigger init\`.`,
+    );
+    return [];
   }
 }
 
@@ -391,7 +387,6 @@ async function resolveEffectiveCatalog(
 export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number> {
   const print = deps.print ?? ((msg: string) => process.stdout.write(msg + '\n'));
   const env: Env = deps.env ?? Bun.env;
-  const artifactsDir = deps.artifactsDir ?? resolveArtifactsDir();
 
   const { command, resourceVerb, resourceIds, flags } = parseArgs(argv);
 
@@ -419,6 +414,9 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
     // ----- ls (top-level) -----
     if (command === 'ls') {
       const effective = await resolveEffectiveCatalog(env, print, deps.remote);
+      if (effective.length === 0) {
+        return 0;
+      }
       const result = await runLs({ catalog: effective, env, scope });
       print(result.output);
       return 0;
@@ -433,7 +431,6 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
         flags,
         scope,
         env,
-        artifactsDir,
         print,
         deps,
       });
@@ -441,27 +438,52 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
 
     // ----- check -----
     if (command === 'check') {
-      const adapter = await buildClaudeAdapter(env, artifactsDir);
+      const effective = await resolveEffectiveCatalog(env, print, deps.remote);
 
-      // Builtin entries for guardrail + context check
-      const entries: AdapterEntry[] = [
-        { id: 'guardrails-claude', nature: 'guardrail', scope },
-        { id: 'context-claude', nature: 'context', scope },
-      ];
+      if (effective.length === 0) {
+        return 0;
+      }
+
+      // Entries for check: all guardrails and contexts in the effective catalog.
+      // (No hardcoded ids — catalog is fully remote, content comes from catalogUrl.)
+      const entries: AdapterEntry[] = effective
+        .filter(
+          (e) => e.kind === 'artifact' && (e.nature === 'guardrail' || e.nature === 'context'),
+        )
+        .map((e) => ({
+          id: e.id,
+          nature: (e as { nature: 'guardrail' | 'context' }).nature,
+          scope,
+        }));
+
+      // Best-effort update-available annotation (R22.4).
+      // Always run when catalog is non-empty, independent of guardrail/context presence.
+      // Never throws: failures are silently swallowed so check exit code is unaffected.
+      const updateLines = await resolveUpdateAvailable(env, scope, deps.remote);
+
+      if (entries.length === 0) {
+        // Catalog has entries but no guardrail/context to check.
+        // Still show update-available annotation if relevant.
+        if (updateLines.length > 0) {
+          print(updateLines.join('\n'));
+        }
+        return 0;
+      }
+
+      const manifestPath = resolveManifestPath(env);
+      const adapter = await buildClaudeAdapter(env);
 
       const result = await runCheck({
         adapter,
         entries,
         scope,
         env,
-        toolEntries: BUILTIN_CATALOG,
+        manifestPath,
+        toolEntries: effective,
       });
 
       print(result.output);
 
-      // Best-effort update-available annotation (R22.4).
-      // Never throws: failures are silently swallowed so check exit code is unaffected.
-      const updateLines = await resolveUpdateAvailable(env, scope, deps.remote);
       if (updateLines.length > 0) {
         print(updateLines.join('\n'));
       }
@@ -476,7 +498,6 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
         flags,
         scope,
         env,
-        artifactsDir,
         print,
         deps,
       });
@@ -489,7 +510,6 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
         flags,
         scope,
         env,
-        artifactsDir,
         print,
         deps,
       });
@@ -502,7 +522,6 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
         flags,
         scope,
         env,
-        artifactsDir,
         print,
         deps,
       });
@@ -513,10 +532,100 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
       const prompts = deps.prompts ?? (await importUiPrompts());
       const configPath = resolveConfigPath(env);
 
+      const runner: CommandRunner = deps.remote?.run ?? defaultRunner;
+      const tmpFactory: TmpDirFactory = deps.remote?.tmpFactory ?? defaultTmpFactory;
+
+      // proposeInstall: resolve required/recommended from catalog.meta, show picker,
+      // then run actual install if user confirmed a non-empty selection.
+      // Gate: use injected prompts.proposeInstall when provided (test injection),
+      //       build the real picker when in a real TTY,
+      //       skip proposal entirely when NOT in a TTY (config-only mode).
+      let proposeInstallFn: ((catalog: CatalogProposal) => Promise<string[]>) | undefined;
+
+      if (prompts.proposeInstall !== undefined) {
+        // Test injection: use the injected fn directly.
+        proposeInstallFn = prompts.proposeInstall;
+      } else if (process.stdout.isTTY) {
+        // Real TTY: build the interactive picker + install orchestration.
+        proposeInstallFn = async (catalog: CatalogProposal): Promise<string[]> => {
+          const { selectArtifactsWithDefaults } = await import('./ui');
+
+          const required = new Set(catalog.meta.required ?? []);
+          const recommended = new Set(catalog.meta.recommended ?? []);
+
+          const selectedIds = await selectArtifactsWithDefaults(catalog.entries, {
+            required,
+            recommended,
+          });
+
+          if (selectedIds.length === 0) {
+            return [];
+          }
+
+          // Launch the actual install using the same remote path as `install` command.
+          const initConfig = await loadCliConfig(env);
+          const catalogUrl = initConfig.catalogUrl ?? '';
+
+          if (catalogUrl === '') {
+            return [];
+          }
+
+          const initManifestPath = resolveManifestPath(env);
+
+          await runRemoteInstall({
+            ids: selectedIds,
+            catalogUrl,
+            scope,
+            env,
+            manifestPath: initManifestPath,
+            runner,
+            tmpFactory,
+            confirm: true,
+            ...(deps.remote?.scanner === undefined ? {} : { scanner: deps.remote.scanner }),
+          });
+
+          return selectedIds;
+        };
+      }
+      // else: non-TTY → proposeInstallFn stays undefined → runInit skips proposal step.
+
+      // fetchCatalogFn: resolves remote version then fetches catalog.json.
+      // Only provided when proposeInstallFn is set — runInit skips both when either is absent.
+      const fetchCatalogFn = proposeInstallFn === undefined
+        ? undefined
+        : async (url: string): Promise<CatalogProposal> => {
+          const version = await resolveVersion(url, runner);
+          const { meta, entries } = await fetchCatalog(
+            url,
+            version.ref,
+            version.isTag,
+            runner,
+            { tmpFactory },
+          );
+          return { meta, entries };
+        };
+
+      // Adapt the catalog CommandRunner (optional stdout/stderr, optional args)
+      // to the preflight-auth CommandRunner (required stdout/stderr, required args).
+      // This is safe: preflightAuth always provides args and always uses stdout/stderr.
+      // opts (env forwarding) is only relevant for the real preflightAuth path; the
+      // test runner does not need it, so we silently discard it here.
+      const initRunner: import('./preflight-auth').CommandRunner = (cmd, args, _opts) =>
+        runner(cmd, args ?? []).then((r) => ({
+          exitCode: r.exitCode,
+          stdout: r.stdout ?? '',
+          stderr: r.stderr ?? '',
+        }));
+
       const result = await runInit({
         configPath,
         askUrl: prompts.askUrl,
         askMethod: prompts.askMethod,
+        // Forward the runner so preflightAuth uses the injected runner in tests
+        // (production: defaultRunner; tests: deps.remote?.run).
+        run: initRunner,
+        ...(fetchCatalogFn === undefined ? {} : { fetchCatalogFn }),
+        ...(proposeInstallFn === undefined ? {} : { proposeInstall: proposeInstallFn }),
       });
 
       print(result.output);
@@ -542,19 +651,21 @@ interface ResourceCommandOpts {
   flags: Record<string, string | boolean>;
   scope: 'user' | 'project';
   env: Env;
-  artifactsDir: string;
   print: (msg: string) => void;
   deps: CliDeps;
 }
 
 async function handleResourceCommand(opts: ResourceCommandOpts): Promise<number> {
-  const { resource, verb, ids, flags, scope, env, artifactsDir, print, deps } = opts;
+  const { resource, verb, ids, flags, scope, env, print, deps } = opts;
 
   const natureMapped = RESOURCE_NATURE_MAP[resource] ?? 'catalog';
 
   // ----- <resource> ls -----
   if (verb === 'ls' || verb === undefined) {
     const effectiveCatalog = await resolveEffectiveCatalog(env, print, deps.remote);
+    if (effectiveCatalog.length === 0) {
+      return 0;
+    }
     let result: RunLsResult;
     if (natureMapped === 'catalog') {
       result = await runLs({ catalog: effectiveCatalog, env, scope });
@@ -572,9 +683,10 @@ async function handleResourceCommand(opts: ResourceCommandOpts): Promise<number>
       return 2;
     }
 
-    // Validate each id belongs to the resource
+    // Validate each id belongs to the resource — check against effective catalog
+    const effectiveCatalog = await resolveEffectiveCatalog(env, print, deps.remote);
     const invalidIds = ids.filter((id) => {
-      const entry = BUILTIN_CATALOG.find((e) => e.id === id);
+      const entry = effectiveCatalog.find((e) => e.id === id);
       if (entry === undefined) return false; // will fail at resolve time with a better error
       if (natureMapped === 'pack') return entry.kind !== 'pack';
       return entry.kind !== 'artifact' || entry.nature !== natureMapped;
@@ -588,7 +700,7 @@ async function handleResourceCommand(opts: ResourceCommandOpts): Promise<number>
       return 2;
     }
 
-    return await handleInstall({ ids, flags, scope, env, artifactsDir, print, deps });
+    return await handleInstall({ ids, flags, scope, env, print, deps });
   }
 
   // ----- <resource> info <id> -----
@@ -599,7 +711,8 @@ async function handleResourceCommand(opts: ResourceCommandOpts): Promise<number>
       return 2;
     }
 
-    const entry = BUILTIN_CATALOG.find((e) => e.id === id);
+    const effectiveCatalog = await resolveEffectiveCatalog(env, print, deps.remote);
+    const entry = effectiveCatalog.find((e) => e.id === id);
     if (entry === undefined) {
       print(`[error] Unknown artifact id "${id}". Run "agent-rigger ls" to see available entries.`);
       return 2;
@@ -629,6 +742,12 @@ async function handleResourceCommand(opts: ResourceCommandOpts): Promise<number>
       return 2;
     }
 
+    const effectiveCatalog = await resolveEffectiveCatalog(env, print, deps.remote);
+
+    if (effectiveCatalog.length === 0) {
+      return 0;
+    }
+
     // Filter catalog to get artifact entries of this nature
     const adapterNature = natureMapped as
       | 'plugin'
@@ -638,7 +757,7 @@ async function handleResourceCommand(opts: ResourceCommandOpts): Promise<number>
       | 'agent'
       | 'mcp'
       | 'tool';
-    const filteredEntries: AdapterEntry[] = BUILTIN_CATALOG
+    const filteredEntries: AdapterEntry[] = effectiveCatalog
       .filter((e) => e.kind === 'artifact' && e.nature === adapterNature)
       .map((e) => ({ id: e.id, nature: adapterNature, scope }));
 
@@ -647,13 +766,15 @@ async function handleResourceCommand(opts: ResourceCommandOpts): Promise<number>
       return 0;
     }
 
-    const adapter = await buildClaudeAdapter(env, artifactsDir);
+    const manifestPath = resolveManifestPath(env);
+    const adapter = await buildClaudeAdapter(env);
     const result = await runCheck({
       adapter,
       entries: filteredEntries,
       scope,
       env,
-      toolEntries: BUILTIN_CATALOG,
+      manifestPath,
+      toolEntries: effectiveCatalog,
     });
 
     print(result.output);
@@ -675,15 +796,14 @@ async function handleResourceCommand(opts: ResourceCommandOpts): Promise<number>
     }
 
     // Validate each id belongs to the resource.
-    // For builtin entries: check via catalog kind/nature.
-    // For external entries (not in BUILTIN_CATALOG): infer nature from id prefix (skill:, agent:, etc.)
-    // so `guardrails update skill:x` is rejected even if skill:x is unknown to the built-in catalog.
+    // For external entries (not in effective catalog): infer nature from id prefix.
     const singular = resource.replace(/s$/, '');
+    const effectiveCatalog = await resolveEffectiveCatalog(env, print, deps.remote);
     const invalidIds = ids.filter((id) => {
-      const builtinEntry = BUILTIN_CATALOG.find((e) => e.id === id);
-      if (builtinEntry !== undefined) {
-        if (natureMapped === 'pack') return builtinEntry.kind !== 'pack';
-        return builtinEntry.kind !== 'artifact' || builtinEntry.nature !== natureMapped;
+      const catalogEntry = effectiveCatalog.find((e) => e.id === id);
+      if (catalogEntry !== undefined) {
+        if (natureMapped === 'pack') return catalogEntry.kind !== 'pack';
+        return catalogEntry.kind !== 'artifact' || catalogEntry.nature !== natureMapped;
       }
       // For external ids: infer nature from known prefixes.
       const PREFIX_TO_NATURE: Record<string, string> = {
@@ -710,7 +830,7 @@ async function handleResourceCommand(opts: ResourceCommandOpts): Promise<number>
       return 2;
     }
 
-    return await handleUpdate({ ids, flags, scope, env, artifactsDir, print, deps });
+    return await handleUpdate({ ids, flags, scope, env, print, deps });
   }
 
   // ----- <resource> remove <id...> -----
@@ -720,9 +840,10 @@ async function handleResourceCommand(opts: ResourceCommandOpts): Promise<number>
       return 2;
     }
 
-    // Validate each id belongs to the resource
+    // Validate each id belongs to the resource — check against effective catalog
+    const effectiveCatalog = await resolveEffectiveCatalog(env, print, deps.remote);
     const invalidIds = ids.filter((id) => {
-      const entry = BUILTIN_CATALOG.find((e) => e.id === id);
+      const entry = effectiveCatalog.find((e) => e.id === id);
       if (entry === undefined) return false; // will fail at runRemove time with a better error
       if (natureMapped === 'pack') return entry.kind !== 'pack';
       return entry.kind !== 'artifact' || entry.nature !== natureMapped;
@@ -736,7 +857,7 @@ async function handleResourceCommand(opts: ResourceCommandOpts): Promise<number>
       return 2;
     }
 
-    return await handleRemove({ ids, flags, scope, env, artifactsDir, print, deps });
+    return await handleRemove({ ids, flags, scope, env, print, deps });
   }
 
   // ----- unknown verb (includes planned: update) -----
@@ -753,13 +874,12 @@ interface HandleInstallOpts {
   flags: Record<string, string | boolean>;
   scope: 'user' | 'project';
   env: Env;
-  artifactsDir: string;
   print: (msg: string) => void;
   deps: CliDeps;
 }
 
 async function handleInstall(opts: HandleInstallOpts): Promise<number> {
-  const { ids, flags, scope, env, artifactsDir, print, deps } = opts;
+  const { ids, flags, scope, env, print, deps } = opts;
 
   const yes = flags['yes'] === true;
   const force = flags['force'] === true;
@@ -794,7 +914,6 @@ async function handleInstall(opts: HandleInstallOpts): Promise<number> {
         scope,
         env,
         manifestPath,
-        artifactsDir,
         runner,
         tmpFactory,
         confirm,
@@ -808,31 +927,19 @@ async function handleInstall(opts: HandleInstallOpts): Promise<number> {
       return 0;
     }
 
-    // Local install path (no catalogUrl configured): use BUILTIN_CATALOG.
-    const adapter = await buildClaudeAdapter(env, artifactsDir);
-
-    const result = await runInstall({
-      catalog: BUILTIN_CATALOG,
-      adapter,
-      scope,
-      env,
-      manifestPath,
-      selectedIds: ids,
-      confirm,
-    });
-
-    print(result.output);
+    // No catalogUrl configured → actionable message, nothing to install locally
+    print('aucun catalog configuré — lance `agent-rigger init`');
     return 0;
   }
 
-  // Interactive: no ids — use selectArtifacts prompt with effective catalog (built-in ∪ remote).
-  // NOTE: if catalogUrl is configured, this path does a best-effort remote fetch here to build
-  // the multiselect list, then runRemoteInstall does a second checkout for the actual install.
-  // 2 checkouts in the remote-interactive path is accepted; avoids leaking a checkout handle
-  // across the prompt boundary.
+  // Interactive: no ids — use selectArtifacts prompt with effective catalog (remote only).
   const prompts = deps.prompts ?? (await importUiPrompts());
 
   const effective = await resolveEffectiveCatalog(env, print, deps.remote);
+
+  if (effective.length === 0) {
+    return 0;
+  }
 
   const selectedIds = await prompts.selectArtifacts(effective);
   if (selectedIds.length === 0) {
@@ -856,7 +963,6 @@ async function handleInstall(opts: HandleInstallOpts): Promise<number> {
       scope: interactiveScope,
       env,
       manifestPath: interactiveManifestPath,
-      artifactsDir,
       runner,
       tmpFactory,
       confirm: (planText: string) => prompts.confirmApply(planText),
@@ -870,20 +976,8 @@ async function handleInstall(opts: HandleInstallOpts): Promise<number> {
     return 0;
   }
 
-  // Local interactive path (no catalogUrl): use BUILTIN_CATALOG.
-  const adapter = await buildClaudeAdapter(env, artifactsDir);
-
-  const result = await runInstall({
-    catalog: BUILTIN_CATALOG,
-    adapter,
-    scope: interactiveScope,
-    env,
-    manifestPath: interactiveManifestPath,
-    selectedIds,
-    confirm: (planText) => prompts.confirmApply(planText),
-  });
-
-  print(result.output);
+  // No catalogUrl configured → actionable message
+  print('aucun catalog configuré — lance `agent-rigger init`');
   return 0;
 }
 
@@ -896,13 +990,12 @@ interface HandleRemoveOpts {
   flags: Record<string, string | boolean>;
   scope: 'user' | 'project';
   env: Env;
-  artifactsDir: string;
   print: (msg: string) => void;
   deps: CliDeps;
 }
 
 async function handleRemove(opts: HandleRemoveOpts): Promise<number> {
-  const { ids, flags, scope, env, artifactsDir, print, deps } = opts;
+  const { ids, flags, scope, env, print, deps } = opts;
 
   if (ids.length === 0) {
     print(`[error] "remove" requires at least one artifact id.\n\n${USAGE}`);
@@ -910,8 +1003,11 @@ async function handleRemove(opts: HandleRemoveOpts): Promise<number> {
   }
 
   const yes = flags['yes'] === true;
-  const adapter = await buildClaudeAdapter(env, artifactsDir);
+  const adapter = await buildClaudeAdapter(env);
   const manifestPath = resolveManifestPath(env);
+
+  // Build effective catalog for remove (entries in manifest)
+  const effectiveCatalog = await resolveEffectiveCatalog(env, print, deps.remote);
 
   let confirm: boolean | ((planText: string) => Promise<boolean>);
   if (yes) {
@@ -922,7 +1018,7 @@ async function handleRemove(opts: HandleRemoveOpts): Promise<number> {
   }
 
   const result = await runRemove({
-    catalog: BUILTIN_CATALOG,
+    catalog: effectiveCatalog,
     adapter,
     scope,
     env,
@@ -944,13 +1040,12 @@ interface HandleUpdateOpts {
   flags: Record<string, string | boolean>;
   scope: 'user' | 'project';
   env: Env;
-  artifactsDir: string;
   print: (msg: string) => void;
   deps: CliDeps;
 }
 
 async function handleUpdate(opts: HandleUpdateOpts): Promise<number> {
-  const { ids, flags, scope, env, artifactsDir, print, deps } = opts;
+  const { ids, flags, scope, env, print, deps } = opts;
 
   const config = await loadCliConfig(env);
 
@@ -976,7 +1071,6 @@ async function handleUpdate(opts: HandleUpdateOpts): Promise<number> {
     scope,
     env,
     manifestPath: resolveManifestPath(env),
-    artifactsDir,
     catalogUrl: config.catalogUrl,
     runner,
     tmpFactory,
@@ -1017,7 +1111,7 @@ async function resolveUpdateAvailable(
     const manifest = await readManifest(manifestPath);
 
     const staleIds = manifest.artifacts
-      .filter((e) => e.scope === scope && e.source === 'external')
+      .filter((e) => e.scope === scope && e.ref !== 'v0.0.0')
       .filter((e) => isUpdateAvailable(e.ref, remoteVersion))
       .map((e) => `  [update available]  ${e.id}  ${e.ref} → ${remoteVersion.ref}`);
 

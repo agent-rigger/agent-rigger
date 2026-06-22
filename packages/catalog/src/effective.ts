@@ -1,9 +1,9 @@
 /**
- * effective.ts — merge built-in ∪ remote catalog entries.
+ * effective.ts — merge base ∪ remote catalog entries.
  *
  * Responsibilities:
- * - Merge two CatalogEntry arrays, built-in entries taking priority on id collision.
- * - Detect and report conflicts (ids present in both built-in and remote).
+ * - Merge two CatalogEntry arrays, base entries taking priority on id collision.
+ * - Detect and report conflicts (ids present in both base and remote).
  * - Deduplicate entries within the remote array by id (first occurrence wins).
  *
  * Constraints:
@@ -19,9 +19,9 @@ import type { CatalogEntry } from './schema';
 // ---------------------------------------------------------------------------
 
 export interface EffectiveCatalog {
-  /** built-in entries first, then remote-only entries (deduped). */
+  /** base entries first, then remote-only entries (deduped). */
   entries: CatalogEntry[];
-  /** Ids present in BOTH built-in and remote — built-in kept, remote shadowed. */
+  /** Ids present in BOTH base and remote — base entry kept, remote entry discarded. */
   conflicts: string[];
 }
 
@@ -30,33 +30,36 @@ export interface EffectiveCatalog {
 // ---------------------------------------------------------------------------
 
 /**
- * Merge built-in ∪ remote, built-in prioritaire.
+ * Merge base ∪ remote, base entries taking priority on id collision.
  *
- * - built-in entries are always preserved as-is.
- * - a remote entry whose id exists in built-in is DISCARDED; its id goes into `conflicts`.
+ * The `base` parameter is always [] in the current single-catalog model
+ * (reserved for a future multi-catalog composition scenario).
+ *
+ * - base entries are always preserved as-is.
+ * - a remote entry whose id exists in base is DISCARDED; its id goes into `conflicts`.
  * - remaining remote entries are deduplicated by id (first occurrence wins).
- * - entries = [...builtin, ...remoteOnlyDeduped].
+ * - entries = [...base, ...remoteOnlyDeduped].
  */
 export function mergeCatalogs(
-  builtin: CatalogEntry[],
+  base: CatalogEntry[],
   remote: CatalogEntry[],
 ): EffectiveCatalog {
-  const builtinIds = new Set(builtin.map((e) => e.id));
+  const baseIds = new Set(base.map((e) => e.id));
 
   const conflicts: string[] = remote
-    .filter((e) => builtinIds.has(e.id))
+    .filter((e) => baseIds.has(e.id))
     .map((e) => e.id);
 
   const seenRemoteIds = new Set<string>();
   const remoteOnlyDeduped = remote.filter((e) => {
-    if (builtinIds.has(e.id)) return false;
+    if (baseIds.has(e.id)) return false;
     if (seenRemoteIds.has(e.id)) return false;
     seenRemoteIds.add(e.id);
     return true;
   });
 
   return {
-    entries: [...builtin, ...remoteOnlyDeduped],
+    entries: [...base, ...remoteOnlyDeduped],
     conflicts,
   };
 }

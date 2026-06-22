@@ -22,9 +22,17 @@
 
 import type { Adapter, AdapterEntry } from './adapter';
 import { backup } from './backup';
-import { readManifest, upsertEntry, writeManifest } from './manifest';
+import { findEntry, readManifest, upsertEntry, writeManifest } from './manifest';
 import type { Env } from './paths';
-import type { Manifest, ManifestEntry, Report, Scope } from './types';
+import type {
+  AppliedPayload,
+  Manifest,
+  ManifestEntry,
+  RemovalOp,
+  Report,
+  Scope,
+  WriteOp,
+} from './types';
 
 // ---------------------------------------------------------------------------
 // RemoveResult
@@ -71,19 +79,47 @@ export interface ApplyResult {
  * If any adapter.audit() call throws (e.g. InvalidJsonError from readJson),
  * the error propagates as-is. The CLI maps it to exit code 2.
  *
- * @param adapter  The adapter to use for auditing.
- * @param entries  Catalog entries to audit.
- * @param scope    Installation scope ('user' | 'project').
- * @param env      Injectable env for HOME resolution.
+ * When manifestPath is provided, each entry is enriched with its `applied`
+ * payload from the manifest before being passed to adapter.audit(). This
+ * allows the adapter to verify against the exact canonical payload recorded
+ * at install time instead of reading from an external artifacts directory.
+ *
+ * @param adapter       The adapter to use for auditing.
+ * @param entries       Catalog entries to audit.
+ * @param scope         Installation scope ('user' | 'project').
+ * @param env           Injectable env for HOME resolution.
+ * @param manifestPath  Optional: absolute path to state.json. When provided,
+ *                      entries are enriched with their manifest `applied` payload.
  */
 export async function check(
   adapter: Adapter,
   entries: AdapterEntry[],
   scope: Scope,
   env: Env,
+  manifestPath?: string,
 ): Promise<Report> {
+  let manifest: Manifest | undefined;
+  if (manifestPath !== undefined) {
+    manifest = await readManifest(manifestPath);
+  }
+
+  const enriched = entries.map((entry) => enrichWithApplied(entry, manifest));
+
+  // When we have a manifest, entries not found in it are definitively missing.
+  // This avoids false-positive "present" from adapters that have no canonical
+  // content (denyRef=[]) when no manifest `applied` is available.
   const natureReports = await Promise.all(
-    entries.map((entry) => adapter.audit(entry, scope, env)),
+    enriched.map((entry): Promise<import('./types').NatureReport> => {
+      if (manifest !== undefined && findEntry(manifest, entry.id, scope) === undefined) {
+        return Promise.resolve({
+          id: entry.id,
+          nature: entry.nature,
+          state: 'missing' as const,
+          detail: 'not installed',
+        });
+      }
+      return adapter.audit(entry, scope, env);
+    }),
   );
 
   return { entries: natureReports };
@@ -125,8 +161,8 @@ export function reportExitCode(report: Report): 0 | 3 {
  * @param scope         Installation scope ('user' | 'project').
  * @param env           Injectable env for HOME resolution.
  * @param manifestPath  Absolute path to state.json (e.g. from resolveUserTargets).
- * @param versionFor    Optional seam: maps an entry to its source/ref/sha for the
- *                      manifest. When omitted the M0 defaults apply (internal/v0.0.0/'').
+ * @param versionFor    Optional seam: maps an entry to its ref/sha for the
+ *                      manifest. When omitted the defaults apply (ref:'v0.0.0', sha:'').
  */
 export async function apply(
   adapter: Adapter,
@@ -136,7 +172,7 @@ export async function apply(
   manifestPath: string,
   versionFor?: (
     entry: AdapterEntry,
-  ) => { source: 'internal' | 'external'; ref: string; sha: string },
+  ) => { ref: string; sha: string },
 ): Promise<ApplyResult> {
   let manifest = await readManifest(manifestPath);
 
@@ -178,15 +214,54 @@ export async function apply(
     // Track written paths
     allWritten.push(...targets);
 
-    // Upsert manifest entry with the files written
+    // Capture the applied payload from the ops for manifest reversibility
+    const applied = extractApplied(ops, targets);
+
+    // Upsert manifest entry with the files written and the applied payload
     const version = versionFor === undefined ? undefined : versionFor(entry);
-    manifest = upsertEntry(manifest, buildManifestEntry(entry, scope, targets, version));
+    manifest = upsertEntry(manifest, buildManifestEntry(entry, scope, targets, version, applied));
   }
 
   // Persist the manifest once after all entries have been processed
   await writeManifest(manifestPath, manifest);
 
   return { written: allWritten, backedUp: allBackedUp, manifest };
+}
+
+// ---------------------------------------------------------------------------
+// planRemoval
+// ---------------------------------------------------------------------------
+
+/**
+ * Compute the aggregated removal plan for a set of entries — read-only.
+ *
+ * Reads the manifest and enriches each entry with its `applied` payload (B-iii)
+ * before calling adapter.planRemove(). This is what makes the plan PREVIEW match
+ * what remove() will actually do: without enrichment the adapter falls back to an
+ * empty canonical (denyRef=[]) and reports "nothing to remove" for an installed
+ * entry whose canonical content lives only in the manifest.
+ *
+ * @param adapter       The adapter to use for planning.
+ * @param entries       Catalog entries to plan removal for.
+ * @param scope         Installation scope ('user' | 'project').
+ * @param env           Injectable env for HOME resolution.
+ * @param manifestPath  Absolute path to state.json.
+ * @returns             Flattened RemovalOp[] across all entries.
+ */
+export async function planRemoval(
+  adapter: Adapter,
+  entries: AdapterEntry[],
+  scope: Scope,
+  env: Env,
+  manifestPath: string,
+): Promise<RemovalOp[]> {
+  const manifest = await readManifest(manifestPath);
+
+  const opsPerEntry = await Promise.all(
+    entries.map((entry) => adapter.planRemove(enrichWithApplied(entry, manifest), scope, env)),
+  );
+
+  return opsPerEntry.flat();
 }
 
 // ---------------------------------------------------------------------------
@@ -229,7 +304,7 @@ export async function remove(
   const allBackedUp: string[] = [];
 
   for (const entry of entries) {
-    const ops = await adapter.planRemove(entry, scope, env);
+    const ops = await adapter.planRemove(enrichWithApplied(entry, manifest), scope, env);
 
     // No ops → not installed; leave the manifest untouched for this entry.
     if (ops.length === 0) {
@@ -281,29 +356,124 @@ function removeEntry(manifest: Manifest, id: string, scope: Scope): Manifest {
 
 /**
  * Build a ManifestEntry from an AdapterEntry + the paths written.
- * M0 defaults: source 'internal', ref 'v0.0.0', sha '' (no remote fetch yet).
+ * Defaults: ref 'v0.0.0', sha '' (no remote fetch yet).
  *
- * @param version  Optional override for source/ref/sha. When omitted the M0
+ * @param version  Optional override for ref/sha. When omitted the
  *                 defaults apply. Provided by the versionFor seam in apply().
+ * @param applied  Optional structured payload of the mutations applied.
+ *                 When provided it enables reversible remove/check (B-iii).
  */
 function buildManifestEntry(
   entry: AdapterEntry,
   scope: Scope,
   files: string[],
-  version?: { source: 'internal' | 'external'; ref: string; sha: string },
+  version?: { ref: string; sha: string },
+  applied?: AppliedPayload,
 ): ManifestEntry {
-  const source = version === undefined ? 'internal' : version.source;
   const ref = version === undefined ? 'v0.0.0' : version.ref;
   const sha = version === undefined ? '' : version.sha;
 
-  return {
+  const base: ManifestEntry = {
     id: entry.id,
     nature: entry.nature,
-    source,
     ref,
     sha,
     scope,
     installedAt: new Date().toISOString(),
     files,
   };
+
+  if (applied !== undefined) {
+    return { ...base, applied };
+  }
+  return base;
+}
+
+// ---------------------------------------------------------------------------
+// extractApplied — derive AppliedPayload from resolved WriteOps (B-iii)
+// ---------------------------------------------------------------------------
+
+/**
+ * Derive the AppliedPayload from the resolved WriteOp list for a single entry.
+ *
+ * Rules (first matching wins):
+ * - merge-deny and/or merge-allow present → AppliedGuardrail
+ *   (denyRules = all toAdd from merge-deny ops; allowRules = all toAdd from merge-allow ops)
+ * - write-text op present → AppliedContext (block = op.content)
+ * - merge-hooks op present → AppliedHook
+ * - link op present → AppliedLink (files = targets collected by apply())
+ *
+ * Returns undefined when no recognisable ops are present.
+ */
+function extractApplied(ops: WriteOp[], targets: string[]): AppliedPayload | undefined {
+  const hasDeny = ops.some((op) => op.kind === 'merge-deny');
+  const hasAllow = ops.some((op) => op.kind === 'merge-allow');
+
+  if (hasDeny || hasAllow) {
+    const denyRules = ops
+      .filter((op) => op.kind === 'merge-deny')
+      .flatMap((op) => (op as { kind: 'merge-deny'; toAdd: string[] }).toAdd);
+    const allowRules = ops
+      .filter((op) => op.kind === 'merge-allow')
+      .flatMap((op) => (op as { kind: 'merge-allow'; toAdd: string[] }).toAdd);
+    return { kind: 'guardrail', denyRules, allowRules };
+  }
+
+  const writeTextOp = ops.find((op) => op.kind === 'write-text') as
+    | { kind: 'write-text'; path: string; content: string; description: string }
+    | undefined;
+  if (writeTextOp !== undefined) {
+    return { kind: 'context', block: writeTextOp.content };
+  }
+
+  const hookOp = ops.find((op) => op.kind === 'merge-hooks') as
+    | {
+      kind: 'merge-hooks';
+      path: string;
+      event: string;
+      matcher: string;
+      command: string;
+      timeout?: number;
+    }
+    | undefined;
+  if (hookOp !== undefined) {
+    const base = {
+      kind: 'hook' as const,
+      event: hookOp.event,
+      matcher: hookOp.matcher,
+      command: hookOp.command,
+    };
+    if (hookOp.timeout !== undefined) {
+      return { ...base, timeout: hookOp.timeout };
+    }
+    return base;
+  }
+
+  const hasLink = ops.some((op) => op.kind === 'link');
+  if (hasLink) {
+    return { kind: 'link', files: targets };
+  }
+
+  return undefined;
+}
+
+// ---------------------------------------------------------------------------
+// enrichWithApplied — inject manifest `applied` into an AdapterEntry (B-iii)
+// ---------------------------------------------------------------------------
+
+/**
+ * Return a new AdapterEntry enriched with the `applied` payload from the manifest.
+ *
+ * If the manifest is absent or the entry is not found, the original entry is
+ * returned unchanged (legacy behaviour — no applied payload).
+ */
+function enrichWithApplied(entry: AdapterEntry, manifest: Manifest | undefined): AdapterEntry {
+  if (manifest === undefined) {
+    return entry;
+  }
+  const manifestEntry = findEntry(manifest, entry.id, entry.scope);
+  if (manifestEntry === undefined || manifestEntry.applied === undefined) {
+    return entry;
+  }
+  return { ...entry, applied: manifestEntry.applied };
 }

@@ -93,7 +93,9 @@ export async function fetchRemoteCatalog(opts: {
   }
 
   const version = await resolveVersion(catalogUrl, run);
-  const { entries, sha } = await fetchCatalog(catalogUrl, version.ref, run, { tmpFactory });
+  const { entries, sha } = await fetchCatalog(catalogUrl, version.ref, version.isTag, run, {
+    tmpFactory,
+  });
 
   return {
     entries,

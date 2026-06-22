@@ -13,6 +13,7 @@ export {
   applyGuardrail,
   auditGuardrail,
   EmptyDenyArtifactError,
+  loadCanonicalAllow,
   loadCanonicalDeny,
   planGuardrail,
 } from './claude/guardrails';

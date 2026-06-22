@@ -29,9 +29,6 @@ import { runCli } from '../src/cli';
 // Repo root
 // ---------------------------------------------------------------------------
 
-const REPO_ROOT = path.resolve(import.meta.dirname, '../../..');
-const ARTIFACTS_DIR = path.join(REPO_ROOT, 'artifacts');
-
 /** A CommandRunner that always fails — used for best-effort check tests. */
 const failRunner: CommandRunner = () =>
   Promise.resolve({ exitCode: 1, stdout: '', stderr: 'network error' });
@@ -54,7 +51,6 @@ const REMOTE_SKILL_ENTRY: CatalogEntry = {
   kind: 'artifact',
   id: 'skill:remote-demo',
   nature: 'skill',
-  source: 'external',
   targets: ['claude'],
   scopes: ['user', 'project'],
 };
@@ -131,7 +127,11 @@ async function makeIsolatedEnv(opts: {
   const makeTmpFactory = (): TmpDirFactory => async () => {
     const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'rigger-m1c3-checkout-'));
     tmpDirs.push(tmpDir);
-    await fs.writeFile(path.join(tmpDir, 'catalog.json'), JSON.stringify(catalog), 'utf8');
+    await fs.writeFile(
+      path.join(tmpDir, 'catalog.json'),
+      JSON.stringify({ meta: { name: 'm1c3-test-catalog' }, entries: catalog }),
+      'utf8',
+    );
     for (const skillId of skillIds) {
       await fs.mkdir(path.join(tmpDir, 'skills', skillId), { recursive: true });
       const content = SKILL_CONTENT[currentTag] ?? `# Skill ${skillId}\n${currentTag}`;
@@ -182,7 +182,6 @@ async function preInstall(env: Env, tag: string, sha: string) {
   await runCli(['install', 'skill:remote-demo', '--yes'], {
     print: cap.print,
     env,
-    artifactsDir: ARTIFACTS_DIR,
     remote: { run: iso.makeRunner(), tmpFactory: iso.makeTmpFactory(), scanner: stubScanner },
   });
 }
@@ -200,7 +199,6 @@ describe('update routing — top-level `update <id...> --yes`', () => {
     const code = await runCli(['update', 'skill:remote-demo', '--yes'], {
       print: cap.print,
       env: iso.env,
-      artifactsDir: ARTIFACTS_DIR,
       remote: { run: iso.makeRunner(), tmpFactory: iso.makeTmpFactory(), scanner: stubScanner },
     });
 
@@ -215,7 +213,6 @@ describe('update routing — top-level `update <id...> --yes`', () => {
     await runCli(['update', 'skill:remote-demo', '--yes'], {
       print: cap.print,
       env: iso.env,
-      artifactsDir: ARTIFACTS_DIR,
       remote: { run: iso.makeRunner(), tmpFactory: iso.makeTmpFactory(), scanner: stubScanner },
     });
 
@@ -235,7 +232,6 @@ describe('update routing — top-level `update <id...> --yes`', () => {
     await runCli(['update', 'skill:remote-demo', '--yes'], {
       print: cap.print,
       env: iso.env,
-      artifactsDir: ARTIFACTS_DIR,
       remote: { run: iso.makeRunner(), tmpFactory: iso.makeTmpFactory(), scanner: stubScanner },
     });
 
@@ -253,7 +249,6 @@ describe('update routing — `skills update <id> --yes`', () => {
     const code = await runCli(['skills', 'update', 'skill:remote-demo', '--yes'], {
       print: cap.print,
       env: iso.env,
-      artifactsDir: ARTIFACTS_DIR,
       remote: { run: iso.makeRunner(), tmpFactory: iso.makeTmpFactory(), scanner: stubScanner },
     });
 
@@ -268,7 +263,6 @@ describe('update routing — `skills update <id> --yes`', () => {
     await runCli(['skills', 'update', 'skill:remote-demo', '--yes'], {
       print: cap.print,
       env: iso.env,
-      artifactsDir: ARTIFACTS_DIR,
       remote: { run: iso.makeRunner(), tmpFactory: iso.makeTmpFactory(), scanner: stubScanner },
     });
 
@@ -287,7 +281,6 @@ describe('update routing — no catalogUrl → exit 2', () => {
       const code = await runCli(['update', 'skill:remote-demo', '--yes'], {
         print: cap.print,
         env: noUrlIso.env,
-        artifactsDir: ARTIFACTS_DIR,
         remote: {
           run: noUrlIso.makeRunner(),
           tmpFactory: noUrlIso.makeTmpFactory(),
@@ -307,7 +300,6 @@ describe('update routing — no catalogUrl → exit 2', () => {
       await runCli(['update', 'skill:remote-demo', '--yes'], {
         print: cap.print,
         env: noUrlIso.env,
-        artifactsDir: ARTIFACTS_DIR,
         remote: {
           run: noUrlIso.makeRunner(),
           tmpFactory: noUrlIso.makeTmpFactory(),
@@ -329,7 +321,6 @@ describe('update routing — internal entry → exit 0, skipped', () => {
     const code = await runCli(['update', 'guardrails-claude', '--yes'], {
       print: cap.print,
       env: iso.env,
-      artifactsDir: ARTIFACTS_DIR,
       remote: { run: iso.makeRunner(), tmpFactory: iso.makeTmpFactory(), scanner: stubScanner },
     });
     // runUpdate returns skipped for internal → exit 0
@@ -341,7 +332,6 @@ describe('update routing — internal entry → exit 0, skipped', () => {
     await runCli(['update', 'guardrails-claude', '--yes'], {
       print: cap.print,
       env: iso.env,
-      artifactsDir: ARTIFACTS_DIR,
       remote: { run: iso.makeRunner(), tmpFactory: iso.makeTmpFactory(), scanner: stubScanner },
     });
     const output = cap.lines.join('\n');
@@ -357,7 +347,6 @@ describe('update routing — wrong nature id → exit 2', () => {
     const code = await runCli(['guardrails', 'update', 'skill:remote-demo', '--yes'], {
       print: cap.print,
       env: iso.env,
-      artifactsDir: ARTIFACTS_DIR,
       remote: { run: iso.makeRunner(), tmpFactory: iso.makeTmpFactory(), scanner: stubScanner },
     });
 
@@ -371,7 +360,6 @@ describe('update routing — wrong nature id → exit 2', () => {
     await runCli(['guardrails', 'update', 'skill:remote-demo', '--yes'], {
       print: cap.print,
       env: iso.env,
-      artifactsDir: ARTIFACTS_DIR,
       remote: { run: iso.makeRunner(), tmpFactory: iso.makeTmpFactory(), scanner: stubScanner },
     });
 
@@ -394,7 +382,6 @@ describe('check — update-available annotation (Part B)', () => {
     await runCli(['check'], {
       print: cap.print,
       env: iso.env,
-      artifactsDir: ARTIFACTS_DIR,
       remote: { run: iso.makeRunner(), tmpFactory: iso.makeTmpFactory(), scanner: stubScanner },
     });
 
@@ -411,7 +398,6 @@ describe('check — update-available annotation (Part B)', () => {
     const code = await runCli(['check'], {
       print: cap.print,
       env: iso.env,
-      artifactsDir: ARTIFACTS_DIR,
       remote: { run: iso.makeRunner(), tmpFactory: iso.makeTmpFactory(), scanner: stubScanner },
     });
 
@@ -431,7 +417,6 @@ describe('check — update-available annotation (Part B)', () => {
       await runCli(['check'], {
         print: cap.print,
         env: noUrlIso.env,
-        artifactsDir: ARTIFACTS_DIR,
         remote: {
           run: noUrlIso.makeRunner(),
           tmpFactory: noUrlIso.makeTmpFactory(),
@@ -453,7 +438,6 @@ describe('check — update-available annotation (Part B)', () => {
     const code = await runCli(['check'], {
       print: cap.print,
       env: iso.env,
-      artifactsDir: ARTIFACTS_DIR,
       remote: { run: failRunner, tmpFactory: iso.makeTmpFactory(), scanner: stubScanner },
     });
 
@@ -471,7 +455,6 @@ describe('check — update-available annotation (Part B)', () => {
     await runCli(['check'], {
       print: cap.print,
       env: iso.env,
-      artifactsDir: ARTIFACTS_DIR,
       remote: { run: iso.makeRunner(), tmpFactory: iso.makeTmpFactory(), scanner: stubScanner },
     });
 
@@ -490,7 +473,6 @@ describe('--help: update listed as active command', () => {
     await runCli(['--help'], {
       print: cap.print,
       env: iso.env,
-      artifactsDir: ARTIFACTS_DIR,
     });
 
     const output = cap.lines.join('\n');

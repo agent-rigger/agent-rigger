@@ -399,7 +399,6 @@ const VALID_TOOL_ENTRY = {
   kind: 'artifact',
   id: 'tool:glab',
   nature: 'tool',
-  source: 'external',
   targets: ['claude'],
   scopes: ['user'],
   level: 'required',
@@ -410,11 +409,24 @@ const VALID_TOOL_ENTRY = {
 const VALID_PACK_ENTRY = {
   kind: 'pack',
   id: 'pack:dev',
-  source: 'internal',
   targets: ['claude'],
   scopes: ['user'],
   members: ['tool:glab'],
 };
+
+/** Default meta block for test fixtures. */
+const DEFAULT_META = { name: 'test-catalog' };
+
+/**
+ * Wraps an entries array into the `{meta,entries}` object expected by catalog.json.
+ * Uses DEFAULT_META unless overridden.
+ */
+function wrapCatalog(
+  entries: unknown[],
+  meta: Record<string, unknown> = DEFAULT_META,
+): string {
+  return JSON.stringify({ meta, entries });
+}
 
 /**
  * Creates a real temp directory, writes the given file content to catalog.json
@@ -447,21 +459,31 @@ async function makeTmpFactory(catalogContent?: string): Promise<{
 }
 
 /**
- * Builds a CommandRunner for fetchCatalog tests.
+ * Builds a CommandRunner for fetchCatalog / withRemoteCheckout tests.
  *
- * - git clone → always exits 0 (no-op success; tmpFactory already prepared the dir)
- * - git rev-parse HEAD → exits 0 with FIXED_SHA
- * - anything else → exits 1
+ * - git clone            → exits 0, records argv in `cloneCalls`
+ * - git -C <p> rev-parse → exits 0 with FIXED_SHA  (fetchCatalog rev-parse)
+ * - git -C <p> fetch     → exits 0  (sha-path fetch step)
+ * - git -C <p> checkout  → exits 0  (sha-path checkout step)
+ * - anything else        → exits 1
+ *
+ * Optional `allCalls` captures every non-clone `-C` call for argv assertions.
  */
-function makeCloneRunner(cloneCalls: string[][] = []): CommandRunner {
+function makeCloneRunner(cloneCalls: string[][] = [], allCalls: string[][] = []): CommandRunner {
   return (_cmd, args) => {
     const argv = args ?? [];
     if (argv[0] === 'clone') {
       cloneCalls.push(argv);
       return Promise.resolve({ exitCode: 0, stdout: '', stderr: '' });
     }
-    if (argv[0] === '-C' && argv[2] === 'rev-parse') {
-      return Promise.resolve({ exitCode: 0, stdout: `${FIXED_SHA}\n`, stderr: '' });
+    if (argv[0] === '-C') {
+      allCalls.push(argv);
+      if (argv[2] === 'rev-parse') {
+        return Promise.resolve({ exitCode: 0, stdout: `${FIXED_SHA}\n`, stderr: '' });
+      }
+      if (argv[2] === 'fetch' || argv[2] === 'checkout') {
+        return Promise.resolve({ exitCode: 0, stdout: '', stderr: '' });
+      }
     }
     return Promise.resolve({ exitCode: 1, stdout: '', stderr: 'unexpected command' });
   };
@@ -484,11 +506,12 @@ function makeFailCloneRunner(stderr: string): CommandRunner {
 
 describe('fetchCatalog — valid catalog returns entries and sha', () => {
   it('returns all validated entries', async () => {
-    const catalog = JSON.stringify([VALID_TOOL_ENTRY, VALID_PACK_ENTRY]);
+    const catalog = wrapCatalog([VALID_TOOL_ENTRY, VALID_PACK_ENTRY]);
     const { factory } = await makeTmpFactory(catalog);
     const result = await fetchCatalog(
       'https://example.com/catalog.git',
       'v1.0.0',
+      true,
       makeCloneRunner(),
       {
         tmpFactory: factory,
@@ -498,11 +521,12 @@ describe('fetchCatalog — valid catalog returns entries and sha', () => {
   });
 
   it('returns the expected sha from rev-parse', async () => {
-    const catalog = JSON.stringify([VALID_TOOL_ENTRY, VALID_PACK_ENTRY]);
+    const catalog = wrapCatalog([VALID_TOOL_ENTRY, VALID_PACK_ENTRY]);
     const { factory } = await makeTmpFactory(catalog);
     const result = await fetchCatalog(
       'https://example.com/catalog.git',
       'v1.0.0',
+      true,
       makeCloneRunner(),
       {
         tmpFactory: factory,
@@ -512,11 +536,12 @@ describe('fetchCatalog — valid catalog returns entries and sha', () => {
   });
 
   it('returns both tool and pack entries typed correctly', async () => {
-    const catalog = JSON.stringify([VALID_TOOL_ENTRY, VALID_PACK_ENTRY]);
+    const catalog = wrapCatalog([VALID_TOOL_ENTRY, VALID_PACK_ENTRY]);
     const { factory } = await makeTmpFactory(catalog);
     const result = await fetchCatalog(
       'https://example.com/catalog.git',
       'v1.0.0',
+      true,
       makeCloneRunner(),
       {
         tmpFactory: factory,
@@ -524,6 +549,20 @@ describe('fetchCatalog — valid catalog returns entries and sha', () => {
     );
     expect(result.entries[0]?.kind).toBe('artifact');
     expect(result.entries[1]?.kind).toBe('pack');
+  });
+
+  it('returns meta from the catalog file', async () => {
+    const catalog = wrapCatalog([VALID_TOOL_ENTRY], { name: 'my-catalog', required: ['pack:x'] });
+    const { factory } = await makeTmpFactory(catalog);
+    const result = await fetchCatalog(
+      'https://example.com/catalog.git',
+      'v1.0.0',
+      true,
+      makeCloneRunner(),
+      { tmpFactory: factory },
+    );
+    expect(result.meta.name).toBe('my-catalog');
+    expect(result.meta.required).toEqual(['pack:x']);
   });
 });
 
@@ -534,10 +573,10 @@ describe('fetchCatalog — valid catalog returns entries and sha', () => {
 describe('fetchCatalog — invalid entry triggers CatalogParseError', () => {
   it('throws CatalogParseError when an entry has an unknown nature', async () => {
     const badEntry = { ...VALID_TOOL_ENTRY, nature: 'unknown-nature' };
-    const catalog = JSON.stringify([badEntry]);
+    const catalog = wrapCatalog([badEntry]);
     const { factory } = await makeTmpFactory(catalog);
     await expect(
-      fetchCatalog('https://example.com/catalog.git', 'v1.0.0', makeCloneRunner(), {
+      fetchCatalog('https://example.com/catalog.git', 'v1.0.0', true, makeCloneRunner(), {
         tmpFactory: factory,
       }),
     ).rejects.toBeInstanceOf(CatalogParseError);
@@ -545,10 +584,10 @@ describe('fetchCatalog — invalid entry triggers CatalogParseError', () => {
 
   it('issues field is non-empty and mentions the problem', async () => {
     const badEntry = { ...VALID_TOOL_ENTRY, nature: 'unknown-nature' };
-    const catalog = JSON.stringify([badEntry]);
+    const catalog = wrapCatalog([badEntry]);
     const { factory } = await makeTmpFactory(catalog);
     try {
-      await fetchCatalog('https://example.com/catalog.git', 'v1.0.0', makeCloneRunner(), {
+      await fetchCatalog('https://example.com/catalog.git', 'v1.0.0', true, makeCloneRunner(), {
         tmpFactory: factory,
       });
       expect(true).toBe(false);
@@ -562,32 +601,58 @@ describe('fetchCatalog — invalid entry triggers CatalogParseError', () => {
 });
 
 // ---------------------------------------------------------------------------
-// fetchCatalog — non-array catalog.json → CatalogParseError
+// fetchCatalog — bare array catalog.json → CatalogParseError
 // ---------------------------------------------------------------------------
 
-describe('fetchCatalog — non-array catalog.json triggers CatalogParseError', () => {
-  it('throws CatalogParseError when catalog.json is an object', async () => {
-    const catalog = JSON.stringify({ entries: [] });
+describe('fetchCatalog — bare-array catalog.json triggers CatalogParseError', () => {
+  it('throws CatalogParseError when catalog.json is a bare array (legacy format)', async () => {
+    const catalog = JSON.stringify([VALID_TOOL_ENTRY]);
     const { factory } = await makeTmpFactory(catalog);
     await expect(
-      fetchCatalog('https://example.com/catalog.git', 'v1.0.0', makeCloneRunner(), {
+      fetchCatalog('https://example.com/catalog.git', 'v1.0.0', true, makeCloneRunner(), {
         tmpFactory: factory,
       }),
     ).rejects.toBeInstanceOf(CatalogParseError);
   });
 
-  it('error message mentions array requirement', async () => {
-    const catalog = JSON.stringify({ entries: [] });
+  it('error message mentions wrapped object requirement', async () => {
+    const catalog = JSON.stringify([VALID_TOOL_ENTRY]);
     const { factory } = await makeTmpFactory(catalog);
     try {
-      await fetchCatalog('https://example.com/catalog.git', 'v1.0.0', makeCloneRunner(), {
+      await fetchCatalog('https://example.com/catalog.git', 'v1.0.0', true, makeCloneRunner(), {
         tmpFactory: factory,
       });
       expect(true).toBe(false);
     } catch (e) {
       expect(e).toBeInstanceOf(CatalogParseError);
-      expect((e as CatalogParseError).message).toMatch(/tableau/i);
+      expect((e as CatalogParseError).message).toMatch(/wrapp/i);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// fetchCatalog — missing meta.name → CatalogParseError
+// ---------------------------------------------------------------------------
+
+describe('fetchCatalog — missing meta.name triggers CatalogParseError', () => {
+  it('throws CatalogParseError when meta.name is absent', async () => {
+    const catalog = JSON.stringify({ meta: { required: [] }, entries: [VALID_TOOL_ENTRY] });
+    const { factory } = await makeTmpFactory(catalog);
+    await expect(
+      fetchCatalog('https://example.com/catalog.git', 'v1.0.0', true, makeCloneRunner(), {
+        tmpFactory: factory,
+      }),
+    ).rejects.toBeInstanceOf(CatalogParseError);
+  });
+
+  it('throws CatalogParseError when meta.name is empty string', async () => {
+    const catalog = JSON.stringify({ meta: { name: '' }, entries: [VALID_TOOL_ENTRY] });
+    const { factory } = await makeTmpFactory(catalog);
+    await expect(
+      fetchCatalog('https://example.com/catalog.git', 'v1.0.0', true, makeCloneRunner(), {
+        tmpFactory: factory,
+      }),
+    ).rejects.toBeInstanceOf(CatalogParseError);
   });
 });
 
@@ -600,7 +665,7 @@ describe('fetchCatalog — absent catalog.json triggers CatalogParseError', () =
     // Pass undefined so no catalog.json is written
     const { factory } = await makeTmpFactory(undefined);
     await expect(
-      fetchCatalog('https://example.com/catalog.git', 'v1.0.0', makeCloneRunner(), {
+      fetchCatalog('https://example.com/catalog.git', 'v1.0.0', true, makeCloneRunner(), {
         tmpFactory: factory,
       }),
     ).rejects.toBeInstanceOf(CatalogParseError);
@@ -609,7 +674,7 @@ describe('fetchCatalog — absent catalog.json triggers CatalogParseError', () =
   it('error message mentions catalog.json being introuvable', async () => {
     const { factory } = await makeTmpFactory(undefined);
     try {
-      await fetchCatalog('https://example.com/catalog.git', 'v1.0.0', makeCloneRunner(), {
+      await fetchCatalog('https://example.com/catalog.git', 'v1.0.0', true, makeCloneRunner(), {
         tmpFactory: factory,
       });
       expect(true).toBe(false);
@@ -628,7 +693,7 @@ describe('fetchCatalog — invalid JSON triggers CatalogParseError', () => {
   it('throws CatalogParseError when catalog.json is broken JSON', async () => {
     const { factory } = await makeTmpFactory('{ this is not json }');
     await expect(
-      fetchCatalog('https://example.com/catalog.git', 'v1.0.0', makeCloneRunner(), {
+      fetchCatalog('https://example.com/catalog.git', 'v1.0.0', true, makeCloneRunner(), {
         tmpFactory: factory,
       }),
     ).rejects.toBeInstanceOf(CatalogParseError);
@@ -646,6 +711,7 @@ describe('fetchCatalog — clone failure: RemoteFetchError and cleanup always ca
       fetchCatalog(
         'https://example.com/catalog.git',
         'v1.0.0',
+        true,
         makeFailCloneRunner('fatal: repository not found'),
         { tmpFactory: factory },
       ),
@@ -658,6 +724,7 @@ describe('fetchCatalog — clone failure: RemoteFetchError and cleanup always ca
       await fetchCatalog(
         'https://example.com/catalog.git',
         'v1.0.0',
+        true,
         makeFailCloneRunner('fatal: repository not found'),
         { tmpFactory: factory },
       );
@@ -668,11 +735,12 @@ describe('fetchCatalog — clone failure: RemoteFetchError and cleanup always ca
   });
 
   it('tmp dir does not exist after clone failure (cleanup ran)', async () => {
-    const { factory, dirPath } = await makeTmpFactory(undefined);
+    const { factory, dirPath } = await makeTmpFactory(wrapCatalog([]));
     try {
       await fetchCatalog(
         'https://example.com/catalog.git',
         'v1.0.0',
+        true,
         makeFailCloneRunner('fatal: repository not found'),
         { tmpFactory: factory },
       );
@@ -691,18 +759,18 @@ describe('fetchCatalog — clone failure: RemoteFetchError and cleanup always ca
 
 describe('fetchCatalog — cleanup called on success', () => {
   it('cleanup spy is called exactly once on a successful fetch', async () => {
-    const catalog = JSON.stringify([VALID_TOOL_ENTRY]);
+    const catalog = wrapCatalog([VALID_TOOL_ENTRY]);
     const { factory, cleanupSpy } = await makeTmpFactory(catalog);
-    await fetchCatalog('https://example.com/catalog.git', 'v1.0.0', makeCloneRunner(), {
+    await fetchCatalog('https://example.com/catalog.git', 'v1.0.0', true, makeCloneRunner(), {
       tmpFactory: factory,
     });
     expect(cleanupSpy).toHaveBeenCalledTimes(1);
   });
 
   it('tmp dir does not exist after successful fetch (cleanup ran)', async () => {
-    const catalog = JSON.stringify([VALID_TOOL_ENTRY]);
+    const catalog = wrapCatalog([VALID_TOOL_ENTRY]);
     const { factory, dirPath } = await makeTmpFactory(catalog);
-    await fetchCatalog('https://example.com/catalog.git', 'v1.0.0', makeCloneRunner(), {
+    await fetchCatalog('https://example.com/catalog.git', 'v1.0.0', true, makeCloneRunner(), {
       tmpFactory: factory,
     });
     const exists = await Bun.file(join(dirPath(), 'catalog.json')).exists();
@@ -716,12 +784,13 @@ describe('fetchCatalog — cleanup called on success', () => {
 
 describe('fetchCatalog — clone argv', () => {
   it('passes correct argv to git clone', async () => {
-    const catalog = JSON.stringify([VALID_TOOL_ENTRY]);
+    const catalog = wrapCatalog([VALID_TOOL_ENTRY]);
     const { factory } = await makeTmpFactory(catalog);
     const cloneCalls: string[][] = [];
     await fetchCatalog(
       'https://example.com/catalog.git',
       'v1.2.3',
+      true,
       makeCloneRunner(cloneCalls),
       { tmpFactory: factory },
     );
@@ -741,12 +810,13 @@ describe('fetchCatalog — clone argv', () => {
   });
 
   it('tmp path is the last argument to git clone', async () => {
-    const catalog = JSON.stringify([VALID_TOOL_ENTRY]);
+    const catalog = wrapCatalog([VALID_TOOL_ENTRY]);
     const { factory, dirPath } = await makeTmpFactory(catalog);
     const cloneCalls: string[][] = [];
     await fetchCatalog(
       'https://example.com/catalog.git',
       'v1.2.3',
+      true,
       makeCloneRunner(cloneCalls),
       { tmpFactory: factory },
     );
@@ -807,18 +877,18 @@ describe('assertSafeRemoteUrl — rejects dangerous URLs', () => {
 
 describe('assertSafeRef — rejects dangerous refs', () => {
   it('rejects ref starting with -- (option injection)', async () => {
-    const { factory } = await makeTmpFactory(JSON.stringify([VALID_TOOL_ENTRY]));
+    const { factory } = await makeTmpFactory(wrapCatalog([VALID_TOOL_ENTRY]));
     await expect(
-      fetchCatalog('https://example.com/catalog.git', '--foo', makeCloneRunner(), {
+      fetchCatalog('https://example.com/catalog.git', '--foo', true, makeCloneRunner(), {
         tmpFactory: factory,
       }),
     ).rejects.toBeInstanceOf(InvalidRemoteRefError);
   });
 
   it('rejects empty ref', async () => {
-    const { factory } = await makeTmpFactory(JSON.stringify([VALID_TOOL_ENTRY]));
+    const { factory } = await makeTmpFactory(wrapCatalog([VALID_TOOL_ENTRY]));
     await expect(
-      fetchCatalog('https://example.com/catalog.git', '', makeCloneRunner(), {
+      fetchCatalog('https://example.com/catalog.git', '', true, makeCloneRunner(), {
         tmpFactory: factory,
       }),
     ).rejects.toBeInstanceOf(InvalidRemoteRefError);
@@ -877,22 +947,28 @@ function makeRevParseFailRunner(): CommandRunner {
 
 describe('fetchCatalog — rev-parse failure triggers RemoteFetchError', () => {
   it('throws RemoteFetchError when rev-parse exits 1', async () => {
-    const catalog = JSON.stringify([VALID_TOOL_ENTRY]);
+    const catalog = wrapCatalog([VALID_TOOL_ENTRY]);
     const { factory } = await makeTmpFactory(catalog);
     await expect(
-      fetchCatalog('https://example.com/catalog.git', 'v1.0.0', makeRevParseFailRunner(), {
+      fetchCatalog('https://example.com/catalog.git', 'v1.0.0', true, makeRevParseFailRunner(), {
         tmpFactory: factory,
       }),
     ).rejects.toBeInstanceOf(RemoteFetchError);
   });
 
   it('cleanup is called exactly once when rev-parse fails', async () => {
-    const catalog = JSON.stringify([VALID_TOOL_ENTRY]);
+    const catalog = wrapCatalog([VALID_TOOL_ENTRY]);
     const { factory, cleanupSpy } = await makeTmpFactory(catalog);
     try {
-      await fetchCatalog('https://example.com/catalog.git', 'v1.0.0', makeRevParseFailRunner(), {
-        tmpFactory: factory,
-      });
+      await fetchCatalog(
+        'https://example.com/catalog.git',
+        'v1.0.0',
+        true,
+        makeRevParseFailRunner(),
+        {
+          tmpFactory: factory,
+        },
+      );
     } catch {
       // expected
     }
@@ -911,6 +987,7 @@ describe('withRemoteCheckout — callback receives checkoutDir', () => {
     await withRemoteCheckout(
       'https://example.com/repo.git',
       'v1.0.0',
+      true,
       makeCloneRunner(),
       { tmpFactory: factory },
       async (dir) => {
@@ -928,6 +1005,7 @@ describe('withRemoteCheckout — clone argv', () => {
     await withRemoteCheckout(
       'https://example.com/repo.git',
       'v2.3.4',
+      true,
       makeCloneRunner(cloneCalls),
       { tmpFactory: factory },
       async () => {},
@@ -953,6 +1031,7 @@ describe('withRemoteCheckout — clone failure: RemoteFetchError + cleanup', () 
       withRemoteCheckout(
         'https://example.com/repo.git',
         'v1.0.0',
+        true,
         makeFailCloneRunner('fatal: repo not found'),
         { tmpFactory: factory },
         async () => {},
@@ -966,6 +1045,7 @@ describe('withRemoteCheckout — clone failure: RemoteFetchError + cleanup', () 
       await withRemoteCheckout(
         'https://example.com/repo.git',
         'v1.0.0',
+        true,
         makeFailCloneRunner('fatal: repo not found'),
         { tmpFactory: factory },
         async () => {},
@@ -984,6 +1064,7 @@ describe('withRemoteCheckout — fn throws: error propagates + cleanup called', 
       withRemoteCheckout(
         'https://example.com/repo.git',
         'v1.0.0',
+        true,
         makeCloneRunner(),
         { tmpFactory: factory },
         async () => {
@@ -999,6 +1080,7 @@ describe('withRemoteCheckout — fn throws: error propagates + cleanup called', 
       await withRemoteCheckout(
         'https://example.com/repo.git',
         'v1.0.0',
+        true,
         makeCloneRunner(),
         { tmpFactory: factory },
         async () => {
@@ -1022,6 +1104,7 @@ describe('withRemoteCheckout — invalid url/ref: error before tmpFactory called
       withRemoteCheckout(
         'ext::sh -c x',
         'v1.0.0',
+        true,
         makeCloneRunner(),
         { tmpFactory: factorySpy as TmpDirFactory },
         async () => {},
@@ -1039,6 +1122,7 @@ describe('withRemoteCheckout — invalid url/ref: error before tmpFactory called
       withRemoteCheckout(
         'https://example.com/repo.git',
         '--foo',
+        true,
         makeCloneRunner(),
         { tmpFactory: factorySpy as TmpDirFactory },
         async () => {},
@@ -1054,6 +1138,7 @@ describe('withRemoteCheckout — success: returns fn value + cleanup called', ()
     const result = await withRemoteCheckout(
       'https://example.com/repo.git',
       'v1.0.0',
+      true,
       makeCloneRunner(),
       { tmpFactory: factory },
       async () => 42,
@@ -1066,11 +1151,255 @@ describe('withRemoteCheckout — success: returns fn value + cleanup called', ()
     await withRemoteCheckout(
       'https://example.com/repo.git',
       'v1.0.0',
+      true,
       makeCloneRunner(),
       { tmpFactory: factory },
       async () => {},
     );
     expect(cleanupSpy).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// withRemoteCheckout — isTag: false (sha path): clone + fetch + checkout
+// ---------------------------------------------------------------------------
+
+const SHA_COMMIT = 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeef';
+
+/**
+ * Builds a CommandRunner for the sha path (isTag: false).
+ *
+ * Records every call argv into `allCalls`.
+ * - git clone              → exits 0
+ * - git -C <p> fetch       → exits 0
+ * - git -C <p> checkout    → exits 0
+ * - git -C <p> rev-parse   → exits 0 with FIXED_SHA  (used by fetchCatalog)
+ * - anything else          → exits 1
+ */
+function makeShaRunner(allCalls: string[][] = []): CommandRunner {
+  return (_cmd, args) => {
+    const argv = args ?? [];
+    allCalls.push(argv);
+    if (argv[0] === 'clone') {
+      return Promise.resolve({ exitCode: 0, stdout: '', stderr: '' });
+    }
+    if (argv[0] === '-C') {
+      const sub = argv[2];
+      if (sub === 'fetch' || sub === 'checkout' || sub === 'rev-parse') {
+        return Promise.resolve({ exitCode: 0, stdout: `${FIXED_SHA}\n`, stderr: '' });
+      }
+    }
+    return Promise.resolve({ exitCode: 1, stdout: '', stderr: 'unexpected command' });
+  };
+}
+
+/**
+ * Builds a CommandRunner where the sha-path fetch step fails.
+ */
+function makeFailFetchRunner(stderr: string): CommandRunner {
+  return (_cmd, args) => {
+    const argv = args ?? [];
+    if (argv[0] === 'clone') {
+      return Promise.resolve({ exitCode: 0, stdout: '', stderr: '' });
+    }
+    if (argv[0] === '-C' && argv[2] === 'fetch') {
+      return Promise.resolve({ exitCode: 1, stdout: '', stderr });
+    }
+    return Promise.resolve({ exitCode: 0, stdout: '', stderr: '' });
+  };
+}
+
+/**
+ * Builds a CommandRunner where the sha-path checkout step fails.
+ */
+function makeFailCheckoutRunner(stderr: string): CommandRunner {
+  return (_cmd, args) => {
+    const argv = args ?? [];
+    if (argv[0] === 'clone') {
+      return Promise.resolve({ exitCode: 0, stdout: '', stderr: '' });
+    }
+    if (argv[0] === '-C' && argv[2] === 'fetch') {
+      return Promise.resolve({ exitCode: 0, stdout: '', stderr: '' });
+    }
+    if (argv[0] === '-C' && argv[2] === 'checkout') {
+      return Promise.resolve({ exitCode: 1, stdout: '', stderr });
+    }
+    return Promise.resolve({ exitCode: 0, stdout: '', stderr: '' });
+  };
+}
+
+describe('withRemoteCheckout — isTag:false (sha path) emits clone + fetch + checkout', () => {
+  it('clones without --branch and then fetches the sha', async () => {
+    const { factory, dirPath } = await makeTmpFactory(undefined);
+    const allCalls: string[][] = [];
+    await withRemoteCheckout(
+      'https://example.com/repo.git',
+      SHA_COMMIT,
+      false,
+      makeShaRunner(allCalls),
+      { tmpFactory: factory },
+      async () => {},
+    );
+    const cloneCall = allCalls.find((a) => a[0] === 'clone');
+    expect(cloneCall).toEqual([
+      'clone',
+      '--depth',
+      '1',
+      '--',
+      'https://example.com/repo.git',
+      dirPath(),
+    ]);
+  });
+
+  it('issues git fetch with the sha after clone', async () => {
+    const { factory, dirPath } = await makeTmpFactory(undefined);
+    const allCalls: string[][] = [];
+    await withRemoteCheckout(
+      'https://example.com/repo.git',
+      SHA_COMMIT,
+      false,
+      makeShaRunner(allCalls),
+      { tmpFactory: factory },
+      async () => {},
+    );
+    const fetchCall = allCalls.find((a) => a[0] === '-C' && a[2] === 'fetch');
+    expect(fetchCall).toEqual(['-C', dirPath(), 'fetch', '--depth', '1', 'origin', SHA_COMMIT]);
+  });
+
+  it('issues git checkout with the sha after fetch', async () => {
+    const { factory, dirPath } = await makeTmpFactory(undefined);
+    const allCalls: string[][] = [];
+    await withRemoteCheckout(
+      'https://example.com/repo.git',
+      SHA_COMMIT,
+      false,
+      makeShaRunner(allCalls),
+      { tmpFactory: factory },
+      async () => {},
+    );
+    const checkoutCall = allCalls.find((a) => a[0] === '-C' && a[2] === 'checkout');
+    expect(checkoutCall).toEqual(['-C', dirPath(), 'checkout', SHA_COMMIT]);
+  });
+
+  it('fn receives the checkout dir', async () => {
+    const { factory, dirPath } = await makeTmpFactory(undefined);
+    let received = '';
+    await withRemoteCheckout(
+      'https://example.com/repo.git',
+      SHA_COMMIT,
+      false,
+      makeShaRunner(),
+      { tmpFactory: factory },
+      async (dir) => {
+        received = dir;
+      },
+    );
+    expect(received).toBe(dirPath());
+  });
+
+  it('cleanup is called on success', async () => {
+    const { factory, cleanupSpy } = await makeTmpFactory(undefined);
+    await withRemoteCheckout(
+      'https://example.com/repo.git',
+      SHA_COMMIT,
+      false,
+      makeShaRunner(),
+      { tmpFactory: factory },
+      async () => {},
+    );
+    expect(cleanupSpy).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('withRemoteCheckout — isTag:false: fetch failure throws RemoteFetchError + cleanup', () => {
+  it('throws RemoteFetchError when fetch exits 1', async () => {
+    const { factory } = await makeTmpFactory(undefined);
+    await expect(
+      withRemoteCheckout(
+        'https://example.com/repo.git',
+        SHA_COMMIT,
+        false,
+        makeFailFetchRunner('fatal: sha not found'),
+        { tmpFactory: factory },
+        async () => {},
+      ),
+    ).rejects.toBeInstanceOf(RemoteFetchError);
+  });
+
+  it('cleanup is called even when fetch fails', async () => {
+    const { factory, cleanupSpy } = await makeTmpFactory(undefined);
+    try {
+      await withRemoteCheckout(
+        'https://example.com/repo.git',
+        SHA_COMMIT,
+        false,
+        makeFailFetchRunner('fatal: sha not found'),
+        { tmpFactory: factory },
+        async () => {},
+      );
+    } catch {
+      // expected
+    }
+    expect(cleanupSpy).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('withRemoteCheckout — isTag:false: checkout failure throws RemoteFetchError + cleanup', () => {
+  it('throws RemoteFetchError when checkout exits 1', async () => {
+    const { factory } = await makeTmpFactory(undefined);
+    await expect(
+      withRemoteCheckout(
+        'https://example.com/repo.git',
+        SHA_COMMIT,
+        false,
+        makeFailCheckoutRunner('error: pathspec SHA did not match'),
+        { tmpFactory: factory },
+        async () => {},
+      ),
+    ).rejects.toBeInstanceOf(RemoteFetchError);
+  });
+
+  it('cleanup is called even when checkout fails', async () => {
+    const { factory, cleanupSpy } = await makeTmpFactory(undefined);
+    try {
+      await withRemoteCheckout(
+        'https://example.com/repo.git',
+        SHA_COMMIT,
+        false,
+        makeFailCheckoutRunner('error: pathspec SHA did not match'),
+        { tmpFactory: factory },
+        async () => {},
+      );
+    } catch {
+      // expected
+    }
+    expect(cleanupSpy).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('withRemoteCheckout — isTag:true (tag path) clone argv unchanged (non-regression)', () => {
+  it('passes --branch <tag> to git clone', async () => {
+    const { factory, dirPath } = await makeTmpFactory(undefined);
+    const cloneCalls: string[][] = [];
+    await withRemoteCheckout(
+      'https://example.com/repo.git',
+      'v3.0.0',
+      true,
+      makeCloneRunner(cloneCalls),
+      { tmpFactory: factory },
+      async () => {},
+    );
+    expect(cloneCalls).toHaveLength(1);
+    expect(cloneCalls[0]).toEqual([
+      'clone',
+      '--depth',
+      '1',
+      '--branch',
+      'v3.0.0',
+      '--',
+      'https://example.com/repo.git',
+      dirPath(),
+    ]);
   });
 });
 
@@ -1096,10 +1425,10 @@ async function makeReadCatalogDir(catalogContent?: string): Promise<{
 
 describe('readCatalogDir — valid catalog returns entries', () => {
   it('returns all validated entries from the directory', async () => {
-    const catalog = JSON.stringify([VALID_TOOL_ENTRY, VALID_PACK_ENTRY]);
+    const catalog = wrapCatalog([VALID_TOOL_ENTRY, VALID_PACK_ENTRY]);
     const { dir, cleanup } = await makeReadCatalogDir(catalog);
     try {
-      const entries = await readCatalogDir(dir);
+      const { entries } = await readCatalogDir(dir);
       expect(entries).toHaveLength(2);
     } finally {
       await cleanup();
@@ -1107,10 +1436,10 @@ describe('readCatalogDir — valid catalog returns entries', () => {
   });
 
   it('returns artifact entry typed correctly', async () => {
-    const catalog = JSON.stringify([VALID_TOOL_ENTRY]);
+    const catalog = wrapCatalog([VALID_TOOL_ENTRY]);
     const { dir, cleanup } = await makeReadCatalogDir(catalog);
     try {
-      const entries = await readCatalogDir(dir);
+      const { entries } = await readCatalogDir(dir);
       expect(entries[0]?.kind).toBe('artifact');
     } finally {
       await cleanup();
@@ -1118,21 +1447,76 @@ describe('readCatalogDir — valid catalog returns entries', () => {
   });
 
   it('returns pack entry typed correctly', async () => {
-    const catalog = JSON.stringify([VALID_PACK_ENTRY]);
+    const catalog = wrapCatalog([VALID_PACK_ENTRY]);
     const { dir, cleanup } = await makeReadCatalogDir(catalog);
     try {
-      const entries = await readCatalogDir(dir);
+      const { entries } = await readCatalogDir(dir);
       expect(entries[0]?.kind).toBe('pack');
     } finally {
       await cleanup();
     }
   });
 
-  it('returns empty array for empty catalog array', async () => {
-    const { dir, cleanup } = await makeReadCatalogDir('[]');
+  it('returns empty entries array for empty entries list', async () => {
+    const { dir, cleanup } = await makeReadCatalogDir(wrapCatalog([]));
     try {
-      const entries = await readCatalogDir(dir);
+      const { entries } = await readCatalogDir(dir);
       expect(entries).toHaveLength(0);
+    } finally {
+      await cleanup();
+    }
+  });
+
+  it('returns meta with name from catalog file', async () => {
+    const { dir, cleanup } = await makeReadCatalogDir(
+      wrapCatalog([], { name: 'my-catalog' }),
+    );
+    try {
+      const { meta } = await readCatalogDir(dir);
+      expect(meta.name).toBe('my-catalog');
+    } finally {
+      await cleanup();
+    }
+  });
+
+  it('meta.required defaults to [] when absent', async () => {
+    const { dir, cleanup } = await makeReadCatalogDir(
+      JSON.stringify({ meta: { name: 'test' }, entries: [] }),
+    );
+    try {
+      const { meta } = await readCatalogDir(dir);
+      expect(meta.required).toEqual([]);
+    } finally {
+      await cleanup();
+    }
+  });
+
+  it('meta.recommended defaults to [] when absent', async () => {
+    const { dir, cleanup } = await makeReadCatalogDir(
+      JSON.stringify({ meta: { name: 'test' }, entries: [] }),
+    );
+    try {
+      const { meta } = await readCatalogDir(dir);
+      expect(meta.recommended).toEqual([]);
+    } finally {
+      await cleanup();
+    }
+  });
+
+  it('accepts arbitrary ids (pack and artifact) in meta.required and meta.recommended', async () => {
+    const catalog = JSON.stringify({
+      meta: {
+        name: 'test',
+        required: ['pack:essentials', 'tool:glab', 'artifact:my-thing'],
+        recommended: ['pack:extras', 'skill:remote-demo'],
+      },
+      entries: [],
+    });
+    const { dir, cleanup } = await makeReadCatalogDir(catalog);
+    try {
+      const { meta } = await readCatalogDir(dir);
+      expect(meta.required).toEqual(['pack:essentials', 'tool:glab', 'artifact:my-thing']);
+      expect(meta.recommended).toEqual(['pack:extras', 'skill:remote-demo']);
     } finally {
       await cleanup();
     }
@@ -1172,8 +1556,30 @@ describe('readCatalogDir — invalid JSON throws CatalogParseError', () => {
   });
 });
 
-describe('readCatalogDir — non-array root throws CatalogParseError', () => {
-  it('throws CatalogParseError when root is an object', async () => {
+describe('readCatalogDir — bare-array root throws CatalogParseError', () => {
+  it('throws CatalogParseError when root is a bare array (legacy format)', async () => {
+    const { dir, cleanup } = await makeReadCatalogDir(JSON.stringify([VALID_TOOL_ENTRY]));
+    try {
+      await expect(readCatalogDir(dir)).rejects.toBeInstanceOf(CatalogParseError);
+    } finally {
+      await cleanup();
+    }
+  });
+
+  it('error message mentions wrapped object requirement', async () => {
+    const { dir, cleanup } = await makeReadCatalogDir(JSON.stringify([VALID_TOOL_ENTRY]));
+    try {
+      await expect(readCatalogDir(dir)).rejects.toMatchObject({
+        message: expect.stringMatching(/wrapp/i),
+      });
+    } finally {
+      await cleanup();
+    }
+  });
+});
+
+describe('readCatalogDir — missing meta.name throws CatalogParseError', () => {
+  it('throws CatalogParseError when meta is missing entirely', async () => {
     const { dir, cleanup } = await makeReadCatalogDir(JSON.stringify({ entries: [] }));
     try {
       await expect(readCatalogDir(dir)).rejects.toBeInstanceOf(CatalogParseError);
@@ -1182,12 +1588,23 @@ describe('readCatalogDir — non-array root throws CatalogParseError', () => {
     }
   });
 
-  it('error message mentions tableau', async () => {
-    const { dir, cleanup } = await makeReadCatalogDir(JSON.stringify({ entries: [] }));
+  it('throws CatalogParseError when meta.name is empty string', async () => {
+    const { dir, cleanup } = await makeReadCatalogDir(
+      JSON.stringify({ meta: { name: '' }, entries: [] }),
+    );
     try {
-      await expect(readCatalogDir(dir)).rejects.toMatchObject({
-        message: expect.stringMatching(/tableau/i),
-      });
+      await expect(readCatalogDir(dir)).rejects.toBeInstanceOf(CatalogParseError);
+    } finally {
+      await cleanup();
+    }
+  });
+
+  it('throws CatalogParseError when meta is present but name is absent', async () => {
+    const { dir, cleanup } = await makeReadCatalogDir(
+      JSON.stringify({ meta: { required: [] }, entries: [] }),
+    );
+    try {
+      await expect(readCatalogDir(dir)).rejects.toBeInstanceOf(CatalogParseError);
     } finally {
       await cleanup();
     }
@@ -1197,7 +1614,7 @@ describe('readCatalogDir — non-array root throws CatalogParseError', () => {
 describe('readCatalogDir — invalid entry throws CatalogParseError with issues', () => {
   it('throws CatalogParseError when an entry has an unknown nature', async () => {
     const badEntry = { ...VALID_TOOL_ENTRY, nature: 'unknown-nature' };
-    const { dir, cleanup } = await makeReadCatalogDir(JSON.stringify([badEntry]));
+    const { dir, cleanup } = await makeReadCatalogDir(wrapCatalog([badEntry]));
     try {
       await expect(readCatalogDir(dir)).rejects.toBeInstanceOf(CatalogParseError);
     } finally {
@@ -1207,7 +1624,7 @@ describe('readCatalogDir — invalid entry throws CatalogParseError with issues'
 
   it('issues array is non-empty on validation failure', async () => {
     const badEntry = { ...VALID_TOOL_ENTRY, nature: 'unknown-nature' };
-    const { dir, cleanup } = await makeReadCatalogDir(JSON.stringify([badEntry]));
+    const { dir, cleanup } = await makeReadCatalogDir(wrapCatalog([badEntry]));
     try {
       try {
         await readCatalogDir(dir);

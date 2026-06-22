@@ -51,7 +51,6 @@ const GUARDRAIL_ENTRY: CatalogEntry = {
   kind: 'artifact',
   id: 'guardrails-claude',
   nature: 'guardrail',
-  source: 'internal',
   targets: ['claude'],
   scopes: ['user', 'project'],
 };
@@ -81,7 +80,7 @@ afterEach(async () => {
 // ---------------------------------------------------------------------------
 
 describe('runInstall — with versionFor', () => {
-  it('manifest entry carries source/ref/sha from versionFor', async () => {
+  it('manifest entry carries ref/sha from versionFor', async () => {
     const adapter = createClaudeAdapter({ denyRef: REF_DENY, agentsContent: AGENTS_CONTENT });
 
     await runInstall({
@@ -92,17 +91,16 @@ describe('runInstall — with versionFor', () => {
       manifestPath,
       selectedIds: ['guardrails-claude'],
       confirm: true,
-      versionFor: () => ({ source: 'external', ref: 'v3.1.0', sha: 'cafecafe' }),
+      versionFor: () => ({ ref: 'v3.1.0', sha: 'cafecafe' }),
     });
 
     const raw = await fs.readFile(manifestPath, 'utf8');
     const manifest = JSON.parse(raw) as {
-      artifacts: Array<{ id: string; source: string; ref: string; sha: string }>;
+      artifacts: Array<{ id: string; ref: string; sha: string }>;
     };
 
     const artifact = manifest.artifacts.find((a) => a.id === 'guardrails-claude');
     expect(artifact).toBeDefined();
-    expect(artifact!.source).toBe('external');
     expect(artifact!.ref).toBe('v3.1.0');
     expect(artifact!.sha).toBe('cafecafe');
   });
@@ -121,7 +119,7 @@ describe('runInstall — with versionFor', () => {
       confirm: true,
       versionFor: (entry) => {
         calledWith.push(entry);
-        return { source: 'external', ref: 'v1.0.0', sha: 'aabbcc' };
+        return { ref: 'v1.0.0', sha: 'aabbcc' };
       },
     });
 
@@ -135,7 +133,7 @@ describe('runInstall — with versionFor', () => {
 // ---------------------------------------------------------------------------
 
 describe('runInstall — without versionFor', () => {
-  it('manifest entry defaults to source:internal, ref:v0.0.0, sha:""', async () => {
+  it('manifest entry defaults to ref:v0.0.0, sha:""', async () => {
     const adapter = createClaudeAdapter({ denyRef: REF_DENY, agentsContent: AGENTS_CONTENT });
 
     await runInstall({
@@ -150,12 +148,11 @@ describe('runInstall — without versionFor', () => {
 
     const raw = await fs.readFile(manifestPath, 'utf8');
     const manifest = JSON.parse(raw) as {
-      artifacts: Array<{ id: string; source: string; ref: string; sha: string }>;
+      artifacts: Array<{ id: string; ref: string; sha: string }>;
     };
 
     const artifact = manifest.artifacts.find((a) => a.id === 'guardrails-claude');
     expect(artifact).toBeDefined();
-    expect(artifact!.source).toBe('internal');
     expect(artifact!.ref).toBe('v0.0.0');
     expect(artifact!.sha).toBe('');
   });
