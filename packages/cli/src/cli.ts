@@ -33,6 +33,7 @@ import type { Scanner } from '@agent-rigger/core/scan';
 
 import {
   type CatalogEntry,
+  fetchCatalog,
   isUpdateAvailable,
   mergeCatalogs,
   resolveVersion,
@@ -45,6 +46,7 @@ export { buildClaudeAdapter } from './adapter-builder';
 export type { BuildClaudeAdapterOpts } from './adapter-builder';
 import { runCheck } from './cmd-check';
 import { runInit } from './cmd-init';
+import type { CatalogProposal } from './cmd-init';
 import type { RunLsResult } from './cmd-ls';
 import { RESOURCE_NATURE_MAP, runLs } from './cmd-ls';
 import { runRemove, UnknownRemoveIdError } from './cmd-remove';
@@ -249,6 +251,15 @@ export interface CliPrompts {
   confirmApply: (planText: string) => Promise<boolean>;
   askUrl: () => Promise<string>;
   askMethod: () => Promise<'provider-cli' | 'https' | 'ssh'>;
+  /**
+   * Optional post-init picker + install orchestration (injectable for tests).
+   *
+   * When set, `runCli` will provide this as `proposeInstall` to `runInit`,
+   * which calls it after a successful config persist.
+   * When absent and in a real TTY, `runCli` builds the real picker + install fn.
+   * When absent and NOT in a TTY, `runInit` receives no `proposeInstall` (config-only).
+   */
+  proposeInstall?: (catalog: CatalogProposal) => Promise<string[]>;
 }
 
 /** All injectable dependencies for runCli. */
@@ -519,10 +530,100 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
       const prompts = deps.prompts ?? (await importUiPrompts());
       const configPath = resolveConfigPath(env);
 
+      const runner: CommandRunner = deps.remote?.run ?? defaultRunner;
+      const tmpFactory: TmpDirFactory = deps.remote?.tmpFactory ?? defaultTmpFactory;
+
+      // proposeInstall: resolve required/recommended from catalog.meta, show picker,
+      // then run actual install if user confirmed a non-empty selection.
+      // Gate: use injected prompts.proposeInstall when provided (test injection),
+      //       build the real picker when in a real TTY,
+      //       skip proposal entirely when NOT in a TTY (config-only mode).
+      let proposeInstallFn: ((catalog: CatalogProposal) => Promise<string[]>) | undefined;
+
+      if (prompts.proposeInstall !== undefined) {
+        // Test injection: use the injected fn directly.
+        proposeInstallFn = prompts.proposeInstall;
+      } else if (process.stdout.isTTY) {
+        // Real TTY: build the interactive picker + install orchestration.
+        proposeInstallFn = async (catalog: CatalogProposal): Promise<string[]> => {
+          const { selectArtifactsWithDefaults } = await import('./ui');
+
+          const required = new Set(catalog.meta.required ?? []);
+          const recommended = new Set(catalog.meta.recommended ?? []);
+
+          const selectedIds = await selectArtifactsWithDefaults(catalog.entries, {
+            required,
+            recommended,
+          });
+
+          if (selectedIds.length === 0) {
+            return [];
+          }
+
+          // Launch the actual install using the same remote path as `install` command.
+          const initConfig = await loadCliConfig(env);
+          const catalogUrl = initConfig.catalogUrl ?? '';
+
+          if (catalogUrl === '') {
+            return [];
+          }
+
+          const initManifestPath = resolveManifestPath(env);
+
+          await runRemoteInstall({
+            ids: selectedIds,
+            catalogUrl,
+            scope,
+            env,
+            manifestPath: initManifestPath,
+            runner,
+            tmpFactory,
+            confirm: true,
+            ...(deps.remote?.scanner === undefined ? {} : { scanner: deps.remote.scanner }),
+          });
+
+          return selectedIds;
+        };
+      }
+      // else: non-TTY → proposeInstallFn stays undefined → runInit skips proposal step.
+
+      // fetchCatalogFn: resolves remote version then fetches catalog.json.
+      // Only provided when proposeInstallFn is set — runInit skips both when either is absent.
+      const fetchCatalogFn = proposeInstallFn === undefined
+        ? undefined
+        : async (url: string): Promise<CatalogProposal> => {
+          const version = await resolveVersion(url, runner);
+          const { meta, entries } = await fetchCatalog(
+            url,
+            version.ref,
+            version.isTag,
+            runner,
+            { tmpFactory },
+          );
+          return { meta, entries };
+        };
+
+      // Adapt the catalog CommandRunner (optional stdout/stderr, optional args)
+      // to the preflight-auth CommandRunner (required stdout/stderr, required args).
+      // This is safe: preflightAuth always provides args and always uses stdout/stderr.
+      // opts (env forwarding) is only relevant for the real preflightAuth path; the
+      // test runner does not need it, so we silently discard it here.
+      const initRunner: import('./preflight-auth').CommandRunner = (cmd, args, _opts) =>
+        runner(cmd, args ?? []).then((r) => ({
+          exitCode: r.exitCode,
+          stdout: r.stdout ?? '',
+          stderr: r.stderr ?? '',
+        }));
+
       const result = await runInit({
         configPath,
         askUrl: prompts.askUrl,
         askMethod: prompts.askMethod,
+        // Forward the runner so preflightAuth uses the injected runner in tests
+        // (production: defaultRunner; tests: deps.remote?.run).
+        run: initRunner,
+        ...(fetchCatalogFn === undefined ? {} : { fetchCatalogFn }),
+        ...(proposeInstallFn === undefined ? {} : { proposeInstall: proposeInstallFn }),
       });
 
       print(result.output);
