@@ -26,6 +26,7 @@ import {
   loadCanonicalContext,
   loadCanonicalDeny,
 } from '@agent-rigger/adapters';
+import type { PluginRunner } from '@agent-rigger/adapters';
 import { assertSafeArtifactName } from '@agent-rigger/core/artifact-name';
 import { resolveUserTargets } from '@agent-rigger/core/paths';
 import type { Env } from '@agent-rigger/core/paths';
@@ -62,6 +63,8 @@ async function buildClaudeAdapterForRemote(
   artifactsDir: string,
   externalIds: Set<string>,
   externalBaseDir: string,
+  catalogUrl: string,
+  commandRunner: CommandRunner,
 ) {
   const denyJsonPath = path.join(artifactsDir, 'claude', 'deny.json');
   const agentsMdPath = path.join(artifactsDir, 'shared', 'AGENTS.md');
@@ -71,10 +74,19 @@ async function buildClaudeAdapterForRemote(
     loadCanonicalContext(agentsMdPath),
   ]);
 
+  // Adapt CommandRunner → PluginRunner (PluginRunner accepts an optional env opts arg;
+  // the CommandRunner signature doesn't carry it, so we ignore it here — tests don't
+  // need the env forwarding that GITLAB_TOKEN injection provides).
+  const pluginRunner: PluginRunner = (command, args) =>
+    commandRunner(command, args).then(
+      (r) => ({ exitCode: r.exitCode, stdout: r.stdout ?? '', stderr: r.stderr ?? '' }),
+    );
+
   return createClaudeAdapter({
     denyRef,
     agentsContent,
     scanner: stubScanner,
+    pluginRunner,
     skillSource: (entry) => {
       const name = entry.id.replace(/^skill:/, '');
       assertSafeArtifactName(name, entry.id);
@@ -91,17 +103,23 @@ async function buildClaudeAdapterForRemote(
       }
       return path.join(artifactsDir, 'claude', 'agents', name + '.md');
     },
-    pluginSource: (entry) => ({
-      plugin: entry.id.replace(/^plugin:/, ''),
-      marketplace: path.join(
-        resolveUserTargets(env).stateJson,
-        '..',
-        '..',
-        '..',
-        '.claude-plugin',
-        'marketplace.json',
-      ),
-    }),
+    pluginSource: (entry) => {
+      const plugin = entry.id.replace(/^plugin:/, '');
+      // External plugin: use the content repo URL as the marketplace so that
+      // `claude plugin marketplace add <catalogUrl>` registers the right source.
+      if (externalIds.has(entry.id)) {
+        return { plugin, marketplace: catalogUrl };
+      }
+      return {
+        plugin,
+        marketplace: path.join(
+          path.dirname(resolveUserTargets(env).stateJson),
+          '..',
+          '.claude-plugin',
+          'marketplace.json',
+        ),
+      };
+    },
   });
 }
 
@@ -170,7 +188,14 @@ export async function runRemoteInstall(opts: {
       resolved.filter((e) => e.source === 'external').map((e) => e.id),
     );
 
-    const adapter = await buildClaudeAdapterForRemote(env, artifactsDir, externalIds, dir);
+    const adapter = await buildClaudeAdapterForRemote(
+      env,
+      artifactsDir,
+      externalIds,
+      dir,
+      catalogUrl,
+      runner,
+    );
 
     const versionFor = (
       entry: { id: string },
