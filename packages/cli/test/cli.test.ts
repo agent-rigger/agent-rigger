@@ -1161,3 +1161,94 @@ describe('runCli — ls with catalogUrl configured but remote fails', () => {
     expect(out).toContain('Falling back to built-in catalog');
   });
 });
+
+// ---------------------------------------------------------------------------
+// runCli — ls with remote catalog containing a shadowed (conflicting) id
+// ---------------------------------------------------------------------------
+
+describe('runCli — ls with remote entry shadowed by built-in', () => {
+  let tmp: { dir: string; cleanup: () => Promise<void> };
+  let catalogDir: string;
+
+  beforeEach(async () => {
+    tmp = await makeTmpHome('rigger-shadow-ls-');
+    const configDir = path.join(tmp.dir, '.config', 'agent-rigger');
+    await fs.mkdir(configDir, { recursive: true });
+    await Bun.write(
+      path.join(configDir, 'config.json'),
+      JSON.stringify({ catalogUrl: 'https://example.com/catalog.git' }),
+    );
+    catalogDir = await fs.mkdtemp(path.join(os.tmpdir(), 'rigger-shadow-catalog-'));
+  });
+
+  afterEach(async () => {
+    await tmp.cleanup();
+    await fs.rm(catalogDir, { recursive: true, force: true });
+  });
+
+  it('ls exits 0 when remote has a built-in id collision', async () => {
+    // guardrails-claude is already in BUILTIN_CATALOG — collision expected
+    const remoteEntries = [
+      makeRemoteEntry('guardrails-claude'),
+      makeRemoteEntry('skill:remote-extra'),
+    ];
+    const cap = makeCapture();
+
+    const code = await runCli(['ls'], {
+      print: cap.print,
+      env: { RIGGER_HOME: tmp.dir },
+      artifactsDir: ARTIFACTS_DIR,
+      remote: {
+        run: makeSuccessRunner(),
+        tmpFactory: makeFakeTmpFactory(catalogDir, remoteEntries),
+      },
+    });
+
+    expect(code).toBe(0);
+  });
+
+  it('prints a shadowing warning mentioning the colliding id', async () => {
+    const remoteEntries = [
+      makeRemoteEntry('guardrails-claude'),
+      makeRemoteEntry('skill:remote-extra'),
+    ];
+    const cap = makeCapture();
+
+    await runCli(['ls'], {
+      print: cap.print,
+      env: { RIGGER_HOME: tmp.dir },
+      artifactsDir: ARTIFACTS_DIR,
+      remote: {
+        run: makeSuccessRunner(),
+        tmpFactory: makeFakeTmpFactory(catalogDir, remoteEntries),
+      },
+    });
+
+    const out = cap.lines.join('\n');
+    expect(out).toContain('[warning]');
+    expect(out).toContain('shadowed by built-in');
+    expect(out).toContain('guardrails-claude');
+  });
+
+  it('catalog still shows the remote-only entry alongside built-in', async () => {
+    const remoteEntries = [
+      makeRemoteEntry('guardrails-claude'),
+      makeRemoteEntry('skill:remote-extra'),
+    ];
+    const cap = makeCapture();
+
+    await runCli(['ls'], {
+      print: cap.print,
+      env: { RIGGER_HOME: tmp.dir },
+      artifactsDir: ARTIFACTS_DIR,
+      remote: {
+        run: makeSuccessRunner(),
+        tmpFactory: makeFakeTmpFactory(catalogDir, remoteEntries),
+      },
+    });
+
+    const out = cap.lines.join('\n');
+    expect(out).toContain('guardrails-claude'); // built-in version kept
+    expect(out).toContain('skill:remote-extra'); // remote-only visible
+  });
+});
