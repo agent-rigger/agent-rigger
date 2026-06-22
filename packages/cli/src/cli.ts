@@ -361,7 +361,15 @@ async function resolveEffectiveCatalog(
 
   try {
     const { entries } = await fetchRemoteCatalog(remoteFetchOpts);
-    return mergeCatalogs(BUILTIN_CATALOG, entries);
+    const effective = mergeCatalogs(BUILTIN_CATALOG, entries);
+    if (effective.conflicts.length > 0) {
+      print(
+        `[warning] ${effective.conflicts.length} remote entr${
+          effective.conflicts.length === 1 ? 'y' : 'ies'
+        } shadowed by built-in: ${effective.conflicts.join(', ')}`,
+      );
+    }
+    return effective.entries;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     print(`[warning] Remote catalog unavailable (${msg}). Falling back to built-in catalog.`);

@@ -20,6 +20,7 @@ import { join } from 'node:path';
 import {
   type CatalogEntry,
   fetchCatalog,
+  mergeCatalogs,
   resolveVersion,
   type TmpDirFactory,
 } from '@agent-rigger/catalog';
@@ -101,21 +102,7 @@ export async function fetchRemoteCatalog(opts: {
 }
 
 // ---------------------------------------------------------------------------
-// mergeCatalogs — pure
+// mergeCatalogs — re-exported from @agent-rigger/catalog
 // ---------------------------------------------------------------------------
 
-/**
- * Merge two catalog arrays, with built-in entries taking priority.
- *
- * - built-in entries are always preserved as-is.
- * - remote entries whose id does not appear in built-in are appended.
- * - Deduplication is by entry.id.
- */
-export function mergeCatalogs(
-  builtin: CatalogEntry[],
-  remote: CatalogEntry[],
-): CatalogEntry[] {
-  const builtinIds = new Set(builtin.map((e) => e.id));
-  const remoteOnly = remote.filter((e) => !builtinIds.has(e.id));
-  return [...builtin, ...remoteOnly];
-}
+export { mergeCatalogs };

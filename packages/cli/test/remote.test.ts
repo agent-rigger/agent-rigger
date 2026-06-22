@@ -201,18 +201,19 @@ describe('fetchRemoteCatalog — RemoteFetchError propagation', () => {
 describe('mergeCatalogs', () => {
   it('returns built-in entries when remote is empty', () => {
     const builtin = [makeEntry('guardrails-claude'), makeEntry('context-claude')];
-    const result = mergeCatalogs(builtin, []);
-    expect(result).toHaveLength(2);
-    expect(result.map((e) => e.id)).toEqual(['guardrails-claude', 'context-claude']);
+    const { entries, conflicts } = mergeCatalogs(builtin, []);
+    expect(entries).toHaveLength(2);
+    expect(entries.map((e) => e.id)).toEqual(['guardrails-claude', 'context-claude']);
+    expect(conflicts).toHaveLength(0);
   });
 
   it('appends remote-only entries after built-in', () => {
     const builtin = [makeEntry('guardrails-claude')];
     const remote = [makeEntry('skill:remote-only')];
-    const result = mergeCatalogs(builtin, remote);
-    expect(result).toHaveLength(2);
-    expect(result[0]?.id).toBe('guardrails-claude');
-    expect(result[1]?.id).toBe('skill:remote-only');
+    const { entries } = mergeCatalogs(builtin, remote);
+    expect(entries).toHaveLength(2);
+    expect(entries[0]?.id).toBe('guardrails-claude');
+    expect(entries[1]?.id).toBe('skill:remote-only');
   });
 
   it('built-in wins on id collision', () => {
@@ -232,19 +233,23 @@ describe('mergeCatalogs', () => {
       targets: ['claude'],
       scopes: ['user'],
     };
-    const result = mergeCatalogs([builtinEntry], [remoteEntry]);
-    expect(result).toHaveLength(1);
-    expect(result[0]?.source).toBe('internal'); // built-in kept
+    const { entries, conflicts } = mergeCatalogs([builtinEntry], [remoteEntry]);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.source).toBe('internal'); // built-in kept
+    expect(conflicts).toContain('guardrails-claude');
   });
 
   it('dedups correctly with multiple remote-only and collision entries', () => {
     const builtin = [makeEntry('a'), makeEntry('b')];
     const remote = [makeEntry('b'), makeEntry('c'), makeEntry('d')];
-    const result = mergeCatalogs(builtin, remote);
-    expect(result.map((e) => e.id)).toEqual(['a', 'b', 'c', 'd']);
+    const { entries, conflicts } = mergeCatalogs(builtin, remote);
+    expect(entries.map((e) => e.id)).toEqual(['a', 'b', 'c', 'd']);
+    expect(conflicts).toContain('b');
   });
 
-  it('returns empty array when both inputs are empty', () => {
-    expect(mergeCatalogs([], [])).toEqual([]);
+  it('returns empty entries and conflicts when both inputs are empty', () => {
+    const { entries, conflicts } = mergeCatalogs([], []);
+    expect(entries).toHaveLength(0);
+    expect(conflicts).toHaveLength(0);
   });
 });
