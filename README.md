@@ -233,6 +233,36 @@ Removal plan (1 change):
 
 After a `remove`, running `check` will show the entry as `[miss ]`.
 
+### `update` — update installed artifacts from the remote
+
+Compares installed artifacts against the latest version of the remote catalog
+and re-installs the ones that are out of date. Requires a configured catalog URL
+(`init`).
+
+```
+agent-rigger update <id…>        # update specific ids
+agent-rigger <resource> update <id>
+agent-rigger update              # update every installed external artifact
+agent-rigger update <id…> --yes  # skip confirmation
+```
+
+For each candidate:
+
+- An `external` artifact with a **newer** remote version is re-installed: the
+  artifact is removed (unlinked) and re-installed from the new version, so the
+  store holds the fresh content and the manifest records the new `ref`/`sha`.
+- An artifact already at the latest version is left untouched (no write).
+- A built-in (`internal`) artifact has no remote version — reported as a no-op.
+
+Version comparison uses semver tags (or the default-branch HEAD sha when the
+content repo has no tags). Nothing is written without confirmation (skip with
+`--yes`).
+
+`check` also surfaces available updates: when a catalog URL is configured and
+the remote is reachable, it appends an `--- Updates ---` section listing
+installed entries with a newer version (`<id>  <installed> → <latest>`). This is
+advisory — it never changes the exit code and writes nothing.
+
 ### `init` — configure catalog URL and auth
 
 Run once before the first `install` on a new machine. Persists the catalog URL
@@ -306,12 +336,12 @@ These properties hold across all commands:
 - **Security scanner is a stub.** The scan step that gates skill and plugin
   installation always passes in M0. A real implementation (Trivy, Gitleaks, or
   similar) is the security milestone.
-- **Remote install is non-interactive (M1-b).** `ls` reads the remote catalog
-  (M1-a) and `install <id…>` / `<resource> add <id>` install `external`
-  artifacts from it with real `ref`/`sha` (M1-b). Still pending: `update`
-  (compare installed vs latest, re-install newer — M1-c) and remote selection
-  from the **interactive** picker. The security scanner that gates remote
-  content is still a stub (see below).
+- **Remote catalog is non-interactive (M1).** `ls` reads the remote catalog
+  (M1-a), `install <id…>` / `<resource> add <id>` install `external` artifacts
+  with real `ref`/`sha` (M1-b), and `update` / `check` compare installed vs
+  latest (M1-c). Still pending: remote selection from the **interactive**
+  `install` picker. The security scanner that gates remote content is still a
+  stub (see below).
 - **No standalone binary distribution.** The compiled binary resolves artifacts
   relative to the cloned repository. Bundling artifacts into the binary is a
   prerequisite for distributing `agent-rigger` as a single file.
