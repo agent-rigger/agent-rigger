@@ -142,7 +142,7 @@ export function assertSafeRef(ref: string): void {
 // Build metadata ("+...") is ignored.
 // A tag that does not match MAJOR.MINOR.PATCH (with optional prerelease) is ignored.
 // Prerelease versions (X.Y.Z-pre) sort below the corresponding release (X.Y.Z).
-// Prerelease strings are compared lexicographically when both sides have one.
+// Prerelease identifiers are compared per SemVer §11.4 (numeric vs alphanum, length tiebreak).
 // ---------------------------------------------------------------------------
 
 interface ParsedSemver {
@@ -156,6 +156,7 @@ interface ParsedSemver {
 }
 
 const SEMVER_RE = /^v?(\d+)\.(\d+)\.(\d+)(?:-([^+]+))?(?:\+.*)?$/;
+const NUMERIC_ID_RE = /^\d+$/;
 
 function parseSemver(tag: string): ParsedSemver | undefined {
   const m = SEMVER_RE.exec(tag);
@@ -172,9 +173,32 @@ function parseSemver(tag: string): ParsedSemver | undefined {
 }
 
 /**
- * Compares two parsed semver values.
+ * Compares two prerelease identifiers per SemVer §11.4:
+ *  - both numeric → numeric comparison
+ *  - both alphanumeric → lexical ASCII comparison
+ *  - numeric vs alphanumeric → numeric is lower (returns negative)
+ */
+function comparePreId(a: string, b: string): number {
+  const aNum = NUMERIC_ID_RE.test(a);
+  const bNum = NUMERIC_ID_RE.test(b);
+
+  if (aNum && bNum) return Number(a) - Number(b);
+  if (!aNum && !bNum) {
+    if (a < b) return -1;
+    if (a > b) return 1;
+    return 0;
+  }
+  // numeric < alphanumeric
+  return aNum ? -1 : 1;
+}
+
+/**
+ * Compares two parsed semver values per SemVer §11.
  * Returns a positive number when a > b, negative when a < b, 0 when equal.
  * Used for descending sort (negate the comparator in Array.sort).
+ *
+ * Prerelease identifiers are compared left-to-right, identifier by identifier.
+ * When all compared identifiers are equal, the one with more identifiers is greater.
  */
 function compareSemver(a: ParsedSemver, b: ParsedSemver): number {
   if (a.major !== b.major) return a.major - b.major;
@@ -184,12 +208,20 @@ function compareSemver(a: ParsedSemver, b: ParsedSemver): number {
   // Releases beat prereleases.
   if (a.pre === undefined && b.pre !== undefined) return 1;
   if (a.pre !== undefined && b.pre === undefined) return -1;
-  if (a.pre !== undefined && b.pre !== undefined) {
-    // Lexicographic comparison between prerelease strings is sufficient for M1-a.
-    if (a.pre < b.pre) return -1;
-    if (a.pre > b.pre) return 1;
+  if (a.pre === undefined && b.pre === undefined) return 0;
+
+  // Both have prereleases — compare identifier by identifier.
+  const aIds = (a.pre as string).split('.');
+  const bIds = (b.pre as string).split('.');
+  const len = Math.min(aIds.length, bIds.length);
+
+  for (let i = 0; i < len; i++) {
+    const cmp = comparePreId(aIds[i] as string, bIds[i] as string);
+    if (cmp !== 0) return cmp;
   }
-  return 0;
+
+  // All shared identifiers are equal — longer prerelease is greater.
+  return aIds.length - bIds.length;
 }
 
 // ---------------------------------------------------------------------------
@@ -500,4 +532,29 @@ export async function fetchCatalog(
 
     return { entries, sha };
   });
+}
+
+// ---------------------------------------------------------------------------
+// isUpdateAvailable
+// ---------------------------------------------------------------------------
+
+/**
+ * Returns true when the remote version is newer than the installed version.
+ *
+ * When `remote.isTag` is true AND `installedRef` is a valid semver tag,
+ * uses `compareSemver` for a precise version comparison.
+ *
+ * Falls back to ref/sha string equality in all other cases (sha-to-sha,
+ * sha-to-tag, or non-semver ref).
+ */
+export function isUpdateAvailable(installedRef: string, remote: ResolvedVersion): boolean {
+  if (remote.isTag) {
+    const remoteParsed = parseSemver(remote.ref);
+    const installedParsed = parseSemver(installedRef);
+    if (remoteParsed !== undefined && installedParsed !== undefined) {
+      return compareSemver(remoteParsed, installedParsed) > 0;
+    }
+  }
+  // Fallback: compare by ref and sha equality.
+  return installedRef !== remote.sha && installedRef !== remote.ref;
 }

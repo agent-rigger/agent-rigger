@@ -36,6 +36,7 @@ import {
   fetchCatalog,
   InvalidRemoteRefError,
   InvalidRemoteUrlError,
+  isUpdateAvailable,
   listRemoteTags,
   readCatalogDir,
   RemoteFetchError,
@@ -1219,5 +1220,133 @@ describe('readCatalogDir — invalid entry throws CatalogParseError with issues'
     } finally {
       await cleanup();
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// compareSemver — SemVer §11 prerelease ordering (via listRemoteTags sort)
+// ---------------------------------------------------------------------------
+
+/**
+ * Helper: builds ls-remote output for a list of version strings and returns
+ * the sorted tag names from listRemoteTags (descending, highest first).
+ */
+async function sortedTags(versions: string[]): Promise<string[]> {
+  const sha = 'aabbccddeeff00112233445566778899aabbccdd';
+  const stdout = versions.map((v) => `${sha}\trefs/tags/${v}`).join('\n');
+  const tags = await listRemoteTags('https://example.com/repo.git', makeRunner(stdout));
+  return tags.map((t) => t.tag);
+}
+
+describe('compareSemver — SemVer §11 strict prerelease ordering', () => {
+  it('1.0.0-alpha < 1.0.0-alpha.1 (more identifiers wins)', async () => {
+    const names = await sortedTags(['1.0.0-alpha', '1.0.0-alpha.1']);
+    expect(names.indexOf('1.0.0-alpha.1')).toBeLessThan(names.indexOf('1.0.0-alpha'));
+  });
+
+  it('1.0.0-alpha.1 < 1.0.0-alpha.beta (numeric < alphanum)', async () => {
+    const names = await sortedTags(['1.0.0-alpha.1', '1.0.0-alpha.beta']);
+    expect(names.indexOf('1.0.0-alpha.beta')).toBeLessThan(names.indexOf('1.0.0-alpha.1'));
+  });
+
+  it('1.0.0-alpha.beta < 1.0.0-beta (lexical alpha < beta)', async () => {
+    const names = await sortedTags(['1.0.0-alpha.beta', '1.0.0-beta']);
+    expect(names.indexOf('1.0.0-beta')).toBeLessThan(names.indexOf('1.0.0-alpha.beta'));
+  });
+
+  it('1.0.0-beta < 1.0.0-beta.2 (more identifiers wins)', async () => {
+    const names = await sortedTags(['1.0.0-beta', '1.0.0-beta.2']);
+    expect(names.indexOf('1.0.0-beta.2')).toBeLessThan(names.indexOf('1.0.0-beta'));
+  });
+
+  it('1.0.0-beta.2 < 1.0.0-beta.11 (numeric comparison, not lexical)', async () => {
+    const names = await sortedTags(['1.0.0-beta.2', '1.0.0-beta.11']);
+    expect(names.indexOf('1.0.0-beta.11')).toBeLessThan(names.indexOf('1.0.0-beta.2'));
+  });
+
+  it('1.0.0-beta.11 < 1.0.0-rc.1 (lexical beta < rc)', async () => {
+    const names = await sortedTags(['1.0.0-beta.11', '1.0.0-rc.1']);
+    expect(names.indexOf('1.0.0-rc.1')).toBeLessThan(names.indexOf('1.0.0-beta.11'));
+  });
+
+  it('1.0.0-rc.1 < 1.0.0 (release beats prerelease)', async () => {
+    const names = await sortedTags(['1.0.0-rc.1', '1.0.0']);
+    expect(names.indexOf('1.0.0')).toBeLessThan(names.indexOf('1.0.0-rc.1'));
+  });
+
+  it('full §11 ordering in one sort: alpha < alpha.1 < alpha.beta < beta < beta.2 < beta.11 < rc.1 < release', async () => {
+    const input = [
+      '1.0.0-beta.11',
+      '1.0.0',
+      '1.0.0-alpha',
+      '1.0.0-rc.1',
+      '1.0.0-alpha.1',
+      '1.0.0-beta.2',
+      '1.0.0-beta',
+      '1.0.0-alpha.beta',
+    ];
+    const names = await sortedTags(input);
+    const expected = [
+      '1.0.0',
+      '1.0.0-rc.1',
+      '1.0.0-beta.11',
+      '1.0.0-beta.2',
+      '1.0.0-beta',
+      '1.0.0-alpha.beta',
+      '1.0.0-alpha.1',
+      '1.0.0-alpha',
+    ];
+    expect(names).toEqual(expected);
+  });
+
+  it('rc.10 > rc.2 (numeric comparison)', async () => {
+    const names = await sortedTags(['1.0.0-rc.2', '1.0.0-rc.10']);
+    expect(names.indexOf('1.0.0-rc.10')).toBeLessThan(names.indexOf('1.0.0-rc.2'));
+  });
+
+  it('alpha.10 > alpha.9 (numeric comparison)', async () => {
+    const names = await sortedTags(['1.0.0-alpha.9', '1.0.0-alpha.10']);
+    expect(names.indexOf('1.0.0-alpha.10')).toBeLessThan(names.indexOf('1.0.0-alpha.9'));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// isUpdateAvailable
+// ---------------------------------------------------------------------------
+
+describe('isUpdateAvailable — tag vs tag', () => {
+  it('returns true when remote tag is newer (v1.0.0 installed, v1.1.0 remote)', () => {
+    const remote = { ref: 'v1.1.0', sha: SHA_B, isTag: true };
+    expect(isUpdateAvailable('v1.0.0', remote)).toBe(true);
+  });
+
+  it('returns false when remote tag equals installed (v1.2.0 == v1.2.0)', () => {
+    const remote = { ref: 'v1.2.0', sha: SHA_B, isTag: true };
+    expect(isUpdateAvailable('v1.2.0', remote)).toBe(false);
+  });
+
+  it('returns false when installed is newer than remote (v2.0.0 installed, v1.0.0 remote)', () => {
+    const remote = { ref: 'v1.0.0', sha: SHA_A, isTag: true };
+    expect(isUpdateAvailable('v2.0.0', remote)).toBe(false);
+  });
+});
+
+describe('isUpdateAvailable — sha fallback path', () => {
+  it('returns true when shas differ (installed sha A, remote sha B)', () => {
+    const remote = { ref: SHA_B, sha: SHA_B, isTag: false };
+    expect(isUpdateAvailable(SHA_A, remote)).toBe(true);
+  });
+
+  it('returns false when shas are identical', () => {
+    const remote = { ref: SHA_A, sha: SHA_A, isTag: false };
+    expect(isUpdateAvailable(SHA_A, remote)).toBe(false);
+  });
+});
+
+describe('isUpdateAvailable — non-semver installed ref', () => {
+  it('returns true when installed is a sha but remote is a semver tag', () => {
+    // installed is a raw sha (non-semver) — falls back to ref/sha comparison
+    const remote = { ref: 'v1.0.0', sha: SHA_B, isTag: true };
+    expect(isUpdateAvailable(SHA_A, remote)).toBe(true);
   });
 });
