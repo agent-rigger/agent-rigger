@@ -32,15 +32,8 @@ import type { Env } from '@agent-rigger/core/paths';
 import { resolveUserTargets } from '@agent-rigger/core/paths';
 import { stubScanner } from '@agent-rigger/core/scan';
 
-import {
-  BUILTIN_CATALOG,
-  mergeCatalogs,
-  readCatalogDir,
-  resolveVersion,
-  type TmpDirFactory,
-  withRemoteCheckout,
-} from '@agent-rigger/catalog';
-import { DependencyCycleError, resolve, UnknownEntryError } from '@agent-rigger/catalog/resolver';
+import { BUILTIN_CATALOG, mergeCatalogs, type TmpDirFactory } from '@agent-rigger/catalog';
+import { DependencyCycleError, UnknownEntryError } from '@agent-rigger/catalog/resolver';
 import { type CommandRunner, defaultRunner } from '@agent-rigger/catalog/tool-check';
 import { runCheck } from './cmd-check';
 import { runInit } from './cmd-init';
@@ -51,6 +44,7 @@ import { runRemove, UnknownRemoveIdError } from './cmd-remove';
 import { loadConfig } from './config';
 import { PreflightAuthError } from './preflight-auth';
 import { defaultTmpFactory, fetchRemoteCatalog } from './remote';
+import { runRemoteInstall } from './remote-install';
 import { renderEntryInfo } from './ui';
 
 // ---------------------------------------------------------------------------
@@ -771,62 +765,22 @@ async function handleInstall(opts: HandleInstallOpts): Promise<number> {
     const config = await loadCliConfig(env);
 
     if (config.catalogUrl !== undefined && config.catalogUrl !== '') {
-      // Remote install path: checkout the content repo, merge catalogs, install.
+      // Remote install path: delegate to runRemoteInstall.
       const catalogUrl = config.catalogUrl;
       const runner: CommandRunner = deps.remote?.run ?? defaultRunner;
       const tmpFactory: TmpDirFactory = deps.remote?.tmpFactory ?? defaultTmpFactory;
 
-      const version = await resolveVersion(catalogUrl, runner);
-
-      const result = await withRemoteCheckout(
+      const result = await runRemoteInstall({
+        ids,
         catalogUrl,
-        version.ref,
+        scope,
+        env,
+        manifestPath,
+        artifactsDir,
         runner,
-        { tmpFactory },
-        async (dir) => {
-          const remoteEntries = await readCatalogDir(dir);
-          // Frontier guard: reject external entries whose derived name would cause
-          // a path traversal before any install operation begins.
-          for (const entry of remoteEntries) {
-            if (entry.kind !== 'artifact') continue;
-            if (entry.nature === 'skill') {
-              const name = entry.id.replace(/^skill:/, '');
-              assertSafeArtifactName(name, entry.id);
-            } else if (entry.nature === 'agent') {
-              const name = entry.id.replace(/^agent:/, '');
-              assertSafeArtifactName(name, entry.id);
-            }
-          }
-          const { entries: effective } = mergeCatalogs(BUILTIN_CATALOG, remoteEntries);
-          const resolved = resolve(ids, effective);
-          const externalIds = new Set(
-            resolved.filter((e) => e.source === 'external').map((e) => e.id),
-          );
-          const adapter = await buildClaudeAdapter(env, artifactsDir, {
-            externalIds,
-            externalBaseDir: dir,
-          });
-          const versionFor = (
-            entry: { id: string },
-          ): { source: 'internal' | 'external'; ref: string; sha: string } => {
-            if (externalIds.has(entry.id)) {
-              return { source: 'external', ref: version.ref, sha: version.sha };
-            }
-            return { source: 'internal', ref: 'v0.0.0', sha: '' };
-          };
-          return runInstall({
-            catalog: effective,
-            adapter,
-            scope,
-            env,
-            manifestPath,
-            selectedIds: ids,
-            confirm,
-            versionFor,
-            toolRunner: runner,
-          });
-        },
-      );
+        tmpFactory,
+        confirm,
+      });
 
       print(result.output);
       return 0;
