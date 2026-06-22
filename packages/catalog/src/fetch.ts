@@ -350,28 +350,30 @@ export class CatalogParseError extends Error {
 }
 
 /**
- * Clones a git repository at `ref` (shallow, depth 1), reads and validates
- * `catalog.json` from the clone root, then returns the parsed entries and HEAD sha.
+ * Performs a shallow clone of `url` at `ref` into a temporary directory,
+ * executes `fn(checkoutDir)`, then cleans up the directory unconditionally.
  *
- * Cleanup of the temporary directory is guaranteed — it runs in the `finally`
- * block regardless of success or failure.
+ * Guarantees:
+ *  - `assertSafeRemoteUrl` and `assertSafeRef` are called before any tmp allocation.
+ *  - cleanup runs in `finally`, covering success, clone failure, and `fn` throw.
  *
- * Throws RemoteFetchError when any git command exits non-zero.
- * Throws CatalogParseError when catalog.json is absent, malformed, or invalid.
+ * Returns the value returned by `fn`.
+ * Throws RemoteFetchError when git clone exits non-zero.
+ * Throws InvalidRemoteUrlError / InvalidRemoteRefError for unsafe inputs.
  */
-export async function fetchCatalog(
+export async function withRemoteCheckout<T>(
   url: string,
   ref: string,
   run: CommandRunner,
   opts: { tmpFactory: TmpDirFactory },
-): Promise<FetchedCatalog> {
+  fn: (checkoutDir: string) => Promise<T>,
+): Promise<T> {
   assertSafeRemoteUrl(url);
   assertSafeRef(ref);
 
-  const { path: tmp, cleanup } = await opts.tmpFactory();
+  const { path, cleanup } = await opts.tmpFactory();
 
   try {
-    // Step 1 — shallow clone into tmp.
     // '--' separates options from operands so URL/ref cannot be parsed as git flags.
     const cloneResult = await run('git', [
       'clone',
@@ -381,71 +383,121 @@ export async function fetchCatalog(
       ref,
       '--',
       url,
-      tmp,
+      path,
     ]);
     if (cloneResult.exitCode !== 0) {
       throw new RemoteFetchError(url, cloneResult.stderr ?? '');
     }
 
-    // Step 2 — read catalog.json from the clone root.
-    const catalogPath = join(tmp, 'catalog.json');
-    const catalogFile = Bun.file(catalogPath);
-    const fileExists = await catalogFile.exists();
-    if (!fileExists) {
-      throw new CatalogParseError('catalog.json introuvable dans le content repo', [
-        'catalog.json introuvable',
-      ]);
-    }
+    return await fn(path);
+  } finally {
+    await cleanup();
+  }
+}
 
-    // Step 3 — parse JSON.
-    let raw: unknown;
-    try {
-      const text = await catalogFile.text();
-      raw = JSON.parse(text);
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      throw new CatalogParseError(msg, [msg]);
-    }
+// ---------------------------------------------------------------------------
+// readCatalogDir — read + validate catalog.json from a directory
+// ---------------------------------------------------------------------------
 
-    // Step 4 — must be an array.
-    if (!Array.isArray(raw)) {
-      throw new CatalogParseError("catalog.json doit être un tableau d'entrées", [
-        "catalog.json doit être un tableau d'entrées",
-      ]);
-    }
+/**
+ * Read and validate `catalog.json` from `dir`.
+ *
+ * - Reads `<dir>/catalog.json`.
+ * - Parses the JSON, checks it is an array.
+ * - Validates each element via Zod (CatalogEntrySchema).
+ * - Returns the validated entries.
+ *
+ * Throws CatalogParseError when:
+ *  - catalog.json is absent.
+ *  - the file contains invalid JSON.
+ *  - the root value is not an array.
+ *  - one or more entries fail Zod validation (issues array populated).
+ */
+export async function readCatalogDir(dir: string): Promise<CatalogEntry[]> {
+  // Step 1 — read catalog.json from the directory.
+  const catalogPath = join(dir, 'catalog.json');
+  const catalogFile = Bun.file(catalogPath);
+  const fileExists = await catalogFile.exists();
+  if (!fileExists) {
+    throw new CatalogParseError('catalog.json introuvable dans le content repo', [
+      'catalog.json introuvable',
+    ]);
+  }
 
-    // Step 5 — validate each entry via Zod.
-    const entries: CatalogEntry[] = [];
-    const issues: string[] = [];
+  // Step 2 — parse JSON.
+  let raw: unknown;
+  try {
+    const text = await catalogFile.text();
+    raw = JSON.parse(text);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    throw new CatalogParseError(msg, [msg]);
+  }
 
-    for (let i = 0; i < raw.length; i++) {
-      const parsed = CatalogEntrySchema.safeParse(raw[i]);
-      if (parsed.success) {
-        entries.push(parsed.data);
-      } else {
-        for (const issue of parsed.error.issues) {
-          const path = issue.path.join('.');
-          issues.push(`index ${i}: ${path} ${issue.message}`);
-        }
+  // Step 3 — must be an array.
+  if (!Array.isArray(raw)) {
+    throw new CatalogParseError("catalog.json doit être un tableau d'entrées", [
+      "catalog.json doit être un tableau d'entrées",
+    ]);
+  }
+
+  // Step 4 — validate each entry via Zod.
+  const entries: CatalogEntry[] = [];
+  const issues: string[] = [];
+
+  for (let i = 0; i < raw.length; i++) {
+    const parsed = CatalogEntrySchema.safeParse(raw[i]);
+    if (parsed.success) {
+      entries.push(parsed.data);
+    } else {
+      for (const issue of parsed.error.issues) {
+        const issuePath = issue.path.join('.');
+        issues.push(`index ${i}: ${issuePath} ${issue.message}`);
       }
     }
+  }
 
-    if (issues.length > 0) {
-      throw new CatalogParseError(
-        `catalog.json contient des entrées invalides: ${issues.join('; ')}`,
-        issues,
-      );
-    }
+  if (issues.length > 0) {
+    throw new CatalogParseError(
+      `catalog.json contient des entrées invalides: ${issues.join('; ')}`,
+      issues,
+    );
+  }
 
-    // Step 6 — resolve HEAD sha of the clone.
-    const revParseResult = await run('git', ['-C', tmp, 'rev-parse', 'HEAD']);
+  return entries;
+}
+
+// ---------------------------------------------------------------------------
+// fetchCatalog — shallow clone + catalog.json validation
+// ---------------------------------------------------------------------------
+
+/**
+ * Clones a git repository at `ref` (shallow, depth 1), reads and validates
+ * `catalog.json` from the clone root, then returns the parsed entries and HEAD sha.
+ *
+ * Delegates clone lifecycle to `withRemoteCheckout` (cleanup guaranteed).
+ * Delegates catalog reading to `readCatalogDir`.
+ *
+ * Throws RemoteFetchError when any git command exits non-zero.
+ * Throws CatalogParseError when catalog.json is absent, malformed, or invalid.
+ * Throws InvalidRemoteUrlError / InvalidRemoteRefError for unsafe inputs.
+ */
+export async function fetchCatalog(
+  url: string,
+  ref: string,
+  run: CommandRunner,
+  opts: { tmpFactory: TmpDirFactory },
+): Promise<FetchedCatalog> {
+  return withRemoteCheckout(url, ref, run, opts, async (dir) => {
+    const entries = await readCatalogDir(dir);
+
+    // Resolve HEAD sha of the clone.
+    const revParseResult = await run('git', ['-C', dir, 'rev-parse', 'HEAD']);
     if (revParseResult.exitCode !== 0) {
       throw new RemoteFetchError(url, revParseResult.stderr ?? '');
     }
     const sha = (revParseResult.stdout ?? '').trim();
 
     return { entries, sha };
-  } finally {
-    await cleanup();
-  }
+  });
 }
