@@ -21,24 +21,31 @@ single command tells you whether your local setup matches the expected state.
 
 ## Concepts
 
-**Artifact** — a deployable unit of harness configuration. Seven natures:
+**Artifact** — a deployable unit of harness configuration. Eight natures:
 
-| Nature      | What it is                                              |
-| ----------- | ------------------------------------------------------- |
-| `guardrail` | Deny list written into `settings.json`                  |
-| `context`   | AGENTS.md context file symlinked into `~/.claude/`      |
-| `skill`     | Workflow script installed into the skill store          |
-| `agent`     | Role-specialised sub-agent definition (Markdown)        |
-| `mcp`       | MCP server declaration (reserved; not in M0 catalog)    |
-| `plugin`    | Claude Code plugin installed via the plugin marketplace |
-| `tool`      | Third-party host CLI (e.g. `glab`); presence-checked    |
+| Nature      | What it is                                                         |
+| ----------- | ------------------------------------------------------------------ |
+| `guardrail` | Deny list written into `settings.json` (`permissions.deny`)        |
+| `hook`      | Claude Code hook written into `settings.json` (`hooks`) + a script |
+| `context`   | AGENTS.md context file symlinked into `~/.claude/`                 |
+| `skill`     | Workflow script installed into the skill store                     |
+| `agent`     | Role-specialised sub-agent definition (Markdown)                   |
+| `mcp`       | MCP server declaration (reserved; not in the catalog yet)          |
+| `plugin`    | Claude Code plugin installed via the plugin marketplace            |
+| `tool`      | Third-party host CLI (e.g. `glab`); presence-checked               |
 
-**Pack** — a named bundle of artifacts installed as a unit. Example:
-`pack:spec-workflow` expands to `skill:spec-workflow` + three agents
-(`agent:tech-lead`, `agent:pm`, `agent:reviewer`).
+A `hook` entry carries its `event` (e.g. `PreToolUse`) and `matcher`; installing
+it merges the hook into `settings.json` and deposits its script into a managed
+store. The built-in guards (`hook:guard-command`, `hook:guard-secret`,
+`hook:guard-write-secret`, `hook:guard-prompt`) ship this way.
 
-**Catalog** — the list of known artifacts and packs. M0 ships a built-in
-catalog. Fetching from a remote content repository is a planned M1 feature.
+**Pack** — a named bundle of artifacts installed as a unit. Examples:
+`pack:spec-workflow` (a skill + three agents), `pack:harness` (the four guard
+hooks), `pack:baseline` (a team baseline: `pack:harness` + guardrails + context).
+
+**Catalog** — the list of known artifacts and packs. agent-rigger ships a
+built-in catalog and fetches additional entries from a remote content repository
+when a catalog URL is configured (`ls`/`add`/`update`).
 
 **Manifest** — `~/.config/agent-rigger/state.json`. Records what was installed
 and when. Used by `check` to detect drift.
@@ -180,8 +187,16 @@ removed afterwards. A built-in (`internal`) artifact installs from the local
 tree and records the tool's own version. Without a catalog URL, install uses the
 built-in catalog only (no network).
 
-> Interactive `install` (no ids) currently lists the built-in catalog only;
-> remote selection from the interactive picker is a follow-up.
+Interactive `install` (no ids) lists the **effective catalog** too: when a
+catalog URL is configured, remote entries appear in the multiselect and install
+through the same remote path.
+
+**Installing hooks.** A `hook` artifact (e.g. `hook:guard-secret`, or the whole
+set via `pack:harness` / `pack:baseline`) merges its `event`/`matcher` into
+`settings.json` under `hooks` and deposits its script into the managed hook store
+(`~/.config/agent-rigger/hooks/`); the registered command runs that deposited
+script. Removing a hook reverts the `settings.json` entry (the shared scripts are
+left in the store).
 
 ### `remove` — uninstall artifacts
 
@@ -336,12 +351,14 @@ These properties hold across all commands:
 - **Security scanner is a stub.** The scan step that gates skill and plugin
   installation always passes in M0. A real implementation (Trivy, Gitleaks, or
   similar) is the security milestone.
-- **Remote catalog is non-interactive (M1).** `ls` reads the remote catalog
-  (M1-a), `install <id…>` / `<resource> add <id>` install `external` artifacts
-  with real `ref`/`sha` (M1-b), and `update` / `check` compare installed vs
-  latest (M1-c). Still pending: remote selection from the **interactive**
-  `install` picker. The security scanner that gates remote content is still a
-  stub (see below).
+- **Remote catalog (M1).** `ls` reads the remote catalog, `install`/`add`
+  install `external` artifacts with real `ref`/`sha`, `update`/`check` compare
+  installed vs latest, and the interactive picker lists remote entries. A single
+  catalog URL is supported (built-in ∪ one remote); multi-catalog is a follow-up.
+- **Hook scripts and logs are shared.** Installing a `hook` deposits the whole
+  hook script set into `~/.config/agent-rigger/hooks/` (a re-sync on each hook
+  install). Any runtime log files the guard scripts write next to themselves are
+  reset on the next hook install — treat the in-store hook logs as volatile.
 - **No standalone binary distribution.** The compiled binary resolves artifacts
   relative to the cloned repository. Bundling artifacts into the binary is a
   prerequisite for distributing `agent-rigger` as a single file.

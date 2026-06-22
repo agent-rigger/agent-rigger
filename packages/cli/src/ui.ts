@@ -155,6 +155,11 @@ export function renderPlan(ops: WriteOp[], opts: RenderPlanOpts = {}): string {
         lines.push(`${DETAIL_INDENT}via ${abbr(op.marketplace)}`);
         break;
       }
+      case 'merge-hooks': {
+        lines.push(`  ${padVerb('hook')} ${op.event}/${op.matcher}  ${abbr(op.path)}`);
+        lines.push(`${DETAIL_INDENT}${op.command}`);
+        break;
+      }
     }
   }
 
@@ -223,6 +228,10 @@ export function renderRemovalPlan(ops: RemovalOp[], opts: RenderRemovalPlanOpts 
       }
       case 'plugin-uninstall': {
         lines.push(`  ${padVerb('uninstall')} ${op.plugin}`);
+        break;
+      }
+      case 'remove-hooks': {
+        lines.push(`  ${padVerb('un-hook')} ${op.event}/${op.matcher}  ${abbr(op.path)}`);
         break;
       }
     }

@@ -34,6 +34,8 @@ import {
   planGuardrail,
   planRemoveGuardrail,
 } from './guardrails';
+import { applyHook, applyRemoveHook, auditHook, planHook, planRemoveHook } from './hooks';
+import type { ResolvedHook } from './hooks';
 import {
   applyPlugin,
   applyRemovePlugin,
@@ -130,6 +132,15 @@ export interface ClaudeAdapterConfig {
    * GitLab instance.
    */
   gitlabToken?: string;
+  /**
+   * Resolve the concrete hook specification for a hook entry.
+   * Required when any entry with nature 'hook' is audited, planned, or applied.
+   * Omitting it is safe as long as no hook entries are processed.
+   *
+   * In H4 this resolver will read from the script catalogue and repository.
+   * In H3 callers inject an arbitrary function (e.g. a constant).
+   */
+  hookSpec?: (entry: AdapterEntry) => ResolvedHook;
 }
 
 // ---------------------------------------------------------------------------
@@ -190,6 +201,20 @@ export function createClaudeAdapter(config: ClaudeAdapterConfig): Adapter {
       );
     }
     return config.pluginSource(entry);
+  }
+
+  /**
+   * Resolve the hook spec for an entry, or raise a clear error when
+   * hookSpec is not configured and a hook operation is attempted.
+   */
+  function resolveHookSpec(entry: AdapterEntry): ResolvedHook {
+    if (config.hookSpec === undefined) {
+      throw new Error(
+        `ClaudeAdapter: hookSpec is required to install hook "${entry.id}". `
+          + 'Pass a hookSpec resolver in ClaudeAdapterConfig.',
+      );
+    }
+    return config.hookSpec(entry);
   }
 
   const pluginRunner = config.pluginRunner ?? defaultPluginRunner;
@@ -278,6 +303,41 @@ export function createClaudeAdapter(config: ClaudeAdapterConfig): Adapter {
         },
       },
     ],
+    [
+      'hook',
+      {
+        audit(entry, scope, env): Promise<NatureReport> {
+          let spec: ResolvedHook;
+          try {
+            spec = resolveHookSpec(entry);
+          } catch (err) {
+            return Promise.reject(err);
+          }
+          const cwd = entry.scope === 'project' ? process.cwd() : undefined;
+          return auditHook(entry, scope, env, spec, cwd);
+        },
+        plan(entry, scope, env): Promise<WriteOp[]> {
+          let spec: ResolvedHook;
+          try {
+            spec = resolveHookSpec(entry);
+          } catch (err) {
+            return Promise.reject(err);
+          }
+          const cwd = entry.scope === 'project' ? process.cwd() : undefined;
+          return planHook(entry, scope, env, spec, cwd);
+        },
+        planRemove(entry, scope, env): Promise<RemovalOp[]> {
+          let spec: ResolvedHook;
+          try {
+            spec = resolveHookSpec(entry);
+          } catch (err) {
+            return Promise.reject(err);
+          }
+          const cwd = entry.scope === 'project' ? process.cwd() : undefined;
+          return planRemoveHook(entry, scope, env, spec, cwd);
+        },
+      },
+    ],
   ]);
 
   // Build plugin apply opts once; omit gitlabToken key entirely when not set
@@ -293,6 +353,7 @@ export function createClaudeAdapter(config: ClaudeAdapterConfig): Adapter {
     ['ensure-import', (ops, env) => applyContext(ops, env)],
     ['link', (ops, env) => applySkill(ops, env, scanner)],
     ['plugin-install', (ops, env) => applyPlugin(ops, env, pluginApplyOpts)],
+    ['merge-hooks', (ops, env) => applyHook(ops, env)],
   ]);
 
   // RemovalOp kind → applyRemove fn — mirrors the install dispatch pattern
@@ -302,6 +363,7 @@ export function createClaudeAdapter(config: ClaudeAdapterConfig): Adapter {
     ['remove-block', (ops, env) => applyRemoveContext(ops, env)],
     ['unlink', (ops, env) => applyRemoveSkill(ops, env)],
     ['plugin-uninstall', (ops, env) => applyRemovePlugin(ops, env, { run: pluginRunner })],
+    ['remove-hooks', (ops, env) => applyRemoveHook(ops, env)],
   ]);
 
   return {

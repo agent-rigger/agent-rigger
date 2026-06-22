@@ -159,12 +159,54 @@ describe('BUILTIN_CATALOG — skill:spec-workflow', () => {
 // ---------------------------------------------------------------------------
 
 describe('BUILTIN_CATALOG — total count', () => {
-  it('has exactly 9 entries (7 artifacts + 1 pack + tooling)', () => {
-    // 7 artifacts: guardrails-claude, context-claude, harness-plugin,
+  it('has exactly 14 entries (11 artifacts + 3 packs; harness-plugin removed)', () => {
+    // 7 artifacts: guardrails-claude, context-claude,
     //              skill:spec-workflow, agent:tech-lead, agent:pm, agent:reviewer,
     //              tool:glab
-    // 1 pack: pack:spec-workflow
-    // Total = 9
-    expect(BUILTIN_CATALOG).toHaveLength(9);
+    // 4 hook artifacts: hook:guard-command, hook:guard-secret,
+    //                   hook:guard-write-secret, hook:guard-prompt
+    // 3 packs: pack:spec-workflow, pack:harness, pack:baseline
+    // Total = 14
+    // (harness-plugin removed: guards are now hook:guard-* entries; keeping the
+    //  plugin would cause double-firing via its hooks.json)
+    expect(BUILTIN_CATALOG).toHaveLength(14);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// pack:baseline — shape and resolver expansion
+// ---------------------------------------------------------------------------
+
+describe('BUILTIN_CATALOG — pack:baseline', () => {
+  it('exists in the catalog', () => {
+    expect(findEntry('pack:baseline')).toBeDefined();
+  });
+
+  it('has kind pack', () => {
+    const pack = findEntry('pack:baseline');
+    expect(pack?.kind).toBe('pack');
+  });
+
+  it('has exactly 3 direct members', () => {
+    const pack = findEntry('pack:baseline');
+    if (pack?.kind !== 'pack') return;
+    expect(pack.members).toHaveLength(3);
+  });
+
+  it('direct members include pack:harness, guardrails-claude, context-claude', () => {
+    const pack = findEntry('pack:baseline');
+    if (pack?.kind !== 'pack') return;
+    expect(pack.members).toContain('pack:harness');
+    expect(pack.members).toContain('guardrails-claude');
+    expect(pack.members).toContain('context-claude');
+  });
+
+  it('all direct members reference existing catalog entries', () => {
+    const ids = new Set(BUILTIN_CATALOG.map((e) => e.id));
+    const pack = findEntry('pack:baseline');
+    if (pack?.kind !== 'pack') return;
+    for (const memberId of pack.members) {
+      expect(ids.has(memberId)).toBe(true);
+    }
   });
 });

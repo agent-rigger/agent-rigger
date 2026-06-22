@@ -17,8 +17,17 @@ import type { Nature, Scope } from '@agent-rigger/core';
 // Nature constants + compile-time coherence check with core.Nature
 // ---------------------------------------------------------------------------
 
-/** The 7 natures of installable artefacts. */
-const NATURES = ['plugin', 'guardrail', 'context', 'skill', 'agent', 'mcp', 'tool'] as const;
+/** The 8 natures of installable artefacts. */
+const NATURES = [
+  'plugin',
+  'guardrail',
+  'context',
+  'skill',
+  'agent',
+  'mcp',
+  'tool',
+  'hook',
+] as const;
 
 /**
  * Compile-time guard: if core's Nature and NATURES diverge, this line fails.
@@ -78,22 +87,50 @@ const CommonFieldsSchema = z.object({
 });
 
 // ---------------------------------------------------------------------------
+// HookEvent — Claude Code hook trigger events
+// ---------------------------------------------------------------------------
+
+/**
+ * Claude Code hook trigger events.
+ * Meaningful only for entries with nature 'hook'; ignored for all other natures.
+ */
+export const HOOK_EVENTS = [
+  'PreToolUse',
+  'PostToolUse',
+  'UserPromptSubmit',
+  'Stop',
+  'SubagentStop',
+  'SessionStart',
+  'SessionEnd',
+  'Notification',
+  'PreCompact',
+] as const;
+
+/** Union type of all valid Claude Code hook events. */
+export type HookEvent = (typeof HOOK_EVENTS)[number];
+
+// ---------------------------------------------------------------------------
 // ArtifactEntrySchema — kind:'artifact'
 // ---------------------------------------------------------------------------
 
 /**
- * A single installable artefact: one of the 7 concrete natures.
+ * A single installable artefact: one of the 8 concrete natures.
  *
  * Artifact-specific optional fields:
  *  - level    Importance hint for the installer ("required" | "recommended").
  *  - check    Shell command to detect presence (exit 0 = already installed).
  *  - install  Package-manager specific install commands; all keys optional.
+ *
+ * Hook-specific optional fields (meaningful when nature === 'hook'):
+ *  - event    Claude Code hook trigger event (e.g. "PreToolUse").
+ *  - matcher  Tool name or pattern the hook listens for.
+ *  - timeout  Max execution time in seconds (positive integer).
  */
 export const ArtifactEntrySchema = CommonFieldsSchema.extend({
   /** Discriminator — always 'artifact' for this variant. */
   kind: z.literal('artifact'),
 
-  /** Artefact nature — one of the 7 domain categories. Required for artifacts. */
+  /** Artefact nature — one of the 8 domain categories. Required for artifacts. */
   nature: z.enum(NATURES),
 
   /**
@@ -125,6 +162,24 @@ export const ArtifactEntrySchema = CommonFieldsSchema.extend({
       mise: z.string().optional(),
     })
     .optional(),
+
+  /**
+   * Claude Code hook trigger event. Meaningful when nature === 'hook'.
+   * Specifies which lifecycle event activates this hook.
+   */
+  event: z.enum(HOOK_EVENTS).optional(),
+
+  /**
+   * Tool name or pattern this hook listens for. Meaningful when nature === 'hook'.
+   * Example: "Bash" to match only Bash tool calls.
+   */
+  matcher: z.string().optional(),
+
+  /**
+   * Maximum execution time in seconds. Must be a positive integer.
+   * Meaningful when nature === 'hook'.
+   */
+  timeout: z.number().int().positive().optional(),
 });
 
 /** Inferred type for an artifact entry. */

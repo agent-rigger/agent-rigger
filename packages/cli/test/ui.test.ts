@@ -698,6 +698,126 @@ describe('renderRemovalPlan — path abbreviation', () => {
 });
 
 // ---------------------------------------------------------------------------
+// renderPlan — merge-hooks
+// ---------------------------------------------------------------------------
+
+describe('renderPlan — merge-hooks', () => {
+  it('output is non-empty and contains event, matcher and abbreviated path', () => {
+    const op: WriteOp = {
+      kind: 'merge-hooks',
+      path: '/h/.claude/settings.json',
+      event: 'PreToolUse',
+      matcher: 'Bash',
+      command: 'bun run /h/.config/agent-rigger/hooks/guard-command.ts',
+      timeout: 5,
+    };
+    const result = renderPlan([op], { home: '/h' });
+    expect(result).not.toBe('');
+    expect(result).not.toBe('Nothing to apply — already up to date.');
+    expect(result).toContain('PreToolUse');
+    expect(result).toContain('Bash');
+    expect(result).toContain('~/.claude/settings.json');
+  });
+
+  it('renders verb "hook" and command as detail line', () => {
+    const op: WriteOp = {
+      kind: 'merge-hooks',
+      path: '/home/me/.claude/settings.json',
+      event: 'UserPromptSubmit',
+      matcher: '*',
+      command: 'bun run /store/hooks/guard-prompt.ts',
+    };
+    const result = renderPlan([op], { home: '/home/me' });
+    expect(result).toContain('hook');
+    expect(result).toContain('bun run /store/hooks/guard-prompt.ts');
+  });
+
+  it('abbreviates home path in the hook line', () => {
+    const op: WriteOp = {
+      kind: 'merge-hooks',
+      path: '/home/me/.claude/settings.json',
+      event: 'PreToolUse',
+      matcher: 'Read|Edit|Write',
+      command: 'bun run x',
+    };
+    const result = renderPlan([op], { home: '/home/me' });
+    expect(result).toContain('~/.claude/settings.json');
+    expect(result).not.toContain('/home/me/.claude/settings.json');
+  });
+
+  it('counts the op in the plan header', () => {
+    const op: WriteOp = {
+      kind: 'merge-hooks',
+      path: '/h/.claude/settings.json',
+      event: 'PreToolUse',
+      matcher: 'Bash',
+      command: 'bun run x',
+    };
+    const result = renderPlan([op]);
+    expect(result).toMatch(/Plan \(1 change\):/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// renderRemovalPlan — remove-hooks
+// ---------------------------------------------------------------------------
+
+describe('renderRemovalPlan — remove-hooks', () => {
+  it('output is non-empty and contains event, matcher and abbreviated path', () => {
+    const op: RemovalOp = {
+      kind: 'remove-hooks',
+      path: '/h/.claude/settings.json',
+      event: 'PreToolUse',
+      matcher: 'Bash',
+      command: 'bun run /h/.config/agent-rigger/hooks/guard-command.ts',
+    };
+    const result = renderRemovalPlan([op], { home: '/h' });
+    expect(result).not.toBe('');
+    expect(result).not.toBe('Nothing to remove — not installed.');
+    expect(result).toContain('PreToolUse');
+    expect(result).toContain('Bash');
+    expect(result).toContain('~/.claude/settings.json');
+  });
+
+  it('renders verb "un-hook"', () => {
+    const op: RemovalOp = {
+      kind: 'remove-hooks',
+      path: '/home/me/.claude/settings.json',
+      event: 'UserPromptSubmit',
+      matcher: '*',
+      command: 'bun run x',
+    };
+    const result = renderRemovalPlan([op], { home: '/home/me' });
+    expect(result).toContain('un-hook');
+  });
+
+  it('abbreviates home path in the un-hook line', () => {
+    const op: RemovalOp = {
+      kind: 'remove-hooks',
+      path: '/home/me/.claude/settings.json',
+      event: 'PreToolUse',
+      matcher: 'Write|Edit|MultiEdit',
+      command: 'bun run x',
+    };
+    const result = renderRemovalPlan([op], { home: '/home/me' });
+    expect(result).toContain('~/.claude/settings.json');
+    expect(result).not.toContain('/home/me/.claude/settings.json');
+  });
+
+  it('counts the op in the removal plan header', () => {
+    const op: RemovalOp = {
+      kind: 'remove-hooks',
+      path: '/h/.claude/settings.json',
+      event: 'PreToolUse',
+      matcher: 'Bash',
+      command: 'bun run x',
+    };
+    const result = renderRemovalPlan([op]);
+    expect(result).toMatch(/Removal plan \(1 change\):/);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // renderRemovalPlan — multiple ops
 // ---------------------------------------------------------------------------
 
