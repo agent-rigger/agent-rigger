@@ -281,10 +281,15 @@ export interface CliDeps {
  *                         together for the seam to activate.
  * @param externalBaseDir  Absolute path to the root of a remote checkout. Expected
  *                         layout: skills/<name>/ and agents/<name>.md.
+ * @param catalogUrl       URL of the content repo (used as the marketplace URL for
+ *                         external plugin installs). When provided alongside externalIds,
+ *                         plugin entries in externalIds use this URL as their marketplace
+ *                         instead of the bundled <cwd>/.claude-plugin/marketplace.json.
  */
 export interface BuildClaudeAdapterOpts {
   externalIds?: Set<string>;
   externalBaseDir?: string;
+  catalogUrl?: string;
 }
 
 /**
@@ -378,10 +383,22 @@ export async function buildClaudeAdapter(
       }
       return path.join(artifactsDir, 'claude', 'agents', name + '.md');
     },
-    pluginSource: (entry) => ({
-      plugin: entry.id.replace(/^plugin:/, ''),
-      marketplace: path.join(process.cwd(), '.claude-plugin', 'marketplace.json'),
-    }),
+    pluginSource: (entry) => {
+      const plugin = entry.id.replace(/^plugin:/, '');
+      // External plugin: use the content repo URL as the marketplace.
+      // This lets `claude plugin marketplace add <url>` register the remote
+      // repository, then `claude plugin install <plugin>` installs from it.
+      if (
+        opts?.externalIds?.has(entry.id) === true
+        && opts.catalogUrl !== undefined
+      ) {
+        return { plugin, marketplace: opts.catalogUrl };
+      }
+      return {
+        plugin,
+        marketplace: path.join(process.cwd(), '.claude-plugin', 'marketplace.json'),
+      };
+    },
     hookSpec,
   });
 }
