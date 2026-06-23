@@ -16,6 +16,9 @@
  * - Human-in-the-loop: nothing is written without confirmation.
  */
 
+import fs from 'node:fs/promises';
+import path from 'node:path';
+
 import type { Adapter, AdapterEntry } from '@agent-rigger/core/adapter';
 import { apply } from '@agent-rigger/core/engine';
 import type { Env } from '@agent-rigger/core/paths';
@@ -100,6 +103,49 @@ export interface RunInstallOptions {
 }
 
 // ---------------------------------------------------------------------------
+// Git repo detection (project-scope footgun warning)
+// ---------------------------------------------------------------------------
+
+/**
+ * Return true when the given directory is the root of a git repository.
+ * A git repo is detected by the presence of a `.git` entry (file or directory)
+ * at the root of `dir`. Uses fs.access() which works for both files (git
+ * worktrees) and directories (regular clones).
+ */
+async function isGitRepo(dir: string): Promise<boolean> {
+  return fs.access(path.join(dir, '.git')).then(
+    () => true,
+    () => false,
+  );
+}
+
+/**
+ * Build the project-scope note prepended to planText.
+ *
+ * Always emits the target cwd. Adds a repo-pollution warning when a `.git`
+ * entry is detected at the cwd root.
+ *
+ * @param targetCwd  Effective cwd (opts.cwd ?? process.cwd()).
+ */
+async function buildProjectScopeNote(targetCwd: string): Promise<string> {
+  const lines: string[] = [
+    `--- Project Scope Target ---`,
+    `  Target directory: ${targetCwd}`,
+  ];
+
+  const gitRepo = await isGitRepo(targetCwd);
+  if (gitRepo) {
+    lines.push(
+      `  [warning] This directory is a git repo — files written here will appear`,
+      `            in version control. Commit or .gitignore them intentionally.`,
+    );
+  }
+
+  lines.push('');
+  return lines.join('\n');
+}
+
+// ---------------------------------------------------------------------------
 // runInstall
 // ---------------------------------------------------------------------------
 
@@ -174,10 +220,21 @@ export async function runInstall(opts: RunInstallOptions): Promise<InstallResult
   // Step 4: Diff (plan rendering)
   // -------------------------------------------------------------------------
 
-  const planText = renderPlan(allOps, {
+  const effectiveCwd = opts.cwd ?? process.cwd();
+
+  const renderedPlan = renderPlan(allOps, {
     home: resolveHome(env),
-    cwd: opts.cwd ?? process.cwd(),
+    cwd: effectiveCwd,
   });
+
+  // Prepend project-scope note (cwd + optional git-repo warning) when relevant.
+  // The note is included in planText so it is visible in both the confirm prompt
+  // and the final output, across all branches (up-to-date / aborted / applied).
+  const projectNote = scope === 'project'
+    ? await buildProjectScopeNote(effectiveCwd)
+    : '';
+
+  const planText = projectNote + renderedPlan;
 
   // -------------------------------------------------------------------------
   // Empty plan → already up to date, skip confirm + apply
