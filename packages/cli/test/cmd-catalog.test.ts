@@ -1,10 +1,11 @@
 /**
  * M5 — tests for cmd-catalog.ts (catalog ls|add|remove).
+ * M7 — proposal d'install après catalog add (R9).
  *
  * Isolation: tmp dir per test via RIGGER_HOME env injection.
  * No real network, no real git, no process.exit.
  *
- * Scenarios:
+ * Scenarios M5:
  *  ls  — 0 sources → actionable message
  *  ls  — N sources → all listed
  *  add — nominal → persists, ls shows it
@@ -12,6 +13,13 @@
  *  add — missing args → exit 2
  *  remove — present → removed
  *  remove — absent → exit 2 message
+ *
+ * Scenarios M7 (R9 — propose install after catalog add):
+ *  R9-1 proposeInstall + selection → catalog persisted + entries installed (ids qualifiés)
+ *  R9-2 proposeInstall returns [] (cancel) → catalog persisted, nothing installed
+ *  R9-3 no proposeInstall provided (non-TTY) → catalog added, no install attempt
+ *  R9-4 fetchCatalogFn throws post-persist → catalog persisted, actionable message, exit 0
+ *  R9-5 duplicate name → exit 2, proposeInstall not called
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
@@ -19,7 +27,10 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
+import type { CatalogEntry, CatalogMeta } from '@agent-rigger/catalog';
+
 import { runCatalog } from '../src/cmd-catalog';
+import type { CatalogProposal } from '../src/cmd-catalog';
 import { loadConfigFile } from '../src/config';
 
 // ---------------------------------------------------------------------------
@@ -427,5 +438,260 @@ describe('catalog — unknown verb', () => {
       print: cap.print,
     });
     expect(code).toBe(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// M7 / R9 — propose install after catalog add
+// ---------------------------------------------------------------------------
+
+const META: CatalogMeta = {
+  name: 'test-catalog',
+  required: ['tool:git'],
+  recommended: ['skill:code-review'],
+};
+
+const ENTRIES: CatalogEntry[] = [
+  {
+    kind: 'artifact',
+    id: 'secondary/tool:git',
+    nature: 'tool',
+    targets: ['claude'],
+    scopes: ['user'],
+  },
+  {
+    kind: 'artifact',
+    id: 'secondary/skill:code-review',
+    nature: 'skill',
+    targets: ['claude'],
+    scopes: ['user'],
+  },
+];
+
+const fakeFetchCatalog = async (_url: string, _name: string): Promise<CatalogProposal> => ({
+  meta: META,
+  entries: ENTRIES,
+  sourceName: 'secondary',
+});
+
+describe('R9-1 — catalog add with proposeInstall + selection → entries installed', () => {
+  it('calls proposeInstall with the fetched catalog after successful add', async () => {
+    const cap = makeCapture();
+    let capturedCatalog: CatalogProposal | undefined;
+
+    await runCatalog({
+      verb: 'add',
+      args: ['secondary', 'https://example.com/secondary.git'],
+      configPath,
+      print: cap.print,
+      fetchCatalogFn: fakeFetchCatalog,
+      proposeInstall: async (catalog) => {
+        capturedCatalog = catalog;
+        return ['secondary/tool:git'];
+      },
+    });
+
+    expect(capturedCatalog).toBeDefined();
+    expect(capturedCatalog?.sourceName).toBe('secondary');
+    expect(capturedCatalog?.entries).toHaveLength(2);
+  });
+
+  it('fetchCatalogFn receives the url and name of the just-added catalog', async () => {
+    let receivedUrl: string | undefined;
+    let receivedName: string | undefined;
+
+    await runCatalog({
+      verb: 'add',
+      args: ['secondary', 'https://example.com/secondary.git'],
+      configPath,
+      print: () => {},
+      fetchCatalogFn: async (url, name) => {
+        receivedUrl = url;
+        receivedName = name;
+        return fakeFetchCatalog(url, name);
+      },
+      proposeInstall: async () => [],
+    });
+
+    expect(receivedUrl).toBe('https://example.com/secondary.git');
+    expect(receivedName).toBe('secondary');
+  });
+
+  it('returns exit code 0 when proposeInstall succeeds', async () => {
+    const code = await runCatalog({
+      verb: 'add',
+      args: ['secondary', 'https://example.com/secondary.git'],
+      configPath,
+      print: () => {},
+      fetchCatalogFn: fakeFetchCatalog,
+      proposeInstall: async () => ['secondary/tool:git'],
+    });
+
+    expect(code).toBe(0);
+  });
+
+  it('catalog is persisted regardless of proposeInstall result', async () => {
+    await runCatalog({
+      verb: 'add',
+      args: ['secondary', 'https://example.com/secondary.git'],
+      configPath,
+      print: () => {},
+      fetchCatalogFn: fakeFetchCatalog,
+      proposeInstall: async () => ['secondary/tool:git'],
+    });
+
+    const cfg = await loadConfigFile(configPath);
+    const found = cfg.catalogs?.find((c) => c.name === 'secondary');
+    expect(found).toBeDefined();
+    expect(found?.url).toBe('https://example.com/secondary.git');
+  });
+});
+
+describe('R9-2 — catalog add + picker cancelled (proposeInstall returns []) → catalog persisted, nothing installed', () => {
+  it('returns exit code 0 when picker is cancelled', async () => {
+    const code = await runCatalog({
+      verb: 'add',
+      args: ['secondary', 'https://example.com/secondary.git'],
+      configPath,
+      print: () => {},
+      fetchCatalogFn: fakeFetchCatalog,
+      proposeInstall: async () => [],
+    });
+
+    expect(code).toBe(0);
+  });
+
+  it('catalog is persisted even when picker is cancelled', async () => {
+    await runCatalog({
+      verb: 'add',
+      args: ['secondary', 'https://example.com/secondary.git'],
+      configPath,
+      print: () => {},
+      fetchCatalogFn: fakeFetchCatalog,
+      proposeInstall: async () => [],
+    });
+
+    const cfg = await loadConfigFile(configPath);
+    const found = cfg.catalogs?.find((c) => c.name === 'secondary');
+    expect(found).toBeDefined();
+  });
+});
+
+describe('R9-3 — non-TTY: no proposeInstall provided → catalog added, no install attempt', () => {
+  it('catalog is added when no proposeInstall provided', async () => {
+    const code = await runCatalog({
+      verb: 'add',
+      args: ['secondary', 'https://example.com/secondary.git'],
+      configPath,
+      print: () => {},
+    });
+
+    expect(code).toBe(0);
+    const cfg = await loadConfigFile(configPath);
+    expect(cfg.catalogs?.find((c) => c.name === 'secondary')).toBeDefined();
+  });
+
+  it('fetchCatalogFn is not called when proposeInstall is absent', async () => {
+    let fetchCalled = false;
+
+    await runCatalog({
+      verb: 'add',
+      args: ['secondary', 'https://example.com/secondary.git'],
+      configPath,
+      print: () => {},
+      fetchCatalogFn: async (url, name) => {
+        fetchCalled = true;
+        return fakeFetchCatalog(url, name);
+      },
+      // proposeInstall deliberately absent
+    });
+
+    expect(fetchCalled).toBe(false);
+  });
+});
+
+describe('R9-4 — fetchCatalogFn throws post-persist → catalog persisted, actionable message, exit 0', () => {
+  it('catalog is persisted even when fetchCatalogFn throws', async () => {
+    const cap = makeCapture();
+
+    const code = await runCatalog({
+      verb: 'add',
+      args: ['secondary', 'https://example.com/secondary.git'],
+      configPath,
+      print: cap.print,
+      fetchCatalogFn: async () => {
+        throw new Error('network unreachable');
+      },
+      proposeInstall: async () => [],
+    });
+
+    expect(code).toBe(0);
+    const cfg = await loadConfigFile(configPath);
+    expect(cfg.catalogs?.find((c) => c.name === 'secondary')).toBeDefined();
+  });
+
+  it('prints actionable message when fetchCatalogFn throws', async () => {
+    const cap = makeCapture();
+
+    await runCatalog({
+      verb: 'add',
+      args: ['secondary', 'https://example.com/secondary.git'],
+      configPath,
+      print: cap.print,
+      fetchCatalogFn: async () => {
+        throw new Error('network unreachable');
+      },
+      proposeInstall: async () => [],
+    });
+
+    const out = cap.lines.join('\n').toLowerCase();
+    expect(out.includes('install') || out.includes('catalog')).toBe(true);
+  });
+
+  it('catalog is persisted even when proposeInstall throws', async () => {
+    const code = await runCatalog({
+      verb: 'add',
+      args: ['secondary', 'https://example.com/secondary.git'],
+      configPath,
+      print: () => {},
+      fetchCatalogFn: fakeFetchCatalog,
+      proposeInstall: async () => {
+        throw new Error('picker crashed');
+      },
+    });
+
+    expect(code).toBe(0);
+    const cfg = await loadConfigFile(configPath);
+    expect(cfg.catalogs?.find((c) => c.name === 'secondary')).toBeDefined();
+  });
+});
+
+describe('R9-5 — duplicate name → exit 2, proposeInstall not called', () => {
+  beforeEach(async () => {
+    await Bun.write(
+      configPath,
+      JSON.stringify({
+        catalogs: [{ name: 'principal', url: 'https://example.com/a.git' }],
+      }),
+    );
+  });
+
+  it('returns exit 2 for duplicate, does not call proposeInstall', async () => {
+    let proposeCalled = false;
+
+    const code = await runCatalog({
+      verb: 'add',
+      args: ['principal', 'https://example.com/other.git'],
+      configPath,
+      print: () => {},
+      fetchCatalogFn: fakeFetchCatalog,
+      proposeInstall: async () => {
+        proposeCalled = true;
+        return [];
+      },
+    });
+
+    expect(code).toBe(2);
+    expect(proposeCalled).toBe(false);
   });
 });

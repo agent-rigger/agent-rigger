@@ -409,6 +409,70 @@ async function resolveEffectiveCatalog(
 }
 
 // ---------------------------------------------------------------------------
+// runInteractiveProposeInstall — shared picker + install orchestration (M7/R9)
+// ---------------------------------------------------------------------------
+
+/**
+ * Show the interactive artifact picker for a catalog source, then install the
+ * selected ids via runRemoteInstall.
+ *
+ * Shared between `init` (post-wizard proposal) and `catalog add` (post-add
+ * proposal). The caller is responsible for building the CatalogProposal
+ * (qualified entries + meta) and for resolving the install source (url/name).
+ *
+ * Returns the list of installed ids (empty if the user cancelled).
+ */
+async function runInteractiveProposeInstall(
+  catalog: CatalogProposal,
+  installSource: { catalogUrl: string; sourceName: string },
+  opts: {
+    scope: 'user' | 'project';
+    env: Env;
+    runner: CommandRunner;
+    tmpFactory: TmpDirFactory;
+    scanner?: import('@agent-rigger/core/scan').Scanner;
+  },
+): Promise<string[]> {
+  const { selectArtifactsWithDefaults } = await import('./ui');
+  const { scope, env, runner, tmpFactory, scanner } = opts;
+
+  // Qualify meta.required/recommended with the source name so that they
+  // match the qualified entries in the picker (ADR-0017).
+  const sourceName = catalog.sourceName ?? '';
+  const qualify = (id: string): string =>
+    sourceName !== '' && !id.includes('/') ? `${sourceName}/${id}` : id;
+  const required = new Set((catalog.meta.required ?? []).map(qualify));
+  const recommended = new Set((catalog.meta.recommended ?? []).map(qualify));
+
+  // catalog.entries are already qualified (fetchCatalogFn returns qualified entries).
+  const selectedIds = await selectArtifactsWithDefaults(catalog.entries, {
+    required,
+    recommended,
+  });
+
+  if (selectedIds.length === 0) {
+    return [];
+  }
+
+  const manifestPath = resolveManifestPath(env);
+
+  await runRemoteInstall({
+    ids: selectedIds,
+    catalogUrl: installSource.catalogUrl,
+    sourceName: installSource.sourceName,
+    scope,
+    env,
+    manifestPath,
+    runner,
+    tmpFactory,
+    confirm: true,
+    ...(scanner === undefined ? {} : { scanner }),
+  });
+
+  return selectedIds;
+}
+
+// ---------------------------------------------------------------------------
 // runCli
 // ---------------------------------------------------------------------------
 
@@ -590,29 +654,10 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
         // Test injection: use the injected fn directly.
         proposeInstallFn = prompts.proposeInstall;
       } else if (process.stdout.isTTY) {
-        // Real TTY: build the interactive picker + install orchestration.
+        // Real TTY: delegate to the shared interactive picker + install helper.
+        // The install source (url + name) is loaded lazily from the just-saved config
+        // so that `init` always installs from the first catalog it configured.
         proposeInstallFn = async (catalog: CatalogProposal): Promise<string[]> => {
-          const { selectArtifactsWithDefaults } = await import('./ui');
-
-          // Qualify meta.required/recommended with the source name so that they
-          // match the qualified entries in the picker (ADR-0017).
-          const sourceName = catalog.sourceName ?? '';
-          const qualify = (id: string): string =>
-            sourceName !== '' && !id.includes('/') ? `${sourceName}/${id}` : id;
-          const required = new Set((catalog.meta.required ?? []).map(qualify));
-          const recommended = new Set((catalog.meta.recommended ?? []).map(qualify));
-
-          // catalog.entries are already qualified (fetchCatalogFn returns qualified entries).
-          const selectedIds = await selectArtifactsWithDefaults(catalog.entries, {
-            required,
-            recommended,
-          });
-
-          if (selectedIds.length === 0) {
-            return [];
-          }
-
-          // Launch the actual install using the same remote path as `install` command.
           const initConfig = await loadCliConfig(env);
           const initPrimary = initConfig.catalogs[0];
 
@@ -620,23 +665,16 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
             return [];
           }
 
-          const catalogUrl = initPrimary.url;
-          const initManifestPath = resolveManifestPath(env);
-
-          await runRemoteInstall({
-            ids: selectedIds,
-            catalogUrl,
+          return runInteractiveProposeInstall(catalog, {
+            catalogUrl: initPrimary.url,
             sourceName: initPrimary.name,
+          }, {
             scope,
             env,
-            manifestPath: initManifestPath,
             runner,
             tmpFactory,
-            confirm: true,
             ...(deps.remote?.scanner === undefined ? {} : { scanner: deps.remote.scanner }),
           });
-
-          return selectedIds;
         };
       }
       // else: non-TTY → proposeInstallFn stays undefined → runInit skips proposal step.
@@ -730,9 +768,89 @@ async function handleResourceCommand(opts: ResourceCommandOpts): Promise<number>
   // ----- catalog source management: ls, add, remove -----
   // Intercept before artifact-level routing so that `catalog add/remove` manage
   // configured sources (config.catalogs[]) rather than artifact entries.
+  //
+  // For `catalog add` (M7/R9): after persisting the source, propose an install
+  // using the same interactive mechanism as `init`. Both fetchCatalogFn and
+  // proposeInstall are gated on the same TTY / injection logic as in `init`.
   if (resource === 'catalog' && (verb === 'add' || verb === 'remove' || verb === 'ls')) {
     const configPath = resolveConfigPath(env);
-    return runCatalog({ verb, args: ids, configPath, print });
+
+    if (verb !== 'add') {
+      return runCatalog({ verb, args: ids, configPath, print });
+    }
+
+    // verb === 'add': build the proposal fns (TTY gate / test injection).
+    const runner: CommandRunner = deps.remote?.run ?? defaultRunner;
+    const tmpFactory: TmpDirFactory = deps.remote?.tmpFactory ?? defaultTmpFactory;
+
+    const prompts = deps.prompts;
+
+    let proposeInstallFn: ((catalog: CatalogProposal) => Promise<string[]>) | undefined;
+
+    if (prompts?.proposeInstall !== undefined) {
+      // Test injection: use the injected fn directly.
+      proposeInstallFn = prompts.proposeInstall;
+    } else if (process.stdout.isTTY) {
+      // Real TTY: delegate to the shared interactive picker + install helper.
+      // The install source (url + name) comes from the catalog proposal itself —
+      // they are the just-added source, passed through catalog.sourceName and
+      // injected as the explicit catalogUrl by fetchCatalogFn below.
+      proposeInstallFn = async (catalog: CatalogProposal): Promise<string[]> => {
+        const addedName = catalog.sourceName ?? ids[0] ?? '';
+        // catalogUrl: the newly-added source's url is in ids[1] (args: [name, url]).
+        // It was passed to fetchCatalogFn and is now canonically stored in the config.
+        // Load it from config to ensure consistency (same pattern as init).
+        let addedUrl = ids[1] ?? '';
+        try {
+          const conf = await loadCliConfig(env);
+          const src = conf.catalogs.find((c) => c.name === addedName);
+          if (src !== undefined) addedUrl = src.url;
+        } catch {
+          // Config not readable — fall back to the explicit url arg.
+        }
+
+        return runInteractiveProposeInstall(catalog, {
+          catalogUrl: addedUrl,
+          sourceName: addedName,
+        }, {
+          scope,
+          env,
+          runner,
+          tmpFactory,
+          ...(deps.remote?.scanner === undefined ? {} : { scanner: deps.remote.scanner }),
+        });
+      };
+    }
+
+    // fetchCatalogFn: resolves remote version then fetches catalog.json for the
+    // just-added source. Receives (url, name) directly from runCatalog after persist.
+    // Only built when proposeInstallFn is set — runCatalog skips both when either is absent.
+    const fetchCatalogFn = proposeInstallFn === undefined
+      ? undefined
+      : async (url: string, name: string): Promise<CatalogProposal> => {
+        const version = await resolveVersion(url, runner);
+        const { meta, entries } = await fetchCatalog(
+          url,
+          version.ref,
+          version.isTag,
+          runner,
+          { tmpFactory },
+        );
+        return {
+          meta,
+          entries: qualifyEntries(name, entries),
+          sourceName: name,
+        };
+      };
+
+    return runCatalog({
+      verb,
+      args: ids,
+      configPath,
+      print,
+      ...(fetchCatalogFn === undefined ? {} : { fetchCatalogFn }),
+      ...(proposeInstallFn === undefined ? {} : { proposeInstall: proposeInstallFn }),
+    });
   }
 
   // ----- <resource> ls -----
