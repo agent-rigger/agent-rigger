@@ -213,8 +213,10 @@ describe('interactive install — with catalogUrl', () => {
   });
 
   it('returns exit 0 when external skill is installed interactively', async () => {
+    // The real picker returns qualified ids (e.g. 'principal/skill:remote-demo')
+    // because resolveEffectiveCatalog already qualifies all entries.
     const prompts: CliPrompts = {
-      selectArtifacts: async () => ['skill:remote-demo'],
+      selectArtifacts: async () => ['principal/skill:remote-demo'],
       selectScope: async () => 'user',
       confirmApply: async () => true,
       askUrl: async () => '',
@@ -233,7 +235,7 @@ describe('interactive install — with catalogUrl', () => {
 
   it('manifest entry has real ref/sha after interactive remote install', async () => {
     const prompts: CliPrompts = {
-      selectArtifacts: async () => ['skill:remote-demo'],
+      selectArtifacts: async () => ['principal/skill:remote-demo'],
       selectScope: async () => 'user',
       confirmApply: async () => true,
       askUrl: async () => '',
@@ -259,7 +261,7 @@ describe('interactive install — with catalogUrl', () => {
 
   it('store SKILL.md is written after interactive remote install', async () => {
     const prompts: CliPrompts = {
-      selectArtifacts: async () => ['skill:remote-demo'],
+      selectArtifacts: async () => ['principal/skill:remote-demo'],
       selectScope: async () => 'user',
       confirmApply: async () => true,
       askUrl: async () => '',
