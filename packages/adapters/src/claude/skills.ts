@@ -76,7 +76,9 @@ export class SkillScanBlockedError extends Error {
  */
 export function skillName(entry: AdapterEntry): string {
   const prefix = 'skill:';
-  const name = entry.id.startsWith(prefix) ? entry.id.slice(prefix.length) : entry.id;
+  // Strip source qualifier if present (ADR-0017: ids may be 'principal/skill:foo')
+  const localPart = entry.id.includes('/') ? entry.id.slice(entry.id.indexOf('/') + 1) : entry.id;
+  const name = localPart.startsWith(prefix) ? localPart.slice(prefix.length) : localPart;
   assertSafeArtifactName(name, entry.id);
   return name;
 }

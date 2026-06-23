@@ -112,7 +112,7 @@ async function makeIsolatedEnv(opts: {
   if (withCatalogUrl) {
     await fs.writeFile(
       path.join(configDir, 'config.json'),
-      JSON.stringify({ catalogUrl: 'https://example.com/catalog.git' }),
+      JSON.stringify({ catalogs: [{ name: 'principal', url: 'https://example.com/catalog.git' }] }),
       'utf8',
     );
   }
@@ -242,7 +242,7 @@ afterEach(async () => {
 async function preInstallRemote(env: Env, tag: string, sha: string) {
   iso.setRemoteTag(tag, sha);
 
-  await runCli(['install', 'skill:remote-demo', '--yes'], {
+  await runCli(['install', 'principal/skill:remote-demo', '--yes'], {
     print: makeCapture().print,
     env,
     remote: { run: iso.makeRunner(), tmpFactory: iso.makeTmpFactory(), scanner: stubScanner },
@@ -259,7 +259,7 @@ describe('runUpdate — stale: re-installs when remote is newer', () => {
     iso.setRemoteTag(TAG_V1_1_0, SHA_V1_1_0);
 
     const result = await runUpdate({
-      ids: ['skill:remote-demo'],
+      ids: ['principal/skill:remote-demo'],
       scope: 'user',
       env: iso.env,
       manifestPath: targets.stateJson,
@@ -270,7 +270,7 @@ describe('runUpdate — stale: re-installs when remote is newer', () => {
       confirm: true,
     });
 
-    expect(result.updated).toContain('skill:remote-demo');
+    expect(result.updated).toContain('principal/skill:remote-demo');
   });
 
   it('manifest ref is bumped to v1.1.0 after update', async () => {
@@ -278,7 +278,7 @@ describe('runUpdate — stale: re-installs when remote is newer', () => {
     iso.setRemoteTag(TAG_V1_1_0, SHA_V1_1_0);
 
     await runUpdate({
-      ids: ['skill:remote-demo'],
+      ids: ['principal/skill:remote-demo'],
       scope: 'user',
       env: iso.env,
       manifestPath: targets.stateJson,
@@ -293,7 +293,7 @@ describe('runUpdate — stale: re-installs when remote is newer', () => {
     const manifest = JSON.parse(raw) as {
       artifacts: Array<{ id: string; ref?: string; sha?: string }>;
     };
-    const entry = manifest.artifacts.find((a) => a.id === 'skill:remote-demo');
+    const entry = manifest.artifacts.find((a) => a.id === 'principal/skill:remote-demo');
     expect(entry?.ref).toBe(TAG_V1_1_0);
     expect(entry?.sha).toBe(SHA_V1_1_0);
   });
@@ -312,7 +312,7 @@ describe('runUpdate — stale: re-installs when remote is newer', () => {
     iso.setRemoteTag(TAG_V1_1_0, SHA_V1_1_0);
 
     await runUpdate({
-      ids: ['skill:remote-demo'],
+      ids: ['principal/skill:remote-demo'],
       scope: 'user',
       env: iso.env,
       manifestPath: targets.stateJson,
@@ -334,7 +334,7 @@ describe('runUpdate — stale: re-installs when remote is newer', () => {
     iso.setRemoteTag(TAG_V1_1_0, SHA_V1_1_0);
 
     const result = await runUpdate({
-      ids: ['skill:remote-demo'],
+      ids: ['principal/skill:remote-demo'],
       scope: 'user',
       env: iso.env,
       manifestPath: targets.stateJson,
@@ -361,7 +361,7 @@ describe('runUpdate — up-to-date: no write when versions match', () => {
     const contentBefore = await fs.readFile(manifestPath, 'utf8');
 
     const result = await runUpdate({
-      ids: ['skill:remote-demo'],
+      ids: ['principal/skill:remote-demo'],
       scope: 'user',
       env: iso.env,
       manifestPath,
@@ -372,7 +372,7 @@ describe('runUpdate — up-to-date: no write when versions match', () => {
       confirm: true,
     });
 
-    expect(result.upToDate).toContain('skill:remote-demo');
+    expect(result.upToDate).toContain('principal/skill:remote-demo');
     expect(result.updated).toHaveLength(0);
 
     // Manifest must be unchanged
@@ -384,7 +384,7 @@ describe('runUpdate — up-to-date: no write when versions match', () => {
     await preInstallRemote(iso.env, TAG_V1_0_0, SHA_V1_0_0);
 
     const result = await runUpdate({
-      ids: ['skill:remote-demo'],
+      ids: ['principal/skill:remote-demo'],
       scope: 'user',
       env: iso.env,
       manifestPath: targets.stateJson,
@@ -453,15 +453,18 @@ describe('runUpdate — no ids: auto-selects external installed entries', () => 
     try {
       dualIso.setRemoteTag(TAG_V1_0_0, SHA_V1_0_0);
 
-      await runCli(['install', 'skill:remote-demo', 'skill:remote-b', '--yes'], {
-        print: makeCapture().print,
-        env: dualIso.env,
-        remote: {
-          run: dualIso.makeRunner(),
-          tmpFactory: dualIso.makeTmpFactory(),
-          scanner: stubScanner,
+      await runCli(
+        ['install', 'principal/skill:remote-demo', 'principal/skill:remote-b', '--yes'],
+        {
+          print: makeCapture().print,
+          env: dualIso.env,
+          remote: {
+            run: dualIso.makeRunner(),
+            tmpFactory: dualIso.makeTmpFactory(),
+            scanner: stubScanner,
+          },
         },
-      });
+      );
 
       dualIso.setRemoteTag(TAG_V1_1_0, SHA_V1_1_0);
 
@@ -477,8 +480,8 @@ describe('runUpdate — no ids: auto-selects external installed entries', () => 
         confirm: true,
       });
 
-      expect(result.updated).toContain('skill:remote-demo');
-      expect(result.updated).toContain('skill:remote-b');
+      expect(result.updated).toContain('principal/skill:remote-demo');
+      expect(result.updated).toContain('principal/skill:remote-b');
       expect(result.upToDate).toHaveLength(0);
     } finally {
       await dualIso.cleanupAll();
@@ -500,7 +503,7 @@ describe('runUpdate — no ids: auto-selects external installed entries', () => 
       confirm: true,
     });
 
-    expect(result.upToDate).toContain('skill:remote-demo');
+    expect(result.upToDate).toContain('principal/skill:remote-demo');
     expect(result.updated).toHaveLength(0);
   });
 });
@@ -562,7 +565,7 @@ describe('runUpdate — transactional: confirm=false leaves artifact intact', ()
 
     // confirm=false → user declines.
     const result = await runUpdate({
-      ids: ['skill:remote-demo'],
+      ids: ['principal/skill:remote-demo'],
       scope: 'user',
       env: iso.env,
       manifestPath: targets.stateJson,
@@ -581,7 +584,7 @@ describe('runUpdate — transactional: confirm=false leaves artifact intact', ()
     const parsed = JSON.parse(manifestAfter) as {
       artifacts: Array<{ id: string; ref?: string }>;
     };
-    const entry = parsed.artifacts.find((a) => a.id === 'skill:remote-demo');
+    const entry = parsed.artifacts.find((a) => a.id === 'principal/skill:remote-demo');
     expect(entry?.ref).toBe(TAG_V1_0_0);
 
     // Manifest bytes unchanged.
@@ -600,7 +603,7 @@ describe('runUpdate — transactional: confirm=false leaves artifact intact', ()
     const manifestBefore = await fs.readFile(targets.stateJson, 'utf8');
 
     const result = await runUpdate({
-      ids: ['skill:remote-demo'],
+      ids: ['principal/skill:remote-demo'],
       scope: 'user',
       env: iso.env,
       manifestPath: targets.stateJson,
@@ -622,7 +625,7 @@ describe('runUpdate — transactional: confirm=false leaves artifact intact', ()
     iso.setRemoteTag(TAG_V1_1_0, SHA_V1_1_0);
 
     const result = await runUpdate({
-      ids: ['skill:remote-demo'],
+      ids: ['principal/skill:remote-demo'],
       scope: 'user',
       env: iso.env,
       manifestPath: targets.stateJson,
@@ -668,7 +671,7 @@ describe('runUpdate — transactional: clone failure leaves artifact intact', ()
     // runUpdate must throw (RemoteFetchError from clone) — caller handles it.
     await expect(
       runUpdate({
-        ids: ['skill:remote-demo'],
+        ids: ['principal/skill:remote-demo'],
         scope: 'user',
         env: iso.env,
         manifestPath: targets.stateJson,
@@ -697,7 +700,7 @@ describe('runUpdate — interactive confirm: installs when confirmed', () => {
     iso.setRemoteTag(TAG_V1_1_0, SHA_V1_1_0);
 
     const result = await runUpdate({
-      ids: ['skill:remote-demo'],
+      ids: ['principal/skill:remote-demo'],
       scope: 'user',
       env: iso.env,
       manifestPath: targets.stateJson,
@@ -708,12 +711,12 @@ describe('runUpdate — interactive confirm: installs when confirmed', () => {
       confirm: () => Promise.resolve(true),
     });
 
-    expect(result.updated).toContain('skill:remote-demo');
+    expect(result.updated).toContain('principal/skill:remote-demo');
 
     // Manifest ref bumped.
     const raw = await fs.readFile(targets.stateJson, 'utf8');
     const parsed = JSON.parse(raw) as { artifacts: Array<{ id: string; ref?: string }> };
-    const entry = parsed.artifacts.find((a) => a.id === 'skill:remote-demo');
+    const entry = parsed.artifacts.find((a) => a.id === 'principal/skill:remote-demo');
     expect(entry?.ref).toBe(TAG_V1_1_0);
   });
 
@@ -724,7 +727,7 @@ describe('runUpdate — interactive confirm: installs when confirmed', () => {
     let capturedPlanText = '';
 
     await runUpdate({
-      ids: ['skill:remote-demo'],
+      ids: ['principal/skill:remote-demo'],
       scope: 'user',
       env: iso.env,
       manifestPath: targets.stateJson,

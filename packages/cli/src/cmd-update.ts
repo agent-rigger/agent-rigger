@@ -44,6 +44,22 @@ import type { Env } from '@agent-rigger/core/paths';
 import type { Scanner } from '@agent-rigger/core/scan';
 import type { Scope } from '@agent-rigger/core/types';
 
+// ---------------------------------------------------------------------------
+// localId — strip source-qualifier prefix (ADR-0017 consumer helper)
+// ---------------------------------------------------------------------------
+
+/**
+ * Return the local (unqualified) part of a catalog entry id.
+ *
+ * Examples:
+ *   'skill:foo'            → 'skill:foo'
+ *   'principal/skill:foo'  → 'skill:foo'
+ */
+function localId(id: string): string {
+  const slashIdx = id.indexOf('/');
+  return slashIdx === -1 ? id : id.slice(slashIdx + 1);
+}
+
 import { buildClaudeAdapter } from './cli';
 import { scanEntries } from './remote-install';
 
@@ -128,6 +144,9 @@ export async function runUpdate(opts: RunUpdateOptions): Promise<UpdateResult> {
   // Determine the candidate id set.
   // When ids is empty: all installed artifacts for the given scope are candidates.
   // Classification below filters out those without a remote version.
+  //
+  // When ids is non-empty: exact manifest match only (ADR-0017 §5 — qualified ids end-to-end).
+  // Callers must pass qualified ids; unqualified ids result in a "not installed" skip.
   const candidateIds: string[] = ids.length === 0
     ? manifest.artifacts
       .filter((e) => e.scope === scope)
@@ -193,36 +212,55 @@ export async function runUpdate(opts: RunUpdateOptions): Promise<UpdateResult> {
         const { entries: remoteEntries } = await readCatalogDir(dir);
 
         // Frontier guard: reject traversal ids.
+        // Always use localId() to strip any qualifier before path derivation.
         for (const entry of remoteEntries) {
           if (entry.kind !== 'artifact') continue;
+          const local = localId(entry.id);
           if (entry.nature === 'skill') {
-            assertSafeArtifactName(entry.id.replace(/^skill:/, ''), entry.id);
+            assertSafeArtifactName(local.replace(/^skill:/, ''), entry.id);
           } else if (entry.nature === 'agent') {
-            assertSafeArtifactName(entry.id.replace(/^agent:/, ''), entry.id);
+            assertSafeArtifactName(local.replace(/^agent:/, ''), entry.id);
           }
         }
 
         // 3b. Resolve ids against effective catalog (UnknownEntryError → abort before remove).
+        // staleIds may contain qualified ids (e.g. 'principal/skill:foo') from the manifest
+        // (ADR-0017), but the raw checkout catalog has unqualified ids ('skill:foo').
+        // Strip qualifiers for resolution, then restore them in the resolved entries.
         const { entries: effective } = mergeCatalogs([], remoteEntries);
-        const resolved = resolve(staleIds, effective);
+        const rawStaleIds = staleIds.map(localId);
+        const rawResolved = resolve(rawStaleIds, effective);
+
+        // Restore qualification: map raw resolved entries back to their manifest-qualified ids.
+        // Build a lookup from local-id → qualified id for the stale set.
+        const localToQualified = new Map(staleIds.map((qid) => [localId(qid), qid]));
+        const resolved = rawResolved.map((e) => ({
+          ...e,
+          id: localToQualified.get(e.id) ?? e.id,
+        }));
 
         // All stale entries sourced from the remote checkout.
         // Skills / agents have a scanPath; guardrails / contexts / hooks do not
         // but still come from externalBaseDir. All are remote.
+        // remoteIds uses qualified ids; buildClaudeAdapter and versionFor key by them.
         const remoteIds = new Set(resolved.map((e) => e.id));
+
+        // Build effectiveEntries map with qualified ids for hookSpec resolution
+        // (maps qualified id → entry, merging qualifier on top of raw entries).
+        const effectiveEntries = new Map(
+          rawResolved.map((e) => [localToQualified.get(e.id) ?? e.id, e]),
+        );
 
         // 3c. Security scan — all entries that have a checkout path (uniform scan, ADR-0014).
         //     Entries without a scanPath (e.g. guardrails, hooks) are naturally skipped.
         //     Must be BEFORE remove so a blocked scan leaves the artifact intact.
+        //     scanEntries uses localId() internally for path derivation.
         const { warnings: scanWarnings } = await scanEntries({
           entries: resolved,
           baseDir: dir,
           scanner,
           force,
         });
-
-        // 3d. Build effectiveEntries map for hookSpec resolution
-        const effectiveEntries = new Map(effective.map((e) => [e.id, e]));
 
         // 3e. Build adapter with remote resolver seam (externalBaseDir = checkout dir).
         const adapter = await buildClaudeAdapter(env, {

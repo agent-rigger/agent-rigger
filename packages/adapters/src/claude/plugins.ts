@@ -146,10 +146,12 @@ export class PluginUninstallError extends Error {
  */
 export function pluginName(entry: AdapterEntry): string {
   const prefix = 'plugin:';
-  if (entry.id.startsWith(prefix)) {
-    return entry.id.slice(prefix.length);
+  // Strip source qualifier if present (ADR-0017: ids may be 'principal/plugin:foo')
+  const localPart = entry.id.includes('/') ? entry.id.slice(entry.id.indexOf('/') + 1) : entry.id;
+  if (localPart.startsWith(prefix)) {
+    return localPart.slice(prefix.length);
   }
-  return entry.id;
+  return localPart;
 }
 
 // ---------------------------------------------------------------------------

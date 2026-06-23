@@ -33,6 +33,25 @@ import { stubScanner } from '@agent-rigger/core/scan';
 import type { CatalogEntry } from '@agent-rigger/catalog';
 
 // ---------------------------------------------------------------------------
+// localId — strip the source-qualifier prefix from a (potentially qualified) id
+// ---------------------------------------------------------------------------
+
+/**
+ * Return the local (unqualified) part of a catalog entry id.
+ *
+ * Examples:
+ *   'guardrail:main'          → 'guardrail:main'
+ *   'principal/guardrail:main' → 'guardrail:main'
+ *
+ * Used to derive filesystem paths from potentially-qualified catalog ids
+ * (ADR-0017: ids carry `<source>/<local-id>` after multi-catalog qualification).
+ */
+function localId(id: string): string {
+  const slashIdx = id.indexOf('/');
+  return slashIdx === -1 ? id : id.slice(slashIdx + 1);
+}
+
+// ---------------------------------------------------------------------------
 // BuildClaudeAdapterOpts
 // ---------------------------------------------------------------------------
 
@@ -103,8 +122,8 @@ export async function buildClaudeAdapter(
   const externalGuardrailId = opts?.externalIds === undefined
     ? undefined
     : (
-      // Primary: id with 'guardrail:' prefix
-      [...opts.externalIds].find((id) => id.startsWith('guardrail:'))
+      // Primary: local part of id starts with 'guardrail:' (handles qualified ids)
+      [...opts.externalIds].find((id) => localId(id).startsWith('guardrail:'))
         // Fallback: any external id whose catalog entry has nature 'guardrail'
         ?? [...opts.externalIds].find((id) =>
           opts.effectiveEntries?.get(id)?.kind === 'artifact'
@@ -116,11 +135,12 @@ export async function buildClaudeAdapter(
   let allowRef: string[];
 
   if (externalGuardrailId !== undefined && opts?.externalBaseDir !== undefined) {
-    // Derive the directory name from the id:
+    // Derive the directory name from the local part of the id:
     // 'guardrail:<name>' → <name>; legacy ids (e.g. 'guardrails-claude') → id itself.
-    const name = externalGuardrailId.startsWith('guardrail:')
-      ? externalGuardrailId.replace(/^guardrail:/, '')
-      : externalGuardrailId;
+    const local = localId(externalGuardrailId);
+    const name = local.startsWith('guardrail:')
+      ? local.replace(/^guardrail:/, '')
+      : local;
     assertSafeArtifactName(name, externalGuardrailId);
     const guardrailDir = path.join(opts.externalBaseDir, 'guardrails', name);
     const [extDeny, extAllow] = await Promise.all([
@@ -143,7 +163,7 @@ export async function buildClaudeAdapter(
   const externalContextId = opts?.externalIds === undefined
     ? undefined
     : (
-      [...opts.externalIds].find((id) => id.startsWith('context:'))
+      [...opts.externalIds].find((id) => localId(id).startsWith('context:'))
         ?? [...opts.externalIds].find((id) =>
           opts.effectiveEntries?.get(id)?.kind === 'artifact'
           && (opts.effectiveEntries.get(id) as { nature: string }).nature === 'context'
@@ -153,9 +173,10 @@ export async function buildClaudeAdapter(
   let agentsContent: string;
 
   if (externalContextId !== undefined && opts?.externalBaseDir !== undefined) {
-    const name = externalContextId.startsWith('context:')
-      ? externalContextId.replace(/^context:/, '')
-      : externalContextId;
+    const local = localId(externalContextId);
+    const name = local.startsWith('context:')
+      ? local.replace(/^context:/, '')
+      : local;
     assertSafeArtifactName(name, externalContextId);
     agentsContent = await readText(
       path.join(opts.externalBaseDir, 'contexts', name, 'AGENTS.md'),
@@ -189,7 +210,7 @@ export async function buildClaudeAdapter(
       );
     }
 
-    const name = entry.id.replace(/^hook:/, '');
+    const name = localId(entry.id).replace(/^hook:/, '');
     // Depth-in-defence: guard before any path.join.
     assertSafeArtifactName(name, entry.id);
 
@@ -224,7 +245,7 @@ export async function buildClaudeAdapter(
     scanner: stubScanner,
     hookSpec,
     skillSource: (entry) => {
-      const name = entry.id.replace(/^skill:/, '');
+      const name = localId(entry.id).replace(/^skill:/, '');
       assertSafeArtifactName(name, entry.id);
       if (
         opts?.externalIds?.has(entry.id) === true
@@ -238,7 +259,7 @@ export async function buildClaudeAdapter(
       );
     },
     agentSource: (entry) => {
-      const name = entry.id.replace(/^agent:/, '');
+      const name = localId(entry.id).replace(/^agent:/, '');
       assertSafeArtifactName(name, entry.id);
       if (
         opts?.externalIds?.has(entry.id) === true
@@ -252,7 +273,7 @@ export async function buildClaudeAdapter(
       );
     },
     pluginSource: (entry) => {
-      const plugin = entry.id.replace(/^plugin:/, '');
+      const plugin = localId(entry.id).replace(/^plugin:/, '');
       if (
         opts?.externalIds?.has(entry.id) === true
         && opts.catalogUrl !== undefined

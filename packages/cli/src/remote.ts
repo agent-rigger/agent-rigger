@@ -9,7 +9,6 @@
  * Constraints:
  * - No process.exit.
  * - No while loops.
- * - CatalogUrlMissingError when catalogUrl is undefined/empty.
  * - fetchRemoteCatalog propagates RemoteFetchError and CatalogParseError as-is.
  */
 
@@ -25,23 +24,6 @@ import {
   type TmpDirFactory,
 } from '@agent-rigger/catalog';
 import { type CommandRunner, defaultRunner } from '@agent-rigger/catalog/tool-check';
-
-// ---------------------------------------------------------------------------
-// CatalogUrlMissingError
-// ---------------------------------------------------------------------------
-
-/**
- * Thrown when fetchRemoteCatalog is called without a catalogUrl configured.
- * Actionable: tells the user to run `agent-rigger init`.
- */
-export class CatalogUrlMissingError extends Error {
-  constructor() {
-    super(
-      'Aucune URL de catalogue configurée. Lance `agent-rigger init` pour la configurer.',
-    );
-    this.name = 'CatalogUrlMissingError';
-  }
-}
 
 // ---------------------------------------------------------------------------
 // RemoteCatalog
@@ -76,24 +58,23 @@ export const defaultTmpFactory: TmpDirFactory = async () => {
 /**
  * Fetch catalog entries from a remote git repository.
  *
- * - If catalogUrl is absent/empty → throws CatalogUrlMissingError.
  * - Resolves the latest semver tag (or HEAD fallback) via resolveVersion.
  * - Shallow-clones at that ref and parses catalog.json via fetchCatalog.
  * - Propagates RemoteFetchError or CatalogParseError on failure.
+ *
+ * @param opts.url         The git URL of the catalog repository (required, non-empty).
+ * @param opts.run         Optional CommandRunner override (defaults to defaultRunner).
+ * @param opts.tmpFactory  Optional TmpDirFactory override (defaults to defaultTmpFactory).
  */
 export async function fetchRemoteCatalog(opts: {
-  catalogUrl: string | undefined;
+  url: string;
   run?: CommandRunner;
   tmpFactory?: TmpDirFactory;
 }): Promise<RemoteCatalog> {
-  const { catalogUrl, run = defaultRunner, tmpFactory = defaultTmpFactory } = opts;
+  const { url, run = defaultRunner, tmpFactory = defaultTmpFactory } = opts;
 
-  if (catalogUrl === undefined || catalogUrl === '') {
-    throw new CatalogUrlMissingError();
-  }
-
-  const version = await resolveVersion(catalogUrl, run);
-  const { entries, sha } = await fetchCatalog(catalogUrl, version.ref, version.isTag, run, {
+  const version = await resolveVersion(url, run);
+  const { entries, sha } = await fetchCatalog(url, version.ref, version.isTag, run, {
     tmpFactory,
   });
 

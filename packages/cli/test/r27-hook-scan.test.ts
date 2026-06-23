@@ -148,7 +148,7 @@ async function makeHookEnv(entries: CatalogEntry[]): Promise<HookEnv> {
   await fs.mkdir(configDir, { recursive: true });
   await fs.writeFile(
     path.join(configDir, 'config.json'),
-    JSON.stringify({ catalogUrl: 'https://example.com/catalog.git' }),
+    JSON.stringify({ catalogs: [{ name: 'principal', url: 'https://example.com/catalog.git' }] }),
     'utf8',
   );
 
@@ -365,7 +365,7 @@ describe('R27-1 — hook + blocking scanner, no --force → fail-closed', () => 
   it('runCli returns non-zero when scanner blocks a hook entry', async () => {
     const cap = { lines: [] as string[], print: (m: string) => cap.lines.push(m) };
 
-    const code = await runCli(['install', 'hook:pre-tool', '--yes'], {
+    const code = await runCli(['install', 'principal/hook:pre-tool', '--yes'], {
       print: cap.print,
       env: hookEnv.env,
       remote: {
@@ -379,7 +379,7 @@ describe('R27-1 — hook + blocking scanner, no --force → fail-closed', () => 
   });
 
   it('no hook command is registered in settings.json when scanner blocks', async () => {
-    await runCli(['install', 'hook:pre-tool', '--yes'], {
+    await runCli(['install', 'principal/hook:pre-tool', '--yes'], {
       print: () => {},
       env: hookEnv.env,
       remote: {
@@ -394,7 +394,7 @@ describe('R27-1 — hook + blocking scanner, no --force → fail-closed', () => 
   });
 
   it('hooks store directory is NOT created when scanner blocks', async () => {
-    await runCli(['install', 'hook:pre-tool', '--yes'], {
+    await runCli(['install', 'principal/hook:pre-tool', '--yes'], {
       print: () => {},
       env: hookEnv.env,
       remote: {
@@ -413,7 +413,7 @@ describe('R27-1 — hook + blocking scanner, no --force → fail-closed', () => 
   it('output mentions scan finding when hook is blocked', async () => {
     const cap = { lines: [] as string[], print: (m: string) => cap.lines.push(m) };
 
-    await runCli(['install', 'hook:pre-tool', '--yes'], {
+    await runCli(['install', 'principal/hook:pre-tool', '--yes'], {
       print: cap.print,
       env: hookEnv.env,
       remote: {
@@ -441,7 +441,7 @@ describe('R27-2 — hook + blocking scanner, with --force → warn + proceed', (
   it('runCli returns 0 when scanner blocks but --force is set', async () => {
     const cap = { lines: [] as string[], print: (m: string) => cap.lines.push(m) };
 
-    const code = await runCli(['install', 'hook:pre-tool', '--yes', '--force'], {
+    const code = await runCli(['install', 'principal/hook:pre-tool', '--yes', '--force'], {
       print: cap.print,
       env: hookEnv.env,
       remote: {
@@ -457,7 +457,7 @@ describe('R27-2 — hook + blocking scanner, with --force → warn + proceed', (
   it('output contains [warning] when --force overrides a blocking hook scan', async () => {
     const cap = { lines: [] as string[], print: (m: string) => cap.lines.push(m) };
 
-    await runCli(['install', 'hook:pre-tool', '--yes', '--force'], {
+    await runCli(['install', 'principal/hook:pre-tool', '--yes', '--force'], {
       print: cap.print,
       env: hookEnv.env,
       remote: {
@@ -472,7 +472,7 @@ describe('R27-2 — hook + blocking scanner, with --force → warn + proceed', (
   });
 
   it('hook command is registered in settings.json when --force overrides scan block', async () => {
-    await runCli(['install', 'hook:pre-tool', '--yes', '--force'], {
+    await runCli(['install', 'principal/hook:pre-tool', '--yes', '--force'], {
       print: () => {},
       env: hookEnv.env,
       remote: {
@@ -493,7 +493,7 @@ describe('R27-2 — hook + blocking scanner, with --force → warn + proceed', (
 
 describe('R27-CLEAN — hook + clean scanner → installs normally', () => {
   it('runCli returns 0 when scanner passes a hook entry', async () => {
-    const code = await runCli(['install', 'hook:pre-tool', '--yes'], {
+    const code = await runCli(['install', 'principal/hook:pre-tool', '--yes'], {
       print: () => {},
       env: hookEnv.env,
       remote: {
@@ -507,7 +507,7 @@ describe('R27-CLEAN — hook + clean scanner → installs normally', () => {
   });
 
   it('hook command is registered in settings.json after clean scan', async () => {
-    await runCli(['install', 'hook:pre-tool', '--yes'], {
+    await runCli(['install', 'principal/hook:pre-tool', '--yes'], {
       print: () => {},
       env: hookEnv.env,
       remote: {
@@ -524,7 +524,7 @@ describe('R27-CLEAN — hook + clean scanner → installs normally', () => {
   it('spy scanner is called with the hooks/ directory path (not just the individual hook script)', async () => {
     const { scanner, calls } = spyScanner();
 
-    await runCli(['install', 'hook:pre-tool', '--yes'], {
+    await runCli(['install', 'principal/hook:pre-tool', '--yes'], {
       print: () => {},
       env: hookEnv.env,
       remote: {
