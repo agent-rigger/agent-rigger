@@ -16,7 +16,7 @@
  * - Bun-native where natural; node:fs/promises for symlink/lstat/readlink.
  */
 
-import { cp, lstat, mkdir, readlink, rm, symlink as fsSymlink } from 'node:fs/promises';
+import { cp, lstat, mkdir, readdir, readlink, rm, symlink as fsSymlink } from 'node:fs/promises';
 import path from 'node:path';
 
 // ---------------------------------------------------------------------------
@@ -42,6 +42,20 @@ export interface LinkResult {
   target: string;
 }
 
+/** Options for syncToStore. */
+export interface SyncOptions {
+  /**
+   * Glob patterns (basename only) for files already present in the store that
+   * must survive a re-sync even when absent from the source directory.
+   * Typical use: `['guard-*.log']` to preserve runtime logs written by hook
+   * guard scripts after each install.
+   *
+   * Only effective when `sourcePath` is a directory.
+   * Uses Bun.Glob for matching — patterns follow minimatch/glob conventions.
+   */
+  preserveGlobs?: string[];
+}
+
 // ---------------------------------------------------------------------------
 // unlink
 // ---------------------------------------------------------------------------
@@ -64,6 +78,24 @@ export async function unlink(target: string, store: string): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
+// Internal helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Return true if `basename` matches any of the provided glob patterns.
+ * Uses Bun.Glob — patterns are basename-only (no path separators).
+ */
+function matchesAnyGlob(basename: string, globs: string[]): boolean {
+  for (const pattern of globs) {
+    const glob = new Bun.Glob(pattern);
+    if (glob.match(basename)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// ---------------------------------------------------------------------------
 // syncToStore
 // ---------------------------------------------------------------------------
 
@@ -71,23 +103,67 @@ export async function unlink(target: string, store: string): Promise<void> {
  * Copy `sourcePath` (file or directory) to `storePath`, overwriting whatever
  * was there before. Parent directories of `storePath` are created as needed.
  *
- * For directories the store is replaced atomically: the old tree is removed
- * before the new copy is written, so no stale entries survive a re-sync.
+ * **Default behaviour (no opts.preserveGlobs):** for directories the store is
+ * replaced atomically — the old tree is removed before the new copy is written,
+ * so no stale entries survive a re-sync.
+ *
+ * **With opts.preserveGlobs:** files already present in the store whose basename
+ * matches one of the provided glob patterns are left untouched. All other files
+ * in the store that are not present in the source are removed (mirror contract
+ * preserved for source files). Source files are always copied into the store,
+ * overwriting any existing copy. This mode is used by hook installs to preserve
+ * runtime `guard-*.log` files written by guard scripts.
+ *
+ * @param sourcePath  Source file or directory.
+ * @param storePath   Destination in the managed store.
+ * @param opts        Optional sync options (see SyncOptions).
  */
-export async function syncToStore(sourcePath: string, storePath: string): Promise<void> {
+export async function syncToStore(
+  sourcePath: string,
+  storePath: string,
+  opts?: SyncOptions,
+): Promise<void> {
   await mkdir(path.dirname(storePath), { recursive: true });
 
   const srcStat = await lstat(sourcePath);
 
-  if (srcStat.isDirectory()) {
-    const storeExists = await lstat(storePath).then(() => true).catch(() => false);
-    if (storeExists) {
-      await rm(storePath, { recursive: true, force: true });
-    }
-    await cp(sourcePath, storePath, { recursive: true });
-  } else {
+  if (!srcStat.isDirectory()) {
     await cp(sourcePath, storePath);
+    return;
   }
+
+  const preserveGlobs = opts?.preserveGlobs;
+
+  // Non-destructive sync when preserveGlobs is provided.
+  if (preserveGlobs !== undefined && preserveGlobs.length > 0) {
+    await mkdir(storePath, { recursive: true });
+
+    // Step 1: Remove stale store entries — files/dirs that are neither in the
+    // source nor protected by a preserveGlob.
+    const storeEntries = await readdir(storePath).catch(() => [] as string[]);
+    const srcEntries = new Set(await readdir(sourcePath).catch(() => [] as string[]));
+
+    for (const entry of storeEntries) {
+      if (!srcEntries.has(entry) && !matchesAnyGlob(entry, preserveGlobs)) {
+        await rm(path.join(storePath, entry), { recursive: true, force: true });
+      }
+    }
+
+    // Step 2: Copy all source files into the store (overwrite existing).
+    const srcList = await readdir(sourcePath);
+    for (const entry of srcList) {
+      await cp(path.join(sourcePath, entry), path.join(storePath, entry), { recursive: true });
+    }
+
+    return;
+  }
+
+  // Default destructive sync: rm -rf + cp (clean mirror, no survivors).
+  const storeExists = await lstat(storePath).then(() => true).catch(() => false);
+  if (storeExists) {
+    await rm(storePath, { recursive: true, force: true });
+  }
+  await cp(sourcePath, storePath, { recursive: true });
 }
 
 // ---------------------------------------------------------------------------

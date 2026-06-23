@@ -733,3 +733,84 @@ describe('createClaudeAdapter — hook nature routing', () => {
     await expect(adapter.plan(ENTRY, 'user', env)).rejects.toThrow('hookSpec');
   });
 });
+
+// ---------------------------------------------------------------------------
+// D4 — guard-*.log files are preserved on re-install (non-destructive sync)
+// ---------------------------------------------------------------------------
+
+describe('applyHook — guard-*.log files preserved on re-install (D4)', () => {
+  it('preserves a pre-existing guard-*.log runtime log after re-install', async () => {
+    const targets = resolveUserTargets(env);
+    await fs.mkdir(path.dirname(targets.claudeSettings), { recursive: true });
+
+    // Create a fake scriptSource directory with a guard script
+    const scriptSource = path.join(tmp.dir, 'scripts-src');
+    const scriptStore = path.join(tmp.dir, 'scripts-store');
+    await fs.mkdir(scriptSource);
+    await fs.writeFile(path.join(scriptSource, 'guard.sh'), '#!/bin/sh\necho guard v1');
+
+    // First install — deposits the script
+    const ops = [
+      {
+        kind: 'merge-hooks' as const,
+        path: targets.claudeSettings,
+        event: SPEC.event,
+        matcher: SPEC.matcher,
+        command: SPEC.command,
+        scriptSource,
+        scriptStore,
+      },
+    ];
+    await applyHook(ops, env);
+
+    // Simulate runtime: guard script writes a log into the store
+    await fs.writeFile(path.join(scriptStore, 'guard-2026-06-23.log'), 'session run log');
+
+    // Update the guard script source (new version)
+    await fs.writeFile(path.join(scriptSource, 'guard.sh'), '#!/bin/sh\necho guard v2');
+
+    // Re-install (same ops)
+    await applyHook(ops, env);
+
+    // The runtime log must still be there
+    const logContent = await fs.readFile(path.join(scriptStore, 'guard-2026-06-23.log'), 'utf8');
+    expect(logContent).toBe('session run log');
+
+    // The script must be updated to v2
+    const scriptContent = await fs.readFile(path.join(scriptStore, 'guard.sh'), 'utf8');
+    expect(scriptContent).toBe('#!/bin/sh\necho guard v2');
+  });
+
+  it('does not leave stale source files in store after re-install', async () => {
+    const targets = resolveUserTargets(env);
+    await fs.mkdir(path.dirname(targets.claudeSettings), { recursive: true });
+
+    const scriptSource = path.join(tmp.dir, 'scripts-src2');
+    const scriptStore = path.join(tmp.dir, 'scripts-store2');
+    await fs.mkdir(scriptSource);
+    await fs.writeFile(path.join(scriptSource, 'guard-old.sh'), '#!/bin/sh old');
+
+    const ops = [
+      {
+        kind: 'merge-hooks' as const,
+        path: targets.claudeSettings,
+        event: SPEC.event,
+        matcher: SPEC.matcher,
+        command: SPEC.command,
+        scriptSource,
+        scriptStore,
+      },
+    ];
+    await applyHook(ops, env);
+
+    // Update source: old script removed, new one added
+    await fs.rm(path.join(scriptSource, 'guard-old.sh'));
+    await fs.writeFile(path.join(scriptSource, 'guard-new.sh'), '#!/bin/sh new');
+
+    await applyHook(ops, env);
+
+    const entries = await fs.readdir(scriptStore);
+    expect(entries).toContain('guard-new.sh');
+    expect(entries).not.toContain('guard-old.sh');
+  });
+});
