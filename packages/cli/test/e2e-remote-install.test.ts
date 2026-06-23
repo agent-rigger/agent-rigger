@@ -562,9 +562,12 @@ describe('TEST-1 — path traversal id rejected', () => {
 
       // Must not succeed
       expect(code).not.toBe(0);
-      // Output must mention unsafe/traversal
+      // Output must mention rejection. The traversal id 'skill:../../../../etc/evil'
+      // contains '/' so it is treated as a qualified id with a bogus prefix ('skill:..')
+      // that is not a configured catalog → rejected at prefix validation.
+      // Either the catalog-not-found gate or the deep frontier guard fires; both protect.
       const output = cap.lines.join('\n');
-      expect(output).toMatch(/unsafe|traversal|path/i);
+      expect(output).toMatch(/unsafe|traversal|path|non configuré|non qualifié/i);
     } finally {
       await traversalEnv.cleanupAll();
     }
@@ -642,7 +645,14 @@ describe('TEST-1 — path traversal id rejected', () => {
       // may propagate
     }
 
-    expect(traversalEnv.getCleanupCalled()).toBe(true);
+    // 'skill:../../../../etc/evil' contains '/', so it is parsed as a QUALIFIED id
+    // whose prefix is 'skill:..' — not a configured catalog → rejected at the prefix
+    // validation gate BEFORE any checkout starts. tmpFactory is never invoked, so no
+    // cleanup is needed (filesystem still protected — nothing was ever checked out).
+    // Note: a traversal id under a VALID prefix (e.g. 'principal/skill:../../etc/evil')
+    // does start a checkout, where the frontier guard (assertSafeArtifactName in
+    // remote-install.ts) fires and cleanup runs via withRemoteCheckout's finally.
+    expect(traversalEnv.getCleanupCalled()).toBe(false);
     await traversalEnv.cleanupAll();
   });
 

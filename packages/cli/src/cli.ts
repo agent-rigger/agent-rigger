@@ -1296,24 +1296,55 @@ async function handleInstall(opts: HandleInstallOpts): Promise<number> {
       confirm = (planText: string) => prompts.confirmApply(planText);
     }
 
-    // Load config to check for a remote catalog.
-    // For non-interactive install with explicit ids, we use the first configured catalog.
-    // Multi-source resolution happens at the effective-catalog level; for install we pick
-    // the primary source (index 0) so that the git checkout comes from a single repo.
-    // Users wanting to install from a specific source can specify the qualified id directly.
+    // Load config to route each qualified id to its source catalog (ADR-0017 §5).
+    // The prefix (part before the first '/') names the catalog; we group ids by prefix
+    // and run one runRemoteInstall per source so each checkout targets the right URL.
     const config = await loadCliConfig(env);
-    const primaryCatalog = config.catalogs[0];
 
-    if (primaryCatalog !== undefined) {
-      // Remote install path: delegate to runRemoteInstall.
-      const catalogUrl = primaryCatalog.url;
-      const runner: CommandRunner = deps.remote?.run ?? defaultRunner;
-      const tmpFactory: TmpDirFactory = deps.remote?.tmpFactory ?? defaultTmpFactory;
+    if (config.catalogs.length === 0) {
+      // No catalogs configured → actionable message, nothing to install locally
+      print('aucun catalog configuré — lance `agent-rigger init`');
+      return 0;
+    }
+
+    const runner: CommandRunner = deps.remote?.run ?? defaultRunner;
+    const tmpFactory: TmpDirFactory = deps.remote?.tmpFactory ?? defaultTmpFactory;
+
+    // Group ids by their catalog prefix.
+    const groupedByPrefix = new Map<string, string[]>();
+    for (const id of ids) {
+      const slashIdx = id.indexOf('/');
+      const prefix = slashIdx === -1 ? '' : id.slice(0, slashIdx);
+      const existing = groupedByPrefix.get(prefix);
+      if (existing === undefined) {
+        groupedByPrefix.set(prefix, [id]);
+      } else {
+        existing.push(id);
+      }
+    }
+
+    // Validate all prefixes resolve to a configured catalog before touching the network.
+    for (const prefix of groupedByPrefix.keys()) {
+      const catalog = config.catalogs.find((c) => c.name === prefix);
+      if (catalog === undefined) {
+        print(
+          `[error] catalog "${prefix}" non configuré — voir \`agent-rigger catalog ls\``,
+        );
+        return 2;
+      }
+    }
+
+    // Run one install per source catalog (sequential — each requires its own checkout).
+    for (const [prefix, groupIds] of groupedByPrefix) {
+      const catalog = config.catalogs.find((c) => c.name === prefix) as {
+        name: string;
+        url: string;
+      };
 
       const remoteOpts = {
-        ids,
-        catalogUrl,
-        sourceName: primaryCatalog.name,
+        ids: groupIds,
+        catalogUrl: catalog.url,
+        sourceName: catalog.name,
         scope,
         env,
         manifestPath,
@@ -1325,13 +1356,9 @@ async function handleInstall(opts: HandleInstallOpts): Promise<number> {
       };
 
       const result = await runRemoteInstall(remoteOpts);
-
       print(result.output);
-      return 0;
     }
 
-    // No catalogs configured → actionable message, nothing to install locally
-    print('aucun catalog configuré — lance `agent-rigger init`');
     return 0;
   }
 
@@ -1353,36 +1380,56 @@ async function handleInstall(opts: HandleInstallOpts): Promise<number> {
   const interactiveScope = await prompts.selectScope();
   const interactiveManifestPath = resolveManifestPath(env);
   const interactiveConfig = await loadCliConfig(env);
-  const interactivePrimary = interactiveConfig.catalogs[0];
 
-  if (interactivePrimary !== undefined) {
-    // Remote interactive path: use runRemoteInstall so external entries are sourced correctly.
-    const catalogUrl = interactivePrimary.url;
-    const runner: CommandRunner = deps.remote?.run ?? defaultRunner;
-    const tmpFactory: TmpDirFactory = deps.remote?.tmpFactory ?? defaultTmpFactory;
+  if (interactiveConfig.catalogs.length === 0) {
+    // No catalogs configured → actionable message
+    print('aucun catalog configuré — lance `agent-rigger init`');
+    return 0;
+  }
+
+  const interactiveRunner: CommandRunner = deps.remote?.run ?? defaultRunner;
+  const interactiveTmpFactory: TmpDirFactory = deps.remote?.tmpFactory ?? defaultTmpFactory;
+
+  // Group selected ids by prefix and install per source (same routing as non-interactive).
+  const interactiveGrouped = new Map<string, string[]>();
+  for (const id of selectedIds) {
+    const slashIdx = id.indexOf('/');
+    const prefix = slashIdx === -1 ? '' : id.slice(0, slashIdx);
+    const existing = interactiveGrouped.get(prefix);
+    if (existing === undefined) {
+      interactiveGrouped.set(prefix, [id]);
+    } else {
+      existing.push(id);
+    }
+  }
+
+  for (const [prefix, groupIds] of interactiveGrouped) {
+    const catalog = interactiveConfig.catalogs.find((c) => c.name === prefix);
+    if (catalog === undefined) {
+      // Interactive picker always yields qualified ids from effective catalog, so an
+      // unresolvable prefix here is a data inconsistency — skip with a warning.
+      print(`[warning] catalog "${prefix}" non configuré — entrées ignorées`);
+      continue;
+    }
 
     const interactiveOpts = {
-      ids: selectedIds,
-      catalogUrl,
-      sourceName: interactivePrimary.name,
+      ids: groupIds,
+      catalogUrl: catalog.url,
+      sourceName: catalog.name,
       scope: interactiveScope,
       env,
       manifestPath: interactiveManifestPath,
-      runner,
-      tmpFactory,
+      runner: interactiveRunner,
+      tmpFactory: interactiveTmpFactory,
       confirm: (planText: string) => prompts.confirmApply(planText),
       ...(force ? { force } : {}),
       ...(deps.remote?.scanner === undefined ? {} : { scanner: deps.remote.scanner }),
     };
 
     const remoteResult = await runRemoteInstall(interactiveOpts);
-
     print(remoteResult.output);
-    return 0;
   }
 
-  // No catalogs configured → actionable message
-  print('aucun catalog configuré — lance `agent-rigger init`');
   return 0;
 }
 
@@ -1582,10 +1629,9 @@ async function handleUpdate(opts: HandleUpdateOpts): Promise<number> {
   }
 
   const config = await loadCliConfig(env);
-  const primaryCatalog = config.catalogs[0];
 
-  if (primaryCatalog === undefined) {
-    // No catalogs configured — surface as actionable error (mirrors update's old behaviour).
+  if (config.catalogs.length === 0) {
+    // No catalogs configured — surface as actionable error.
     print('[error] No catalog URL configured.');
     print('  Run `agent-rigger init` to configure the catalog URL.');
     return 2;
@@ -1604,22 +1650,88 @@ async function handleUpdate(opts: HandleUpdateOpts): Promise<number> {
     confirm = (planText: string) => prompts.confirmApply(planText);
   }
 
-  const updateOpts = {
-    ids,
-    scope,
-    env,
-    manifestPath: resolveManifestPath(env),
-    catalogUrl: primaryCatalog.url,
-    runner,
-    tmpFactory,
-    confirm,
-    ...(force ? { force } : {}),
-    ...(deps.remote?.scanner === undefined ? {} : { scanner: deps.remote.scanner }),
-  };
+  const manifestPath = resolveManifestPath(env);
+  const scannerOpts = deps.remote?.scanner === undefined ? {} : { scanner: deps.remote.scanner };
 
-  const result = await runUpdate(updateOpts);
+  if (ids.length === 0) {
+    // update all installed — iterate each catalog; pass empty ids so runUpdate reads
+    // the full manifest; then filter by prefix happens inside runUpdate (only entries
+    // whose ids start with this catalog's name are in scope).
+    // We drive it per-catalog with explicit ids derived from the manifest to ensure
+    // each checkout targets the right URL.
+    const { readManifest } = await import('@agent-rigger/core/manifest');
+    const manifest = await readManifest(manifestPath);
 
-  print(result.output);
+    for (const catalog of config.catalogs) {
+      const prefix = catalog.name + '/';
+      const catalogIds = manifest.artifacts
+        .filter((e) => e.scope === scope && e.id.startsWith(prefix))
+        .map((e) => e.id);
+
+      const updateOpts = {
+        ids: catalogIds,
+        scope,
+        env,
+        manifestPath,
+        catalogUrl: catalog.url,
+        runner,
+        tmpFactory,
+        confirm,
+        ...(force ? { force } : {}),
+        ...scannerOpts,
+      };
+
+      const result = await runUpdate(updateOpts);
+      print(result.output);
+    }
+
+    return 0;
+  }
+
+  // Explicit ids — validate prefixes then group by catalog (ADR-0017 §5).
+  for (const id of ids) {
+    const slashIdx = id.indexOf('/');
+    const prefix = slashIdx === -1 ? '' : id.slice(0, slashIdx);
+    const catalog = config.catalogs.find((c) => c.name === prefix);
+    if (catalog === undefined) {
+      print(
+        `[error] catalog "${prefix}" non configuré — voir \`agent-rigger catalog ls\``,
+      );
+      return 2;
+    }
+  }
+
+  const updateGrouped = new Map<string, string[]>();
+  for (const id of ids) {
+    const prefix = id.slice(0, id.indexOf('/'));
+    const existing = updateGrouped.get(prefix);
+    if (existing === undefined) {
+      updateGrouped.set(prefix, [id]);
+    } else {
+      existing.push(id);
+    }
+  }
+
+  for (const [prefix, groupIds] of updateGrouped) {
+    const catalog = config.catalogs.find((c) => c.name === prefix) as { name: string; url: string };
+
+    const updateOpts = {
+      ids: groupIds,
+      scope,
+      env,
+      manifestPath,
+      catalogUrl: catalog.url,
+      runner,
+      tmpFactory,
+      confirm,
+      ...(force ? { force } : {}),
+      ...scannerOpts,
+    };
+
+    const result = await runUpdate(updateOpts);
+    print(result.output);
+  }
+
   return 0;
 }
 
@@ -1639,20 +1751,33 @@ async function resolveUpdateAvailable(
 ): Promise<string[]> {
   try {
     const config = await loadCliConfig(env);
-    const primaryCatalog = config.catalogs[0];
-    if (primaryCatalog === undefined) return [];
+    if (config.catalogs.length === 0) return [];
 
     const runner: CommandRunner = remote?.run ?? defaultRunner;
-    const remoteVersion = await resolveVersion(primaryCatalog.url, runner);
 
     const { readManifest } = await import('@agent-rigger/core/manifest');
     const manifestPath = resolveManifestPath(env);
     const manifest = await readManifest(manifestPath);
 
-    const staleIds = manifest.artifacts
-      .filter((e) => e.scope === scope && e.ref !== 'v0.0.0')
-      .filter((e) => isUpdateAvailable(e.ref, remoteVersion))
-      .map((e) => `  [update available]  ${e.id}  ${e.ref} → ${remoteVersion.ref}`);
+    // Check each configured catalog independently for stale entries.
+    // Best-effort: a failing catalog is silently skipped.
+    const staleIds: string[] = [];
+
+    for (const catalog of config.catalogs) {
+      try {
+        const remoteVersion = await resolveVersion(catalog.url, runner);
+        const prefix = catalog.name + '/';
+
+        const catalogStale = manifest.artifacts
+          .filter((e) => e.scope === scope && e.ref !== 'v0.0.0' && e.id.startsWith(prefix))
+          .filter((e) => isUpdateAvailable(e.ref, remoteVersion))
+          .map((e) => `  [update available]  ${e.id}  ${e.ref} → ${remoteVersion.ref}`);
+
+        staleIds.push(...catalogStale);
+      } catch {
+        // Network failure on this catalog — silently skip (best-effort).
+      }
+    }
 
     if (staleIds.length === 0) return [];
 
