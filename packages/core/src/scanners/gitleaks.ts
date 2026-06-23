@@ -48,16 +48,36 @@ export const defaultScanRunner: ScanRunner = async (command, args) => {
 };
 
 // ---------------------------------------------------------------------------
+// WhichFn — portable PATH lookup (no shell spawn)
+// ---------------------------------------------------------------------------
+
+/**
+ * Abstraction over `Bun.which` for injecting a test double.
+ * Returns the resolved executable path, or null when not found.
+ */
+export type WhichFn = (cmd: string) => string | null;
+
+/**
+ * Production implementation: delegates to `Bun.which`, which reads PATH
+ * directly without spawning a shell process — portable on Linux and macOS.
+ */
+export const defaultWhich: WhichFn = (cmd) => Bun.which(cmd);
+
+// ---------------------------------------------------------------------------
 // isGitleaksAvailable
 // ---------------------------------------------------------------------------
 
 /**
- * Returns true when `gitleaks` is found on PATH (`command -v gitleaks` exits 0).
- * Inject a mock runner in tests.
+ * Returns true when `gitleaks` is found on PATH.
+ *
+ * Uses `WhichFn` (default: `Bun.which`) instead of `command -v` to avoid
+ * spawning a shell builtin — `command` is not a standalone executable and
+ * causes ENOENT on Linux when used with Bun.spawn directly.
+ *
+ * Inject a mock WhichFn in tests.
  */
-export async function isGitleaksAvailable(run: ScanRunner): Promise<boolean> {
-  const { exitCode } = await run('command', ['-v', 'gitleaks']);
-  return exitCode === 0;
+export async function isGitleaksAvailable(which: WhichFn = defaultWhich): Promise<boolean> {
+  return which('gitleaks') !== null;
 }
 
 // ---------------------------------------------------------------------------

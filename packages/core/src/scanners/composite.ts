@@ -12,8 +12,13 @@
 
 import type { Scanner } from '../scan';
 import type { Verdict } from '../types';
-import type { ScanRunner } from './gitleaks';
-import { createGitleaksScanner, defaultScanRunner, isGitleaksAvailable } from './gitleaks';
+import type { ScanRunner, WhichFn } from './gitleaks';
+import {
+  createGitleaksScanner,
+  defaultScanRunner,
+  defaultWhich,
+  isGitleaksAvailable,
+} from './gitleaks';
 import { createTrivyScanner, isTrivyAvailable } from './trivy';
 
 // ---------------------------------------------------------------------------
@@ -21,7 +26,14 @@ import { createTrivyScanner, isTrivyAvailable } from './trivy';
 // ---------------------------------------------------------------------------
 
 export interface CompositeScannerOpts {
+  /** Runner for actual scan commands (gitleaks detect / trivy fs). */
   run?: ScanRunner;
+  /**
+   * PATH-lookup function for tool presence detection.
+   * Defaults to `Bun.which`-based `defaultWhich`.
+   * Inject a mock in tests to avoid spawning any process.
+   */
+  which?: WhichFn;
 }
 
 // ---------------------------------------------------------------------------
@@ -44,12 +56,13 @@ function prefixFindings(prefix: string, verdict: Verdict): string[] {
  */
 export function createCompositeScanner(opts?: CompositeScannerOpts): Scanner {
   const run = opts?.run ?? defaultScanRunner;
+  const which = opts?.which ?? defaultWhich;
 
   return {
     async scan(dir: string): Promise<Verdict> {
       const [gitleaksAvail, trivyAvail] = await Promise.all([
-        isGitleaksAvailable(run),
-        isTrivyAvailable(run),
+        isGitleaksAvailable(which),
+        isTrivyAvailable(which),
       ]);
 
       if (!gitleaksAvail && !trivyAvail) {

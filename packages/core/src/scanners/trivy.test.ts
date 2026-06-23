@@ -1,7 +1,8 @@
 /**
  * Tests for core/src/scanners/trivy.ts
  *
- * Strategy: inject a mock ScanRunner — no real trivy process is spawned.
+ * Strategy: inject a mock ScanRunner for scan calls, and a mock WhichFn for
+ * presence checks — no real trivy process is spawned.
  *
  * Coverage:
  *  - exit 0 / 1 secret               → { ok: false }, finding mentions RuleID
@@ -12,12 +13,12 @@
  *  - exit 0 / stdout empty            → { ok: true }
  *  - exit 2 / stderr "fatal"          → { ok: false }, finding mentions "trivy error"
  *  - exit 0 / non-JSON stdout         → { ok: false }, finding mentions "unparseable"
- *  - isTrivyAvailable: exit 0 → true ; non-0 → false
+ *  - isTrivyAvailable: which returns path → true ; returns null → false
  */
 
 import { describe, expect, it } from 'bun:test';
 
-import type { ScanRunner } from './gitleaks';
+import type { ScanRunner, WhichFn } from './gitleaks';
 import { createTrivyScanner, isTrivyAvailable } from './trivy';
 
 // ---------------------------------------------------------------------------
@@ -221,17 +222,29 @@ describe('createTrivyScanner — exit 0, non-JSON stdout', () => {
 });
 
 // ---------------------------------------------------------------------------
-// isTrivyAvailable
+// isTrivyAvailable — WhichFn-based (portable, no shell spawn)
 // ---------------------------------------------------------------------------
 
+const trivyWhichFound: WhichFn = () => '/usr/local/bin/trivy';
+const trivyWhichNotFound: WhichFn = () => null;
+
 describe('isTrivyAvailable', () => {
-  it('returns true when "command -v trivy" exits 0', async () => {
-    const available = await isTrivyAvailable(mockRunner(0, '/usr/local/bin/trivy'));
+  it('returns true when which returns a non-null path', async () => {
+    const available = await isTrivyAvailable(trivyWhichFound);
     expect(available).toBe(true);
   });
 
-  it('returns false when "command -v trivy" exits non-zero', async () => {
-    const available = await isTrivyAvailable(mockRunner(1, ''));
+  it('returns false when which returns null', async () => {
+    const available = await isTrivyAvailable(trivyWhichNotFound);
     expect(available).toBe(false);
+  });
+
+  it('passes "trivy" as the command to which', async () => {
+    let received: string | undefined;
+    await isTrivyAvailable((cmd) => {
+      received = cmd;
+      return '/usr/bin/trivy';
+    });
+    expect(received).toBe('trivy');
   });
 });
