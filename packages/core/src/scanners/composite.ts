@@ -4,8 +4,9 @@
  * Detects which security tools are available on the host (gitleaks / trivy),
  * runs them in parallel, and aggregates verdicts.
  *
- * Fail-closed policy:
- *  - If neither tool is present → { ok: false, findings: ['no security scanner available …'] }
+ * Policy (ADR-0018):
+ *  - If neither tool is present → { ok: true, degraded: true }
+ *    The install layer emits an actionable warning and proceeds (warn-only).
  *  - Each individual scanner's findings are prefixed with [gitleaks] or [trivy].
  *  - ok is true only when ALL running scanners return ok: true.
  */
@@ -66,12 +67,9 @@ export function createCompositeScanner(opts?: CompositeScannerOpts): Scanner {
       ]);
 
       if (!gitleaksAvail && !trivyAvail) {
-        return {
-          ok: false,
-          findings: [
-            'no security scanner available — install gitleaks or trivy to scan remote content',
-          ],
-        };
+        // ADR-0018: warn-only when no scanner is installed.
+        // The install layer decides to block or warn; the scanner only signals the mode.
+        return { ok: true, degraded: true };
       }
 
       const tasks: Promise<{ prefix: string; verdict: Verdict }>[] = [];

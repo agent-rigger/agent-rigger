@@ -228,21 +228,28 @@ describe('composite — only gitleaks present', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Neither present → fail-closed
+// Neither present → warn-only (degraded mode, ADR-0018)
 // ---------------------------------------------------------------------------
 
 describe('composite — neither present', () => {
-  it('returns { ok: false }', async () => {
+  it('returns { ok: true } (warn-only, no fail-closed on missing scanner)', async () => {
     const { which, run } = makeFixtures({ gitleaksPresent: false, trivyPresent: false });
     const scanner = createCompositeScanner({ run, which });
     const verdict = await scanner.scan('/tmp/project');
-    expect(verdict.ok).toBe(false);
+    expect(verdict.ok).toBe(true);
   });
 
-  it('finding mentions "no security scanner available"', async () => {
+  it('sets degraded: true when no scanner is available', async () => {
     const { which, run } = makeFixtures({ gitleaksPresent: false, trivyPresent: false });
     const scanner = createCompositeScanner({ run, which });
     const verdict = await scanner.scan('/tmp/project');
-    expect(verdict.findings?.[0]).toContain('no security scanner available');
+    expect(verdict.degraded).toBe(true);
+  });
+
+  it('does not set degraded when at least one scanner is available and clean', async () => {
+    const { which, run } = makeFixtures({ gitleaksPresent: true, trivyPresent: false });
+    const scanner = createCompositeScanner({ run, which });
+    const verdict = await scanner.scan('/tmp/project');
+    expect(verdict.degraded).toBeUndefined();
   });
 });

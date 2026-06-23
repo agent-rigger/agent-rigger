@@ -105,16 +105,18 @@ export function scanPathFor(entry: ArtifactEntry, baseDir: string): string | nul
  *
  * - Resolves each entry to a scan path (skills/agents only; others skipped naturally).
  * - Runs scanner.scan() in parallel via Promise.all.
- * - If any verdict is !ok and force is false → throws ScanBlockedError.
- * - If any verdict is !ok and force is true  → returns { warnings: [...] }.
- * - If all ok → returns { warnings: [] }.
+ * - If any verdict is degraded (no scanner tool installed) → actionable warning + proceeds.
+ *   force is NOT needed for this case (ADR-0018).
+ * - If any verdict is !ok (real findings, scanner present) and force is false → throws ScanBlockedError.
+ * - If any verdict is !ok and force is true → returns { warnings: [...] }.
+ * - If all ok and not degraded → returns { warnings: [] }.
  *
  * Callers prepend the warnings to their output.
  *
  * @param opts.entries  ArtifactEntry list to scan (entries without a checkout path are skipped).
  * @param opts.baseDir  Root of the remote checkout directory.
  * @param opts.scanner  Scanner instance to use.
- * @param opts.force    When true, blocking scan warns instead of throwing.
+ * @param opts.force    When true, a blocking scan (real findings) warns instead of throwing.
  */
 export async function scanEntries(opts: {
   entries: ArtifactEntry[];
@@ -149,22 +151,37 @@ export async function scanEntries(opts: {
 
   const verdicts = await Promise.all(uniquePaths.map((p) => scanner.scan(p)));
 
+  // Real findings from a present scanner (ok: false).
   const allFindings = verdicts.flatMap((v) => v.findings ?? []);
   const anyBlocked = verdicts.some((v) => !v.ok);
 
-  if (!anyBlocked) {
-    return { warnings: [] };
+  // Degraded mode: scanner returned ok: true but no tool is installed (ADR-0018).
+  // All verdicts are degraded — none ran a real scan.
+  const anyDegraded = verdicts.some((v) => v.degraded === true);
+
+  if (anyBlocked) {
+    if (!force) {
+      throw new ScanBlockedError(allFindings);
+    }
+
+    return {
+      warnings: [
+        `[warning] security scan findings (installed anyway via --force): ${
+          allFindings.join('; ')
+        }`,
+      ],
+    };
   }
 
-  if (!force) {
-    throw new ScanBlockedError(allFindings);
+  if (anyDegraded) {
+    return {
+      warnings: [
+        '[warning] contenu non scanné — installe gitleaks ou trivy puis relance pour un scan complet ; voir `rigger doctor`',
+      ],
+    };
   }
 
-  return {
-    warnings: [
-      `[warning] security scan findings (installed anyway via --force): ${allFindings.join('; ')}`,
-    ],
-  };
+  return { warnings: [] };
 }
 
 // ---------------------------------------------------------------------------
