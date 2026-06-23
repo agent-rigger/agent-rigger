@@ -22,14 +22,22 @@ import { parse as parseJsonc } from 'jsonc-parser';
 // Types
 // ---------------------------------------------------------------------------
 
+/** A single catalog entry in the multi-catalog list. */
+export interface CatalogEntry {
+  name: string;
+  url: string;
+}
+
 /** M0 CLI configuration shape. Keep soberly minimal — YAGNI. */
 export interface Config {
-  /** URL of the content repository. Fetch is M1; optional in M0. */
+  /** URL of the content repository. Fetch is M1; optional in M0. @deprecated — kept for M4 consumer migration; use catalogs[] instead. */
   catalogUrl?: string;
   /** Default installation scope. */
   defaultScope: 'user' | 'project';
   /** Authentication method used by preflight (F1). */
   authMethod?: 'provider-cli' | 'https' | 'ssh';
+  /** List of content catalogs (M1). Replaces catalogUrl when fully migrated in M4. */
+  catalogs: CatalogEntry[];
 }
 
 /**
@@ -84,6 +92,7 @@ export class InvalidConfigError extends Error {
 /** Factory returning the baseline Config. Used as the lowest-priority layer. */
 export const DEFAULT_CONFIG: Config = {
   defaultScope: 'user',
+  catalogs: [],
 };
 
 // ---------------------------------------------------------------------------
@@ -164,7 +173,7 @@ export function resolveConfig(layers: ConfigLayers): Config {
 // ---------------------------------------------------------------------------
 
 /** Known Config keys for safe mapping (unknown keys are stripped). */
-const KNOWN_KEYS = new Set<keyof Config>(['catalogUrl', 'defaultScope', 'authMethod']);
+const KNOWN_KEYS = new Set<keyof Config>(['catalogUrl', 'defaultScope', 'authMethod', 'catalogs']);
 
 /**
  * Read and parse a JSONC config file.
@@ -202,14 +211,37 @@ export async function loadConfigFile(filePath: string): Promise<Partial<Config>>
   const result: Partial<Config> = {};
 
   for (const key of KNOWN_KEYS) {
-    if (key in raw2) {
-      const value = raw2[key];
-      if (value !== undefined) {
-        // Type-safe: cast via the widened record, value is unknown but callers
-        // (resolveConfig) treat it as Partial<Config>, validated at runtime by TS.
-        (result as Record<string, unknown>)[key] = value;
+    if (!(key in raw2)) continue;
+
+    const value = raw2[key];
+    if (value === undefined) continue;
+
+    if (key === 'catalogs') {
+      // Validate: must be an array of objects with non-empty string url.
+      if (!Array.isArray(value)) continue;
+      const valid: CatalogEntry[] = [];
+      for (const entry of value) {
+        if (
+          entry !== null
+          && typeof entry === 'object'
+          && !Array.isArray(entry)
+          && typeof (entry as Record<string, unknown>)['name'] === 'string'
+          && typeof (entry as Record<string, unknown>)['url'] === 'string'
+          && ((entry as Record<string, unknown>)['url'] as string) !== ''
+        ) {
+          valid.push({
+            name: (entry as Record<string, unknown>)['name'] as string,
+            url: (entry as Record<string, unknown>)['url'] as string,
+          });
+        }
       }
+      result.catalogs = valid;
+      continue;
     }
+
+    // Type-safe: cast via the widened record, value is unknown but callers
+    // (resolveConfig) treat it as Partial<Config>, validated at runtime by TS.
+    (result as Record<string, unknown>)[key] = value;
   }
 
   return result;
