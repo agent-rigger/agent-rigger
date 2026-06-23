@@ -1374,22 +1374,21 @@ describe('runCli — ls with remote catalog configured', () => {
     // no built-in entries — catalog is remote-only
   });
 
-  it('ls shows remote entry via catalog ls alias', async () => {
-    const remoteEntries = [makeRemoteEntry('skill:remote-alias')];
+  it('catalog ls lists configured sources (name + url), not catalog entries', async () => {
+    // M5: `catalog ls` now lists configured sources (config.catalogs[]), not artifact entries.
+    // Use top-level `ls` to list artifact entries.
     const cap = makeCapture();
 
     const code = await runCli(['catalog', 'ls'], {
       print: cap.print,
       env: { RIGGER_HOME: tmp.dir },
-      remote: {
-        run: makeSuccessRunner(),
-        tmpFactory: makeFakeTmpFactory(catalogDir, remoteEntries),
-      },
     });
 
     expect(code).toBe(0);
     const out = cap.lines.join('\n');
-    expect(out).toContain('principal/skill:remote-alias');
+    // Shows the configured source name + url
+    expect(out).toContain('principal');
+    expect(out).toContain('https://example.com/catalog.git');
   });
 });
 

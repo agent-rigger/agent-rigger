@@ -45,6 +45,7 @@ import { type CommandRunner, defaultRunner } from '@agent-rigger/catalog/tool-ch
 import { buildClaudeAdapter } from './adapter-builder';
 export { buildClaudeAdapter } from './adapter-builder';
 export type { BuildClaudeAdapterOpts } from './adapter-builder';
+import { runCatalog } from './cmd-catalog';
 import { runCheck } from './cmd-check';
 import { runDoctor } from './cmd-doctor';
 import { runInit } from './cmd-init';
@@ -190,7 +191,9 @@ Workflow commands:
 
 Discovery commands:
   ls                       List all catalog entries with install status.
-  catalog ls               Same as ls.
+  catalog ls               List configured catalog sources (name + url).
+  catalog add <n> <url>    Add a catalog source (name must be unique).
+  catalog remove <name>    Remove a catalog source by name.
 
 Update commands:
   update <id...>           Update specified external artifact ids to the latest remote version.
@@ -723,6 +726,14 @@ async function handleResourceCommand(opts: ResourceCommandOpts): Promise<number>
   const { resource, verb, ids, flags, scope, env, print, deps } = opts;
 
   const natureMapped = RESOURCE_NATURE_MAP[resource] ?? 'catalog';
+
+  // ----- catalog source management: ls, add, remove -----
+  // Intercept before artifact-level routing so that `catalog add/remove` manage
+  // configured sources (config.catalogs[]) rather than artifact entries.
+  if (resource === 'catalog' && (verb === 'add' || verb === 'remove' || verb === 'ls')) {
+    const configPath = resolveConfigPath(env);
+    return runCatalog({ verb, args: ids, configPath, print });
+  }
 
   // ----- <resource> ls -----
   if (verb === 'ls' || verb === undefined) {
