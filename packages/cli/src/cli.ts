@@ -67,6 +67,142 @@ import { renderEntryInfo } from './ui';
 const CLI_VERSION = '0.0.0';
 
 // ---------------------------------------------------------------------------
+// isAdHocTarget — detect whether an arg is a URL or local path (not a qualified id)
+// ---------------------------------------------------------------------------
+
+/**
+ * Known git hosting prefixes that indicate a remote URL even without a scheme.
+ * We only check for prefixes that unambiguously denote a remote git host.
+ */
+const GIT_HOST_PREFIXES = ['github.com/', 'gitlab.com/', 'bitbucket.org/'];
+
+/**
+ * Return true when `arg` should be treated as an ad-hoc install target
+ * (a URL or a local filesystem path) rather than a qualified catalog id.
+ *
+ * Detection rules (in priority order):
+ * 1. Contains `://`                  → URL (http/https/git/ssh/…)
+ * 2. Starts with `git@`              → SSH git URL
+ * 3. Ends with `.git`                → git clone URL (bare)
+ * 4. Starts with `./`, `/`, or `~/`  → local filesystem path
+ * 5. Matches a known git host prefix → bare git URL (no scheme)
+ *
+ * A qualified id has the form `<prefix>/<nature>:<name>` and always contains `/`
+ * AND `:`. Such an arg passes none of the above rules and falls through as NOT
+ * ad-hoc. A bare id (`skill:foo`) also passes none of the rules.
+ */
+export function isAdHocTarget(arg: string): boolean {
+  if (arg.includes('://')) return true;
+  if (arg.startsWith('git@')) return true;
+  if (arg.endsWith('.git')) return true;
+  if (arg.startsWith('./') || arg.startsWith('/') || arg.startsWith('~/')) return true;
+  for (const prefix of GIT_HOST_PREFIXES) {
+    if (arg.startsWith(prefix)) return true;
+  }
+  return false;
+}
+
+// ---------------------------------------------------------------------------
+// deriveAdHocPrefix — derive a sanitised source prefix from a URL or path
+// ---------------------------------------------------------------------------
+
+/**
+ * Sanitise a raw string to `[a-z0-9-]`: lowercase, replace non-alphanumeric
+ * (except `-`) with `-`, then collapse consecutive `-` and trim leading/trailing `-`.
+ */
+function sanitizeSegment(raw: string): string {
+  return raw
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, '-')
+    .replace(/-{2,}/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+/**
+ * Strip the TLD from a hostname.
+ *
+ * Examples:
+ *   'custom.host'    → 'host'   (last label before TLD dropped)
+ *   'bitbucket.org'  → 'bitbucket'
+ *   'example.com'    → 'example'
+ *
+ * We keep only the second-to-last label (the SLD) when the hostname has exactly
+ * two labels. For deeper hostnames (sub.example.com) we also return the SLD.
+ * `github` and `gitlab` are handled by their dedicated cases before this is called.
+ */
+function hostWithoutTld(host: string): string {
+  const parts = host.split('.');
+  // For 'bitbucket.org' → ['bitbucket', 'org'] → 'bitbucket'
+  // For 'custom.host' → ['custom', 'host'] → 'custom'
+  // For 'sub.example.com' → ['sub', 'example', 'com'] → 'example'
+  if (parts.length >= 2) {
+    const idx = parts.length - 2;
+    return parts[idx] as string;
+  }
+  return host;
+}
+
+/**
+ * Derive the ad-hoc source prefix from a URL or local path.
+ *
+ * Rules:
+ *  - `github.com/<owner>/<repo>(.git)` → `gh-<repo>`
+ *  - `gitlab.com/<owner>/<repo>(.git)` → `glab-<repo>`
+ *  - other host `<host>/<owner>/<repo>(.git)` → `<host-sans-TLD>-<repo>`
+ *  - local path (starts with `.`, `/`, `~`) → `local-<basename-no-.git>`
+ *
+ * All output segments are sanitised to `[a-z0-9-]` with no consecutive `-`.
+ */
+export function deriveAdHocPrefix(source: string): string {
+  // ── Local path ──────────────────────────────────────────────────────────
+  const isLocal = source.startsWith('./') || source.startsWith('/') || source.startsWith('~/');
+  if (isLocal) {
+    const base = path.basename(source).replace(/\.git$/, '');
+    return `local-${sanitizeSegment(base)}`;
+  }
+
+  // ── Normalise: strip scheme and git@ prefix to get a plain host/path string ──
+  // https://github.com/owner/repo.git → github.com/owner/repo.git
+  // git@github.com:owner/repo.git     → github.com/owner/repo.git
+  let normalised = source;
+  const schemeMatch = /^[a-z][a-z0-9+.-]*:\/\//i.exec(source);
+  if (schemeMatch !== null) {
+    normalised = source.slice(schemeMatch[0].length);
+  } else if (source.startsWith('git@')) {
+    // git@github.com:owner/repo.git → github.com/owner/repo.git
+    normalised = source.slice(4).replace(':', '/');
+  }
+
+  // ── Extract host and repo name ───────────────────────────────────────────
+  const slashIdx = normalised.indexOf('/');
+  if (slashIdx === -1) {
+    // e.g. just 'github.com' — unlikely but safe
+    return sanitizeSegment(normalised);
+  }
+
+  const host = normalised.slice(0, slashIdx);
+  // path after host: 'owner/repo.git' or 'owner/repo'
+  const rest = normalised.slice(slashIdx + 1);
+
+  // Repo name = last path segment, strip .git
+  const lastSlash = rest.lastIndexOf('/');
+  const rawRepo = lastSlash === -1 ? rest : rest.slice(lastSlash + 1);
+  const repo = sanitizeSegment(rawRepo.replace(/\.git$/, ''));
+
+  // ── Determine host-specific prefix ──────────────────────────────────────
+  const hostLower = host.toLowerCase();
+  if (hostLower === 'github.com') {
+    return `gh-${repo}`;
+  }
+  if (hostLower === 'gitlab.com') {
+    return `glab-${repo}`;
+  }
+
+  const sld = sanitizeSegment(hostWithoutTld(hostLower));
+  return `${sld}-${repo}`;
+}
+
+// ---------------------------------------------------------------------------
 // parseArgs
 // ---------------------------------------------------------------------------
 
@@ -187,6 +323,9 @@ Workflow commands:
   install                  Install selected artifacts interactively.
   install <id...>          Install specified artifact ids non-interactively.
   install <id...> --yes    Install without confirmation prompt.
+  install <url|path>       Install ad-hoc from a URL or local path (content is scanned).
+  install <url|path> --force
+                           Install despite scan findings (warn + proceed).
   init                     First-launch wizard: configure catalog URL and auth method.
 
 Discovery commands:
@@ -1126,6 +1265,13 @@ async function handleInstall(opts: HandleInstallOpts): Promise<number> {
 
   // Non-interactive: ids provided on the command line
   if (ids.length > 0) {
+    // Ad-hoc install: single URL or local path — routed before the qualified-id checks.
+    // We only support one ad-hoc target per invocation (unambiguous, scannable, qualifiable).
+    const firstId = ids[0] as string;
+    if (ids.length === 1 && isAdHocTarget(firstId)) {
+      return handleAdHocInstall({ source: firstId, flags, scope, env, print, deps });
+    }
+
     // Reject unqualified ids immediately with an actionable error (ADR-0017 §5).
     const unqualifiedInstallIds = ids.filter((id) => !id.includes('/'));
     if (unqualifiedInstallIds.length > 0) {
@@ -1237,6 +1383,109 @@ async function handleInstall(opts: HandleInstallOpts): Promise<number> {
 
   // No catalogs configured → actionable message
   print('aucun catalog configuré — lance `agent-rigger init`');
+  return 0;
+}
+
+// ---------------------------------------------------------------------------
+// handleAdHocInstall — install from a URL or local path outside configured catalogs
+// ---------------------------------------------------------------------------
+
+interface HandleAdHocInstallOpts {
+  source: string;
+  flags: Record<string, string | boolean>;
+  scope: 'user' | 'project';
+  env: Env;
+  print: (msg: string) => void;
+  deps: CliDeps;
+}
+
+/**
+ * Install content from an ad-hoc URL or local path (R8).
+ *
+ * The content is treated as untrusted (ADR-0018):
+ * - The composite scanner runs over all fetchable entries.
+ * - If no scanner tool is installed: warn-only, install proceeds (ADR-0018).
+ * - If the scanner finds issues and --force is absent: blocks with ScanBlockedError.
+ * - If --force: emits warning and proceeds.
+ *
+ * The source prefix is derived from the URL/path hostname+repo (deriveAdHocPrefix)
+ * and used to qualify all installed ids, so the manifest stores
+ * `<derived-prefix>/<nature:name>` (ADR-0017 provenance).
+ *
+ * Flow:
+ * 1. Fetch the remote catalog (lightweight checkout via fetchRemoteCatalog).
+ * 2. Qualify entries with the derived prefix.
+ * 3. Show a picker (interactive) or select all (--yes / non-TTY).
+ * 4. Call runRemoteInstall with the selected ids and derivedPrefix as sourceName —
+ *    runRemoteInstall performs the real checkout, scan, and install.
+ */
+async function handleAdHocInstall(opts: HandleAdHocInstallOpts): Promise<number> {
+  const { source, flags, scope, env, print, deps } = opts;
+
+  const yes = flags['yes'] === true;
+  const force = flags['force'] === true;
+
+  const derivedPrefix = deriveAdHocPrefix(source);
+
+  const runner: CommandRunner = deps.remote?.run ?? defaultRunner;
+  const tmpFactory: TmpDirFactory = deps.remote?.tmpFactory ?? defaultTmpFactory;
+  const manifestPath = resolveManifestPath(env);
+
+  // Step 1: fetch the catalog to enumerate available entries.
+  const remoteCatalog = await fetchRemoteCatalog({ url: source, run: runner, tmpFactory });
+
+  // Step 2: qualify entries so the picker shows fully-qualified ids.
+  const qualifiedEntries = qualifyEntries(derivedPrefix, remoteCatalog.entries);
+
+  // Step 3: select which entries to install.
+  let selectedIds: string[];
+  if (yes || !process.stdout.isTTY) {
+    // Non-interactive: install all entries from the remote catalog.
+    selectedIds = qualifiedEntries.map((e) => e.id);
+  } else {
+    // Interactive: show picker.
+    const prompts = deps.prompts ?? (await importUiPrompts());
+    selectedIds = await prompts.selectArtifacts(qualifiedEntries);
+    if (selectedIds.length === 0) {
+      print('No artifacts selected — nothing to install.');
+      return 0;
+    }
+  }
+
+  if (selectedIds.length === 0) {
+    print('Remote catalog is empty — nothing to install.');
+    return 0;
+  }
+
+  // Confirmation strategy (mirrors handleInstall non-interactive path).
+  let confirm: boolean | ((planText: string) => Promise<boolean>);
+  if (yes) {
+    confirm = true;
+  } else {
+    const prompts = deps.prompts ?? (await importUiPrompts());
+    confirm = (planText: string) => prompts.confirmApply(planText);
+  }
+
+  // Step 4: run the actual install. runRemoteInstall re-fetches via withRemoteCheckout,
+  // runs scanEntries (mandatory for ad-hoc — untrusted content), qualifies with
+  // derivedPrefix as sourceName, and writes to the manifest.
+  const remoteOpts = {
+    ids: selectedIds,
+    catalogUrl: source,
+    sourceName: derivedPrefix,
+    scope,
+    env,
+    manifestPath,
+    runner,
+    tmpFactory,
+    confirm,
+    ...(force ? { force } : {}),
+    ...(deps.remote?.scanner === undefined ? {} : { scanner: deps.remote.scanner }),
+  };
+
+  const result = await runRemoteInstall(remoteOpts);
+
+  print(result.output);
   return 0;
 }
 
