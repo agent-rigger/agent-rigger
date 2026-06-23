@@ -86,7 +86,7 @@ async function makeIsolatedEnv(opts: {
   if (withCatalogUrl) {
     await fs.writeFile(
       path.join(configDir, 'config.json'),
-      JSON.stringify({ catalogUrl: 'https://example.com/catalog.git' }),
+      JSON.stringify({ catalogs: [{ name: 'principal', url: 'https://example.com/catalog.git' }] }),
       'utf8',
     );
   }
@@ -179,7 +179,7 @@ afterEach(async () => {
 async function preInstall(env: Env, tag: string, sha: string) {
   iso.setRemoteTag(tag, sha);
   const cap = makeCapture();
-  await runCli(['install', 'skill:remote-demo', '--yes'], {
+  await runCli(['install', 'principal/skill:remote-demo', '--yes'], {
     print: cap.print,
     env,
     remote: { run: iso.makeRunner(), tmpFactory: iso.makeTmpFactory(), scanner: stubScanner },
@@ -196,7 +196,7 @@ describe('update routing — top-level `update <id...> --yes`', () => {
     iso.setRemoteTag(TAG_V1_1_0, SHA_V1_1_0);
 
     const cap = makeCapture();
-    const code = await runCli(['update', 'skill:remote-demo', '--yes'], {
+    const code = await runCli(['update', 'principal/skill:remote-demo', '--yes'], {
       print: cap.print,
       env: iso.env,
       remote: { run: iso.makeRunner(), tmpFactory: iso.makeTmpFactory(), scanner: stubScanner },
@@ -210,7 +210,7 @@ describe('update routing — top-level `update <id...> --yes`', () => {
     iso.setRemoteTag(TAG_V1_1_0, SHA_V1_1_0);
 
     const cap = makeCapture();
-    await runCli(['update', 'skill:remote-demo', '--yes'], {
+    await runCli(['update', 'principal/skill:remote-demo', '--yes'], {
       print: cap.print,
       env: iso.env,
       remote: { run: iso.makeRunner(), tmpFactory: iso.makeTmpFactory(), scanner: stubScanner },
@@ -220,7 +220,7 @@ describe('update routing — top-level `update <id...> --yes`', () => {
     const manifest = JSON.parse(raw) as {
       artifacts: Array<{ id: string; ref?: string }>;
     };
-    const entry = manifest.artifacts.find((a) => a.id === 'skill:remote-demo');
+    const entry = manifest.artifacts.find((a) => a.id === 'principal/skill:remote-demo');
     expect(entry?.ref).toBe(TAG_V1_1_0);
   });
 
@@ -229,7 +229,7 @@ describe('update routing — top-level `update <id...> --yes`', () => {
     iso.setRemoteTag(TAG_V1_1_0, SHA_V1_1_0);
 
     const cap = makeCapture();
-    await runCli(['update', 'skill:remote-demo', '--yes'], {
+    await runCli(['update', 'principal/skill:remote-demo', '--yes'], {
       print: cap.print,
       env: iso.env,
       remote: { run: iso.makeRunner(), tmpFactory: iso.makeTmpFactory(), scanner: stubScanner },
@@ -246,7 +246,7 @@ describe('update routing — `skills update <id> --yes`', () => {
     iso.setRemoteTag(TAG_V1_1_0, SHA_V1_1_0);
 
     const cap = makeCapture();
-    const code = await runCli(['skills', 'update', 'skill:remote-demo', '--yes'], {
+    const code = await runCli(['skills', 'update', 'principal/skill:remote-demo', '--yes'], {
       print: cap.print,
       env: iso.env,
       remote: { run: iso.makeRunner(), tmpFactory: iso.makeTmpFactory(), scanner: stubScanner },
@@ -260,7 +260,7 @@ describe('update routing — `skills update <id> --yes`', () => {
     iso.setRemoteTag(TAG_V1_1_0, SHA_V1_1_0);
 
     const cap = makeCapture();
-    await runCli(['skills', 'update', 'skill:remote-demo', '--yes'], {
+    await runCli(['skills', 'update', 'principal/skill:remote-demo', '--yes'], {
       print: cap.print,
       env: iso.env,
       remote: { run: iso.makeRunner(), tmpFactory: iso.makeTmpFactory(), scanner: stubScanner },
@@ -268,7 +268,7 @@ describe('update routing — `skills update <id> --yes`', () => {
 
     const raw = await fs.readFile(targets.stateJson, 'utf8');
     const manifest = JSON.parse(raw) as { artifacts: Array<{ id: string; ref?: string }> };
-    const entry = manifest.artifacts.find((a) => a.id === 'skill:remote-demo');
+    const entry = manifest.artifacts.find((a) => a.id === 'principal/skill:remote-demo');
     expect(entry?.ref).toBe(TAG_V1_1_0);
   });
 });
@@ -278,7 +278,7 @@ describe('update routing — no catalogUrl → exit 2', () => {
     const noUrlIso = await makeIsolatedEnv({ withCatalogUrl: false });
     try {
       const cap = makeCapture();
-      const code = await runCli(['update', 'skill:remote-demo', '--yes'], {
+      const code = await runCli(['update', 'principal/skill:remote-demo', '--yes'], {
         print: cap.print,
         env: noUrlIso.env,
         remote: {
@@ -297,7 +297,7 @@ describe('update routing — no catalogUrl → exit 2', () => {
     const noUrlIso = await makeIsolatedEnv({ withCatalogUrl: false });
     try {
       const cap = makeCapture();
-      await runCli(['update', 'skill:remote-demo', '--yes'], {
+      await runCli(['update', 'principal/skill:remote-demo', '--yes'], {
         print: cap.print,
         env: noUrlIso.env,
         remote: {
@@ -318,7 +318,7 @@ describe('update routing — internal entry → exit 0, skipped', () => {
   it('returns exit 0 for internal entry (no remote version)', async () => {
     // guardrails-claude is internal — not in manifest as external
     const cap = makeCapture();
-    const code = await runCli(['update', 'guardrails-claude', '--yes'], {
+    const code = await runCli(['update', 'principal/guardrails-claude', '--yes'], {
       print: cap.print,
       env: iso.env,
       remote: { run: iso.makeRunner(), tmpFactory: iso.makeTmpFactory(), scanner: stubScanner },
@@ -329,7 +329,7 @@ describe('update routing — internal entry → exit 0, skipped', () => {
 
   it('output mentions skipped for internal entry', async () => {
     const cap = makeCapture();
-    await runCli(['update', 'guardrails-claude', '--yes'], {
+    await runCli(['update', 'principal/guardrails-claude', '--yes'], {
       print: cap.print,
       env: iso.env,
       remote: { run: iso.makeRunner(), tmpFactory: iso.makeTmpFactory(), scanner: stubScanner },
@@ -344,7 +344,7 @@ describe('update routing — wrong nature id → exit 2', () => {
     await preInstall(iso.env, TAG_V1_0_0, SHA_V1_0_0);
 
     const cap = makeCapture();
-    const code = await runCli(['guardrails', 'update', 'skill:remote-demo', '--yes'], {
+    const code = await runCli(['guardrails', 'update', 'principal/skill:remote-demo', '--yes'], {
       print: cap.print,
       env: iso.env,
       remote: { run: iso.makeRunner(), tmpFactory: iso.makeTmpFactory(), scanner: stubScanner },
@@ -357,7 +357,7 @@ describe('update routing — wrong nature id → exit 2', () => {
     await preInstall(iso.env, TAG_V1_0_0, SHA_V1_0_0);
 
     const cap = makeCapture();
-    await runCli(['guardrails', 'update', 'skill:remote-demo', '--yes'], {
+    await runCli(['guardrails', 'update', 'principal/skill:remote-demo', '--yes'], {
       print: cap.print,
       env: iso.env,
       remote: { run: iso.makeRunner(), tmpFactory: iso.makeTmpFactory(), scanner: stubScanner },

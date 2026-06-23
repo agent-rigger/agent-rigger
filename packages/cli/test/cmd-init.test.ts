@@ -99,7 +99,7 @@ describe('runInit — fresh init, ambient probe OK', () => {
     expect(result.ok).toBe(true);
   });
 
-  it('persists the catalogUrl to the config file', async () => {
+  it('persists the catalog url into catalogs[] in the config file', async () => {
     const configPath = path.join(tmpDir, 'rigger.jsonc');
     const url = 'https://github.com/org/catalog.git';
 
@@ -111,7 +111,8 @@ describe('runInit — fresh init, ambient probe OK', () => {
     });
 
     const saved = await loadConfigFile(configPath);
-    expect(saved.catalogUrl).toBe(url);
+    expect(saved.catalogs?.[0]?.url).toBe(url);
+    expect(saved.catalogs?.[0]?.name).toBe('principal');
   });
 
   it('config file exists after init (parent dirs created)', async () => {
@@ -250,10 +251,10 @@ describe('runInit — idempotence (second run)', () => {
     });
 
     expect(result2.ok).toBe(true);
-    expect(result2.config.catalogUrl).toBe(url2);
+    expect(result2.config.catalogs[0]?.url).toBe(url2);
 
     const saved = await loadConfigFile(configPath);
-    expect(saved.catalogUrl).toBe(url2);
+    expect(saved.catalogs?.[0]?.url).toBe(url2);
     // authMethod set in first run should be preserved (ambient OK → no new method)
     expect(saved.authMethod).toBe('provider-cli');
   });
@@ -282,10 +283,11 @@ describe('runInit — idempotence (second run)', () => {
     expect(result2.config.defaultScope).toBe('user');
   });
 
-  it('reading existing config before probe (idempotent start)', async () => {
+  it('re-init from legacy catalogUrl config: runInit treats it as empty + overwrites with catalogs[]', async () => {
     const configPath = path.join(tmpDir, 'rigger.jsonc');
 
-    // Write a pre-existing config with a different URL
+    // Write a legacy config with catalogUrl (no catalogs[]) — runInit must handle LegacyConfigError
+    // gracefully (treat existing as {}) and persist the new url as catalogs[].
     await Bun.write(
       configPath,
       JSON.stringify({ catalogUrl: 'https://old.example.com', defaultScope: 'project' }),
@@ -299,10 +301,10 @@ describe('runInit — idempotence (second run)', () => {
     });
 
     expect(result.ok).toBe(true);
-    expect(result.config.catalogUrl).toBe('https://new.example.com');
+    expect(result.config.catalogs[0]?.url).toBe('https://new.example.com');
 
     const saved = await loadConfigFile(configPath);
-    expect(saved.catalogUrl).toBe('https://new.example.com');
+    expect(saved.catalogs?.[0]?.url).toBe('https://new.example.com');
   });
 });
 

@@ -34,8 +34,9 @@ import type { Scanner } from '@agent-rigger/core/scan';
 import {
   type CatalogEntry,
   fetchCatalog,
+  foldCatalogs,
   isUpdateAvailable,
-  mergeCatalogs,
+  qualifyEntries,
   resolveVersion,
   type TmpDirFactory,
 } from '@agent-rigger/catalog';
@@ -52,9 +53,9 @@ import type { RunLsResult } from './cmd-ls';
 import { RESOURCE_NATURE_MAP, runLs } from './cmd-ls';
 import { runRemove, UnknownRemoveIdError } from './cmd-remove';
 import { runUpdate } from './cmd-update';
-import { loadConfig } from './config';
+import { LegacyConfigError, loadConfig } from './config';
 import { PreflightAuthError } from './preflight-auth';
-import { CatalogUrlMissingError, defaultTmpFactory, fetchRemoteCatalog } from './remote';
+import { defaultTmpFactory, fetchRemoteCatalog } from './remote';
 import { runRemoteInstall, ScanBlockedError } from './remote-install';
 import { renderEntryInfo } from './ui';
 
@@ -323,53 +324,85 @@ async function loadCliConfig(env: Env): Promise<Awaited<ReturnType<typeof loadCo
 }
 
 // ---------------------------------------------------------------------------
-// resolveEffectiveCatalog — remote only (no builtin fallback)
+// resolveEffectiveCatalog — multi-source, parallel fetch, per-source degradation
 // ---------------------------------------------------------------------------
 
 /**
- * Resolve the effective catalog for ls commands.
+ * Resolve the effective catalog by fetching all configured sources in parallel.
  *
- * - Loads the user config to check for a catalogUrl.
- * - If catalogUrl is configured, attempts to fetch the remote catalog.
- *   On fetch failure: prints a warning and returns [] (empty, actionable).
- * - If no catalogUrl is configured: returns [] with an actionable message.
+ * - Loads the user config to obtain config.catalogs[].
+ * - If no catalogs are configured: prints actionable message and returns [].
+ * - For each source: fetches in parallel, applies qualifyEntries(name, entries).
+ *   On per-source failure → warning (name + url + error) + continues with others.
+ * - Folds all qualified arrays via foldCatalogs(sources).
+ * - Reports id collisions (same qualified id in multiple sources) as a warning.
  */
 async function resolveEffectiveCatalog(
   env: Env,
   print: (msg: string) => void,
   remote: CliDeps['remote'],
 ): Promise<CatalogEntry[]> {
-  const config = await loadCliConfig(env);
+  let config: Awaited<ReturnType<typeof loadCliConfig>>;
+  try {
+    config = await loadCliConfig(env);
+  } catch (err) {
+    if (err instanceof LegacyConfigError) {
+      print(
+        `[warning] ${err.message}`,
+      );
+      return [];
+    }
+    throw err;
+  }
 
-  if (!config.catalogUrl) {
+  if (config.catalogs.length === 0) {
     print('aucun catalog configuré — lance `agent-rigger init`');
     return [];
   }
 
-  const remoteFetchOpts: Parameters<typeof fetchRemoteCatalog>[0] = {
-    catalogUrl: config.catalogUrl,
-  };
-  if (remote?.run !== undefined) remoteFetchOpts.run = remote.run;
-  if (remote?.tmpFactory !== undefined) remoteFetchOpts.tmpFactory = remote.tmpFactory;
+  const run: CommandRunner | undefined = remote?.run;
+  const tmpFactory: TmpDirFactory | undefined = remote?.tmpFactory;
 
-  try {
-    const { entries } = await fetchRemoteCatalog(remoteFetchOpts);
-    const effective = mergeCatalogs([], entries);
-    if (effective.conflicts.length > 0) {
-      print(
-        `[warning] ${effective.conflicts.length} remote entr${
-          effective.conflicts.length === 1 ? 'y' : 'ies'
-        } deduplicated (duplicate ids discarded): ${effective.conflicts.join(', ')}`,
-      );
-    }
-    return effective.entries;
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
+  // Fetch all sources in parallel; degrade per-source on failure.
+  // Each source's entries are immediately qualified with its name (ADR-0017):
+  // 'skill:foo' from source 'principal' → 'principal/skill:foo'.
+  // foldCatalogs then deduplicates and detects collisions on qualified ids.
+  const sourceResults = await Promise.all(
+    config.catalogs.map(async (source) => {
+      try {
+        const fetchOpts: Parameters<typeof fetchRemoteCatalog>[0] = { url: source.url };
+        if (run !== undefined) fetchOpts.run = run;
+        if (tmpFactory !== undefined) fetchOpts.tmpFactory = tmpFactory;
+
+        const { entries } = await fetchRemoteCatalog(fetchOpts);
+        return {
+          name: source.name,
+          entries: qualifyEntries(source.name, entries),
+          ok: true,
+        };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        print(
+          `[warning] Catalog "${source.name}" (${source.url}) indisponible (${msg}). `
+            + `Vérifie l'URL ou relance \`agent-rigger init\`.`,
+        );
+        return { name: source.name, entries: [] as CatalogEntry[], ok: false };
+      }
+    }),
+  );
+
+  // Fold all qualified sources; first source wins on collision.
+  const effective = foldCatalogs(sourceResults.map((r) => r.entries));
+
+  if (effective.conflicts.length > 0) {
     print(
-      `[warning] Catalog distant indisponible (${msg}). Vérifie l'URL ou relance \`agent-rigger init\`.`,
+      `[warning] ${effective.conflicts.length} catalog entr${
+        effective.conflicts.length === 1 ? 'y' : 'ies'
+      } deduplicated (duplicate qualified ids discarded): ${effective.conflicts.join(', ')}`,
     );
-    return [];
   }
+
+  return effective.entries;
 }
 
 // ---------------------------------------------------------------------------
@@ -558,9 +591,15 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
         proposeInstallFn = async (catalog: CatalogProposal): Promise<string[]> => {
           const { selectArtifactsWithDefaults } = await import('./ui');
 
-          const required = new Set(catalog.meta.required ?? []);
-          const recommended = new Set(catalog.meta.recommended ?? []);
+          // Qualify meta.required/recommended with the source name so that they
+          // match the qualified entries in the picker (ADR-0017).
+          const sourceName = catalog.sourceName ?? '';
+          const qualify = (id: string): string =>
+            sourceName !== '' && !id.includes('/') ? `${sourceName}/${id}` : id;
+          const required = new Set((catalog.meta.required ?? []).map(qualify));
+          const recommended = new Set((catalog.meta.recommended ?? []).map(qualify));
 
+          // catalog.entries are already qualified (fetchCatalogFn returns qualified entries).
           const selectedIds = await selectArtifactsWithDefaults(catalog.entries, {
             required,
             recommended,
@@ -572,17 +611,19 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
 
           // Launch the actual install using the same remote path as `install` command.
           const initConfig = await loadCliConfig(env);
-          const catalogUrl = initConfig.catalogUrl ?? '';
+          const initPrimary = initConfig.catalogs[0];
 
-          if (catalogUrl === '') {
+          if (initPrimary === undefined) {
             return [];
           }
 
+          const catalogUrl = initPrimary.url;
           const initManifestPath = resolveManifestPath(env);
 
           await runRemoteInstall({
             ids: selectedIds,
             catalogUrl,
+            sourceName: initPrimary.name,
             scope,
             env,
             manifestPath: initManifestPath,
@@ -610,7 +651,22 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
             runner,
             { tmpFactory },
           );
-          return { meta, entries };
+          // Determine the source name by loading the just-saved config (runInit
+          // persists catalogs[] before calling fetchCatalogFn). Fall back to
+          // 'principal' which is the name cmd-init.ts always assigns.
+          let sourceName = 'principal';
+          try {
+            const initConf = await loadCliConfig(env);
+            const primary = initConf.catalogs[0];
+            if (primary !== undefined) sourceName = primary.name;
+          } catch {
+            // Config not yet saved or unreadable — keep 'principal' as fallback.
+          }
+          return {
+            meta,
+            entries: qualifyEntries(sourceName, entries),
+            sourceName,
+          };
         };
 
       // Adapt the catalog CommandRunner (optional stdout/stderr, optional args)
@@ -691,8 +747,20 @@ async function handleResourceCommand(opts: ResourceCommandOpts): Promise<number>
       return 2;
     }
 
-    // Validate each id belongs to the resource — check against effective catalog
+    // Validate each id belongs to the resource — strict qualified match (ADR-0017 §5).
     const effectiveCatalog = await resolveEffectiveCatalog(env, print, deps.remote);
+
+    // Reject unqualified ids immediately with an actionable error.
+    const unqualifiedIds = ids.filter((id) => !id.includes('/'));
+    if (unqualifiedIds.length > 0) {
+      for (const id of unqualifiedIds) {
+        print(
+          `[error] id non qualifié "${id}" — utilise \`<catalog>/${id}\` (voir \`agent-rigger ls\`)`,
+        );
+      }
+      return 2;
+    }
+
     const invalidIds = ids.filter((id) => {
       const entry = effectiveCatalog.find((e) => e.id === id);
       if (entry === undefined) return false; // will fail at resolve time with a better error
@@ -719,6 +787,14 @@ async function handleResourceCommand(opts: ResourceCommandOpts): Promise<number>
       return 2;
     }
 
+    // Reject unqualified id immediately with an actionable error (ADR-0017 §5).
+    if (!id.includes('/')) {
+      print(
+        `[error] id non qualifié "${id}" — utilise \`<catalog>/${id}\` (voir \`agent-rigger ls\`)`,
+      );
+      return 2;
+    }
+
     const effectiveCatalog = await resolveEffectiveCatalog(env, print, deps.remote);
     const entry = effectiveCatalog.find((e) => e.id === id);
     if (entry === undefined) {
@@ -726,13 +802,14 @@ async function handleResourceCommand(opts: ResourceCommandOpts): Promise<number>
       return 2;
     }
 
-    // Read manifest to determine installed status
+    // Read manifest to determine installed status (exact qualified id match)
+    const canonicalId = entry.id;
     const targets = resolveUserTargets(env);
     let installed = false;
     try {
       const { readManifest } = await import('@agent-rigger/core/manifest');
       const manifest = await readManifest(targets.stateJson);
-      installed = manifest.artifacts.some((a) => a.id === id && a.scope === scope);
+      installed = manifest.artifacts.some((a) => a.id === canonicalId && a.scope === scope);
     } catch {
       installed = false;
     }
@@ -803,17 +880,28 @@ async function handleResourceCommand(opts: ResourceCommandOpts): Promise<number>
       return 2;
     }
 
-    // Validate each id belongs to the resource.
-    // For external entries (not in effective catalog): infer nature from id prefix.
+    // Validate each id belongs to the resource — strict qualified match (ADR-0017 §5).
     const singular = resource.replace(/s$/, '');
     const effectiveCatalog = await resolveEffectiveCatalog(env, print, deps.remote);
+
+    // Reject unqualified ids immediately with an actionable error.
+    const unqualifiedUpdateIds = ids.filter((id) => !id.includes('/'));
+    if (unqualifiedUpdateIds.length > 0) {
+      for (const id of unqualifiedUpdateIds) {
+        print(
+          `[error] id non qualifié "${id}" — utilise \`<catalog>/${id}\` (voir \`agent-rigger ls\`)`,
+        );
+      }
+      return 2;
+    }
+
     const invalidIds = ids.filter((id) => {
       const catalogEntry = effectiveCatalog.find((e) => e.id === id);
       if (catalogEntry !== undefined) {
         if (natureMapped === 'pack') return catalogEntry.kind !== 'pack';
         return catalogEntry.kind !== 'artifact' || catalogEntry.nature !== natureMapped;
       }
-      // For external ids: infer nature from known prefixes.
+      // For external ids not in catalog: infer nature from known prefixes (qualified form).
       const PREFIX_TO_NATURE: Record<string, string> = {
         'skill:': 'skill',
         'agent:': 'agent',
@@ -823,8 +911,11 @@ async function handleResourceCommand(opts: ResourceCommandOpts): Promise<number>
         'tool:': 'tool',
         'pack:': 'pack',
       };
+      // Strip qualifier to get local part for prefix inference.
+      const slashIdx = id.indexOf('/');
+      const localPart = slashIdx === -1 ? id : id.slice(slashIdx + 1);
       for (const [prefix, nature] of Object.entries(PREFIX_TO_NATURE)) {
-        if (id.startsWith(prefix)) {
+        if (localPart.startsWith(prefix)) {
           return nature !== natureMapped;
         }
       }
@@ -848,8 +939,20 @@ async function handleResourceCommand(opts: ResourceCommandOpts): Promise<number>
       return 2;
     }
 
-    // Validate each id belongs to the resource — check against effective catalog
+    // Validate each id belongs to the resource — strict qualified match (ADR-0017 §5).
     const effectiveCatalog = await resolveEffectiveCatalog(env, print, deps.remote);
+
+    // Reject unqualified ids immediately with an actionable error.
+    const unqualifiedRemoveIds = ids.filter((id) => !id.includes('/'));
+    if (unqualifiedRemoveIds.length > 0) {
+      for (const id of unqualifiedRemoveIds) {
+        print(
+          `[error] id non qualifié "${id}" — utilise \`<catalog>/${id}\` (voir \`agent-rigger ls\`)`,
+        );
+      }
+      return 2;
+    }
+
     const invalidIds = ids.filter((id) => {
       const entry = effectiveCatalog.find((e) => e.id === id);
       if (entry === undefined) return false; // will fail at runRemove time with a better error
@@ -894,6 +997,17 @@ async function handleInstall(opts: HandleInstallOpts): Promise<number> {
 
   // Non-interactive: ids provided on the command line
   if (ids.length > 0) {
+    // Reject unqualified ids immediately with an actionable error (ADR-0017 §5).
+    const unqualifiedInstallIds = ids.filter((id) => !id.includes('/'));
+    if (unqualifiedInstallIds.length > 0) {
+      for (const id of unqualifiedInstallIds) {
+        print(
+          `[error] id non qualifié "${id}" — utilise \`<catalog>/${id}\` (voir \`agent-rigger ls\`)`,
+        );
+      }
+      return 2;
+    }
+
     const manifestPath = resolveManifestPath(env);
 
     // Determine confirmation strategy
@@ -907,18 +1021,24 @@ async function handleInstall(opts: HandleInstallOpts): Promise<number> {
       confirm = (planText: string) => prompts.confirmApply(planText);
     }
 
-    // Load config to check for a remote catalog URL.
+    // Load config to check for a remote catalog.
+    // For non-interactive install with explicit ids, we use the first configured catalog.
+    // Multi-source resolution happens at the effective-catalog level; for install we pick
+    // the primary source (index 0) so that the git checkout comes from a single repo.
+    // Users wanting to install from a specific source can specify the qualified id directly.
     const config = await loadCliConfig(env);
+    const primaryCatalog = config.catalogs[0];
 
-    if (config.catalogUrl !== undefined && config.catalogUrl !== '') {
+    if (primaryCatalog !== undefined) {
       // Remote install path: delegate to runRemoteInstall.
-      const catalogUrl = config.catalogUrl;
+      const catalogUrl = primaryCatalog.url;
       const runner: CommandRunner = deps.remote?.run ?? defaultRunner;
       const tmpFactory: TmpDirFactory = deps.remote?.tmpFactory ?? defaultTmpFactory;
 
       const remoteOpts = {
         ids,
         catalogUrl,
+        sourceName: primaryCatalog.name,
         scope,
         env,
         manifestPath,
@@ -935,7 +1055,7 @@ async function handleInstall(opts: HandleInstallOpts): Promise<number> {
       return 0;
     }
 
-    // No catalogUrl configured → actionable message, nothing to install locally
+    // No catalogs configured → actionable message, nothing to install locally
     print('aucun catalog configuré — lance `agent-rigger init`');
     return 0;
   }
@@ -958,16 +1078,18 @@ async function handleInstall(opts: HandleInstallOpts): Promise<number> {
   const interactiveScope = await prompts.selectScope();
   const interactiveManifestPath = resolveManifestPath(env);
   const interactiveConfig = await loadCliConfig(env);
+  const interactivePrimary = interactiveConfig.catalogs[0];
 
-  if (interactiveConfig.catalogUrl !== undefined && interactiveConfig.catalogUrl !== '') {
+  if (interactivePrimary !== undefined) {
     // Remote interactive path: use runRemoteInstall so external entries are sourced correctly.
-    const catalogUrl = interactiveConfig.catalogUrl;
+    const catalogUrl = interactivePrimary.url;
     const runner: CommandRunner = deps.remote?.run ?? defaultRunner;
     const tmpFactory: TmpDirFactory = deps.remote?.tmpFactory ?? defaultTmpFactory;
 
     const interactiveOpts = {
       ids: selectedIds,
       catalogUrl,
+      sourceName: interactivePrimary.name,
       scope: interactiveScope,
       env,
       manifestPath: interactiveManifestPath,
@@ -984,7 +1106,7 @@ async function handleInstall(opts: HandleInstallOpts): Promise<number> {
     return 0;
   }
 
-  // No catalogUrl configured → actionable message
+  // No catalogs configured → actionable message
   print('aucun catalog configuré — lance `agent-rigger init`');
   return 0;
 }
@@ -1010,6 +1132,17 @@ async function handleRemove(opts: HandleRemoveOpts): Promise<number> {
     return 2;
   }
 
+  // Reject unqualified ids immediately with an actionable error (ADR-0017 §5).
+  const unqualifiedRemIds = ids.filter((id) => !id.includes('/'));
+  if (unqualifiedRemIds.length > 0) {
+    for (const id of unqualifiedRemIds) {
+      print(
+        `[error] id non qualifié "${id}" — utilise \`<catalog>/${id}\` (voir \`agent-rigger ls\`)`,
+      );
+    }
+    return 2;
+  }
+
   const yes = flags['yes'] === true;
   const adapter = await buildClaudeAdapter(env);
   const manifestPath = resolveManifestPath(env);
@@ -1025,6 +1158,7 @@ async function handleRemove(opts: HandleRemoveOpts): Promise<number> {
     confirm = (planText: string) => prompts.confirmApply(planText);
   }
 
+  // ids are already qualified (validated by callers — ADR-0017 §5).
   const result = await runRemove({
     catalog: effectiveCatalog,
     adapter,
@@ -1055,10 +1189,28 @@ interface HandleUpdateOpts {
 async function handleUpdate(opts: HandleUpdateOpts): Promise<number> {
   const { ids, flags, scope, env, print, deps } = opts;
 
-  const config = await loadCliConfig(env);
+  // Reject unqualified ids immediately with an actionable error (ADR-0017 §5).
+  // update with no ids = "all installed" → no per-id validation needed.
+  if (ids.length > 0) {
+    const unqualifiedUpdateIds = ids.filter((id) => !id.includes('/'));
+    if (unqualifiedUpdateIds.length > 0) {
+      for (const id of unqualifiedUpdateIds) {
+        print(
+          `[error] id non qualifié "${id}" — utilise \`<catalog>/${id}\` (voir \`agent-rigger ls\`)`,
+        );
+      }
+      return 2;
+    }
+  }
 
-  if (!config.catalogUrl) {
-    throw new CatalogUrlMissingError();
+  const config = await loadCliConfig(env);
+  const primaryCatalog = config.catalogs[0];
+
+  if (primaryCatalog === undefined) {
+    // No catalogs configured — surface as actionable error (mirrors update's old behaviour).
+    print('[error] No catalog URL configured.');
+    print('  Run `agent-rigger init` to configure the catalog URL.');
+    return 2;
   }
 
   const yes = flags['yes'] === true;
@@ -1079,7 +1231,7 @@ async function handleUpdate(opts: HandleUpdateOpts): Promise<number> {
     scope,
     env,
     manifestPath: resolveManifestPath(env),
-    catalogUrl: config.catalogUrl,
+    catalogUrl: primaryCatalog.url,
     runner,
     tmpFactory,
     confirm,
@@ -1109,10 +1261,11 @@ async function resolveUpdateAvailable(
 ): Promise<string[]> {
   try {
     const config = await loadCliConfig(env);
-    if (!config.catalogUrl) return [];
+    const primaryCatalog = config.catalogs[0];
+    if (primaryCatalog === undefined) return [];
 
     const runner: CommandRunner = remote?.run ?? defaultRunner;
-    const remoteVersion = await resolveVersion(config.catalogUrl, runner);
+    const remoteVersion = await resolveVersion(primaryCatalog.url, runner);
 
     const { readManifest } = await import('@agent-rigger/core/manifest');
     const manifestPath = resolveManifestPath(env);
@@ -1136,9 +1289,8 @@ async function resolveUpdateAvailable(
 // ---------------------------------------------------------------------------
 
 function handleError(err: unknown, print: (msg: string) => void): number {
-  if (err instanceof CatalogUrlMissingError) {
-    print('[error] No catalog URL configured.');
-    print('  Run `agent-rigger init` to configure the catalog URL.');
+  if (err instanceof LegacyConfigError) {
+    print(`[error] ${err.message}`);
     return 2;
   }
 

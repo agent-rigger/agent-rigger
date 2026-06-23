@@ -80,7 +80,7 @@ async function makeUpdateEnv(): Promise<{
   await fs.mkdir(configDir, { recursive: true });
   await fs.writeFile(
     path.join(configDir, 'config.json'),
-    JSON.stringify({ catalogUrl: 'https://example.com/catalog.git' }),
+    JSON.stringify({ catalogs: [{ name: 'principal', url: 'https://example.com/catalog.git' }] }),
     'utf8',
   );
 
@@ -191,7 +191,7 @@ beforeEach(async () => {
 
   // Pre-install at v1.0.0
   setRemoteTag(TAG_V1_0_0, SHA_V1_0_0);
-  await runCli(['install', 'skill:remote-demo', '--yes'], {
+  await runCli(['install', 'principal/skill:remote-demo', '--yes'], {
     print: makeCapture().print,
     env,
     remote: { run: makeRunner(), tmpFactory: makeTmpFactory(), scanner: stubScanner },
@@ -213,7 +213,7 @@ describe('runUpdate — stale skill + blocking scanner, no force', () => {
   it('throws ScanBlockedError', async () => {
     await expect(
       runUpdate({
-        ids: ['skill:remote-demo'],
+        ids: ['principal/skill:remote-demo'],
         scope: 'user',
         env,
         manifestPath,
@@ -229,7 +229,7 @@ describe('runUpdate — stale skill + blocking scanner, no force', () => {
 
   it('manifest entry remains at v1.0.0 (scan is before remove)', async () => {
     await runUpdate({
-      ids: ['skill:remote-demo'],
+      ids: ['principal/skill:remote-demo'],
       scope: 'user',
       env,
       manifestPath,
@@ -243,13 +243,13 @@ describe('runUpdate — stale skill + blocking scanner, no force', () => {
 
     const raw = await fs.readFile(manifestPath, 'utf8');
     const manifest = JSON.parse(raw) as { artifacts: Array<{ id: string; ref: string }> };
-    const entry = manifest.artifacts.find((a) => a.id === 'skill:remote-demo');
+    const entry = manifest.artifacts.find((a) => a.id === 'principal/skill:remote-demo');
     expect(entry?.ref).toBe(TAG_V1_0_0);
   });
 
   it('skill store still contains v1.0.0 content', async () => {
     await runUpdate({
-      ids: ['skill:remote-demo'],
+      ids: ['principal/skill:remote-demo'],
       scope: 'user',
       env,
       manifestPath,
@@ -275,7 +275,7 @@ describe('runUpdate — stale skill + blocking scanner, with force', () => {
   it('does not throw', async () => {
     await expect(
       runUpdate({
-        ids: ['skill:remote-demo'],
+        ids: ['principal/skill:remote-demo'],
         scope: 'user',
         env,
         manifestPath,
@@ -291,7 +291,7 @@ describe('runUpdate — stale skill + blocking scanner, with force', () => {
 
   it('manifest is bumped to v1.1.0', async () => {
     await runUpdate({
-      ids: ['skill:remote-demo'],
+      ids: ['principal/skill:remote-demo'],
       scope: 'user',
       env,
       manifestPath,
@@ -305,13 +305,13 @@ describe('runUpdate — stale skill + blocking scanner, with force', () => {
 
     const raw = await fs.readFile(manifestPath, 'utf8');
     const manifest = JSON.parse(raw) as { artifacts: Array<{ id: string; ref: string }> };
-    const entry = manifest.artifacts.find((a) => a.id === 'skill:remote-demo');
+    const entry = manifest.artifacts.find((a) => a.id === 'principal/skill:remote-demo');
     expect(entry?.ref).toBe(TAG_V1_1_0);
   });
 
   it('output contains [warning] security scan', async () => {
     const result = await runUpdate({
-      ids: ['skill:remote-demo'],
+      ids: ['principal/skill:remote-demo'],
       scope: 'user',
       env,
       manifestPath,
@@ -335,7 +335,7 @@ describe('runUpdate — stale skill + blocking scanner, with force', () => {
 describe('runUpdate — stale skill + clean scanner', () => {
   it('updates to v1.1.0 without warning', async () => {
     const result = await runUpdate({
-      ids: ['skill:remote-demo'],
+      ids: ['principal/skill:remote-demo'],
       scope: 'user',
       env,
       manifestPath,
@@ -346,7 +346,7 @@ describe('runUpdate — stale skill + clean scanner', () => {
       scanner: cleanScanner(),
     });
 
-    expect(result.updated).toContain('skill:remote-demo');
+    expect(result.updated).toContain('principal/skill:remote-demo');
     expect(result.output).not.toContain('[warning]');
   });
 });

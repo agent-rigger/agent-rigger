@@ -167,7 +167,7 @@ describe('E1-1 — TTY mode: proposeInstall called after successful config persi
     });
 
     const saved = await loadConfigFile(configPath);
-    expect(saved.catalogUrl).toBe(URL);
+    expect(saved.catalogs?.[0]?.url).toBe(URL);
   });
 });
 
@@ -189,7 +189,7 @@ describe('E1-2 — Non-TTY mode: no proposeInstall → config persisted, no inst
 
     expect(result.ok).toBe(true);
     const saved = await loadConfigFile(configPath);
-    expect(saved.catalogUrl).toBe(URL);
+    expect(saved.catalogs?.[0]?.url).toBe(URL);
   });
 
   it('output contains catalogUrl when non-interactive', async () => {
@@ -244,7 +244,7 @@ describe('E1-3 — Picker cancelled: empty selection → config conserved, no in
 
     expect(result.ok).toBe(true);
     const saved = await loadConfigFile(configPath);
-    expect(saved.catalogUrl).toBe(URL);
+    expect(saved.catalogs?.[0]?.url).toBe(URL);
   });
 
   it('ok:true when picker returns empty ids (cancel scenario)', async () => {
@@ -284,7 +284,7 @@ describe('E1-4 — fetchCatalogFn fails post-config → config conserved, action
 
     // Config must be saved
     const saved = await loadConfigFile(configPath);
-    expect(saved.catalogUrl).toBe(URL);
+    expect(saved.catalogs?.[0]?.url).toBe(URL);
     // Still ok:true — config was saved, the install step failed but non-fatally
     expect(result.ok).toBe(true);
   });
@@ -323,7 +323,7 @@ describe('E1-4 — fetchCatalogFn fails post-config → config conserved, action
     });
 
     const saved = await loadConfigFile(configPath);
-    expect(saved.catalogUrl).toBe(URL);
+    expect(saved.catalogs?.[0]?.url).toBe(URL);
     expect(result.ok).toBe(true);
   });
 });
