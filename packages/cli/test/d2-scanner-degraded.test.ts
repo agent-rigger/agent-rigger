@@ -1,0 +1,215 @@
+/**
+ * d2-scanner-degraded.test.ts — Warn-only when no scanner deps available (D2 / ADR-0018).
+ *
+ * Strategy:
+ * - Inject a degraded scanner ({ ok: true, degraded: true }) into scanEntries directly.
+ * - Verify that scanEntries does NOT throw and emits a warning.
+ * - Verify that a scanner with real findings ({ ok: false }) still throws ScanBlockedError.
+ * - Uses minimal ArtifactEntry stubs — no filesystem, no checkout, no CLI runner.
+ *
+ * Scenarios:
+ * 1. degraded scanner (no tool available) → scanEntries proceeds + returns warning message.
+ * 2. degraded scanner → warning mentions actionable install hint (gitleaks/trivy / rigger doctor).
+ * 3. blocking scanner (real findings) + no force → ScanBlockedError thrown (unchanged).
+ * 4. blocking scanner + force → proceeds, no ScanBlockedError.
+ * 5. clean scanner (tool present, no findings) → no warning, no error.
+ * 6. empty entries list → scanEntries is a no-op regardless of scanner state.
+ */
+
+import { describe, expect, it } from 'bun:test';
+
+import type { ArtifactEntry } from '@agent-rigger/catalog';
+import type { Scanner } from '@agent-rigger/core/scan';
+
+import { ScanBlockedError, scanEntries } from '../src/remote-install';
+
+// ---------------------------------------------------------------------------
+// Helpers: fake scanner builders
+// ---------------------------------------------------------------------------
+
+function degradedScanner(): Scanner {
+  return {
+    scan: (_source: string) => Promise.resolve({ ok: true, degraded: true }),
+  };
+}
+
+function blockingScanner(findings: string[]): Scanner {
+  return {
+    scan: (_source: string) => Promise.resolve({ ok: false, findings }),
+  };
+}
+
+function cleanScanner(): Scanner {
+  return {
+    scan: (_source: string) => Promise.resolve({ ok: true }),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Minimal skill entry stub — scanPathFor returns a non-null path for skills
+// ---------------------------------------------------------------------------
+
+const SKILL_ENTRY: ArtifactEntry = {
+  kind: 'artifact',
+  id: 'skill:demo',
+  nature: 'skill',
+  targets: ['claude'],
+  scopes: ['user', 'project'],
+};
+
+const BASE_DIR = '/tmp/rigger-d2-fake-checkout';
+
+// ---------------------------------------------------------------------------
+// Scenario 1 & 2: degraded scanner → proceeds + warning
+// ---------------------------------------------------------------------------
+
+describe('scanEntries — degraded scanner (no tool available)', () => {
+  it('does not throw when scanner is degraded', async () => {
+    await expect(
+      scanEntries({
+        entries: [SKILL_ENTRY],
+        baseDir: BASE_DIR,
+        scanner: degradedScanner(),
+        force: false,
+      }),
+    ).resolves.toBeDefined();
+  });
+
+  it('returns a non-empty warnings array when scanner is degraded', async () => {
+    const result = await scanEntries({
+      entries: [SKILL_ENTRY],
+      baseDir: BASE_DIR,
+      scanner: degradedScanner(),
+      force: false,
+    });
+
+    expect(result.warnings.length).toBeGreaterThan(0);
+  });
+
+  it('warning mentions that content was not scanned', async () => {
+    const result = await scanEntries({
+      entries: [SKILL_ENTRY],
+      baseDir: BASE_DIR,
+      scanner: degradedScanner(),
+      force: false,
+    });
+
+    const combined = result.warnings.join(' ');
+    expect(combined.toLowerCase()).toMatch(/non scanné|not scanned|unscanned/i);
+  });
+
+  it('warning mentions how to fix (gitleaks or trivy)', async () => {
+    const result = await scanEntries({
+      entries: [SKILL_ENTRY],
+      baseDir: BASE_DIR,
+      scanner: degradedScanner(),
+      force: false,
+    });
+
+    const combined = result.warnings.join(' ');
+    expect(combined).toMatch(/gitleaks|trivy/i);
+  });
+
+  it('warning mentions rigger doctor', async () => {
+    const result = await scanEntries({
+      entries: [SKILL_ENTRY],
+      baseDir: BASE_DIR,
+      scanner: degradedScanner(),
+      force: false,
+    });
+
+    const combined = result.warnings.join(' ');
+    expect(combined).toMatch(/rigger doctor/i);
+  });
+
+  it('does not need --force to proceed when degraded', async () => {
+    // force: false should not matter — degraded is warn-only
+    const result = await scanEntries({
+      entries: [SKILL_ENTRY],
+      baseDir: BASE_DIR,
+      scanner: degradedScanner(),
+      force: false,
+    });
+
+    expect(result.warnings.length).toBeGreaterThan(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Scenario 3: blocking scanner (real findings), no force → ScanBlockedError (unchanged)
+// ---------------------------------------------------------------------------
+
+describe('scanEntries — blocking scanner, no force', () => {
+  it('throws ScanBlockedError when scanner returns ok: false', async () => {
+    await expect(
+      scanEntries({
+        entries: [SKILL_ENTRY],
+        baseDir: BASE_DIR,
+        scanner: blockingScanner(['[gitleaks] aws-access-key: AWS key (config.env)']),
+        force: false,
+      }),
+    ).rejects.toBeInstanceOf(ScanBlockedError);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Scenario 4: blocking scanner + force → proceeds
+// ---------------------------------------------------------------------------
+
+describe('scanEntries — blocking scanner, with force', () => {
+  it('does not throw when force is true', async () => {
+    await expect(
+      scanEntries({
+        entries: [SKILL_ENTRY],
+        baseDir: BASE_DIR,
+        scanner: blockingScanner(['[gitleaks] aws-access-key: AWS key (config.env)']),
+        force: true,
+      }),
+    ).resolves.toBeDefined();
+  });
+
+  it('returns security scan warning in output when forced', async () => {
+    const result = await scanEntries({
+      entries: [SKILL_ENTRY],
+      baseDir: BASE_DIR,
+      scanner: blockingScanner(['[gitleaks] aws-access-key: AWS key (config.env)']),
+      force: true,
+    });
+
+    expect(result.warnings.join(' ')).toContain('[warning]');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Scenario 5: clean scanner → no warning, no error
+// ---------------------------------------------------------------------------
+
+describe('scanEntries — clean scanner (tool present, no findings)', () => {
+  it('returns empty warnings when scanner is clean', async () => {
+    const result = await scanEntries({
+      entries: [SKILL_ENTRY],
+      baseDir: BASE_DIR,
+      scanner: cleanScanner(),
+      force: false,
+    });
+
+    expect(result.warnings).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Scenario 6: empty entries → no-op
+// ---------------------------------------------------------------------------
+
+describe('scanEntries — empty entries list', () => {
+  it('returns empty warnings regardless of scanner', async () => {
+    const result = await scanEntries({
+      entries: [],
+      baseDir: BASE_DIR,
+      scanner: degradedScanner(),
+      force: false,
+    });
+
+    expect(result.warnings).toHaveLength(0);
+  });
+});
