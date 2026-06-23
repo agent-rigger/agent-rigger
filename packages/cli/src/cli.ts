@@ -45,6 +45,7 @@ import { buildClaudeAdapter } from './adapter-builder';
 export { buildClaudeAdapter } from './adapter-builder';
 export type { BuildClaudeAdapterOpts } from './adapter-builder';
 import { runCheck } from './cmd-check';
+import { runDoctor } from './cmd-doctor';
 import { runInit } from './cmd-init';
 import type { CatalogProposal } from './cmd-init';
 import type { RunLsResult } from './cmd-ls';
@@ -180,6 +181,7 @@ Usage:
 
 Workflow commands:
   check                    Audit whether guardrails and context are correctly installed.
+  doctor                   List external dependencies and their status (scan complet vs warn-only).
   install                  Install selected artifacts interactively.
   install <id...>          Install specified artifact ids non-interactively.
   install <id...> --yes    Install without confirmation prompt.
@@ -489,6 +491,12 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
       }
 
       return result.exitCode;
+    }
+
+    // ----- doctor -----
+    if (command === 'doctor') {
+      await runDoctor({ print });
+      return 0;
     }
 
     // ----- install -----
