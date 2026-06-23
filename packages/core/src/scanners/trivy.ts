@@ -19,20 +19,23 @@
 
 import type { Scanner } from '../scan';
 import type { Verdict } from '../types';
-import { defaultScanRunner } from './gitleaks';
-import type { ScanRunner } from './gitleaks';
+import { defaultScanRunner, defaultWhich } from './gitleaks';
+import type { ScanRunner, WhichFn } from './gitleaks';
 
 // ---------------------------------------------------------------------------
 // isTrivyAvailable
 // ---------------------------------------------------------------------------
 
 /**
- * Returns true when `trivy` is found on PATH (`command -v trivy` exits 0).
- * Inject a mock runner in tests.
+ * Returns true when `trivy` is found on PATH.
+ *
+ * Uses `WhichFn` (default: `Bun.which`) instead of `command -v` to avoid
+ * spawning a shell builtin — portable on Linux and macOS.
+ *
+ * Inject a mock WhichFn in tests.
  */
-export async function isTrivyAvailable(run: ScanRunner): Promise<boolean> {
-  const { exitCode } = await run('command', ['-v', 'trivy']);
-  return exitCode === 0;
+export async function isTrivyAvailable(which: WhichFn = defaultWhich): Promise<boolean> {
+  return which('trivy') !== null;
 }
 
 // ---------------------------------------------------------------------------
