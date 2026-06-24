@@ -9,7 +9,8 @@
  *
  * Strategy:
  *  - Inject fake CommandRunner + TmpDirFactory per source via `remote` deps.
- *  - Two separate tmpFactory factories (one per source) are multiplexed by call order.
+ *  - Catalog content is dispatched by URL (not call order): the runner tracks the URL from
+ *    ls-remote; the tmpFactory uses that URL to serve the matching content dir.
  *  - No real git processes; no real network.
  *  - No while loops.
  */
@@ -42,58 +43,79 @@ function makeCapture(): { lines: string[]; print: (msg: string) => void } {
 }
 
 /**
- * CommandRunner that succeeds for ls-remote/clone/rev-parse.
- * Used for sources that should fetch successfully.
+ * Builds a `{ run, tmpFactory }` pair that dispatches catalog content by URL.
+ *
+ * Strategy: the runner intercepts `git clone <url> <path>` and writes the correct
+ * `catalog.json` into the already-allocated dir based on the URL argument.
+ * The tmpFactory is a simple round-robin allocator (dirA first, dirB second) —
+ * content is never written there; the runner writes it in the clone handler.
+ *
+ * This is robust when fetch operations run in parallel (Promise.all):
+ *  - tmpFactory call order is irrelevant — dirs are just pre-allocated slots.
+ *  - The runner matches URL → content deterministically, regardless of scheduling.
+ *
+ * The URL→content mapping:
+ *  - CATALOG_URL_A → dirA, meta.name='source-a', entriesA
+ *  - CATALOG_URL_B → dirB, meta.name='source-b', entriesB
  */
-function makeSuccessRunner(): CommandRunner {
-  return (_cmd, args) => {
-    const argsArr = args ?? [];
-    if (argsArr.includes('ls-remote') && argsArr.includes('--tags')) {
-      return Promise.resolve({
-        exitCode: 0,
-        stdout: `${FAKE_SHA}\trefs/tags/v1.0.0\n`,
-        stderr: '',
-      });
-    }
-    if (argsArr.includes('clone')) {
-      return Promise.resolve({ exitCode: 0, stdout: '', stderr: '' });
-    }
-    if (argsArr.includes('rev-parse')) {
-      return Promise.resolve({ exitCode: 0, stdout: `${FAKE_SHA}\n`, stderr: '' });
-    }
-    if (argsArr.includes('ls-remote') && argsArr.includes('HEAD')) {
-      return Promise.resolve({ exitCode: 0, stdout: `${FAKE_SHA}\tHEAD\n`, stderr: '' });
-    }
-    return Promise.resolve({ exitCode: 0, stdout: '', stderr: '' });
-  };
-}
-
-/**
- * Builds a TmpDirFactory that serves different catalog content on each call.
- * First call → dirA (source A entries), second call → dirB (source B entries).
- */
-function makeSequentialTmpFactory(
+function makeUrlAwareRemote(
   dirA: string,
   entriesA: CatalogEntry[],
   dirB: string,
   entriesB: CatalogEntry[],
-): TmpDirFactory {
-  let callCount = 0;
-  return async () => {
-    callCount++;
-    if (callCount === 1) {
-      await Bun.write(
-        path.join(dirA, 'catalog.json'),
-        JSON.stringify({ meta: { name: 'source-a' }, entries: entriesA }),
-      );
-      return { path: dirA, cleanup: async () => {} };
+): { run: CommandRunner; tmpFactory: TmpDirFactory } {
+  // URL → catalog payload map, keyed at construction time (no mutation during test).
+  const catalogByUrl = new Map<string, { dir: string; name: string; entries: CatalogEntry[] }>([
+    [CATALOG_URL_A, { dir: dirA, name: 'source-a', entries: entriesA }],
+    [CATALOG_URL_B, { dir: dirB, name: 'source-b', entries: entriesB }],
+  ]);
+
+  const run: CommandRunner = async (_cmd, args) => {
+    const argsArr = args ?? [];
+
+    if (argsArr.includes('ls-remote')) {
+      if (argsArr.includes('--tags')) {
+        return { exitCode: 0, stdout: `${FAKE_SHA}\trefs/tags/v1.0.0\n`, stderr: '' };
+      }
+      return { exitCode: 0, stdout: `${FAKE_SHA}\tHEAD\n`, stderr: '' };
     }
-    await Bun.write(
-      path.join(dirB, 'catalog.json'),
-      JSON.stringify({ meta: { name: 'source-b' }, entries: entriesB }),
-    );
-    return { path: dirB, cleanup: async () => {} };
+
+    if (argsArr.includes('clone')) {
+      // `git clone --depth 1 --branch <ref> -- <url> <path>`
+      // The URL is the second-to-last arg; the destination path is the last arg.
+      const urlArg = argsArr.find((a) => a.startsWith('https://'));
+      const destPath = argsArr.at(-1);
+      if (urlArg !== undefined && destPath !== undefined) {
+        const catalog = catalogByUrl.get(urlArg);
+        if (catalog !== undefined) {
+          await Bun.write(
+            path.join(destPath, 'catalog.json'),
+            JSON.stringify({ meta: { name: catalog.name }, entries: catalog.entries }),
+          );
+        }
+      }
+      return { exitCode: 0, stdout: '', stderr: '' };
+    }
+
+    if (argsArr.includes('rev-parse')) {
+      return { exitCode: 0, stdout: `${FAKE_SHA}\n`, stderr: '' };
+    }
+
+    return { exitCode: 0, stdout: '', stderr: '' };
   };
+
+  // Simple allocator: each call returns a different pre-created dir.
+  // Content is injected by the runner's clone handler, not here.
+  let callCount = 0;
+  const dirs = [dirA, dirB];
+
+  const tmpFactory: TmpDirFactory = async () => {
+    const dir = dirs[callCount % dirs.length] ?? dirA;
+    callCount += 1;
+    return { path: dir, cleanup: async () => {} };
+  };
+
+  return { run, tmpFactory };
 }
 
 // ---------------------------------------------------------------------------
@@ -155,10 +177,7 @@ describe('M4 — two sources merged: entries from both sources appear in ls outp
     const code = await runCli(['ls'], {
       print: cap.print,
       env: { RIGGER_HOME: homeDir },
-      remote: {
-        run: makeSuccessRunner(),
-        tmpFactory: makeSequentialTmpFactory(catalogDirA, entriesA, catalogDirB, entriesB),
-      },
+      remote: makeUrlAwareRemote(catalogDirA, entriesA, catalogDirB, entriesB),
     });
 
     expect(code).toBe(0);
@@ -188,10 +207,7 @@ describe('M4 — two sources merged: entries from both sources appear in ls outp
     await runCli(['ls'], {
       print: cap.print,
       env: { RIGGER_HOME: homeDir },
-      remote: {
-        run: makeSuccessRunner(),
-        tmpFactory: makeSequentialTmpFactory(catalogDirA, entriesA, catalogDirB, entriesB),
-      },
+      remote: makeUrlAwareRemote(catalogDirA, entriesA, catalogDirB, entriesB),
     });
 
     const out = cap.lines.join('\n');
@@ -225,10 +241,7 @@ describe('M4 — two sources merged: entries from both sources appear in ls outp
     await runCli(['ls'], {
       print: cap.print,
       env: { RIGGER_HOME: homeDir },
-      remote: {
-        run: makeSuccessRunner(),
-        tmpFactory: makeSequentialTmpFactory(catalogDirA, entriesA, catalogDirB, entriesB),
-      },
+      remote: makeUrlAwareRemote(catalogDirA, entriesA, catalogDirB, entriesB),
     });
 
     const out = cap.lines.join('\n');
@@ -485,10 +498,7 @@ describe('M4 — collision detection: same id in two sources triggers warning', 
     await runCli(['ls'], {
       print: cap.print,
       env: { RIGGER_HOME: homeDir },
-      remote: {
-        run: makeSuccessRunner(),
-        tmpFactory: makeSequentialTmpFactory(catalogDirA, entriesA, catalogDirB, entriesB),
-      },
+      remote: makeUrlAwareRemote(catalogDirA, entriesA, catalogDirB, entriesB),
     });
 
     const out = cap.lines.join('\n');
@@ -515,10 +525,7 @@ describe('M4 — collision detection: same id in two sources triggers warning', 
     await runCli(['ls'], {
       print: cap.print,
       env: { RIGGER_HOME: homeDir },
-      remote: {
-        run: makeSuccessRunner(),
-        tmpFactory: makeSequentialTmpFactory(catalogDirA, entriesA, catalogDirB, entriesB),
-      },
+      remote: makeUrlAwareRemote(catalogDirA, entriesA, catalogDirB, entriesB),
     });
 
     const out = cap.lines.join('\n');
@@ -580,10 +587,7 @@ describe('M4 — homonym: two sources each with skill:x → qualified ids distin
     await runCli(['ls'], {
       print: cap.print,
       env: { RIGGER_HOME: homeDir },
-      remote: {
-        run: makeSuccessRunner(),
-        tmpFactory: makeSequentialTmpFactory(catalogDirA, entriesA, catalogDirB, entriesB),
-      },
+      remote: makeUrlAwareRemote(catalogDirA, entriesA, catalogDirB, entriesB),
     });
 
     const out = cap.lines.join('\n');

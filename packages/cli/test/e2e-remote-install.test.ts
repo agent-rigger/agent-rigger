@@ -663,6 +663,148 @@ describe('TEST-1 — path traversal id rejected', () => {
     expect(err.id).toBe('skill:../../../../evil');
     expect(err.name).toBe('UnsafeArtifactNameError');
   });
+
+  // ── qualified-traversal: valid catalog prefix + traversal name ─────────────
+  //
+  // 'principal/skill:../../../../etc/evil' has a valid catalog prefix ('principal'),
+  // so it passes prefix validation and a checkout is started (tmpFactory is invoked).
+  // The frontier guard (assertSafeArtifactName inside runRemoteInstall) sees the
+  // traversal name in the remote catalog.json and throws UnsafeArtifactNameError
+  // before any file is written. The finally block inside withRemoteCheckout ensures
+  // cleanup runs even though an error was thrown.
+  //
+  // This test would FAIL if the frontier guard were removed: the traversal id would
+  // reach path.join() in the skill linker and resolve to a path outside HOME.
+
+  it('exits non-0 when qualified id has a valid catalog prefix but a traversal name', async () => {
+    const qualifiedTraversalEnv = await makeRemoteEnv({ withCatalogUrl: true });
+
+    // Write a catalog.json whose entry carries the traversal id
+    const traversalEntry: CatalogEntry = {
+      kind: 'artifact',
+      id: 'skill:../../../../etc/evil',
+      nature: 'skill',
+      targets: ['claude'],
+      scopes: ['user', 'project'],
+    };
+    await fs.writeFile(
+      path.join(qualifiedTraversalEnv.contentDir, 'catalog.json'),
+      JSON.stringify({ meta: { name: 'qualified-traversal-test' }, entries: [traversalEntry] }),
+      'utf8',
+    );
+
+    try {
+      const cap = makeCapture();
+      const code = await runCli(
+        ['install', 'principal/skill:../../../../etc/evil', '--yes'],
+        {
+          print: cap.print,
+          env: qualifiedTraversalEnv.env,
+          remote: {
+            run: qualifiedTraversalEnv.runner,
+            tmpFactory: qualifiedTraversalEnv.tmpFactory,
+            scanner: stubScanner,
+          },
+        },
+      );
+
+      // frontier guard must have rejected the install
+      expect(code).not.toBe(0);
+
+      // output must mention unsafe/traversal (UnsafeArtifactNameError message)
+      const output = cap.lines.join('\n');
+      expect(output).toMatch(/unsafe|traversal/i);
+    } finally {
+      await qualifiedTraversalEnv.cleanupAll();
+    }
+  });
+
+  it('cleanup is called for qualified-traversal (checkout started, guard rejects in finally)', async () => {
+    // Unlike the bare traversal id ('skill:../../../../etc/evil') whose prefix is not a
+    // configured catalog — so no checkout ever starts — the qualified form
+    // ('principal/skill:../../../../etc/evil') passes prefix validation, causing
+    // withRemoteCheckout to call tmpFactory (checkout begins). The frontier guard then
+    // throws, and the finally block runs cleanup. getCleanupCalled() must be true.
+    const qualifiedTraversalEnv = await makeRemoteEnv({ withCatalogUrl: true });
+
+    const traversalEntry: CatalogEntry = {
+      kind: 'artifact',
+      id: 'skill:../../../../etc/evil',
+      nature: 'skill',
+      targets: ['claude'],
+      scopes: ['user', 'project'],
+    };
+    await fs.writeFile(
+      path.join(qualifiedTraversalEnv.contentDir, 'catalog.json'),
+      JSON.stringify({ meta: { name: 'qualified-traversal-test' }, entries: [traversalEntry] }),
+      'utf8',
+    );
+
+    try {
+      await runCli(
+        ['install', 'principal/skill:../../../../etc/evil', '--yes'],
+        {
+          print: makeCapture().print,
+          env: qualifiedTraversalEnv.env,
+          remote: {
+            run: qualifiedTraversalEnv.runner,
+            tmpFactory: qualifiedTraversalEnv.tmpFactory,
+            scanner: stubScanner,
+          },
+        },
+      );
+    } catch {
+      // error may propagate — cleanup still checked
+    }
+
+    // The checkout started (prefix valid) → withRemoteCheckout's finally must have run
+    expect(qualifiedTraversalEnv.getCleanupCalled()).toBe(true);
+    await qualifiedTraversalEnv.cleanupAll();
+  });
+
+  it('does not write outside HOME for qualified-traversal (sentinel untouched)', async () => {
+    const sentinelDir = await fs.mkdtemp(path.join(os.tmpdir(), 'rigger-qtrav-sentinel-'));
+    const sentinelFile = path.join(sentinelDir, 'sentinel.txt');
+    await fs.writeFile(sentinelFile, 'untouched', 'utf8');
+
+    const qualifiedTraversalEnv = await makeRemoteEnv({ withCatalogUrl: true });
+
+    const traversalEntry: CatalogEntry = {
+      kind: 'artifact',
+      id: 'skill:../../../../etc/evil',
+      nature: 'skill',
+      targets: ['claude'],
+      scopes: ['user', 'project'],
+    };
+    await fs.writeFile(
+      path.join(qualifiedTraversalEnv.contentDir, 'catalog.json'),
+      JSON.stringify({ meta: { name: 'qualified-traversal-test' }, entries: [traversalEntry] }),
+      'utf8',
+    );
+
+    try {
+      await runCli(
+        ['install', 'principal/skill:../../../../etc/evil', '--yes'],
+        {
+          print: makeCapture().print,
+          env: qualifiedTraversalEnv.env,
+          remote: {
+            run: qualifiedTraversalEnv.runner,
+            tmpFactory: qualifiedTraversalEnv.tmpFactory,
+            scanner: stubScanner,
+          },
+        },
+      );
+    } catch {
+      // error may propagate
+    }
+
+    const content = await fs.readFile(sentinelFile, 'utf8').catch(() => null);
+    expect(content).toBe('untouched');
+
+    await fs.rm(sentinelDir, { recursive: true, force: true });
+    await qualifiedTraversalEnv.cleanupAll();
+  });
 });
 
 // ---------------------------------------------------------------------------
