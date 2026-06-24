@@ -386,7 +386,7 @@ describe('M4 — per-source degradation: one source fails, other succeeds', () =
     const out = cap.lines.join('\n');
     expect(out).toContain('[warning]');
     expect(out).toContain('source-fail');
-    expect(out).toContain('indisponible');
+    expect(out).toContain('unavailable');
   });
 
   it('entries from succeeding source still appear in output', async () => {
@@ -610,7 +610,7 @@ describe('M4 — homonym: two sources each with skill:x → qualified ids distin
 
     expect(code).toBe(2);
     const out = cap.lines.join('\n');
-    expect(out).toContain('id non qualifié');
+    expect(out).toContain('unqualified id');
     expect(out).toContain('skill:x');
   });
 
@@ -632,7 +632,7 @@ describe('M4 — homonym: two sources each with skill:x → qualified ids distin
     expect(code).not.toBe(2);
     const out = cap.lines.join('\n');
     // Must NOT emit "id non qualifié" error for a qualified id
-    expect(out).not.toContain('id non qualifié');
+    expect(out).not.toContain('unqualified id');
   });
 
   it('install b/skill:x (qualified) → does not emit unqualified-id error', async () => {
@@ -645,7 +645,7 @@ describe('M4 — homonym: two sources each with skill:x → qualified ids distin
 
     expect(code).not.toBe(2);
     const out = cap.lines.join('\n');
-    expect(out).not.toContain('id non qualifié');
+    expect(out).not.toContain('unqualified id');
   });
 });
 

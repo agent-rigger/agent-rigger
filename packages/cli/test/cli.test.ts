@@ -1460,7 +1460,7 @@ describe('runCli — ls with catalogUrl configured but remote fails', () => {
 
     const out = cap.lines.join('\n');
     expect(out).toContain('[warning]');
-    expect(out).toContain('indisponible');
+    expect(out).toContain('unavailable');
     expect(out).toMatch(/init|URL/);
   });
 });
