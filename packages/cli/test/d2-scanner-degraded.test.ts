@@ -45,6 +45,21 @@ function cleanScanner(): Scanner {
   };
 }
 
+/**
+ * Scanner that returns a verdict that is simultaneously blocking (ok: false, findings)
+ * and degraded (degraded: true).
+ *
+ * The real composite scanner never produces this mix, but this helper exists to lock the
+ * evaluation order inside scanEntries: anyBlocked must be checked BEFORE anyDegraded
+ * (defense-in-depth). If the order were inverted, this scanner would be treated as
+ * warn-only instead of fail-closed, which would be a security regression.
+ */
+function degradedBlockingScanner(findings: string[]): Scanner {
+  return {
+    scan: (_source: string) => Promise.resolve({ ok: false, findings, degraded: true }),
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Minimal skill entry stub — scanPathFor returns a non-null path for skills
 // ---------------------------------------------------------------------------
@@ -211,5 +226,57 @@ describe('scanEntries — empty entries list', () => {
     });
 
     expect(result.warnings).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Scenario 7: mixed verdict — both blocking (ok: false) AND degraded (degraded: true)
+//
+// Locks the anyBlocked-before-anyDegraded evaluation order in scanEntries.
+// The real composite scanner never emits this combination, but a custom scanner
+// injected via dependency injection could. In that case, fail-closed must win:
+// anyBlocked is checked first, so the degraded flag does not bypass the block.
+//
+// Regression guard: if the order were inverted (anyDegraded checked first),
+// these tests would fail because scanEntries would treat the verdict as warn-only
+// and not throw ScanBlockedError.
+// ---------------------------------------------------------------------------
+
+describe('scanEntries — mixed degraded+blocked verdict (order guard)', () => {
+  it('throws ScanBlockedError when verdict is both ok: false and degraded: true (no force)', async () => {
+    await expect(
+      scanEntries({
+        entries: [SKILL_ENTRY],
+        baseDir: BASE_DIR,
+        scanner: degradedBlockingScanner(['[custom] suspicious-pattern: secret detected']),
+        force: false,
+      }),
+    ).rejects.toBeInstanceOf(ScanBlockedError);
+  });
+
+  it('does not treat a blocking+degraded verdict as warn-only when force is false', async () => {
+    const result = scanEntries({
+      entries: [SKILL_ENTRY],
+      baseDir: BASE_DIR,
+      scanner: degradedBlockingScanner(['[custom] suspicious-pattern: secret detected']),
+      force: false,
+    });
+
+    // Must reject — not resolve with warnings
+    await expect(result).rejects.toBeInstanceOf(ScanBlockedError);
+  });
+
+  it('proceeds with a force warning when force is true, even if verdict is also degraded', async () => {
+    const result = await scanEntries({
+      entries: [SKILL_ENTRY],
+      baseDir: BASE_DIR,
+      scanner: degradedBlockingScanner(['[custom] suspicious-pattern: secret detected']),
+      force: true,
+    });
+
+    // anyBlocked-first: the force path emits a [warning] security scan message,
+    // NOT the degraded "non scanné" message.
+    expect(result.warnings.join(' ')).toContain('[warning]');
+    expect(result.warnings.join(' ')).not.toMatch(/non scanné|not scanned|unscanned/i);
   });
 });

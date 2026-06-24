@@ -196,7 +196,7 @@ export async function scanEntries(opts: {
   if (anyDegraded) {
     return {
       warnings: [
-        '[warning] contenu non scanné — installe gitleaks ou trivy puis relance pour un scan complet ; voir `rigger doctor`',
+        '[warning] content not scanned — install gitleaks or trivy then re-run for a full scan; see `rigger doctor`',
       ],
     };
   }

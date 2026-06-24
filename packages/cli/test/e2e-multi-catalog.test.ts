@@ -403,7 +403,7 @@ describe('e2e multi-catalog — scenario 2: homonym skill:x in both sources', ()
     });
     expect(code).toBe(2);
     const out = cap.lines.join('\n');
-    expect(out).toContain('id non qualifié');
+    expect(out).toContain('unqualified id');
     expect(out).toContain('skill:x');
   });
 
@@ -418,7 +418,7 @@ describe('e2e multi-catalog — scenario 2: homonym skill:x in both sources', ()
     // Must NOT be 2 (which would mean "id non qualifié" validation error)
     expect(code).not.toBe(2);
     const out = cap.lines.join('\n');
-    expect(out).not.toContain('id non qualifié');
+    expect(out).not.toContain('unqualified id');
   });
 
   it('install b/skill:x (qualified) → does not produce "id non qualifié" error', async () => {
@@ -429,7 +429,7 @@ describe('e2e multi-catalog — scenario 2: homonym skill:x in both sources', ()
     });
     expect(code).not.toBe(2);
     const out = cap.lines.join('\n');
-    expect(out).not.toContain('id non qualifié');
+    expect(out).not.toContain('unqualified id');
   });
 });
 
@@ -813,7 +813,7 @@ describe('e2e multi-catalog — scenario 6: degraded source — warning + other 
     const out = cap.lines.join('\n');
     expect(out).toContain('[warning]');
     expect(out).toContain('source-fail');
-    expect(out).toContain('indisponible');
+    expect(out).toContain('unavailable');
   });
 
   it('entries from the succeeding source still appear in output', async () => {
@@ -1051,7 +1051,7 @@ describe('e2e multi-catalog — scenario 7: install routes by prefix to secondar
       remote: { run, tmpFactory, scanner: stubScanner },
     });
     const out = cap.lines.join('\n');
-    expect(out).not.toContain('id non qualifié');
+    expect(out).not.toContain('unqualified id');
   });
 
   it('install a/skill:x uses catalog-a URL (not catalog-b)', async () => {

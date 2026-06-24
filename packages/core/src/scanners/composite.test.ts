@@ -11,7 +11,7 @@
  *  - both present, both find issues        → findings from both concatenated
  *  - only gitleaks present, clean          → { ok: true }  (trivy not called)
  *  - only gitleaks present, secret found   → { ok: false } with [gitleaks] prefix
- *  - neither present                       → fail-closed, "no security scanner available"
+ *  - neither present                       → warn-only: { ok: true, degraded: true } (ADR-0018, no fail-closed)
  */
 
 import { describe, expect, it } from 'bun:test';
