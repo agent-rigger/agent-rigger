@@ -114,7 +114,7 @@ export class LegacyConfigError extends Error {
 
   constructor(filePath: string) {
     super(
-      `Config obsolète dans "${filePath}" — relance \`rigger init\` pour migrer vers catalogs[].`,
+      `Obsolete config in "${filePath}" — run \`rigger init\` to migrate to catalogs[].`,
     );
     this.name = 'LegacyConfigError';
     this.path = filePath;
