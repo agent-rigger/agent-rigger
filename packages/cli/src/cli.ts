@@ -498,7 +498,7 @@ async function resolveEffectiveCatalog(
   }
 
   if (config.catalogs.length === 0) {
-    print('aucun catalog configuré — lance `agent-rigger init`');
+    print('no catalog configured — run `agent-rigger init`');
     return [];
   }
 
@@ -525,8 +525,8 @@ async function resolveEffectiveCatalog(
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         print(
-          `[warning] Catalog "${source.name}" (${source.url}) indisponible (${msg}). `
-            + `Vérifie l'URL ou relance \`agent-rigger init\`.`,
+          `[warning] Catalog "${source.name}" (${source.url}) unavailable (${msg}). `
+            + `Check the URL or run \`agent-rigger init\`.`,
         );
         return { name: source.name, entries: [] as CatalogEntry[], ok: false };
       }
@@ -1085,7 +1085,7 @@ async function handleResourceCommand(opts: ResourceCommandOpts): Promise<number>
     if (unqualifiedIds.length > 0) {
       for (const id of unqualifiedIds) {
         print(
-          `[error] id non qualifié "${id}" — utilise \`<catalog>/${id}\` (voir \`agent-rigger ls\`)`,
+          `[error] unqualified id "${id}" — use \`<catalog>/${id}\` (see \`agent-rigger ls\`)`,
         );
       }
       return 2;
@@ -1120,7 +1120,7 @@ async function handleResourceCommand(opts: ResourceCommandOpts): Promise<number>
     // Reject unqualified id immediately with an actionable error (ADR-0017 §5).
     if (!id.includes('/')) {
       print(
-        `[error] id non qualifié "${id}" — utilise \`<catalog>/${id}\` (voir \`agent-rigger ls\`)`,
+        `[error] unqualified id "${id}" — use \`<catalog>/${id}\` (see \`agent-rigger ls\`)`,
       );
       return 2;
     }
@@ -1219,7 +1219,7 @@ async function handleResourceCommand(opts: ResourceCommandOpts): Promise<number>
     if (unqualifiedUpdateIds.length > 0) {
       for (const id of unqualifiedUpdateIds) {
         print(
-          `[error] id non qualifié "${id}" — utilise \`<catalog>/${id}\` (voir \`agent-rigger ls\`)`,
+          `[error] unqualified id "${id}" — use \`<catalog>/${id}\` (see \`agent-rigger ls\`)`,
         );
       }
       return 2;
@@ -1277,7 +1277,7 @@ async function handleResourceCommand(opts: ResourceCommandOpts): Promise<number>
     if (unqualifiedRemoveIds.length > 0) {
       for (const id of unqualifiedRemoveIds) {
         print(
-          `[error] id non qualifié "${id}" — utilise \`<catalog>/${id}\` (voir \`agent-rigger ls\`)`,
+          `[error] unqualified id "${id}" — use \`<catalog>/${id}\` (see \`agent-rigger ls\`)`,
         );
       }
       return 2;
@@ -1339,7 +1339,7 @@ async function handleInstall(opts: HandleInstallOpts): Promise<number> {
     if (unqualifiedInstallIds.length > 0) {
       for (const id of unqualifiedInstallIds) {
         print(
-          `[error] id non qualifié "${id}" — utilise \`<catalog>/${id}\` (voir \`agent-rigger ls\`)`,
+          `[error] unqualified id "${id}" — use \`<catalog>/${id}\` (see \`agent-rigger ls\`)`,
         );
       }
       return 2;
@@ -1365,7 +1365,7 @@ async function handleInstall(opts: HandleInstallOpts): Promise<number> {
 
     if (config.catalogs.length === 0) {
       // No catalogs configured → actionable message, nothing to install locally
-      print('aucun catalog configuré — lance `agent-rigger init`');
+      print('no catalog configured — run `agent-rigger init`');
       return 0;
     }
 
@@ -1390,7 +1390,7 @@ async function handleInstall(opts: HandleInstallOpts): Promise<number> {
       const catalog = config.catalogs.find((c) => c.name === prefix);
       if (catalog === undefined) {
         print(
-          `[error] catalog "${prefix}" non configuré — voir \`agent-rigger catalog ls\``,
+          `[error] catalog "${prefix}" not configured — see \`agent-rigger catalog ls\``,
         );
         return 2;
       }
@@ -1445,7 +1445,7 @@ async function handleInstall(opts: HandleInstallOpts): Promise<number> {
 
   if (interactiveConfig.catalogs.length === 0) {
     // No catalogs configured → actionable message
-    print('aucun catalog configuré — lance `agent-rigger init`');
+    print('no catalog configured — run `agent-rigger init`');
     return 0;
   }
 
@@ -1470,7 +1470,7 @@ async function handleInstall(opts: HandleInstallOpts): Promise<number> {
     if (catalog === undefined) {
       // Interactive picker always yields qualified ids from effective catalog, so an
       // unresolvable prefix here is a data inconsistency — skip with a warning.
-      print(`[warning] catalog "${prefix}" non configuré — entrées ignorées`);
+      print(`[warning] catalog "${prefix}" not configured — entries ignored`);
       continue;
     }
 
@@ -1624,7 +1624,7 @@ async function handleRemove(opts: HandleRemoveOpts): Promise<number> {
   if (unqualifiedRemIds.length > 0) {
     for (const id of unqualifiedRemIds) {
       print(
-        `[error] id non qualifié "${id}" — utilise \`<catalog>/${id}\` (voir \`agent-rigger ls\`)`,
+        `[error] unqualified id "${id}" — use \`<catalog>/${id}\` (see \`agent-rigger ls\`)`,
       );
     }
     return 2;
@@ -1683,7 +1683,7 @@ async function handleUpdate(opts: HandleUpdateOpts): Promise<number> {
     if (unqualifiedUpdateIds.length > 0) {
       for (const id of unqualifiedUpdateIds) {
         print(
-          `[error] id non qualifié "${id}" — utilise \`<catalog>/${id}\` (voir \`agent-rigger ls\`)`,
+          `[error] unqualified id "${id}" — use \`<catalog>/${id}\` (see \`agent-rigger ls\`)`,
         );
       }
       return 2;
@@ -1757,7 +1757,7 @@ async function handleUpdate(opts: HandleUpdateOpts): Promise<number> {
     const catalog = config.catalogs.find((c) => c.name === prefix);
     if (catalog === undefined) {
       print(
-        `[error] catalog "${prefix}" non configuré — voir \`agent-rigger catalog ls\``,
+        `[error] catalog "${prefix}" not configured — see \`agent-rigger catalog ls\``,
       );
       return 2;
     }

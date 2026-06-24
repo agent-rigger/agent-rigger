@@ -567,7 +567,7 @@ describe('TEST-1 — path traversal id rejected', () => {
       // that is not a configured catalog → rejected at prefix validation.
       // Either the catalog-not-found gate or the deep frontier guard fires; both protect.
       const output = cap.lines.join('\n');
-      expect(output).toMatch(/unsafe|traversal|path|non configuré|non qualifié/i);
+      expect(output).toMatch(/unsafe|traversal|path|not configured|unqualified/i);
     } finally {
       await traversalEnv.cleanupAll();
     }

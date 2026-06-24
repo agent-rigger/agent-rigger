@@ -92,7 +92,7 @@ export async function runDoctor(opts: RunDoctorOpts): Promise<void> {
   for (const dep of DOCTOR_DEPS) {
     const resolved = which(dep.name);
     if (resolved === null) {
-      print(`✗ ${dep.name} — manquant  hint: ${dep.installHint}`);
+      print(`✗ ${dep.name} — missing  hint: ${dep.installHint}`);
     } else {
       print(`✓ ${dep.name} (${resolved})`);
       if (dep.name === 'gitleaks') gitleaksPresent = true;
@@ -103,10 +103,10 @@ export async function runDoctor(opts: RunDoctorOpts): Promise<void> {
   print('');
 
   if (gitleaksPresent || trivyPresent) {
-    print('mode : scan complet');
+    print('mode : full scan');
   } else {
     print(
-      'mode : warn-only (contenu externe non scanné — installe gitleaks ou trivy)',
+      'mode : warn-only (external content not scanned — install gitleaks or trivy)',
     );
   }
 }

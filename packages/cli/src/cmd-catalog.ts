@@ -74,7 +74,7 @@ export async function runCatalog(opts: RunCatalogOpts): Promise<number> {
     const catalogs = config.catalogs ?? [];
 
     if (catalogs.length === 0) {
-      print('aucun catalog configuré — lance `agent-rigger init` ou `catalog add <name> <url>`');
+      print('no catalog configured — run `agent-rigger init` or `catalog add <name> <url>`');
       return 0;
     }
 
@@ -105,14 +105,14 @@ export async function runCatalog(opts: RunCatalogOpts): Promise<number> {
 
     const existing = catalogs.find((c) => c.name === name);
     if (existing !== undefined) {
-      print(`[error] catalog "${name}" existe déjà (${existing.url}).`);
+      print(`[error] catalog "${name}" already exists (${existing.url}).`);
       return 2;
     }
 
     const updated = [...catalogs, { name, url }];
     await persistConfig(configPath, { ...config, catalogs: updated });
 
-    print(`catalog "${name}" ajouté (${url})`);
+    print(`catalog "${name}" added (${url})`);
 
     // Step M7/R9 — post-add catalog proposal (interactive / TTY mode only).
     // Both fetchCatalogFn and proposeInstall must be provided; otherwise skip silently.
@@ -146,14 +146,14 @@ export async function runCatalog(opts: RunCatalogOpts): Promise<number> {
 
     const index = catalogs.findIndex((c) => c.name === name);
     if (index === -1) {
-      print(`[error] catalog "${name}" introuvable.`);
+      print(`[error] catalog "${name}" not found.`);
       return 2;
     }
 
     const updated = catalogs.filter((c) => c.name !== name);
     await persistConfig(configPath, { ...config, catalogs: updated });
 
-    print(`catalog "${name}" retiré.`);
+    print(`catalog "${name}" removed.`);
     return 0;
   }
 

@@ -58,7 +58,7 @@ describe('runDoctor', () => {
     expect(output).toContain('✓ trivy');
     expect(output).toContain('✓ glab');
     expect(output).toContain('✓ git');
-    expect(output).toContain('mode : scan complet');
+    expect(output).toContain('mode : full scan');
     expect(output).not.toContain('warn-only');
     expect(output).not.toContain('✗');
   });
@@ -79,7 +79,7 @@ describe('runDoctor', () => {
     // hint mentions how to install
     expect(output).toContain('gitleaks');
     // trivy present → scan complet
-    expect(output).toContain('mode : scan complet');
+    expect(output).toContain('mode : full scan');
     expect(output).not.toContain('warn-only');
   });
 
@@ -96,7 +96,7 @@ describe('runDoctor', () => {
     const output = lines().join('\n');
     expect(output).toContain('✓ gitleaks');
     expect(output).toContain('✗ trivy');
-    expect(output).toContain('mode : scan complet');
+    expect(output).toContain('mode : full scan');
   });
 
   it('gitleaks AND trivy absent — mode warn-only', async () => {
@@ -112,7 +112,7 @@ describe('runDoctor', () => {
     expect(output).toContain('✗ gitleaks');
     expect(output).toContain('✗ trivy');
     expect(output).toContain('warn-only');
-    expect(output).not.toContain('mode : scan complet');
+    expect(output).not.toContain('mode : full scan');
   });
 
   it('git absent — ✗ git with install hint', async () => {
