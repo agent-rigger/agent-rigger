@@ -37,6 +37,7 @@ import type {
   WriteOpMergeHooks,
 } from '@agent-rigger/core';
 import { syncToStore } from '@agent-rigger/core/linker';
+import type { SyncOptions } from '@agent-rigger/core/linker';
 
 // ---------------------------------------------------------------------------
 // ResolvedHook
@@ -198,7 +199,10 @@ export async function applyHook(ops: WriteOp[], _env: Env): Promise<void> {
     // Deposit guard scripts to the store before merging settings.json.
     // exactOptionalPropertyTypes: both fields must be present (not merely defined).
     if (mergeOp.scriptSource !== undefined && mergeOp.scriptStore !== undefined) {
-      await syncToStore(mergeOp.scriptSource, mergeOp.scriptStore);
+      // Preserve runtime guard-*.log files written by the guard scripts at execution
+      // time. Without this, a plain rm-rf + cp would erase logs on every re-install.
+      const syncOpts: SyncOptions = { preserveGlobs: ['guard-*.log'] };
+      await syncToStore(mergeOp.scriptSource, mergeOp.scriptStore, syncOpts);
     }
 
     const settings = await readJson(mergeOp.path);

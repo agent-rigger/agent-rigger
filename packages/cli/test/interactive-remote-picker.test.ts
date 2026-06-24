@@ -95,7 +95,7 @@ async function makeIsolatedEnv(opts: {
   if (withCatalogUrl) {
     await fs.writeFile(
       path.join(configDir, 'config.json'),
-      JSON.stringify({ catalogUrl: 'https://example.com/catalog.git' }),
+      JSON.stringify({ catalogs: [{ name: 'principal', url: 'https://example.com/catalog.git' }] }),
       'utf8',
     );
   }
@@ -209,12 +209,14 @@ describe('interactive install — with catalogUrl', () => {
     // capturedEntries is non-null at this point (asserted above).
     // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
     const ids = capturedEntries!.map((e) => e.id);
-    expect(ids).toContain('skill:remote-demo');
+    expect(ids).toContain('principal/skill:remote-demo');
   });
 
   it('returns exit 0 when external skill is installed interactively', async () => {
+    // The real picker returns qualified ids (e.g. 'principal/skill:remote-demo')
+    // because resolveEffectiveCatalog already qualifies all entries.
     const prompts: CliPrompts = {
-      selectArtifacts: async () => ['skill:remote-demo'],
+      selectArtifacts: async () => ['principal/skill:remote-demo'],
       selectScope: async () => 'user',
       confirmApply: async () => true,
       askUrl: async () => '',
@@ -233,7 +235,7 @@ describe('interactive install — with catalogUrl', () => {
 
   it('manifest entry has real ref/sha after interactive remote install', async () => {
     const prompts: CliPrompts = {
-      selectArtifacts: async () => ['skill:remote-demo'],
+      selectArtifacts: async () => ['principal/skill:remote-demo'],
       selectScope: async () => 'user',
       confirmApply: async () => true,
       askUrl: async () => '',
@@ -251,7 +253,7 @@ describe('interactive install — with catalogUrl', () => {
     const manifest = JSON.parse(raw) as {
       artifacts: Array<{ id: string; ref?: string; sha?: string }>;
     };
-    const entry = manifest.artifacts.find((a) => a.id === 'skill:remote-demo');
+    const entry = manifest.artifacts.find((a) => a.id === 'principal/skill:remote-demo');
     expect(entry).toBeDefined();
     expect(entry?.ref).toBe(TAG_V1_0_0);
     expect(entry?.sha).not.toBe('');
@@ -259,7 +261,7 @@ describe('interactive install — with catalogUrl', () => {
 
   it('store SKILL.md is written after interactive remote install', async () => {
     const prompts: CliPrompts = {
-      selectArtifacts: async () => ['skill:remote-demo'],
+      selectArtifacts: async () => ['principal/skill:remote-demo'],
       selectScope: async () => 'user',
       confirmApply: async () => true,
       askUrl: async () => '',

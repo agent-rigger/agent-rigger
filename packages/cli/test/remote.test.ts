@@ -11,7 +11,7 @@ import { join } from 'node:path';
 import { type CatalogEntry, RemoteFetchError, type TmpDirFactory } from '@agent-rigger/catalog';
 import type { CommandRunner } from '@agent-rigger/catalog/tool-check';
 
-import { CatalogUrlMissingError, fetchRemoteCatalog, mergeCatalogs } from '../src/remote';
+import { fetchRemoteCatalog, mergeCatalogs } from '../src/remote';
 
 // ---------------------------------------------------------------------------
 // Module-level runners (no outer scope captures — extracted per lint)
@@ -101,35 +101,6 @@ function makeRunner(tagsStdout: string, cloneExitCode = 0): CommandRunner {
 }
 
 // ---------------------------------------------------------------------------
-// fetchRemoteCatalog — CatalogUrlMissingError
-// ---------------------------------------------------------------------------
-
-describe('fetchRemoteCatalog — missing url', () => {
-  it('throws CatalogUrlMissingError when catalogUrl is undefined', async () => {
-    await expect(
-      fetchRemoteCatalog({ catalogUrl: undefined }),
-    ).rejects.toBeInstanceOf(CatalogUrlMissingError);
-  });
-
-  it('throws CatalogUrlMissingError when catalogUrl is empty string', async () => {
-    await expect(
-      fetchRemoteCatalog({ catalogUrl: '' }),
-    ).rejects.toBeInstanceOf(CatalogUrlMissingError);
-  });
-
-  it('CatalogUrlMissingError message mentions agent-rigger init', async () => {
-    let err: unknown;
-    try {
-      await fetchRemoteCatalog({ catalogUrl: undefined });
-    } catch (e) {
-      err = e;
-    }
-    expect(err).toBeInstanceOf(CatalogUrlMissingError);
-    expect((err as CatalogUrlMissingError).message).toContain('agent-rigger init');
-  });
-});
-
-// ---------------------------------------------------------------------------
 // fetchRemoteCatalog — success
 // ---------------------------------------------------------------------------
 
@@ -144,7 +115,7 @@ describe('fetchRemoteCatalog — success', () => {
     const tagsStdout = `${SHA}\trefs/tags/v1.0.0\n`;
 
     const result = await fetchRemoteCatalog({
-      catalogUrl: 'https://example.com/catalog.git',
+      url: 'https://example.com/catalog.git',
       run: makeRunner(tagsStdout),
       tmpFactory: makeFakeTmpFactory(dir, {
         meta: { name: 'remote-test-catalog' },
@@ -177,7 +148,7 @@ describe('fetchRemoteCatalog — RemoteFetchError propagation', () => {
 
     await expect(
       fetchRemoteCatalog({
-        catalogUrl: 'https://example.com/catalog.git',
+        url: 'https://example.com/catalog.git',
         run: makeRunner(tagsStdout, 1), // clone exits 1
         tmpFactory: makeFakeTmpFactory(dir, { meta: { name: 'fail-test-catalog' }, entries: [] }),
       }),
@@ -189,7 +160,7 @@ describe('fetchRemoteCatalog — RemoteFetchError propagation', () => {
   it('propagates RemoteFetchError when ls-remote fails', async () => {
     await expect(
       fetchRemoteCatalog({
-        catalogUrl: 'https://example.com/catalog.git',
+        url: 'https://example.com/catalog.git',
         run: alwaysFailRunner,
       }),
     ).rejects.toBeInstanceOf(RemoteFetchError);

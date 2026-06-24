@@ -13,6 +13,7 @@ import path from 'node:path';
 import {
   DEFAULT_CONFIG,
   InvalidConfigError,
+  LegacyConfigError,
   loadConfig,
   loadConfigFile,
   persistConfig,
@@ -43,8 +44,8 @@ describe('DEFAULT_CONFIG', () => {
     expect(DEFAULT_CONFIG.defaultScope).toBe('user');
   });
 
-  it('does not have catalogUrl set', () => {
-    expect(DEFAULT_CONFIG.catalogUrl).toBeUndefined();
+  it('has empty catalogs array', () => {
+    expect(DEFAULT_CONFIG.catalogs).toEqual([]);
   });
 
   it('does not have authMethod set', () => {
@@ -63,17 +64,19 @@ describe('resolveConfig', () => {
   });
 
   it('preset overrides defaults', () => {
-    const config = resolveConfig({ preset: { catalogUrl: 'https://preset.example.com' } });
-    expect(config.catalogUrl).toBe('https://preset.example.com');
+    const config = resolveConfig({
+      preset: { catalogs: [{ name: 'preset', url: 'https://preset.example.com' }] },
+    });
+    expect(config.catalogs[0]?.url).toBe('https://preset.example.com');
     expect(config.defaultScope).toBe('user');
   });
 
   it('user overrides preset', () => {
     const config = resolveConfig({
-      preset: { catalogUrl: 'https://preset.example.com' },
-      user: { catalogUrl: 'https://user.example.com' },
+      preset: { catalogs: [{ name: 'preset', url: 'https://preset.example.com' }] },
+      user: { catalogs: [{ name: 'user', url: 'https://user.example.com' }] },
     });
-    expect(config.catalogUrl).toBe('https://user.example.com');
+    expect(config.catalogs[0]?.url).toBe('https://user.example.com');
   });
 
   it('project overrides user', () => {
@@ -101,29 +104,34 @@ describe('resolveConfig', () => {
   });
 
   it('flags have highest priority — override all layers', () => {
+    const preset = [{ name: 'preset', url: 'https://preset.example.com' }];
+    const user = [{ name: 'user', url: 'https://user.example.com' }];
+    const project = [{ name: 'project', url: 'https://project.example.com' }];
+    const flags = [{ name: 'flags', url: 'https://flags.example.com' }];
     const config = resolveConfig({
-      preset: { defaultScope: 'user', catalogUrl: 'https://preset.example.com' },
-      user: { defaultScope: 'user', catalogUrl: 'https://user.example.com' },
-      project: { defaultScope: 'project', catalogUrl: 'https://project.example.com' },
-      env: { RIGGER_CATALOG_URL: 'https://env.example.com', RIGGER_SCOPE: 'project' },
-      flags: { defaultScope: 'user', catalogUrl: 'https://flags.example.com' },
+      preset: { defaultScope: 'user', catalogs: preset },
+      user: { defaultScope: 'user', catalogs: user },
+      project: { defaultScope: 'project', catalogs: project },
+      env: { RIGGER_SCOPE: 'project' },
+      flags: { defaultScope: 'user', catalogs: flags },
     });
     expect(config.defaultScope).toBe('user');
-    expect(config.catalogUrl).toBe('https://flags.example.com');
+    expect(config.catalogs[0]?.url).toBe('https://flags.example.com');
   });
 
   it('absent field in higher-priority layer does not erase lower-priority value', () => {
     const config = resolveConfig({
-      preset: { catalogUrl: 'https://preset.example.com' },
+      preset: { catalogs: [{ name: 'preset', url: 'https://preset.example.com' }] },
       flags: { defaultScope: 'project' },
     });
-    expect(config.catalogUrl).toBe('https://preset.example.com');
+    expect(config.catalogs[0]?.url).toBe('https://preset.example.com');
     expect(config.defaultScope).toBe('project');
   });
 
-  it('maps RIGGER_CATALOG_URL env var to catalogUrl', () => {
+  it('RIGGER_CATALOG_URL env var is no longer mapped (removed in M4)', () => {
     const config = resolveConfig({ env: { RIGGER_CATALOG_URL: 'https://env.example.com' } });
-    expect(config.catalogUrl).toBe('https://env.example.com');
+    // catalogUrl no longer exists; catalogs should remain empty (env var ignored).
+    expect(config.catalogs).toEqual([]);
   });
 
   it('maps RIGGER_SCOPE env var to defaultScope', () => {
@@ -136,12 +144,13 @@ describe('resolveConfig', () => {
     expect(config.authMethod).toBe('ssh');
   });
 
-  it('ignores empty env values', () => {
+  it('ignores RIGGER_CATALOG_URL — lower-priority catalogs not overridden', () => {
     const config = resolveConfig({
-      user: { catalogUrl: 'https://user.example.com' },
-      env: { RIGGER_CATALOG_URL: '' },
+      user: { catalogs: [{ name: 'user', url: 'https://user.example.com' }] },
+      env: { RIGGER_CATALOG_URL: 'https://env.example.com' },
     });
-    expect(config.catalogUrl).toBe('https://user.example.com');
+    // RIGGER_CATALOG_URL is no longer mapped — user catalogs are preserved
+    expect(config.catalogs[0]?.url).toBe('https://user.example.com');
   });
 
   it('ignores unknown env keys', () => {
@@ -193,24 +202,27 @@ describe('loadConfigFile', () => {
 
   it('parses a plain JSON file', async () => {
     const filePath = path.join(tmpDir, 'config.jsonc');
-    const data: Partial<Config> = { defaultScope: 'project', catalogUrl: 'https://example.com' };
+    const data: Partial<Config> = {
+      defaultScope: 'project',
+      catalogs: [{ name: 'main', url: 'https://example.com' }],
+    };
     await fs.writeFile(filePath, JSON.stringify(data), 'utf-8');
 
     const result = await loadConfigFile(filePath);
     expect(result).toEqual(data);
   });
 
-  it('parses JSONC with single-line comments', async () => {
+  it('parses JSONC with single-line comments (catalogs)', async () => {
     const filePath = path.join(tmpDir, 'config.jsonc');
     const content = `{
-  // The catalog URL
-  "catalogUrl": "https://example.com",
+  // The catalog list
+  "catalogs": [{"name":"main","url":"https://example.com"}],
   "defaultScope": "user"
 }`;
     await fs.writeFile(filePath, content, 'utf-8');
 
     const result = await loadConfigFile(filePath);
-    expect(result.catalogUrl).toBe('https://example.com');
+    expect(result.catalogs?.[0]?.url).toBe('https://example.com');
     expect(result.defaultScope).toBe('user');
   });
 
@@ -230,13 +242,13 @@ describe('loadConfigFile', () => {
     const filePath = path.join(tmpDir, 'config.jsonc');
     const content = `{
   "defaultScope": "user",
-  "catalogUrl": "https://example.com",
+  "catalogs": [{"name":"main","url":"https://example.com"}],
 }`;
     await fs.writeFile(filePath, content, 'utf-8');
 
     const result = await loadConfigFile(filePath);
     expect(result.defaultScope).toBe('user');
-    expect(result.catalogUrl).toBe('https://example.com');
+    expect(result.catalogs?.[0]?.url).toBe('https://example.com');
   });
 
   it('parses JSONC with both comments and trailing commas', async () => {
@@ -289,18 +301,21 @@ describe('loadConfigFile', () => {
 describe('persistConfig', () => {
   it('writes a file readable by loadConfigFile (round-trip)', async () => {
     const filePath = path.join(tmpDir, 'config.jsonc');
-    const config: Config = { defaultScope: 'project', catalogUrl: 'https://example.com' };
+    const config: Config = {
+      defaultScope: 'project',
+      catalogs: [{ name: 'main', url: 'https://example.com' }],
+    };
 
     await persistConfig(filePath, config);
     const reloaded = await loadConfigFile(filePath);
 
     expect(reloaded.defaultScope).toBe(config.defaultScope);
-    expect(reloaded.catalogUrl).toBe(config.catalogUrl);
+    expect(reloaded.catalogs?.[0]?.url).toBe(config.catalogs[0]?.url);
   });
 
   it('creates parent directories if missing', async () => {
     const filePath = path.join(tmpDir, 'nested', 'deep', 'config.jsonc');
-    const config: Config = { defaultScope: 'user' };
+    const config: Config = { defaultScope: 'user', catalogs: [] };
 
     await persistConfig(filePath, config);
     const reloaded = await loadConfigFile(filePath);
@@ -357,15 +372,20 @@ describe('loadConfig', () => {
     const userPath = path.join(tmpDir, 'user.jsonc');
     const projectPath = path.join(tmpDir, 'project.jsonc');
 
-    await persistConfig(userPath, { defaultScope: 'user', catalogUrl: 'https://user.example.com' });
-    await persistConfig(projectPath, { catalogUrl: 'https://project.example.com' });
+    await persistConfig(userPath, {
+      defaultScope: 'user',
+      catalogs: [{ name: 'user', url: 'https://user.example.com' }],
+    });
+    await persistConfig(projectPath, {
+      catalogs: [{ name: 'project', url: 'https://project.example.com' }],
+    });
 
     const config = await loadConfig({
       projectConfigPath: projectPath,
       userConfigPath: userPath,
     });
 
-    expect(config.catalogUrl).toBe('https://project.example.com');
+    expect(config.catalogs[0]?.url).toBe('https://project.example.com');
     expect(config.defaultScope).toBe('user');
   });
 
@@ -374,10 +394,12 @@ describe('loadConfig', () => {
     const userPath = path.join(tmpDir, 'user.jsonc');
 
     await persistConfig(presetPath, {
-      catalogUrl: 'https://preset.example.com',
+      catalogs: [{ name: 'preset', url: 'https://preset.example.com' }],
       defaultScope: 'user',
     });
-    await persistConfig(userPath, { catalogUrl: 'https://user.example.com' });
+    await persistConfig(userPath, {
+      catalogs: [{ name: 'user', url: 'https://user.example.com' }],
+    });
 
     const config = await loadConfig({
       projectConfigPath: path.join(tmpDir, 'project.jsonc'),
@@ -385,24 +407,27 @@ describe('loadConfig', () => {
       presetConfigPath: presetPath,
     });
 
-    expect(config.catalogUrl).toBe('https://user.example.com');
+    expect(config.catalogs[0]?.url).toBe('https://user.example.com');
   });
 
   it('flags override everything', async () => {
     const userPath = path.join(tmpDir, 'user.jsonc');
     await persistConfig(userPath, {
       defaultScope: 'project',
-      catalogUrl: 'https://user.example.com',
+      catalogs: [{ name: 'user', url: 'https://user.example.com' }],
     });
 
     const config = await loadConfig({
       projectConfigPath: path.join(tmpDir, 'project.jsonc'),
       userConfigPath: userPath,
-      flags: { defaultScope: 'user', catalogUrl: 'https://flags.example.com' },
+      flags: {
+        defaultScope: 'user',
+        catalogs: [{ name: 'flags', url: 'https://flags.example.com' }],
+      },
     });
 
     expect(config.defaultScope).toBe('user');
-    expect(config.catalogUrl).toBe('https://flags.example.com');
+    expect(config.catalogs[0]?.url).toBe('https://flags.example.com');
   });
 
   it('env vars override file-based config', async () => {
@@ -418,28 +443,215 @@ describe('loadConfig', () => {
     expect(config.defaultScope).toBe('project');
   });
 
-  it('full priority chain: flags > env > project > user > preset > defaults', async () => {
+  it('full priority chain: flags > project > user > preset > defaults (authMethod)', async () => {
     const presetPath = path.join(tmpDir, 'preset.jsonc');
     const userPath = path.join(tmpDir, 'user.jsonc');
     const projectPath = path.join(tmpDir, 'project.jsonc');
 
     await persistConfig(presetPath, {
       authMethod: 'provider-cli',
-      catalogUrl: 'https://preset.example.com',
+      catalogs: [{ name: 'preset', url: 'https://preset.example.com' }],
     });
-    await persistConfig(userPath, { authMethod: 'https', catalogUrl: 'https://user.example.com' });
+    await persistConfig(userPath, {
+      authMethod: 'https',
+      catalogs: [{ name: 'user', url: 'https://user.example.com' }],
+    });
     await persistConfig(projectPath, { authMethod: 'ssh' });
 
     const config = await loadConfig({
       projectConfigPath: projectPath,
       userConfigPath: userPath,
       presetConfigPath: presetPath,
-      env: { RIGGER_CATALOG_URL: 'https://env.example.com' },
+      env: { RIGGER_SCOPE: 'user' },
       flags: { defaultScope: 'project' },
     });
 
     expect(config.authMethod).toBe('ssh');
-    expect(config.catalogUrl).toBe('https://env.example.com');
+    // catalogs comes from user (project didn't define it)
+    expect(config.catalogs[0]?.url).toBe('https://user.example.com');
     expect(config.defaultScope).toBe('project');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// M1 — catalogs[] (additif)
+// ---------------------------------------------------------------------------
+
+describe('DEFAULT_CONFIG — catalogs', () => {
+  it('catalogs defaults to empty array', () => {
+    expect(DEFAULT_CONFIG.catalogs).toEqual([]);
+  });
+});
+
+describe('loadConfigFile — catalogs', () => {
+  it('maps a valid catalogs array from a config file', async () => {
+    const filePath = path.join(tmpDir, 'config.jsonc');
+    const content = JSON.stringify({
+      catalogs: [
+        { name: 'official', url: 'https://catalog.example.com' },
+        { name: 'local', url: 'https://local.example.com' },
+      ],
+    });
+    await fs.writeFile(filePath, content, 'utf-8');
+
+    const result = await loadConfigFile(filePath);
+    expect(result.catalogs).toEqual([
+      { name: 'official', url: 'https://catalog.example.com' },
+      { name: 'local', url: 'https://local.example.com' },
+    ]);
+  });
+
+  it('ignores catalog entries missing url', async () => {
+    const filePath = path.join(tmpDir, 'config.jsonc');
+    const content = JSON.stringify({
+      catalogs: [
+        { name: 'valid', url: 'https://valid.example.com' },
+        { name: 'no-url' },
+        { url: 'https://no-name.example.com' },
+        'not-an-object',
+        42,
+      ],
+    });
+    await fs.writeFile(filePath, content, 'utf-8');
+
+    const result = await loadConfigFile(filePath);
+    expect(result.catalogs).toEqual([
+      { name: 'valid', url: 'https://valid.example.com' },
+    ]);
+  });
+
+  it('ignores catalogs key if value is not an array', async () => {
+    const filePath = path.join(tmpDir, 'config.jsonc');
+    const content = JSON.stringify({ catalogs: 'not-an-array' });
+    await fs.writeFile(filePath, content, 'utf-8');
+
+    const result = await loadConfigFile(filePath);
+    expect(result.catalogs).toBeUndefined();
+  });
+
+  it('ignores catalog entries with empty url', async () => {
+    const filePath = path.join(tmpDir, 'config.jsonc');
+    const content = JSON.stringify({
+      catalogs: [
+        { name: 'valid', url: 'https://valid.example.com' },
+        { name: 'empty-url', url: '' },
+        { name: 'empty-name', url: 'https://empty-name.example.com' },
+      ],
+    });
+    await fs.writeFile(filePath, content, 'utf-8');
+
+    const result = await loadConfigFile(filePath);
+    expect(result.catalogs).toEqual([
+      { name: 'valid', url: 'https://valid.example.com' },
+      { name: 'empty-name', url: 'https://empty-name.example.com' },
+    ]);
+  });
+
+  it('R7: throws LegacyConfigError when file has catalogUrl without catalogs[] (M4 migration guard)', async () => {
+    const filePath = path.join(tmpDir, 'config.jsonc');
+    const content = JSON.stringify({
+      catalogUrl: 'https://legacy.example.com',
+      defaultScope: 'project',
+    });
+    await fs.writeFile(filePath, content, 'utf-8');
+
+    // Must throw LegacyConfigError — not silently migrate
+    await expect(loadConfigFile(filePath)).rejects.toThrow(LegacyConfigError);
+
+    let caught: unknown;
+    try {
+      await loadConfigFile(filePath);
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(LegacyConfigError);
+    expect((caught as LegacyConfigError).path).toBe(filePath);
+    expect((caught as LegacyConfigError).message).toMatch(/init/i);
+  });
+
+  it('R7: no LegacyConfigError when file has both catalogUrl AND valid catalogs[]', async () => {
+    const filePath = path.join(tmpDir, 'config.jsonc');
+    // If someone manually wrote both, catalogs[] takes precedence — no error.
+    const content = JSON.stringify({
+      catalogUrl: 'https://legacy.example.com',
+      catalogs: [{ name: 'main', url: 'https://new.example.com' }],
+      defaultScope: 'project',
+    });
+    await fs.writeFile(filePath, content, 'utf-8');
+
+    const result = await loadConfigFile(filePath);
+    expect(result.catalogs?.[0]?.url).toBe('https://new.example.com');
+    expect(result.defaultScope).toBe('project');
+  });
+});
+
+describe('resolveConfig — catalogs layer semantics', () => {
+  it('catalogs in project layer replaces catalogs from user layer (no merge)', () => {
+    const config = resolveConfig({
+      user: {
+        catalogs: [{ name: 'user-cat', url: 'https://user.example.com' }],
+      },
+      project: {
+        catalogs: [{ name: 'project-cat', url: 'https://project.example.com' }],
+      },
+    });
+    expect(config.catalogs).toEqual([
+      { name: 'project-cat', url: 'https://project.example.com' },
+    ]);
+  });
+
+  it('user catalogs preserved when project does not define catalogs', () => {
+    const config = resolveConfig({
+      user: {
+        catalogs: [{ name: 'user-cat', url: 'https://user.example.com' }],
+      },
+      project: { defaultScope: 'project' },
+    });
+    expect(config.catalogs).toEqual([
+      { name: 'user-cat', url: 'https://user.example.com' },
+    ]);
+  });
+
+  it('flags catalogs replaces all lower-priority catalogs', () => {
+    const config = resolveConfig({
+      user: { catalogs: [{ name: 'user-cat', url: 'https://user.example.com' }] },
+      project: { catalogs: [{ name: 'project-cat', url: 'https://project.example.com' }] },
+      flags: { catalogs: [{ name: 'flags-cat', url: 'https://flags.example.com' }] },
+    });
+    expect(config.catalogs).toEqual([
+      { name: 'flags-cat', url: 'https://flags.example.com' },
+    ]);
+  });
+
+  it('empty catalogs array in higher-priority layer replaces lower-priority catalogs', () => {
+    const config = resolveConfig({
+      user: { catalogs: [{ name: 'user-cat', url: 'https://user.example.com' }] },
+      project: { catalogs: [] },
+    });
+    expect(config.catalogs).toEqual([]);
+  });
+});
+
+describe('persistConfig — catalogs round-trip', () => {
+  it('persists and reloads catalogs array identically', async () => {
+    const filePath = path.join(tmpDir, 'config.jsonc');
+    const catalogs = [
+      { name: 'primary', url: 'https://primary.example.com' },
+      { name: 'secondary', url: 'https://secondary.example.com' },
+    ];
+
+    await persistConfig(filePath, { catalogs });
+    const reloaded = await loadConfigFile(filePath);
+
+    expect(reloaded.catalogs).toEqual(catalogs);
+  });
+
+  it('persists empty catalogs array and reloads it', async () => {
+    const filePath = path.join(tmpDir, 'config.jsonc');
+
+    await persistConfig(filePath, { catalogs: [] });
+    const reloaded = await loadConfigFile(filePath);
+
+    expect(reloaded.catalogs).toEqual([]);
   });
 });

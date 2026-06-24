@@ -39,6 +39,7 @@ import type { Scope } from '@agent-rigger/core/types';
 import {
   type ArtifactEntry,
   mergeCatalogs,
+  qualifyEntries,
   readCatalogDir,
   resolveVersion,
   type TmpDirFactory,
@@ -76,16 +77,35 @@ export class ScanBlockedError extends Error {
 }
 
 // ---------------------------------------------------------------------------
+// localId — strip the source-qualifier prefix from a (potentially qualified) id
+// ---------------------------------------------------------------------------
+
+/**
+ * Return the local (unqualified) part of a catalog entry id.
+ *
+ * Examples:
+ *   'skill:foo'          → 'skill:foo'   (no prefix → unchanged)
+ *   'principal/skill:foo' → 'skill:foo'  (prefix stripped)
+ *
+ * This is the inverse of the qualification applied by qualifyEntries.
+ */
+function localId(id: string): string {
+  const slashIdx = id.indexOf('/');
+  return slashIdx === -1 ? id : id.slice(slashIdx + 1);
+}
+
+// ---------------------------------------------------------------------------
 // scanPathFor — derive the filesystem path to scan inside the checkout dir
 // ---------------------------------------------------------------------------
 
 export function scanPathFor(entry: ArtifactEntry, baseDir: string): string | null {
+  const local = localId(entry.id);
   if (entry.nature === 'skill') {
-    const name = entry.id.replace(/^skill:/, '');
+    const name = local.replace(/^skill:/, '');
     return path.join(baseDir, 'skills', name);
   }
   if (entry.nature === 'agent') {
-    const name = entry.id.replace(/^agent:/, '');
+    const name = local.replace(/^agent:/, '');
     return path.join(baseDir, 'agents', name + '.md');
   }
   if (entry.nature === 'hook') {
@@ -105,16 +125,18 @@ export function scanPathFor(entry: ArtifactEntry, baseDir: string): string | nul
  *
  * - Resolves each entry to a scan path (skills/agents only; others skipped naturally).
  * - Runs scanner.scan() in parallel via Promise.all.
- * - If any verdict is !ok and force is false → throws ScanBlockedError.
- * - If any verdict is !ok and force is true  → returns { warnings: [...] }.
- * - If all ok → returns { warnings: [] }.
+ * - If any verdict is degraded (no scanner tool installed) → actionable warning + proceeds.
+ *   force is NOT needed for this case (ADR-0018).
+ * - If any verdict is !ok (real findings, scanner present) and force is false → throws ScanBlockedError.
+ * - If any verdict is !ok and force is true → returns { warnings: [...] }.
+ * - If all ok and not degraded → returns { warnings: [] }.
  *
  * Callers prepend the warnings to their output.
  *
  * @param opts.entries  ArtifactEntry list to scan (entries without a checkout path are skipped).
  * @param opts.baseDir  Root of the remote checkout directory.
  * @param opts.scanner  Scanner instance to use.
- * @param opts.force    When true, blocking scan warns instead of throwing.
+ * @param opts.force    When true, a blocking scan (real findings) warns instead of throwing.
  */
 export async function scanEntries(opts: {
   entries: ArtifactEntry[];
@@ -149,22 +171,37 @@ export async function scanEntries(opts: {
 
   const verdicts = await Promise.all(uniquePaths.map((p) => scanner.scan(p)));
 
+  // Real findings from a present scanner (ok: false).
   const allFindings = verdicts.flatMap((v) => v.findings ?? []);
   const anyBlocked = verdicts.some((v) => !v.ok);
 
-  if (!anyBlocked) {
-    return { warnings: [] };
+  // Degraded mode: scanner returned ok: true but no tool is installed (ADR-0018).
+  // All verdicts are degraded — none ran a real scan.
+  const anyDegraded = verdicts.some((v) => v.degraded === true);
+
+  if (anyBlocked) {
+    if (!force) {
+      throw new ScanBlockedError(allFindings);
+    }
+
+    return {
+      warnings: [
+        `[warning] security scan findings (installed anyway via --force): ${
+          allFindings.join('; ')
+        }`,
+      ],
+    };
   }
 
-  if (!force) {
-    throw new ScanBlockedError(allFindings);
+  if (anyDegraded) {
+    return {
+      warnings: [
+        '[warning] contenu non scanné — installe gitleaks ou trivy puis relance pour un scan complet ; voir `rigger doctor`',
+      ],
+    };
   }
 
-  return {
-    warnings: [
-      `[warning] security scan findings (installed anyway via --force): ${allFindings.join('; ')}`,
-    ],
-  };
+  return { warnings: [] };
 }
 
 // ---------------------------------------------------------------------------
@@ -202,6 +239,13 @@ export async function runRemoteInstall(opts: {
   confirm: boolean | ((planText: string) => Promise<boolean>);
   scanner?: Scanner;
   force?: boolean;
+  /**
+   * When provided, raw catalog ids are qualified as `<sourceName>/<id>` so that
+   * the manifest stores fully-qualified ids (ADR-0017). The caller is responsible
+   * for stripping any existing qualifier from `ids` before passing them here, or
+   * for passing pre-qualified ids — `localId()` normalises them either way.
+   */
+  sourceName?: string;
 }): Promise<InstallResult> {
   const {
     ids,
@@ -216,6 +260,12 @@ export async function runRemoteInstall(opts: {
 
   const force = opts.force === true;
   const scanner = opts.scanner ?? createCompositeScanner();
+  const sourceName = opts.sourceName;
+
+  // Normalise: strip any existing qualifier prefix from user-provided ids so that
+  // we always work with local (unqualified) ids when resolving against the raw
+  // checkout catalog.
+  const rawIds = ids.map(localId);
 
   // Adapt CommandRunner → PluginRunner (PluginRunner accepts an optional env opts arg;
   // the CommandRunner signature doesn't carry it, so we ignore it here — tests don't
@@ -238,34 +288,56 @@ export async function runRemoteInstall(opts: {
 
       // Frontier guard: reject external entries whose derived name would cause
       // a path traversal before any install operation begins.
+      // Always use local (unqualified) id for path derivation.
       for (const entry of remoteEntries) {
         if (entry.kind !== 'artifact') continue;
+        const local = localId(entry.id);
         if (entry.nature === 'skill') {
-          const name = entry.id.replace(/^skill:/, '');
+          const name = local.replace(/^skill:/, '');
           assertSafeArtifactName(name, entry.id);
         } else if (entry.nature === 'agent') {
-          const name = entry.id.replace(/^agent:/, '');
+          const name = local.replace(/^agent:/, '');
           assertSafeArtifactName(name, entry.id);
         }
       }
 
-      const { entries: effective } = mergeCatalogs([], remoteEntries);
-      const resolved = resolve(ids, effective);
+      // Resolve against raw (unqualified) catalog first.
+      const { entries: rawEffective } = mergeCatalogs([], remoteEntries);
+      const rawResolved = resolve(rawIds, rawEffective);
+
+      // When a sourceName is provided, qualify all resolved entries so that the
+      // manifest stores fully-qualified ids (e.g. 'principal/guardrail:main').
+      // The adapter and version lookup still key by qualified id.
+      const qualify = (id: string): string =>
+        sourceName !== undefined && !id.includes('/') ? `${sourceName}/${id}` : id;
+
+      const resolved: ArtifactEntry[] = sourceName === undefined
+        ? rawResolved
+        : rawResolved.map((e) => ({ ...e, id: qualify(e.id) }));
+
+      // Qualify the effective catalog using qualifyEntries so that pack members,
+      // requires, and ids are ALL qualified (not just the top-level id field).
+      // This prevents UnknownEntryError when resolve() tries to look up pack members.
+      const effective = sourceName === undefined
+        ? rawEffective
+        : qualifyEntries(sourceName, rawEffective);
 
       // All entries from the remote catalog are sourced from the checkout.
       // - Skills / agents: have a checkout path (scanPathFor != null).
       // - Guardrails / contexts / hooks: no scan path but also come from checkout.
       // - Plugins: from the remote catalog's marketplace URL.
       // remoteIds tells buildClaudeAdapter which entries to resolve from externalBaseDir.
-      const remoteEntryIds = new Set(remoteEntries.map((e) => e.id));
+      // Use qualified ids here to match the (potentially qualified) resolved entries.
+      const qualifiedRemoteEntryIds = new Set(remoteEntries.map((e) => qualify(e.id)));
       const remoteIds = new Set(
         resolved
-          .filter((e) => remoteEntryIds.has(e.id))
+          .filter((e) => qualifiedRemoteEntryIds.has(e.id))
           .map((e) => e.id),
       );
 
       // Security scan — all entries that have a checkout path (uniform scan, ADR-0014).
       // Entries without a scanPath (e.g. guardrails, hooks) are naturally skipped.
+      // scanPathFor uses localId() internally to strip the qualifier before path derivation.
       const { warnings } = await scanEntries({
         entries: resolved,
         baseDir: dir,
@@ -273,7 +345,7 @@ export async function runRemoteInstall(opts: {
         force,
       });
 
-      // Build effectiveEntries map for hookSpec resolution
+      // Build effectiveEntries map for hookSpec resolution (qualified ids).
       const effectiveEntries = new Map(effective.map((e) => [e.id, e]));
 
       const adapter = await buildClaudeAdapter(env, {
@@ -293,13 +365,16 @@ export async function runRemoteInstall(opts: {
         return { ref: 'v0.0.0', sha: '' };
       };
 
+      // Pass qualified ids and qualified catalog to runInstall so the manifest
+      // stores fully-qualified ids.
+      const selectedIds = sourceName === undefined ? ids : ids.map(qualify);
       const result = await runInstall({
         catalog: effective,
         adapter,
         scope,
         env,
         manifestPath,
-        selectedIds: ids,
+        selectedIds,
         confirm,
         versionFor,
         toolRunner: runner,
