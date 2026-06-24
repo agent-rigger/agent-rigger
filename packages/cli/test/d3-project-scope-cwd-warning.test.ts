@@ -194,6 +194,59 @@ describe('d3 — scope project, cwd with .git', () => {
 });
 
 // ---------------------------------------------------------------------------
+// scenario b2: scope project + cwd with .git as a FILE (worktree) → warning fires
+//
+// git worktrees use a .git file (not directory) containing "gitdir: <path>".
+// The code uses fs.access() which resolves both cases — the warning must trigger
+// regardless of whether .git is a file or a directory.
+// ---------------------------------------------------------------------------
+
+describe('d3 — scope project, cwd with .git as a file (worktree)', () => {
+  beforeEach(async () => {
+    // Simulate a git worktree: .git is a plain file with a gitdir pointer
+    await fs.writeFile(
+      path.join(projectCwd.dir, '.git'),
+      'gitdir: /some/bare/repo/.git/worktrees/my-worktree\n',
+      'utf8',
+    );
+  });
+
+  it('output contains the target cwd path when .git is a file', async () => {
+    const adapter = createClaudeAdapter({ denyRef: REF_DENY, agentsContent: AGENTS_CONTENT });
+
+    const result = await runInstall({
+      catalog: MINI_CATALOG,
+      adapter,
+      scope: 'project' as Scope,
+      env,
+      manifestPath: path.join(home.dir, 'state.json'),
+      selectedIds: ['guardrails-claude'],
+      confirm: false,
+      cwd: projectCwd.dir,
+    });
+
+    expect(result.output).toContain(projectCwd.dir);
+  });
+
+  it('output contains a repo-pollution warning when .git is a file', async () => {
+    const adapter = createClaudeAdapter({ denyRef: REF_DENY, agentsContent: AGENTS_CONTENT });
+
+    const result = await runInstall({
+      catalog: MINI_CATALOG,
+      adapter,
+      scope: 'project' as Scope,
+      env,
+      manifestPath: path.join(home.dir, 'state.json'),
+      selectedIds: ['guardrails-claude'],
+      confirm: false,
+      cwd: projectCwd.dir,
+    });
+
+    expect(result.output).toMatch(/git repo|pollut/i);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // scenario c: scope user → no cwd header, no warning (no regression)
 // ---------------------------------------------------------------------------
 
