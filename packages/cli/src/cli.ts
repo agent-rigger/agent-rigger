@@ -792,8 +792,70 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
       if (prompts.proposeInstall !== undefined) {
         // Test injection: use the injected fn directly.
         proposeInstallFn = prompts.proposeInstall;
+      } else if (flags['yes'] === true) {
+        // --yes (TTY or non-TTY): install defaults (required + recommended) without a picker.
+        // `--yes` universally means "accept defaults, show no prompt" — it takes priority
+        // over the interactive TTY picker.
+        proposeInstallFn = async (catalog: CatalogProposal): Promise<string[]> => {
+          const sourceName = catalog.sourceName ?? 'principal';
+          const qualify = (id: string): string =>
+            sourceName !== '' && !id.includes('/') ? `${sourceName}/${id}` : id;
+
+          const required = (catalog.meta.required ?? []).map(qualify);
+          const recommended = (catalog.meta.recommended ?? []).map(qualify);
+
+          // Build defaults selection: required(all) ∪ (recommended ∩ entries).
+          //
+          // Mirrors the interactive path (selectArtifactsWithDefaults):
+          //   - required ids absent from entries are kept → runRemoteInstall errors
+          //     (UnknownEntryError, fail-closed — aligned with ADR-0015 §6).
+          //   - recommended ids absent from entries are silently skipped: the picker
+          //     only renders options from entries, so absent recommended ids never
+          //     appear in the picker and are never installed — no error.
+          const entryIds = new Set(catalog.entries.map((e) => e.id));
+          const seen = new Set<string>();
+          const defaultIds: string[] = [];
+          for (const id of required) {
+            if (!seen.has(id)) {
+              seen.add(id);
+              defaultIds.push(id);
+            }
+          }
+          for (const id of recommended) {
+            if (!seen.has(id) && entryIds.has(id)) {
+              seen.add(id);
+              defaultIds.push(id);
+            }
+          }
+
+          if (defaultIds.length === 0) {
+            return [];
+          }
+
+          const initConfig = await loadCliConfig(env);
+          const initPrimary = initConfig.catalogs[0];
+          if (initPrimary === undefined) {
+            return [];
+          }
+
+          const manifestPath = resolveManifestPath(env);
+          await runRemoteInstall({
+            ids: defaultIds,
+            catalogUrl: initPrimary.url,
+            sourceName,
+            scope,
+            env,
+            manifestPath,
+            runner,
+            tmpFactory,
+            confirm: true,
+            ...(deps.remote?.scanner === undefined ? {} : { scanner: deps.remote.scanner }),
+          });
+
+          return defaultIds;
+        };
       } else if (process.stdout.isTTY) {
-        // Real TTY: delegate to the shared interactive picker + install helper.
+        // Real TTY without --yes: delegate to the shared interactive picker + install helper.
         // The install source (url + name) is loaded lazily from the just-saved config
         // so that `init` always installs from the first catalog it configured.
         proposeInstallFn = async (catalog: CatalogProposal): Promise<string[]> => {
@@ -816,7 +878,7 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
           });
         };
       }
-      // else: non-TTY → proposeInstallFn stays undefined → runInit skips proposal step.
+      // else: non-TTY without --yes → proposeInstallFn stays undefined → runInit skips proposal step.
 
       // fetchCatalogFn: resolves remote version then fetches catalog.json.
       // Only provided when proposeInstallFn is set — runInit skips both when either is absent.
