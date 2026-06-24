@@ -1,20 +1,21 @@
 /**
  * Tests for core/src/scanners/gitleaks.ts
  *
- * Strategy: inject a mock ScanRunner — no real gitleaks process is spawned.
+ * Strategy: inject a mock ScanRunner for scan calls, and a mock WhichFn for
+ * presence checks — no real gitleaks process is spawned.
  *
  * Coverage:
  *  - exit 0 / stdout `[]`     → { ok: true }
  *  - exit 0 / stdout empty    → { ok: true } (no JSON.parse crash)
  *  - exit 1 / 2 findings      → { ok: false }, findings.length === 2, each mentions RuleID + File
  *  - exit 2 / stderr "fatal"  → { ok: false }, finding mentions "gitleaks error"
- *  - isGitleaksAvailable: exit 0 → true ; non-0 → false
+ *  - isGitleaksAvailable: which returns path → true ; returns null → false
  */
 
 import { describe, expect, it } from 'bun:test';
 
 import { createGitleaksScanner, isGitleaksAvailable } from './gitleaks';
-import type { ScanRunner } from './gitleaks';
+import type { ScanRunner, WhichFn } from './gitleaks';
 
 // ---------------------------------------------------------------------------
 // Fixture helpers
@@ -138,17 +139,29 @@ describe('createGitleaksScanner — exit 1 but empty findings (fail-closed)', ()
 });
 
 // ---------------------------------------------------------------------------
-// isGitleaksAvailable
+// isGitleaksAvailable — WhichFn-based (portable, no shell spawn)
 // ---------------------------------------------------------------------------
 
+const whichFound: WhichFn = () => '/usr/local/bin/gitleaks';
+const whichNotFound: WhichFn = () => null;
+
 describe('isGitleaksAvailable', () => {
-  it('returns true when "command -v gitleaks" exits 0', async () => {
-    const available = await isGitleaksAvailable(mockRunner(0, '/usr/local/bin/gitleaks'));
+  it('returns true when which returns a non-null path', async () => {
+    const available = await isGitleaksAvailable(whichFound);
     expect(available).toBe(true);
   });
 
-  it('returns false when "command -v gitleaks" exits non-zero', async () => {
-    const available = await isGitleaksAvailable(mockRunner(1, ''));
+  it('returns false when which returns null', async () => {
+    const available = await isGitleaksAvailable(whichNotFound);
     expect(available).toBe(false);
+  });
+
+  it('passes "gitleaks" as the command to which', async () => {
+    let received: string | undefined;
+    await isGitleaksAvailable((cmd) => {
+      received = cmd;
+      return '/usr/bin/gitleaks';
+    });
+    expect(received).toBe('gitleaks');
   });
 });

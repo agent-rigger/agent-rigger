@@ -4,7 +4,7 @@
  * Responsibilities:
  * - Ask the user for a catalog URL (via injectable askUrl).
  * - Probe access via preflightAuth (injectable run + askMethod).
- * - Persist the resolved config (catalogUrl + authMethod) to configPath.
+ * - Persist the resolved config (catalogs[] + authMethod) to configPath.
  * - Idempotent: reads existing config first, merges new values on top.
  * - After successful persist + in interactive mode: fetch catalog, propose install.
  *
@@ -22,14 +22,15 @@
  *   The config is not written to disk in this case, so the user can re-run after fixing auth.
  *
  * Idempotence:
- * - Reads existing config file at configPath before doing anything.
- * - Merges: { ...DEFAULT_CONFIG, ...existing, catalogUrl: <from askUrl>, authMethod: <from preflight> }.
+ * - Reads existing config file at configPath before doing anything (LegacyConfigError is caught
+ *   and treated as an empty config — the user will be prompted for a URL which rewrites correctly).
+ * - Merges: { ...DEFAULT_CONFIG, ...existing, catalogs: [{name:'principal', url}], authMethod }.
  * - A second runInit starts from the existing state and only updates the provided fields.
  */
 
 import type { CatalogEntry, CatalogMeta } from '@agent-rigger/catalog';
 
-import { DEFAULT_CONFIG, loadConfigFile, persistConfig } from './config';
+import { DEFAULT_CONFIG, LegacyConfigError, loadConfigFile, persistConfig } from './config';
 import type { Config } from './config';
 import { preflightAuth, PreflightAuthError } from './preflight-auth';
 import type { AskMethod, CommandRunner } from './preflight-auth';
@@ -52,6 +53,12 @@ export interface InitResult {
 export interface CatalogProposal {
   meta: CatalogMeta;
   entries: CatalogEntry[];
+  /**
+   * Name of the catalog source (e.g. 'principal').
+   * Used by the caller to qualify meta.required/recommended ids so that
+   * they match the qualified entries (ADR-0017).
+   */
+  sourceName?: string;
 }
 
 /** Options for runInit. All I/O is injectable for testability. */
@@ -165,8 +172,18 @@ export async function runInit(opts: RunInitOpts): Promise<InitResult> {
     proposeInstall,
   } = opts;
 
-  // Step 1 — read existing config (graceful: missing file → {})
-  const existing = await loadConfigFile(configPath);
+  // Step 1 — read existing config (graceful: missing file → {}; LegacyConfigError → {} so init
+  // can overwrite the legacy key with a correct catalogs[] value without blocking the wizard).
+  let existing: Awaited<ReturnType<typeof loadConfigFile>>;
+  try {
+    existing = await loadConfigFile(configPath);
+  } catch (err) {
+    if (err instanceof LegacyConfigError) {
+      existing = {};
+    } else {
+      throw err;
+    }
+  }
 
   // Step 2 — ask for the catalog URL
   const url = await askUrl();
@@ -193,7 +210,7 @@ export async function runInit(opts: RunInitOpts): Promise<InitResult> {
         ...DEFAULT_CONFIG,
         ...existing,
         defaultScope: defaultScope ?? existing.defaultScope ?? DEFAULT_CONFIG.defaultScope,
-        catalogUrl: url,
+        catalogs: [{ name: 'principal', url }],
       };
       return {
         config: partialConfig,
@@ -212,7 +229,7 @@ export async function runInit(opts: RunInitOpts): Promise<InitResult> {
     ...DEFAULT_CONFIG,
     ...existing,
     defaultScope: resolvedScope,
-    catalogUrl: url,
+    catalogs: [{ name: 'principal', url }],
     ...(authMethod === undefined ? {} : { authMethod }),
   };
 
@@ -221,8 +238,8 @@ export async function runInit(opts: RunInitOpts): Promise<InitResult> {
   // Step 5 — compose base output
   const methodLine = authMethod === undefined
     ? ''
-    : `\nAuth method : ${authMethod}`;
-  let output = `Catalog URL  : ${url}${methodLine}\nConfig saved : ${configPath}`;
+    : `\nAuth method  : ${authMethod}`;
+  let output = `Catalog      : ${url} (principal)${methodLine}\nConfig saved : ${configPath}`;
 
   // Step 6 — post-init catalog proposal (interactive / TTY mode only)
   // Both fetchCatalogFn and proposeInstall must be provided; otherwise skip silently.

@@ -223,7 +223,7 @@ async function makeRemoteEnv(opts: { withCatalogUrl: boolean }): Promise<{
   if (opts.withCatalogUrl) {
     await fs.writeFile(
       path.join(configDir, 'config.json'),
-      JSON.stringify({ catalogUrl: 'https://example.com/catalog.git' }),
+      JSON.stringify({ catalogs: [{ name: 'principal', url: 'https://example.com/catalog.git' }] }),
       'utf8',
     );
   }
@@ -324,7 +324,7 @@ afterEach(async () => {
 describe('remote install — skill:remote-demo --yes with catalogUrl', () => {
   it('exits 0', async () => {
     const cap = makeCapture();
-    const code = await runCli(['install', 'skill:remote-demo', '--yes'], {
+    const code = await runCli(['install', 'principal/skill:remote-demo', '--yes'], {
       print: cap.print,
       env: remoteEnv.env,
       remote: { run: remoteEnv.runner, tmpFactory: remoteEnv.tmpFactory, scanner: stubScanner },
@@ -333,7 +333,7 @@ describe('remote install — skill:remote-demo --yes with catalogUrl', () => {
   });
 
   it('creates skill store directory', async () => {
-    await runCli(['install', 'skill:remote-demo', '--yes'], {
+    await runCli(['install', 'principal/skill:remote-demo', '--yes'], {
       print: makeCapture().print,
       env: remoteEnv.env,
       remote: { run: remoteEnv.runner, tmpFactory: remoteEnv.tmpFactory, scanner: stubScanner },
@@ -346,7 +346,7 @@ describe('remote install — skill:remote-demo --yes with catalogUrl', () => {
   });
 
   it('copies SKILL.md to store', async () => {
-    await runCli(['install', 'skill:remote-demo', '--yes'], {
+    await runCli(['install', 'principal/skill:remote-demo', '--yes'], {
       print: makeCapture().print,
       env: remoteEnv.env,
       remote: { run: remoteEnv.runner, tmpFactory: remoteEnv.tmpFactory, scanner: stubScanner },
@@ -358,7 +358,7 @@ describe('remote install — skill:remote-demo --yes with catalogUrl', () => {
   });
 
   it('creates symlink in ~/.claude/skills', async () => {
-    await runCli(['install', 'skill:remote-demo', '--yes'], {
+    await runCli(['install', 'principal/skill:remote-demo', '--yes'], {
       print: makeCapture().print,
       env: remoteEnv.env,
       remote: { run: remoteEnv.runner, tmpFactory: remoteEnv.tmpFactory, scanner: stubScanner },
@@ -372,7 +372,7 @@ describe('remote install — skill:remote-demo --yes with catalogUrl', () => {
   });
 
   it('manifest entry has real ref (identifies remote origin)', async () => {
-    await runCli(['install', 'skill:remote-demo', '--yes'], {
+    await runCli(['install', 'principal/skill:remote-demo', '--yes'], {
       print: makeCapture().print,
       env: remoteEnv.env,
       remote: { run: remoteEnv.runner, tmpFactory: remoteEnv.tmpFactory, scanner: stubScanner },
@@ -382,14 +382,14 @@ describe('remote install — skill:remote-demo --yes with catalogUrl', () => {
     const manifest = JSON.parse(raw) as {
       artifacts: Array<{ id: string; ref?: string; sha?: string }>;
     };
-    const entry = manifest.artifacts.find((a) => a.id === 'skill:remote-demo');
+    const entry = manifest.artifacts.find((a) => a.id === 'principal/skill:remote-demo');
     expect(entry).toBeDefined();
     // Remote entry has a real ref/sha (not defaults)
     expect(entry?.ref).not.toBe('v0.0.0');
   });
 
   it('manifest entry has real ref (tag name)', async () => {
-    await runCli(['install', 'skill:remote-demo', '--yes'], {
+    await runCli(['install', 'principal/skill:remote-demo', '--yes'], {
       print: makeCapture().print,
       env: remoteEnv.env,
       remote: { run: remoteEnv.runner, tmpFactory: remoteEnv.tmpFactory, scanner: stubScanner },
@@ -399,12 +399,12 @@ describe('remote install — skill:remote-demo --yes with catalogUrl', () => {
     const manifest = JSON.parse(raw) as {
       artifacts: Array<{ id: string; ref?: string }>;
     };
-    const entry = manifest.artifacts.find((a) => a.id === 'skill:remote-demo');
+    const entry = manifest.artifacts.find((a) => a.id === 'principal/skill:remote-demo');
     expect(entry?.ref).toBe(TAG_NAME);
   });
 
   it('manifest entry has real sha', async () => {
-    await runCli(['install', 'skill:remote-demo', '--yes'], {
+    await runCli(['install', 'principal/skill:remote-demo', '--yes'], {
       print: makeCapture().print,
       env: remoteEnv.env,
       remote: { run: remoteEnv.runner, tmpFactory: remoteEnv.tmpFactory, scanner: stubScanner },
@@ -414,7 +414,7 @@ describe('remote install — skill:remote-demo --yes with catalogUrl', () => {
     const manifest = JSON.parse(raw) as {
       artifacts: Array<{ id: string; sha?: string }>;
     };
-    const entry = manifest.artifacts.find((a) => a.id === 'skill:remote-demo');
+    const entry = manifest.artifacts.find((a) => a.id === 'principal/skill:remote-demo');
     expect(entry?.sha).toBe(SHA);
   });
 });
@@ -427,7 +427,7 @@ describe('remote install — skill:remote-demo --yes with catalogUrl', () => {
 describe('remote install — builtin id with catalogUrl → local defaults', () => {
   it('exits 0 for guardrails-claude', async () => {
     const cap = makeCapture();
-    const code = await runCli(['install', 'guardrails-claude', '--yes'], {
+    const code = await runCli(['install', 'principal/guardrails-claude', '--yes'], {
       print: cap.print,
       env: remoteEnv.env,
       remote: { run: remoteEnv.runner, tmpFactory: remoteEnv.tmpFactory, scanner: stubScanner },
@@ -436,7 +436,7 @@ describe('remote install — builtin id with catalogUrl → local defaults', () 
   });
 
   it('manifest entry for guardrails-claude is created with remote ref (B-iii: from checkout)', async () => {
-    await runCli(['install', 'guardrails-claude', '--yes'], {
+    await runCli(['install', 'principal/guardrails-claude', '--yes'], {
       print: makeCapture().print,
       env: remoteEnv.env,
       remote: { run: remoteEnv.runner, tmpFactory: remoteEnv.tmpFactory, scanner: stubScanner },
@@ -446,7 +446,7 @@ describe('remote install — builtin id with catalogUrl → local defaults', () 
     const manifest = JSON.parse(raw) as {
       artifacts: Array<{ id: string; ref?: string; sha?: string }>;
     };
-    const entry = manifest.artifacts.find((a) => a.id === 'guardrails-claude');
+    const entry = manifest.artifacts.find((a) => a.id === 'principal/guardrails-claude');
     expect(entry).toBeDefined();
     // B-iii: guardrails-claude is in the remote catalog → gets remote ref
     expect(entry?.ref).toBe(TAG_NAME);
@@ -471,7 +471,7 @@ describe('remote install — install WITHOUT catalogUrl → actionable message',
 
     try {
       const cap = makeCapture();
-      const code = await runCli(['install', 'guardrails-claude', '--yes'], {
+      const code = await runCli(['install', 'principal/guardrails-claude', '--yes'], {
         print: cap.print,
         env: localEnv.env,
         remote: { run: countingRunner, tmpFactory: localEnv.tmpFactory, scanner: stubScanner },
@@ -491,7 +491,7 @@ describe('remote install — install WITHOUT catalogUrl → actionable message',
     const localTargets = resolveUserTargets(localEnv.env);
 
     try {
-      await runCli(['install', 'guardrails-claude', '--yes'], {
+      await runCli(['install', 'principal/guardrails-claude', '--yes'], {
         print: makeCapture().print,
         env: localEnv.env,
         remote: { run: localEnv.runner, tmpFactory: localEnv.tmpFactory, scanner: stubScanner },
@@ -512,7 +512,7 @@ describe('remote install — install WITHOUT catalogUrl → actionable message',
 
 describe('remote install — cleanup: tmp checkout removed after install', () => {
   it('tmpFactory cleanup is called after successful remote install', async () => {
-    await runCli(['install', 'skill:remote-demo', '--yes'], {
+    await runCli(['install', 'principal/skill:remote-demo', '--yes'], {
       print: makeCapture().print,
       env: remoteEnv.env,
       remote: { run: remoteEnv.runner, tmpFactory: remoteEnv.tmpFactory, scanner: stubScanner },
@@ -562,9 +562,12 @@ describe('TEST-1 — path traversal id rejected', () => {
 
       // Must not succeed
       expect(code).not.toBe(0);
-      // Output must mention unsafe/traversal
+      // Output must mention rejection. The traversal id 'skill:../../../../etc/evil'
+      // contains '/' so it is treated as a qualified id with a bogus prefix ('skill:..')
+      // that is not a configured catalog → rejected at prefix validation.
+      // Either the catalog-not-found gate or the deep frontier guard fires; both protect.
       const output = cap.lines.join('\n');
-      expect(output).toMatch(/unsafe|traversal|path/i);
+      expect(output).toMatch(/unsafe|traversal|path|non configuré|non qualifié/i);
     } finally {
       await traversalEnv.cleanupAll();
     }
@@ -642,7 +645,14 @@ describe('TEST-1 — path traversal id rejected', () => {
       // may propagate
     }
 
-    expect(traversalEnv.getCleanupCalled()).toBe(true);
+    // 'skill:../../../../etc/evil' contains '/', so it is parsed as a QUALIFIED id
+    // whose prefix is 'skill:..' — not a configured catalog → rejected at the prefix
+    // validation gate BEFORE any checkout starts. tmpFactory is never invoked, so no
+    // cleanup is needed (filesystem still protected — nothing was ever checked out).
+    // Note: a traversal id under a VALID prefix (e.g. 'principal/skill:../../etc/evil')
+    // does start a checkout, where the frontier guard (assertSafeArtifactName in
+    // remote-install.ts) fires and cleanup runs via withRemoteCheckout's finally.
+    expect(traversalEnv.getCleanupCalled()).toBe(false);
     await traversalEnv.cleanupAll();
   });
 
@@ -666,7 +676,7 @@ describe('TEST-2a — confirm:false — cleanup called, nothing written', () => 
 
     try {
       const cap = makeCapture();
-      await runCli(['install', 'skill:remote-demo'], {
+      await runCli(['install', 'principal/skill:remote-demo'], {
         print: cap.print,
         env: abortEnv.env,
         remote: { run: abortEnv.runner, tmpFactory: abortEnv.tmpFactory, scanner: stubScanner },
@@ -694,7 +704,7 @@ describe('TEST-2a — confirm:false — cleanup called, nothing written', () => 
     try {
       // inject confirm=false via prompts (non-interactive needs --yes, so we omit it
       // and inject a prompts.confirmApply that returns false)
-      await runCli(['install', 'skill:remote-demo'], {
+      await runCli(['install', 'principal/skill:remote-demo'], {
         print: makeCapture().print,
         env: abortEnv.env,
         remote: { run: abortEnv.runner, tmpFactory: abortEnv.tmpFactory, scanner: stubScanner },
@@ -731,7 +741,7 @@ describe('TEST-2b — skill source absent in checkout — error propagates + cle
     });
 
     try {
-      await runCli(['install', 'skill:remote-demo', '--yes'], {
+      await runCli(['install', 'principal/skill:remote-demo', '--yes'], {
         print: makeCapture().print,
         env: noSkillEnv.env,
         remote: { run: noSkillEnv.runner, tmpFactory: noSkillEnv.tmpFactory, scanner: stubScanner },
@@ -753,7 +763,7 @@ describe('TEST-2b — skill source absent in checkout — error propagates + cle
     });
 
     try {
-      const code = await runCli(['install', 'skill:remote-demo', '--yes'], {
+      const code = await runCli(['install', 'principal/skill:remote-demo', '--yes'], {
         print: makeCapture().print,
         env: noSkillEnv.env,
         remote: { run: noSkillEnv.runner, tmpFactory: noSkillEnv.tmpFactory, scanner: stubScanner },
@@ -775,7 +785,7 @@ describe('TEST-3 — mixed install: builtin (internal) + remote (external)', () 
   it('installs both builtin and external skill', async () => {
     const cap = makeCapture();
     const code = await runCli(
-      ['install', 'guardrails-claude', 'skill:remote-demo', '--yes'],
+      ['install', 'principal/guardrails-claude', 'principal/skill:remote-demo', '--yes'],
       {
         print: cap.print,
         env: remoteEnv.env,
@@ -786,11 +796,14 @@ describe('TEST-3 — mixed install: builtin (internal) + remote (external)', () 
   });
 
   it('manifest: guardrails-claude has remote ref (B-iii: sourced from checkout)', async () => {
-    await runCli(['install', 'guardrails-claude', 'skill:remote-demo', '--yes'], {
-      print: makeCapture().print,
-      env: remoteEnv.env,
-      remote: { run: remoteEnv.runner, tmpFactory: remoteEnv.tmpFactory, scanner: stubScanner },
-    });
+    await runCli(
+      ['install', 'principal/guardrails-claude', 'principal/skill:remote-demo', '--yes'],
+      {
+        print: makeCapture().print,
+        env: remoteEnv.env,
+        remote: { run: remoteEnv.runner, tmpFactory: remoteEnv.tmpFactory, scanner: stubScanner },
+      },
+    );
 
     const raw = await fs.readFile(targets.stateJson, 'utf8');
     const manifest = JSON.parse(raw) as {
@@ -798,36 +811,42 @@ describe('TEST-3 — mixed install: builtin (internal) + remote (external)', () 
     };
 
     // B-iii: guardrails-claude is in the remote catalog → sourced from checkout → remote ref
-    const guardrail = manifest.artifacts.find((a) => a.id === 'guardrails-claude');
+    const guardrail = manifest.artifacts.find((a) => a.id === 'principal/guardrails-claude');
     expect(guardrail).toBeDefined();
     expect(guardrail?.ref).toBe(TAG_NAME);
     expect(guardrail?.sha).toBe(SHA);
   });
 
   it('manifest: skill:remote-demo has real ref+sha (from checkout)', async () => {
-    await runCli(['install', 'guardrails-claude', 'skill:remote-demo', '--yes'], {
-      print: makeCapture().print,
-      env: remoteEnv.env,
-      remote: { run: remoteEnv.runner, tmpFactory: remoteEnv.tmpFactory, scanner: stubScanner },
-    });
+    await runCli(
+      ['install', 'principal/guardrails-claude', 'principal/skill:remote-demo', '--yes'],
+      {
+        print: makeCapture().print,
+        env: remoteEnv.env,
+        remote: { run: remoteEnv.runner, tmpFactory: remoteEnv.tmpFactory, scanner: stubScanner },
+      },
+    );
 
     const raw = await fs.readFile(targets.stateJson, 'utf8');
     const manifest = JSON.parse(raw) as {
       artifacts: Array<{ id: string; ref?: string; sha?: string }>;
     };
 
-    const external = manifest.artifacts.find((a) => a.id === 'skill:remote-demo');
+    const external = manifest.artifacts.find((a) => a.id === 'principal/skill:remote-demo');
     expect(external).toBeDefined();
     expect(external?.ref).toBe(TAG_NAME);
     expect(external?.sha).toBe(SHA);
   });
 
   it('manifest: both guardrails-claude and skill:remote-demo have remote ref (B-iii)', async () => {
-    await runCli(['install', 'guardrails-claude', 'skill:remote-demo', '--yes'], {
-      print: makeCapture().print,
-      env: remoteEnv.env,
-      remote: { run: remoteEnv.runner, tmpFactory: remoteEnv.tmpFactory, scanner: stubScanner },
-    });
+    await runCli(
+      ['install', 'principal/guardrails-claude', 'principal/skill:remote-demo', '--yes'],
+      {
+        print: makeCapture().print,
+        env: remoteEnv.env,
+        remote: { run: remoteEnv.runner, tmpFactory: remoteEnv.tmpFactory, scanner: stubScanner },
+      },
+    );
 
     const raw = await fs.readFile(targets.stateJson, 'utf8');
     const manifest = JSON.parse(raw) as {
@@ -835,11 +854,11 @@ describe('TEST-3 — mixed install: builtin (internal) + remote (external)', () 
     };
 
     // B-iii: all entries in the remote catalog come from the checkout → remote ref
-    const guardrail = manifest.artifacts.find((a) => a.id === 'guardrails-claude');
+    const guardrail = manifest.artifacts.find((a) => a.id === 'principal/guardrails-claude');
     expect(guardrail?.ref).toBe(TAG_NAME);
     expect(guardrail?.sha).toBe(SHA);
 
-    const skill = manifest.artifacts.find((a) => a.id === 'skill:remote-demo');
+    const skill = manifest.artifacts.find((a) => a.id === 'principal/skill:remote-demo');
     expect(skill?.ref).toBe(TAG_NAME);
     expect(skill?.sha).toBe(SHA);
   });
@@ -859,7 +878,7 @@ describe('TEST-4 — pack:harness install via remote path with catalogUrl', () =
 
   it('exits 0 when installing pack:harness with catalogUrl configured', async () => {
     const cap = makeCapture();
-    const code = await runCli(['install', 'pack:harness', '--yes'], {
+    const code = await runCli(['install', 'principal/pack:harness', '--yes'], {
       print: cap.print,
       env: remoteEnv.env,
       remote: { run: remoteEnv.runner, tmpFactory: remoteEnv.tmpFactory, scanner: stubScanner },
@@ -868,7 +887,7 @@ describe('TEST-4 — pack:harness install via remote path with catalogUrl', () =
   });
 
   it('writes all 4 guard hooks to settings.json', async () => {
-    await runCli(['install', 'pack:harness', '--yes'], {
+    await runCli(['install', 'principal/pack:harness', '--yes'], {
       print: makeCapture().print,
       env: remoteEnv.env,
       remote: { run: remoteEnv.runner, tmpFactory: remoteEnv.tmpFactory, scanner: stubScanner },
@@ -900,7 +919,7 @@ describe('TEST-4 — pack:harness install via remote path with catalogUrl', () =
   });
 
   it('deposits hook scripts to store/hooks/', async () => {
-    await runCli(['install', 'pack:harness', '--yes'], {
+    await runCli(['install', 'principal/pack:harness', '--yes'], {
       print: makeCapture().print,
       env: remoteEnv.env,
       remote: { run: remoteEnv.runner, tmpFactory: remoteEnv.tmpFactory, scanner: stubScanner },
@@ -916,7 +935,7 @@ describe('TEST-4 — pack:harness install via remote path with catalogUrl', () =
   });
 
   it('deposits _shared/hook-lib.ts to store/hooks/', async () => {
-    await runCli(['install', 'pack:harness', '--yes'], {
+    await runCli(['install', 'principal/pack:harness', '--yes'], {
       print: makeCapture().print,
       env: remoteEnv.env,
       remote: { run: remoteEnv.runner, tmpFactory: remoteEnv.tmpFactory, scanner: stubScanner },
@@ -929,7 +948,7 @@ describe('TEST-4 — pack:harness install via remote path with catalogUrl', () =
   });
 
   it('manifest contains all 4 guard entries with remote ref (B-iii: from checkout)', async () => {
-    await runCli(['install', 'pack:harness', '--yes'], {
+    await runCli(['install', 'principal/pack:harness', '--yes'], {
       print: makeCapture().print,
       env: remoteEnv.env,
       remote: { run: remoteEnv.runner, tmpFactory: remoteEnv.tmpFactory, scanner: stubScanner },
@@ -942,10 +961,10 @@ describe('TEST-4 — pack:harness install via remote path with catalogUrl', () =
 
     for (
       const id of [
-        'hook:guard-command',
-        'hook:guard-secret',
-        'hook:guard-write-secret',
-        'hook:guard-prompt',
+        'principal/hook:guard-command',
+        'principal/hook:guard-secret',
+        'principal/hook:guard-write-secret',
+        'principal/hook:guard-prompt',
       ]
     ) {
       const entry = manifest.artifacts.find((a) => a.id === id);

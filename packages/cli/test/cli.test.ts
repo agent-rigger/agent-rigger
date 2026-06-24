@@ -486,7 +486,7 @@ describe('runCli — install <id> --yes without catalogUrl → actionable messag
   it('returns exit code 0 even when id provided but no catalogUrl configured', async () => {
     const cap = makeCapture();
     // Without catalogUrl, catalog is empty → actionable message + exit 0
-    const code = await runCli(['install', 'skill:some-skill', '--yes'], {
+    const code = await runCli(['install', 'principal/skill:some-skill', '--yes'], {
       print: cap.print,
       env: { RIGGER_HOME: tmp.dir },
     });
@@ -506,7 +506,7 @@ describe('runCli — install <id> --yes without catalogUrl → actionable messag
     };
     const cap = makeCapture();
     // ids provided → selectArtifacts must NOT be called (regardless of catalog presence)
-    await runCli(['install', 'skill:some-skill', '--yes'], {
+    await runCli(['install', 'principal/skill:some-skill', '--yes'], {
       print: cap.print,
       env: { RIGGER_HOME: tmp.dir },
       prompts,
@@ -524,7 +524,7 @@ describe('runCli — install <id> --yes without catalogUrl → actionable messag
       },
     };
     const cap = makeCapture();
-    await runCli(['install', 'skill:some-skill', '--yes'], {
+    await runCli(['install', 'principal/skill:some-skill', '--yes'], {
       print: cap.print,
       env: { RIGGER_HOME: tmp.dir },
       prompts,
@@ -534,7 +534,7 @@ describe('runCli — install <id> --yes without catalogUrl → actionable messag
 
   it('exits 0 with actionable message when --yes is NOT set and no catalogUrl', async () => {
     const cap = makeCapture();
-    await runCli(['install', 'skill:some-skill'], {
+    await runCli(['install', 'principal/skill:some-skill'], {
       print: cap.print,
       env: { RIGGER_HOME: tmp.dir },
       prompts: fakePrompts(),
@@ -560,7 +560,7 @@ describe('runCli — <resource> add <id> validation', () => {
     await fs.mkdir(configDir, { recursive: true });
     await Bun.write(
       path.join(configDir, 'config.json'),
-      JSON.stringify({ catalogUrl: 'https://example.com/catalog.git' }),
+      JSON.stringify({ catalogs: [{ name: 'principal', url: 'https://example.com/catalog.git' }] }),
     );
     catalogDir = await fs.mkdtemp(path.join(os.tmpdir(), 'rigger-add-catalog-'));
   });
@@ -589,7 +589,7 @@ describe('runCli — <resource> add <id> validation', () => {
         scopes: ['user'],
       },
     ];
-    const code = await runCli(['skills', 'add', 'guardrail:main'], {
+    const code = await runCli(['skills', 'add', 'principal/guardrail:main'], {
       print: cap.print,
       env: { RIGGER_HOME: tmp.dir },
       remote: {
@@ -597,7 +597,7 @@ describe('runCli — <resource> add <id> validation', () => {
         tmpFactory: makeFakeTmpFactory(catalogDir, fixtureEntries),
       },
     });
-    // guardrail:main is a guardrail, not a skill → type mismatch → exit 2
+    // principal/guardrail:main is a guardrail, not a skill → type mismatch → exit 2
     expect(code).toBe(2);
   });
 
@@ -612,7 +612,7 @@ describe('runCli — <resource> add <id> validation', () => {
         scopes: ['user'],
       },
     ];
-    await runCli(['skills', 'add', 'guardrail:main'], {
+    await runCli(['skills', 'add', 'principal/guardrail:main'], {
       print: cap.print,
       env: { RIGGER_HOME: tmp.dir },
       remote: {
@@ -621,7 +621,7 @@ describe('runCli — <resource> add <id> validation', () => {
       },
     });
     const out = cap.lines.join('\n');
-    expect(out).toContain('guardrail:main');
+    expect(out).toContain('principal/guardrail:main');
     expect(out.toLowerCase()).toMatch(/not a skill|is not a/);
   });
 
@@ -636,7 +636,7 @@ describe('runCli — <resource> add <id> validation', () => {
         scopes: ['user'],
       },
     ];
-    const code = await runCli(['guardrails', 'add', 'guardrail:main', '--yes'], {
+    const code = await runCli(['guardrails', 'add', 'principal/guardrail:main', '--yes'], {
       print: cap.print,
       env: { RIGGER_HOME: tmp.dir },
       remote: {
@@ -662,7 +662,7 @@ describe('runCli — <resource> info <id>', () => {
     await fs.mkdir(configDir, { recursive: true });
     await Bun.write(
       path.join(configDir, 'config.json'),
-      JSON.stringify({ catalogUrl: 'https://example.com/catalog.git' }),
+      JSON.stringify({ catalogs: [{ name: 'principal', url: 'https://example.com/catalog.git' }] }),
     );
     catalogDir = await fs.mkdtemp(path.join(os.tmpdir(), 'rigger-info-catalog-'));
   });
@@ -683,7 +683,7 @@ describe('runCli — <resource> info <id>', () => {
         scopes: ['user'],
       },
     ];
-    const code = await runCli(['guardrails', 'info', 'guardrail:main'], {
+    const code = await runCli(['guardrails', 'info', 'principal/guardrail:main'], {
       print: cap.print,
       env: { RIGGER_HOME: tmp.dir },
       remote: {
@@ -705,7 +705,7 @@ describe('runCli — <resource> info <id>', () => {
         scopes: ['user'],
       },
     ];
-    await runCli(['guardrails', 'info', 'guardrail:main'], {
+    await runCli(['guardrails', 'info', 'principal/guardrail:main'], {
       print: cap.print,
       env: { RIGGER_HOME: tmp.dir },
       remote: {
@@ -714,7 +714,7 @@ describe('runCli — <resource> info <id>', () => {
       },
     });
     const out = cap.lines.join('\n');
-    expect(out).toContain('guardrail:main');
+    expect(out).toContain('principal/guardrail:main');
     expect(out.toLowerCase()).toMatch(/status|source|nature|guardrail/);
   });
 
@@ -767,7 +767,7 @@ describe('runCli — <resource> info <id>', () => {
     const tmpNoCatalog = await makeTmpHome('rigger-info-nocatalog-');
     try {
       const cap = makeCapture();
-      const code = await runCli(['guardrails', 'info', 'guardrail:main'], {
+      const code = await runCli(['guardrails', 'info', 'principal/guardrail:main'], {
         print: cap.print,
         env: { RIGGER_HOME: tmpNoCatalog.dir },
       });
@@ -778,7 +778,7 @@ describe('runCli — <resource> info <id>', () => {
       if (code === 0) {
         expect(out).toMatch(/aucun catalog|agent-rigger init/);
       } else {
-        expect(out).toContain('guardrail:main');
+        expect(out).toContain('principal/guardrail:main');
       }
     } finally {
       await tmpNoCatalog.cleanup();
@@ -808,7 +808,7 @@ describe('runCli — <resource> check', () => {
     await fs.mkdir(configDir, { recursive: true });
     await Bun.write(
       path.join(configDir, 'config.json'),
-      JSON.stringify({ catalogUrl: 'https://example.com/catalog.git' }),
+      JSON.stringify({ catalogs: [{ name: 'principal', url: 'https://example.com/catalog.git' }] }),
     );
     catalogDir = await fs.mkdtemp(path.join(os.tmpdir(), 'rigger-check-catalog-'));
   });
@@ -832,9 +832,9 @@ describe('runCli — <resource> check', () => {
   });
 
   it('returns exit code 0 after installing guardrails (with remote catalog)', async () => {
-    // Install guardrail:main with remote catalog
+    // Install principal/guardrail:main with remote catalog
     const installCap = makeCapture();
-    await runCli(['guardrails', 'add', 'guardrail:main', '--yes'], {
+    await runCli(['guardrails', 'add', 'principal/guardrail:main', '--yes'], {
       print: installCap.print,
       env: { RIGGER_HOME: tmp.dir },
       remote: {
@@ -886,7 +886,7 @@ describe('runCli — <resource> update without catalogUrl', () => {
   it('returns exit code 2 when no catalog URL configured', async () => {
     // No env/catalogUrl → CatalogUrlMissingError → exit 2
     const cap = makeCapture();
-    const code = await runCli(['guardrails', 'update', 'guardrails-claude'], {
+    const code = await runCli(['guardrails', 'update', 'principal/guardrails-claude'], {
       print: cap.print,
     });
     expect(code).toBe(2);
@@ -954,7 +954,7 @@ describe('runCli — <resource> remove <id...>', () => {
     await fs.mkdir(configDir, { recursive: true });
     await Bun.write(
       path.join(configDir, 'config.json'),
-      JSON.stringify({ catalogUrl: 'https://example.com/catalog.git' }),
+      JSON.stringify({ catalogs: [{ name: 'principal', url: 'https://example.com/catalog.git' }] }),
     );
     catalogDir = await fs.mkdtemp(path.join(os.tmpdir(), 'rigger-rm-catalog-'));
   });
@@ -965,8 +965,8 @@ describe('runCli — <resource> remove <id...>', () => {
   });
 
   it('returns exit code 0 after add + remove --yes', async () => {
-    // Install guardrail:main with remote catalog
-    await runCli(['guardrails', 'add', 'guardrail:main', '--yes'], {
+    // Install principal/guardrail:main with remote catalog
+    await runCli(['guardrails', 'add', 'principal/guardrail:main', '--yes'], {
       print: makeCapture().print,
       env: { RIGGER_HOME: tmp.dir },
       remote: makeRemote(catalogDir),
@@ -976,7 +976,7 @@ describe('runCli — <resource> remove <id...>', () => {
     const catalogDir2 = await fs.mkdtemp(path.join(os.tmpdir(), 'rigger-rm-catalog-'));
     try {
       const cap = makeCapture();
-      const code = await runCli(['guardrails', 'remove', 'guardrail:main', '--yes'], {
+      const code = await runCli(['guardrails', 'remove', 'principal/guardrail:main', '--yes'], {
         print: cap.print,
         env: { RIGGER_HOME: tmp.dir },
         remote: makeRemote(catalogDir2),
@@ -1011,7 +1011,7 @@ describe('runCli — <resource> remove <id...>', () => {
     // context:main is context, not a skill — catalog must have the entry to reject it
     const catalogDir3 = await fs.mkdtemp(path.join(os.tmpdir(), 'rigger-rm-catalog-'));
     try {
-      const code = await runCli(['skills', 'remove', 'context:main', '--yes'], {
+      const code = await runCli(['skills', 'remove', 'principal/context:main', '--yes'], {
         print: cap.print,
         env: { RIGGER_HOME: tmp.dir },
         remote: makeRemote(catalogDir3),
@@ -1028,15 +1028,15 @@ describe('runCli — <resource> remove <id...>', () => {
     const cDir3 = await fs.mkdtemp(path.join(os.tmpdir(), 'rigger-rm-catalog-'));
 
     try {
-      // Install guardrail:main
-      await runCli(['guardrails', 'add', 'guardrail:main', '--yes'], {
+      // Install principal/guardrail:main
+      await runCli(['guardrails', 'add', 'principal/guardrail:main', '--yes'], {
         print: makeCapture().print,
         env: { RIGGER_HOME: tmp.dir },
         remote: makeRemote(cDir1),
       });
 
       // Remove
-      await runCli(['guardrails', 'remove', 'guardrail:main', '--yes'], {
+      await runCli(['guardrails', 'remove', 'principal/guardrail:main', '--yes'], {
         print: makeCapture().print,
         env: { RIGGER_HOME: tmp.dir },
         remote: makeRemote(cDir2),
@@ -1079,7 +1079,7 @@ describe('runCli — top-level remove <id...>', () => {
     await fs.mkdir(configDir, { recursive: true });
     await Bun.write(
       path.join(configDir, 'config.json'),
-      JSON.stringify({ catalogUrl: 'https://example.com/catalog.git' }),
+      JSON.stringify({ catalogs: [{ name: 'principal', url: 'https://example.com/catalog.git' }] }),
     );
   });
 
@@ -1091,7 +1091,7 @@ describe('runCli — top-level remove <id...>', () => {
     const cDir1 = await fs.mkdtemp(path.join(os.tmpdir(), 'rigger-tl-rm1-'));
     const cDir2 = await fs.mkdtemp(path.join(os.tmpdir(), 'rigger-tl-rm2-'));
     try {
-      await runCli(['install', 'guardrail:main', '--yes'], {
+      await runCli(['install', 'principal/guardrail:main', '--yes'], {
         print: makeCapture().print,
         env: { RIGGER_HOME: tmp.dir },
         remote: {
@@ -1101,7 +1101,7 @@ describe('runCli — top-level remove <id...>', () => {
       });
 
       const cap = makeCapture();
-      const code = await runCli(['remove', 'guardrail:main', '--yes'], {
+      const code = await runCli(['remove', 'principal/guardrail:main', '--yes'], {
         print: cap.print,
         env: { RIGGER_HOME: tmp.dir },
         remote: {
@@ -1192,7 +1192,7 @@ describe('runCli — non-regression interactive install', () => {
     await fs.mkdir(configDir, { recursive: true });
     await Bun.write(
       path.join(configDir, 'config.json'),
-      JSON.stringify({ catalogUrl: 'https://example.com/catalog.git' }),
+      JSON.stringify({ catalogs: [{ name: 'principal', url: 'https://example.com/catalog.git' }] }),
     );
     catalogDir = await fs.mkdtemp(path.join(os.tmpdir(), 'rigger-regression-catalog-'));
   });
@@ -1344,7 +1344,7 @@ describe('runCli — ls with remote catalog configured', () => {
     await fs.mkdir(configDir, { recursive: true });
     await Bun.write(
       path.join(configDir, 'config.json'),
-      JSON.stringify({ catalogUrl: 'https://example.com/catalog.git' }),
+      JSON.stringify({ catalogs: [{ name: 'principal', url: 'https://example.com/catalog.git' }] }),
     );
     // Create a dir for the fake clone
     catalogDir = await fs.mkdtemp(path.join(os.tmpdir(), 'rigger-remote-catalog-'));
@@ -1370,26 +1370,25 @@ describe('runCli — ls with remote catalog configured', () => {
 
     expect(code).toBe(0);
     const out = cap.lines.join('\n');
-    expect(out).toContain('skill:remote-unique');
+    expect(out).toContain('principal/skill:remote-unique');
     // no built-in entries — catalog is remote-only
   });
 
-  it('ls shows remote entry via catalog ls alias', async () => {
-    const remoteEntries = [makeRemoteEntry('skill:remote-alias')];
+  it('catalog ls lists configured sources (name + url), not catalog entries', async () => {
+    // M5: `catalog ls` now lists configured sources (config.catalogs[]), not artifact entries.
+    // Use top-level `ls` to list artifact entries.
     const cap = makeCapture();
 
     const code = await runCli(['catalog', 'ls'], {
       print: cap.print,
       env: { RIGGER_HOME: tmp.dir },
-      remote: {
-        run: makeSuccessRunner(),
-        tmpFactory: makeFakeTmpFactory(catalogDir, remoteEntries),
-      },
     });
 
     expect(code).toBe(0);
     const out = cap.lines.join('\n');
-    expect(out).toContain('skill:remote-alias');
+    // Shows the configured source name + url
+    expect(out).toContain('principal');
+    expect(out).toContain('https://example.com/catalog.git');
   });
 });
 
@@ -1428,7 +1427,7 @@ describe('runCli — ls with catalogUrl configured but remote fails', () => {
     await fs.mkdir(configDir, { recursive: true });
     await Bun.write(
       path.join(configDir, 'config.json'),
-      JSON.stringify({ catalogUrl: 'https://example.com/catalog.git' }),
+      JSON.stringify({ catalogs: [{ name: 'principal', url: 'https://example.com/catalog.git' }] }),
     );
   });
 
@@ -1460,7 +1459,8 @@ describe('runCli — ls with catalogUrl configured but remote fails', () => {
     });
 
     const out = cap.lines.join('\n');
-    expect(out).toContain('Catalog distant indisponible');
+    expect(out).toContain('[warning]');
+    expect(out).toContain('indisponible');
     expect(out).toMatch(/init|URL/);
   });
 });
@@ -1479,7 +1479,7 @@ describe('runCli — ls with multiple remote catalog entries', () => {
     await fs.mkdir(configDir, { recursive: true });
     await Bun.write(
       path.join(configDir, 'config.json'),
-      JSON.stringify({ catalogUrl: 'https://example.com/catalog.git' }),
+      JSON.stringify({ catalogs: [{ name: 'principal', url: 'https://example.com/catalog.git' }] }),
     );
     catalogDir = await fs.mkdtemp(path.join(os.tmpdir(), 'rigger-multi-catalog-'));
   });
@@ -1525,8 +1525,8 @@ describe('runCli — ls with multiple remote catalog entries', () => {
     });
 
     const out = cap.lines.join('\n');
-    expect(out).toContain('skill:remote-first');
-    expect(out).toContain('skill:remote-second');
+    expect(out).toContain('principal/skill:remote-first');
+    expect(out).toContain('principal/skill:remote-second');
   });
 
   it('no [warning] shown when remote catalog has no conflicts', async () => {

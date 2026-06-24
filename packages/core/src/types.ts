@@ -359,11 +359,20 @@ export type RemovalOp =
  * Result of a security scan (core/scan.ts seam).
  * M0: stub always returns { ok: true }.
  * Future: findings array populated by Trivy/Gitleaks/regex scanners.
+ *
+ * ADR-0018: when no scanner tool is installed, ok is true but degraded is true.
+ * The install layer translates degraded into an actionable warning and proceeds.
  */
 export interface Verdict {
   ok: boolean;
   /** Human-readable findings when ok is false. */
   findings?: string[];
+  /**
+   * True when no scanner tool (gitleaks / trivy) is installed on the host.
+   * Content was not scanned; install proceeds with a warning.
+   * Absent (undefined) when a scanner ran normally.
+   */
+  degraded?: boolean;
 }
 
 // ---------------------------------------------------------------------------

@@ -132,7 +132,7 @@ async function makeAtomicityEnv(): Promise<AtomicityEnv> {
   await fs.mkdir(configDir, { recursive: true });
   await fs.writeFile(
     path.join(configDir, 'config.json'),
-    JSON.stringify({ catalogUrl: 'https://example.com/catalog.git' }),
+    JSON.stringify({ catalogs: [{ name: 'principal', url: 'https://example.com/catalog.git' }] }),
     'utf8',
   );
 
@@ -300,7 +300,7 @@ describe('R26-1 — clone failure → fail-closed, 0 files written', () => {
   it('runCli returns non-zero exit code when clone fails', async () => {
     const cap = { lines: [] as string[], print: (m: string) => cap.lines.push(m) };
 
-    const code = await runCli(['install', 'skill:demo', '--yes'], {
+    const code = await runCli(['install', 'principal/skill:demo', '--yes'], {
       print: cap.print,
       env: env_.env,
       remote: {
@@ -314,7 +314,7 @@ describe('R26-1 — clone failure → fail-closed, 0 files written', () => {
   });
 
   it('manifest does not exist when clone fails', async () => {
-    await runCli(['install', 'skill:demo', '--yes'], {
+    await runCli(['install', 'principal/skill:demo', '--yes'], {
       print: () => {},
       env: env_.env,
       remote: {
@@ -329,7 +329,7 @@ describe('R26-1 — clone failure → fail-closed, 0 files written', () => {
   });
 
   it('skill store directory is NOT created when clone fails', async () => {
-    await runCli(['install', 'skill:demo', '--yes'], {
+    await runCli(['install', 'principal/skill:demo', '--yes'], {
       print: () => {},
       env: env_.env,
       remote: {
@@ -351,7 +351,7 @@ describe('R26-1 — clone failure → fail-closed, 0 files written', () => {
     const configDir = path.dirname(targets.stateJson);
     const filesBefore = await countFilesUnder(configDir);
 
-    await runCli(['install', 'skill:demo', '--yes'], {
+    await runCli(['install', 'principal/skill:demo', '--yes'], {
       print: () => {},
       env: env_.env,
       remote: {
@@ -369,7 +369,7 @@ describe('R26-1 — clone failure → fail-closed, 0 files written', () => {
   it('output mentions error (fetch/network failure surfaced to user)', async () => {
     const cap = { lines: [] as string[], print: (m: string) => cap.lines.push(m) };
 
-    await runCli(['install', 'skill:demo', '--yes'], {
+    await runCli(['install', 'principal/skill:demo', '--yes'], {
       print: cap.print,
       env: env_.env,
       remote: {
@@ -402,7 +402,7 @@ describe('R26-2 — scan blocked → fail-closed, 0 files written, no agent plac
   it('runCli returns non-zero when scanner blocks', async () => {
     const cap = { lines: [] as string[], print: (m: string) => cap.lines.push(m) };
 
-    const code = await runCli(['install', 'skill:demo', '--yes'], {
+    const code = await runCli(['install', 'principal/skill:demo', '--yes'], {
       print: cap.print,
       env: env_.env,
       remote: {
@@ -416,7 +416,7 @@ describe('R26-2 — scan blocked → fail-closed, 0 files written, no agent plac
   });
 
   it('manifest is absent when scanner blocks', async () => {
-    await runCli(['install', 'skill:demo', '--yes'], {
+    await runCli(['install', 'principal/skill:demo', '--yes'], {
       print: () => {},
       env: env_.env,
       remote: {
@@ -431,7 +431,7 @@ describe('R26-2 — scan blocked → fail-closed, 0 files written, no agent plac
   });
 
   it('skill store directory is NOT created when scanner blocks', async () => {
-    await runCli(['install', 'skill:demo', '--yes'], {
+    await runCli(['install', 'principal/skill:demo', '--yes'], {
       print: () => {},
       env: env_.env,
       remote: {
@@ -453,7 +453,7 @@ describe('R26-2 — scan blocked → fail-closed, 0 files written, no agent plac
      * an agent entry must never reach disk if the scan gate blocks.
      * The scan happens BEFORE apply, so agent:demo.md is never written.
      */
-    await runCli(['install', 'agent:demo', '--yes'], {
+    await runCli(['install', 'principal/agent:demo', '--yes'], {
       print: () => {},
       env: env_.env,
       remote: {
@@ -473,7 +473,7 @@ describe('R26-2 — scan blocked → fail-closed, 0 files written, no agent plac
   it('output mentions scan blocked or security', async () => {
     const cap = { lines: [] as string[], print: (m: string) => cap.lines.push(m) };
 
-    await runCli(['install', 'skill:demo', '--yes'], {
+    await runCli(['install', 'principal/skill:demo', '--yes'], {
       print: cap.print,
       env: env_.env,
       remote: {
@@ -490,7 +490,7 @@ describe('R26-2 — scan blocked → fail-closed, 0 files written, no agent plac
   it('output mentions the scanner finding (malware keyword)', async () => {
     const cap = { lines: [] as string[], print: (m: string) => cap.lines.push(m) };
 
-    await runCli(['install', 'skill:demo', '--yes'], {
+    await runCli(['install', 'principal/skill:demo', '--yes'], {
       print: cap.print,
       env: env_.env,
       remote: {
@@ -505,7 +505,7 @@ describe('R26-2 — scan blocked → fail-closed, 0 files written, no agent plac
   });
 
   it('cleanup is called even when scan blocks (withRemoteCheckout finally guard)', async () => {
-    await runCli(['install', 'skill:demo', '--yes'], {
+    await runCli(['install', 'principal/skill:demo', '--yes'], {
       print: () => {},
       env: env_.env,
       remote: {
@@ -594,7 +594,7 @@ describe('R26-3 — unknown entry in plan → resolve() fails, 0 files written',
      */
     const { stubScanner } = await import('@agent-rigger/core/scan');
 
-    await runCli(['install', 'skill:demo', 'skill:nonexistent', '--yes'], {
+    await runCli(['install', 'principal/skill:demo', 'principal/skill:nonexistent', '--yes'], {
       print: () => {},
       env: env_.env,
       remote: {
@@ -706,7 +706,7 @@ describe('R26-CLI — init command: proposeInstall wired via deps.prompts', () =
     });
 
     const saved = await loadConfigFile(configPath);
-    expect(saved.catalogUrl).toBe('https://example.com/catalog.git');
+    expect(saved.catalogs?.[0]?.url).toBe('https://example.com/catalog.git');
   });
 
   it('no manifest entry when proposeInstall returns empty (user cancelled)', async () => {
