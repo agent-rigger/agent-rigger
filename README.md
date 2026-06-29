@@ -5,7 +5,7 @@ assistant harness (Claude Code at M0) in a reproducible way across a team's
 machines.
 
 [![CI](https://github.com/agent-rigger/agent-rigger/actions/workflows/ci.yml/badge.svg)](https://github.com/agent-rigger/agent-rigger/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
+[![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](./LICENSE)
 [![Bun](https://img.shields.io/badge/runtime-Bun%20%E2%89%A5%201.3-000?logo=bun)](https://bun.sh)
 [![Conventional Commits](https://img.shields.io/badge/commits-conventional-fe5196?logo=conventionalcommits)](https://www.conventionalcommits.org/)
 
@@ -406,6 +406,14 @@ gates, and the workspace layout. Changes are tracked in
 
 ---
 
+## Core team
+
+- **Jonathan Robic** — Founder
+  [GitHub](https://github.com/jrobic) · [LinkedIn](https://www.linkedin.com/in/jonathan-robic/)
+
+---
+
 ## License
 
-Released under the [MIT License](./LICENSE).
+Released under the [Apache License 2.0](./LICENSE). See [DISCLAIMER.md](./DISCLAIMER.md)
+for important notices on warranty, liability, and use.
