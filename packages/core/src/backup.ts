@@ -62,3 +62,12 @@ export async function restore(backupPath: string, originalPath: string): Promise
 export async function removeFile(filePath: string): Promise<void> {
   await rm(filePath, { force: true });
 }
+
+/**
+ * Recursively delete `dirPath` if it exists; no-op when absent. Used by the
+ * engine's transactional rollback to remove a directory (e.g. the shared hook
+ * scriptStore) that did NOT exist before a failed apply() run.
+ */
+export async function removeDir(dirPath: string): Promise<void> {
+  await rm(dirPath, { recursive: true, force: true });
+}

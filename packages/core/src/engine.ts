@@ -20,8 +20,10 @@
  * - No while loops — for...of / map / Promise.all only.
  */
 
+import { lstat } from 'node:fs/promises';
+
 import type { Adapter, AdapterEntry } from './adapter';
-import { backup, removeFile, restore } from './backup';
+import { backup, removeDir, removeFile, restore } from './backup';
 import { findEntry, readManifest, upsertEntry, writeManifest } from './manifest';
 import type { Env } from './paths';
 import type {
@@ -156,25 +158,27 @@ export function reportExitCode(report: Report): 0 | 3 {
  *   5. Upsert a ManifestEntry for this artifact.
  * After all entries: persist the updated manifest.
  *
- * Atomicity (option A — scoped to backup-covered writes): if any step throws —
- * adapter.plan, adapter.apply, or the final writeManifest — the engine rolls
- * back every `path`-based file write to its pre-apply state (files restored from
- * their backup, newly-created files deleted) and re-throws the original error.
- * The manifest is persisted only on full success.
+ * Atomicity — if any step throws (adapter.plan, adapter.apply, or the final
+ * writeManifest) the engine rolls back to the pre-apply state and re-throws the
+ * original error. The manifest is persisted only on full success. Three layers:
+ *   A. path-based file writes (write-text/json, merge-deny/allow, ensure-import,
+ *      settings.json) → restored from backup / deleted if newly created.
+ *   B. non-path side effects of FRESH installs (skill/agent symlink+store via
+ *      link ops; plugin via plugin-install) → compensated by replaying their
+ *      inverse RemovalOps through adapter.applyRemove, in reverse order.
+ *   C. shared dirs created this run (hook scriptStore) → removed.
  *
- * KNOWN BOUNDARY (NOT rolled back — these are not backed up by the engine):
- *   - link ops (skills/agents): the linker's store copy + symlink target are
- *     created/overwritten in place; a failed run can leave an orphaned symlink
- *     and store dir, and a pre-existing target overwritten by the linker is not
- *     recoverable. (Backlog: extend the ledger or back up the store/target.)
- *   - merge-hooks script deposits (scriptStore): only the settings.json write is
- *     backed up; deposited guard scripts are not.
- *   - plugin-install: delegated to the `claude` CLI — an external side effect
- *     with no backup, intrinsically outside option A.
- *   - state.json itself: writeManifest is not part of the ledger; writeJson is
- *     atomic (tmp + rename, see fs-json) so a failed manifest write leaves the
- *     previous state.json intact, but its content is not restored by rollback.
- * See rollbackApply.
+ * KNOWN BOUNDARY (Tier 1 — orphan-safe, NOT data-safe):
+ *   - Re-install / update of an ALREADY-tracked entry is NOT rolled back: the
+ *     overwritten previous content is not restored (only fresh installs are
+ *     compensated). The affected dirs are managed (skills/<name>, scriptStore),
+ *     recreatable by re-running install.
+ *   - plugin-install: the compensating `claude plugin uninstall` is best-effort
+ *     and does NOT undo the `marketplace add`; a failure is surfaced via
+ *     err.rollbackFailures, not thrown.
+ *   - state.json: writeJson is atomic (tmp+rename), so a failed manifest write
+ *     leaves the previous state.json intact (its content is not restored here).
+ * See rollbackApply / rollbackCreatedDirs / rollbackCompensations.
  *
  * @param adapter       The adapter to use for planning and writing.
  * @param entries       Catalog entries to install.
@@ -196,6 +200,13 @@ export async function apply(
 ): Promise<ApplyResult> {
   let manifest = await readManifest(manifestPath);
 
+  // Snapshot the ids tracked BEFORE this run. Drives compensation eligibility
+  // (fresh install vs re-install) independently of the manifest being mutated
+  // by upsertEntry during the loop — robust even if an id appears twice.
+  const preExistingIds = new Set(
+    manifest.artifacts.filter((a) => a.scope === scope).map((a) => a.id),
+  );
+
   const allWritten: string[] = [];
   const allBackedUp: string[] = [];
 
@@ -206,6 +217,18 @@ export async function apply(
   // never to an intermediate state produced earlier in the same run.
   const rollbackLedger = new Map<string, string | null>();
 
+  // Compensations for non-path side effects (atomicity option B, Tier 1
+  // orphan-safe). Only entries ABSENT from the pre-apply manifest are recorded:
+  // a fresh install is fully undone, while a re-install/update of an already
+  // tracked entry is left in place (Tier 1 does not restore overwritten content).
+  // Replayed in REVERSE order on rollback via adapter.applyRemove.
+  const compensations: RemovalOp[] = [];
+  // Shared directories (the hook scriptStore) that did NOT exist before this run
+  // and must be removed on rollback. First-wins: a dir already present when first
+  // touched is left untouched — other already-installed entries may depend on it.
+  const createdDirs = new Set<string>();
+  const seenDirs = new Set<string>();
+
   try {
     for (const entry of entries) {
       const ops = await adapter.plan(entry, scope, env);
@@ -215,6 +238,11 @@ export async function apply(
       if (ops.length === 0) {
         continue;
       }
+
+      // Fresh install (entry not tracked before this run) vs re-install of a
+      // tracked entry. Drives whether non-path side effects are compensated on
+      // rollback. Uses the pre-run snapshot, not the loop-mutated manifest.
+      const isFreshInstall = !preExistingIds.has(entry.id);
 
       // Collect target paths from ops for tracking.
       // - Ops with 'path' use op.path (write-json, write-text, merge-deny, ensure-import).
@@ -246,11 +274,37 @@ export async function apply(
       const backedUp = bakResults.filter((b): b is string => b !== null);
       allBackedUp.push(...backedUp);
 
+      // Track shared directories created by this run (hook scriptStore) so a
+      // rollback can remove them. Checked BEFORE apply, first-wins per dir: a
+      // store already present is NOT tracked (other installed hooks share it).
+      for (const op of ops) {
+        if (
+          op.kind === 'merge-hooks' && op.scriptStore !== undefined && !seenDirs.has(op.scriptStore)
+        ) {
+          seenDirs.add(op.scriptStore);
+          if (!(await pathExists(op.scriptStore))) {
+            createdDirs.add(op.scriptStore);
+          }
+        }
+      }
+
       // Delegate actual writes to the adapter
       await adapter.apply(ops, env);
 
       // Track written paths
       allWritten.push(...targets);
+
+      // Record compensations for the non-path side effects of a FRESH install,
+      // so a later failure can undo them (skill/agent symlink+store, plugin).
+      if (isFreshInstall) {
+        for (const op of ops) {
+          if (op.kind === 'link') {
+            compensations.push({ kind: 'unlink', target: op.target, store: op.store });
+          } else if (op.kind === 'plugin-install') {
+            compensations.push({ kind: 'plugin-uninstall', plugin: op.plugin });
+          }
+        }
+      }
 
       // Capture the applied payload from the ops for manifest reversibility
       const applied = extractApplied(ops, targets);
@@ -263,12 +317,19 @@ export async function apply(
     // Persist the manifest once after all entries have been processed
     await writeManifest(manifestPath, manifest);
   } catch (err) {
-    // Atomicity option A: undo every backup-covered write back to the pre-apply
-    // state, then re-throw the ORIGINAL error. The manifest is never persisted
-    // on this path (writeManifest is the last statement in the try). If the
-    // rollback itself partially failed, attach the failures to the error so a
-    // resulting inconsistent disk state is observable rather than silent.
-    const rollbackFailures = await rollbackApply(rollbackLedger);
+    // Roll back to the pre-apply state, then re-throw the ORIGINAL error. The
+    // manifest is never persisted on this path (writeManifest is the last
+    // statement in the try). Three layers, all best-effort and resilient:
+    //   1. path-based file writes (option A) → restore .bak / delete
+    //   2. shared dirs created this run (hook scriptStore) → remove
+    //   3. non-path side effects of fresh installs (link, plugin) → compensate
+    //      via adapter.applyRemove, replayed in REVERSE order
+    // Any failure is aggregated onto err.rollbackFailures so a resulting
+    // inconsistent disk state is observable rather than silent.
+    const fileFailures = await rollbackApply(rollbackLedger);
+    const dirFailures = await rollbackCreatedDirs(createdDirs);
+    const compFailures = await rollbackCompensations(adapter, compensations, env);
+    const rollbackFailures = [...fileFailures, ...dirFailures, ...compFailures];
     if (rollbackFailures.length > 0 && err instanceof Error) {
       (err as Error & { rollbackFailures?: RollbackFailure[] }).rollbackFailures = rollbackFailures;
     }
@@ -322,6 +383,59 @@ export async function rollbackApply(
     const tracking = tracked[i];
     if (result.status === 'rejected' && tracking !== undefined) {
       failures.push({ path: tracking[0], cause: result.reason });
+    }
+  });
+  return failures;
+}
+
+/** True if `p` exists on disk (file, dir, or symlink); false otherwise. */
+async function pathExists(p: string): Promise<boolean> {
+  return lstat(p).then(() => true).catch(() => false);
+}
+
+/**
+ * Remove the shared directories created during a failed run (atomicity option B,
+ * Tier 1). Best-effort via Promise.allSettled; failures are returned, not thrown.
+ */
+async function rollbackCreatedDirs(dirs: Set<string>): Promise<RollbackFailure[]> {
+  const tracked = [...dirs];
+  const results = await Promise.allSettled(tracked.map((d) => removeDir(d)));
+
+  const failures: RollbackFailure[] = [];
+  results.forEach((result, i) => {
+    const dir = tracked[i];
+    if (result.status === 'rejected' && dir !== undefined) {
+      failures.push({ path: dir, cause: result.reason });
+    }
+  });
+  return failures;
+}
+
+/**
+ * Undo the non-path side effects of fresh installs by replaying their inverse
+ * RemovalOps (unlink, plugin-uninstall) through adapter.applyRemove, in REVERSE
+ * order (later side effects undone first). Each op runs in isolation via
+ * Promise.allSettled so one failure (e.g. an external `claude plugin uninstall`)
+ * neither aborts the others nor masks the original error. Failures are returned.
+ */
+async function rollbackCompensations(
+  adapter: Adapter,
+  compensations: RemovalOp[],
+  env: Env,
+): Promise<RollbackFailure[]> {
+  const reversed = compensations.toReversed();
+  const results = await Promise.allSettled(reversed.map((op) => adapter.applyRemove([op], env)));
+
+  const failures: RollbackFailure[] = [];
+  results.forEach((result, i) => {
+    const op = reversed[i];
+    if (result.status === 'rejected' && op !== undefined) {
+      const id = op.kind === 'unlink'
+        ? op.target
+        : op.kind === 'plugin-uninstall'
+        ? `plugin:${op.plugin}`
+        : op.kind;
+      failures.push({ path: id, cause: result.reason });
     }
   });
   return failures;
