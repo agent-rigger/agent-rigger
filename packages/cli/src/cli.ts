@@ -319,7 +319,7 @@ Usage:
 
 Workflow commands:
   check                    Audit whether guardrails and context are correctly installed.
-  doctor                   List external dependencies and their status (scan complet vs warn-only).
+  doctor                   List external dependencies and their status (full scan vs warn-only).
   install                  Install selected artifacts interactively.
   install <id...>          Install specified artifact ids non-interactively.
   install <id...> --yes    Install without confirmation prompt.

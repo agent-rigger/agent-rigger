@@ -2,12 +2,12 @@
  * cmd-doctor — implementation of the `doctor` command.
  *
  * Lists external dependencies with their availability status so the user knows
- * whether agent-rigger operates in "scan complet" or "warn-only" mode before
+ * whether agent-rigger operates in "full scan" or "warn-only" mode before
  * installing (see ADR-0018).
  *
  * Deps checked:
- *   gitleaks — secret scanner (optional, scan complet when present)
- *   trivy    — vulnerability scanner (optional, scan complet when present)
+ *   gitleaks — secret scanner (optional, full scan when present)
+ *   trivy    — vulnerability scanner (optional, full scan when present)
  *   glab     — GitLab auth CLI (recommended, ADR-0006)
  *   git      — version control (required for most workflows)
  *
@@ -73,11 +73,11 @@ export interface RunDoctorOpts {
  *
  * For each dependency:
  *   present → "✓ <name> (<path>)"
- *   absent  → "✗ <name> — manquant  hint: <installHint>"
+ *   absent  → "✗ <name> — missing  hint: <installHint>"
  *
  * Mode line (printed after the dep list):
- *   gitleaks OR trivy present → "mode : scan complet"
- *   neither present           → "mode : warn-only (contenu externe non scanné — installe gitleaks ou trivy)"
+ *   gitleaks OR trivy present → "mode : full scan"
+ *   neither present           → "mode : warn-only (external content not scanned — install gitleaks or trivy)"
  */
 export async function runDoctor(opts: RunDoctorOpts): Promise<void> {
   const which = opts.which ?? defaultWhich;
