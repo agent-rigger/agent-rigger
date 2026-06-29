@@ -163,3 +163,48 @@ describe('writeJson', () => {
     expect(result).toEqual(data);
   });
 });
+
+// ---------------------------------------------------------------------------
+// atomic write (tmp + rename) — no half-written files, no leftover temp files
+// ---------------------------------------------------------------------------
+
+describe('atomic write', () => {
+  it('leaves no .tmp-* turd after a successful writeJson', async () => {
+    const filePath = path.join(tmpDir, 'state.json');
+    await writeJson(filePath, { ok: true });
+
+    const entries = await fs.readdir(tmpDir);
+    expect(entries.filter((e) => e.includes('.tmp-'))).toHaveLength(0);
+    expect(entries).toContain('state.json');
+  });
+
+  it('leaves no .tmp-* turd after a successful writeText', async () => {
+    const filePath = path.join(tmpDir, 'AGENTS.md');
+    await writeText(filePath, 'hello');
+
+    const entries = await fs.readdir(tmpDir);
+    expect(entries.filter((e) => e.includes('.tmp-'))).toHaveLength(0);
+  });
+
+  it('overwrites an existing file in full (no merge of old bytes)', async () => {
+    const filePath = path.join(tmpDir, 'out.txt');
+    await writeText(filePath, 'a-very-long-original-content-string');
+    await writeText(filePath, 'short');
+
+    expect(await readText(filePath)).toBe('short');
+  });
+
+  it('preserves the previous file and cleans up when the write fails', async () => {
+    // Parent is a regular file → mkdir(ENOTDIR) makes the write throw.
+    const blocker = path.join(tmpDir, 'blocker');
+    await writeText(blocker, 'i am a file');
+    const target = path.join(blocker, 'state.json');
+
+    await expect(writeJson(target, { x: 1 })).rejects.toBeTruthy();
+
+    // The blocker file is untouched and no stray temp file appeared.
+    expect(await readText(blocker)).toBe('i am a file');
+    const entries = await fs.readdir(tmpDir);
+    expect(entries.filter((e) => e.includes('.tmp-'))).toHaveLength(0);
+  });
+});

@@ -14,6 +14,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
+import { rm } from 'node:fs/promises';
 
 /**
  * Format a Date as an ISO-8601 string safe for use in file names.
@@ -42,4 +43,22 @@ export async function backup(filePath: string): Promise<string | null> {
 
   await Bun.write(dest, await source.arrayBuffer());
   return dest;
+}
+
+/**
+ * Restore a file from its backup: copy `backupPath` content back over
+ * `originalPath`. Used by the engine's transactional rollback to undo writes
+ * to files that existed before an apply() run.
+ */
+export async function restore(backupPath: string, originalPath: string): Promise<void> {
+  await Bun.write(originalPath, await Bun.file(backupPath).arrayBuffer());
+}
+
+/**
+ * Delete `filePath` if it exists; no-op when absent. Used by the engine's
+ * transactional rollback to remove files that were newly created during a
+ * failed apply() run (no backup existed for them).
+ */
+export async function removeFile(filePath: string): Promise<void> {
+  await rm(filePath, { force: true });
 }

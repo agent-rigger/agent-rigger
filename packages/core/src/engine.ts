@@ -21,7 +21,7 @@
  */
 
 import type { Adapter, AdapterEntry } from './adapter';
-import { backup } from './backup';
+import { backup, removeFile, restore } from './backup';
 import { findEntry, readManifest, upsertEntry, writeManifest } from './manifest';
 import type { Env } from './paths';
 import type {
@@ -156,6 +156,26 @@ export function reportExitCode(report: Report): 0 | 3 {
  *   5. Upsert a ManifestEntry for this artifact.
  * After all entries: persist the updated manifest.
  *
+ * Atomicity (option A — scoped to backup-covered writes): if any step throws —
+ * adapter.plan, adapter.apply, or the final writeManifest — the engine rolls
+ * back every `path`-based file write to its pre-apply state (files restored from
+ * their backup, newly-created files deleted) and re-throws the original error.
+ * The manifest is persisted only on full success.
+ *
+ * KNOWN BOUNDARY (NOT rolled back — these are not backed up by the engine):
+ *   - link ops (skills/agents): the linker's store copy + symlink target are
+ *     created/overwritten in place; a failed run can leave an orphaned symlink
+ *     and store dir, and a pre-existing target overwritten by the linker is not
+ *     recoverable. (Backlog: extend the ledger or back up the store/target.)
+ *   - merge-hooks script deposits (scriptStore): only the settings.json write is
+ *     backed up; deposited guard scripts are not.
+ *   - plugin-install: delegated to the `claude` CLI — an external side effect
+ *     with no backup, intrinsically outside option A.
+ *   - state.json itself: writeManifest is not part of the ledger; writeJson is
+ *     atomic (tmp + rename, see fs-json) so a failed manifest write leaves the
+ *     previous state.json intact, but its content is not restored by rollback.
+ * See rollbackApply.
+ *
  * @param adapter       The adapter to use for planning and writing.
  * @param entries       Catalog entries to install.
  * @param scope         Installation scope ('user' | 'project').
@@ -179,53 +199,132 @@ export async function apply(
   const allWritten: string[] = [];
   const allBackedUp: string[] = [];
 
-  for (const entry of entries) {
-    const ops = await adapter.plan(entry, scope, env);
+  // Rollback ledger (atomicity option A). Keyed by absolute target path; the
+  // value is the backup path to restore from, or null when the file did not
+  // exist before this run (→ delete on rollback). FIRST write wins per path, so
+  // a path touched by several entries always rolls back to its ORIGINAL state,
+  // never to an intermediate state produced earlier in the same run.
+  const rollbackLedger = new Map<string, string | null>();
 
-    // No ops → idempotent no-op; already installed.
-    // Leave the manifest untouched for this entry (preserve existing record).
-    if (ops.length === 0) {
-      continue;
+  try {
+    for (const entry of entries) {
+      const ops = await adapter.plan(entry, scope, env);
+
+      // No ops → idempotent no-op; already installed.
+      // Leave the manifest untouched for this entry (preserve existing record).
+      if (ops.length === 0) {
+        continue;
+      }
+
+      // Collect target paths from ops for tracking.
+      // - Ops with 'path' use op.path (write-json, write-text, merge-deny, ensure-import).
+      // - Link ops use op.target (symlink destination).
+      // - Ops with neither 'path' nor 'target' (e.g. plugin-install) contribute no path.
+      const targets = ops.flatMap((op) => {
+        if ('path' in op) return [op.path as string];
+        if ('target' in op) return [(op as { target: string }).target];
+        return [];
+      });
+
+      // Backup every 'path'-based target that currently exists on disk; these are
+      // the only writes the rollback ledger can undo. Link ops (store copy +
+      // symlink) and plugin-install (external CLI) are NOT backed up — see the
+      // KNOWN BOUNDARY note on apply().
+      const backupTargets = ops
+        .filter((op) => 'path' in op)
+        .map((op) => (op as { path: string }).path);
+      const bakResults = await Promise.all(backupTargets.map((p) => backup(p)));
+
+      // Record the pre-write state for rollback (first-wins per path).
+      // backup() returns the .bak path when the file existed, null when it did not.
+      backupTargets.forEach((p, i) => {
+        if (!rollbackLedger.has(p)) {
+          rollbackLedger.set(p, bakResults[i] ?? null);
+        }
+      });
+
+      const backedUp = bakResults.filter((b): b is string => b !== null);
+      allBackedUp.push(...backedUp);
+
+      // Delegate actual writes to the adapter
+      await adapter.apply(ops, env);
+
+      // Track written paths
+      allWritten.push(...targets);
+
+      // Capture the applied payload from the ops for manifest reversibility
+      const applied = extractApplied(ops, targets);
+
+      // Upsert manifest entry with the files written and the applied payload
+      const version = versionFor === undefined ? undefined : versionFor(entry);
+      manifest = upsertEntry(manifest, buildManifestEntry(entry, scope, targets, version, applied));
     }
 
-    // Collect target paths from ops for tracking.
-    // - Ops with 'path' use op.path (write-json, write-text, merge-deny, ensure-import).
-    // - Link ops use op.target (symlink destination); the linker is atomic, no backup needed.
-    // - Ops with neither 'path' nor 'target' (e.g. plugin-install) contribute no path;
-    //   they perform no direct file write, so nothing to track or back up.
-    const targets = ops.flatMap((op) => {
-      if ('path' in op) return [op.path as string];
-      if ('target' in op) return [(op as { target: string }).target];
-      return [];
-    });
-
-    // Backup every target that currently exists on disk.
-    // Skip link ops (linker is atomic) and plugin-install ops (no file written).
-    const backupTargets = ops
-      .filter((op) => 'path' in op)
-      .map((op) => (op as { path: string }).path);
-    const bakResults = await Promise.all(backupTargets.map((p) => backup(p)));
-    const backedUp = bakResults.filter((b): b is string => b !== null);
-    allBackedUp.push(...backedUp);
-
-    // Delegate actual writes to the adapter
-    await adapter.apply(ops, env);
-
-    // Track written paths
-    allWritten.push(...targets);
-
-    // Capture the applied payload from the ops for manifest reversibility
-    const applied = extractApplied(ops, targets);
-
-    // Upsert manifest entry with the files written and the applied payload
-    const version = versionFor === undefined ? undefined : versionFor(entry);
-    manifest = upsertEntry(manifest, buildManifestEntry(entry, scope, targets, version, applied));
+    // Persist the manifest once after all entries have been processed
+    await writeManifest(manifestPath, manifest);
+  } catch (err) {
+    // Atomicity option A: undo every backup-covered write back to the pre-apply
+    // state, then re-throw the ORIGINAL error. The manifest is never persisted
+    // on this path (writeManifest is the last statement in the try). If the
+    // rollback itself partially failed, attach the failures to the error so a
+    // resulting inconsistent disk state is observable rather than silent.
+    const rollbackFailures = await rollbackApply(rollbackLedger);
+    if (rollbackFailures.length > 0 && err instanceof Error) {
+      (err as Error & { rollbackFailures?: RollbackFailure[] }).rollbackFailures = rollbackFailures;
+    }
+    throw err;
   }
 
-  // Persist the manifest once after all entries have been processed
-  await writeManifest(manifestPath, manifest);
-
   return { written: allWritten, backedUp: allBackedUp, manifest };
+}
+
+// ---------------------------------------------------------------------------
+// rollbackApply — undo a partial apply() back to its pre-run state (option A)
+// ---------------------------------------------------------------------------
+
+/** A single path whose rollback (restore/delete) failed. */
+export interface RollbackFailure {
+  /** The original path whose restore/delete failed. */
+  path: string;
+  /** The error thrown by restore()/removeFile() for that path. */
+  cause: unknown;
+}
+
+/**
+ * Restore the on-disk state recorded in the rollback ledger.
+ *
+ * For each tracked path:
+ *   - backup path present → restore the file from its .bak-* copy
+ *   - null (file was created during the run) → delete it
+ *
+ * Best-effort and resilient: every restore/delete runs to completion via
+ * Promise.allSettled, so one failing restore never aborts the others and never
+ * masks the original error that triggered the rollback (the caller re-throws it).
+ * Failures are NOT swallowed silently — they are returned so the caller can
+ * surface them on the re-thrown error (a partial rollback leaves disk in an
+ * inconsistent state and must be observable). The .bak-* copies are left in
+ * place as a recovery artifact, consistent with the success path.
+ *
+ * @returns The list of paths whose rollback failed (empty when fully clean).
+ */
+export async function rollbackApply(
+  ledger: Map<string, string | null>,
+): Promise<RollbackFailure[]> {
+  const tracked = [...ledger.entries()];
+  const results = await Promise.allSettled(
+    tracked.map(([originalPath, backupPath]) =>
+      backupPath === null ? removeFile(originalPath) : restore(backupPath, originalPath)
+    ),
+  );
+
+  const failures: RollbackFailure[] = [];
+  results.forEach((result, i) => {
+    const tracking = tracked[i];
+    if (result.status === 'rejected' && tracking !== undefined) {
+      failures.push({ path: tracking[0], cause: result.reason });
+    }
+  });
+  return failures;
 }
 
 // ---------------------------------------------------------------------------

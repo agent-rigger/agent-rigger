@@ -6,11 +6,14 @@
  * - Missing file → safe defaults (empty object / empty string), not an error.
  * - Invalid JSON → throws InvalidJsonError (actionable, carries file path).
  * - writeJson always creates parent directories and appends a trailing newline.
+ * - All writes are atomic (tmp + rename) so a crash/concurrent reader never
+ *   observes a half-written file.
  *
  * Bun-native: uses Bun.file() for reads and Bun.write() for writes.
  */
 
-import { mkdir } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
+import { mkdir, rename, rm } from 'node:fs/promises';
 import path from 'node:path';
 
 // ---------------------------------------------------------------------------
@@ -102,15 +105,32 @@ export async function readText(filePath: string): Promise<string> {
 // ---------------------------------------------------------------------------
 
 /**
- * Serialize `data` to JSON (2-space indent, trailing newline) and write it to
- * `filePath`. Parent directories are created if absent.
+ * Write `content` to `filePath` atomically: stage it in a temp file in the SAME
+ * directory, then rename(2) over the target (atomic on the same filesystem).
+ * A crash or concurrent reader therefore never sees a partially written file —
+ * the path either holds the old content or the new one. Parent directories are
+ * created if absent; the temp file is cleaned up if the rename never happens.
  */
-export async function writeJson(filePath: string, data: unknown): Promise<void> {
+async function atomicWrite(filePath: string, content: string): Promise<void> {
   const dir = path.dirname(filePath);
   await mkdir(dir, { recursive: true });
 
-  const content = JSON.stringify(data, null, 2) + '\n';
-  await Bun.write(filePath, content);
+  const tmp = `${filePath}.tmp-${randomUUID().slice(0, 8)}`;
+  try {
+    await Bun.write(tmp, content);
+    await rename(tmp, filePath);
+  } catch (err) {
+    await rm(tmp, { force: true });
+    throw err;
+  }
+}
+
+/**
+ * Serialize `data` to JSON (2-space indent, trailing newline) and write it to
+ * `filePath` atomically. Parent directories are created if absent.
+ */
+export async function writeJson(filePath: string, data: unknown): Promise<void> {
+  await atomicWrite(filePath, JSON.stringify(data, null, 2) + '\n');
 }
 
 // ---------------------------------------------------------------------------
@@ -118,12 +138,10 @@ export async function writeJson(filePath: string, data: unknown): Promise<void> 
 // ---------------------------------------------------------------------------
 
 /**
- * Write a UTF-8 string to `filePath`. Parent directories are created if absent.
- * Symmetric with readText: writeText then readText returns the original content.
+ * Write a UTF-8 string to `filePath` atomically. Parent directories are created
+ * if absent. Symmetric with readText: writeText then readText returns the
+ * original content.
  */
 export async function writeText(filePath: string, content: string): Promise<void> {
-  const dir = path.dirname(filePath);
-  await mkdir(dir, { recursive: true });
-
-  await Bun.write(filePath, content);
+  await atomicWrite(filePath, content);
 }
