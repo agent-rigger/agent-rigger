@@ -1734,6 +1734,12 @@ async function handleUpdate(opts: HandleUpdateOpts): Promise<number> {
         .filter((e) => e.scope === scope && e.id.startsWith(prefix))
         .map((e) => e.id);
 
+      // Nothing installed from this catalog → skip it. Passing empty ids to
+      // runUpdate would trigger its "all installed" semantics, reclassifying
+      // OTHER catalogs' entries against THIS catalog's url/version and failing
+      // resolution (UnknownEntryError). The loop always drives explicit ids.
+      if (catalogIds.length === 0) continue;
+
       const updateOpts = {
         ids: catalogIds,
         scope,

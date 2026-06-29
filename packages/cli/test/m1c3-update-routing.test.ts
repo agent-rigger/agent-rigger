@@ -33,6 +33,15 @@ import { runCli } from '../src/cli';
 const failRunner: CommandRunner = () =>
   Promise.resolve({ exitCode: 1, stdout: '', stderr: 'network error' });
 
+/** True when a git URL belongs to the secondary ("other") catalog. */
+const isOtherUrl = (url: string): boolean => url.includes('other');
+
+/**
+ * Extract the repo URL from a git argv. git places the URL after a `--`
+ * separator (security hardening), so its position varies — match by content.
+ */
+const urlOf = (argv: string[]): string => argv.find((a) => a.includes('example.com')) ?? '';
+
 // ---------------------------------------------------------------------------
 // Fixed fixtures
 // ---------------------------------------------------------------------------
@@ -365,6 +374,124 @@ describe('update routing — wrong nature id → exit 2', () => {
 
     const output = cap.lines.join('\n');
     expect(output).toMatch(/is not a guardrail/i);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Part A — multi-catalog all-update: a catalog with NO installed entries must
+// be skipped (regression: cross-catalog "Unknown catalog entry" crash).
+// ---------------------------------------------------------------------------
+
+describe('update routing — `update --yes` (all) with a 2nd empty catalog', () => {
+  it('skips the catalog with no installs instead of crashing with "Unknown catalog entry"', async () => {
+    // TWO catalogs configured; only `principal` has an installed entry.
+    // `other` is on a HIGHER version and serves DIFFERENT content (no remote-demo).
+    // Pre-fix: the all-update loop passes empty ids to runUpdate for `other`,
+    // runUpdate treats empty as "all installed" → reclassifies principal's entry
+    // as stale against `other`'s higher version → resolve() against `other`'s
+    // catalog throws UnknownEntryError. Post-fix: `other` is skipped.
+    const homeDir = await fs.mkdtemp(path.join(os.tmpdir(), 'rigger-m1c3-multi-'));
+    const configDir = path.join(homeDir, '.config', 'agent-rigger');
+    await fs.mkdir(configDir, { recursive: true });
+    await fs.writeFile(
+      path.join(configDir, 'config.json'),
+      JSON.stringify({
+        catalogs: [
+          { name: 'principal', url: 'https://example.com/principal.git' },
+          { name: 'other', url: 'https://example.com/other.git' },
+        ],
+      }),
+      'utf8',
+    );
+    const env: Env = { RIGGER_HOME: homeDir };
+
+    let lastLsUrl = '';
+    const tmpDirs: string[] = [];
+
+    const runner: CommandRunner = (_cmd, args) => {
+      const argv = args ?? [];
+      if (argv[0] === 'ls-remote' && argv[1] === '--tags') {
+        const url = urlOf(argv);
+        lastLsUrl = url;
+        const tag = isOtherUrl(url) ? TAG_V1_1_0 : TAG_V1_0_0;
+        const sha = isOtherUrl(url) ? SHA_V1_1_0 : SHA_V1_0_0;
+        return Promise.resolve({ exitCode: 0, stdout: `${sha}\trefs/tags/${tag}\n`, stderr: '' });
+      }
+      if (argv[0] === 'ls-remote' && argv.includes('HEAD')) {
+        const url = urlOf(argv);
+        const sha = isOtherUrl(url) ? SHA_V1_1_0 : SHA_V1_0_0;
+        return Promise.resolve({ exitCode: 0, stdout: `${sha}\tHEAD\n`, stderr: '' });
+      }
+      if (argv[0] === 'clone') {
+        return Promise.resolve({ exitCode: 0, stdout: '', stderr: '' });
+      }
+      if (argv[0] === '-C' && argv[2] === 'rev-parse') {
+        const sha = isOtherUrl(lastLsUrl) ? SHA_V1_1_0 : SHA_V1_0_0;
+        return Promise.resolve({ exitCode: 0, stdout: `${sha}\n`, stderr: '' });
+      }
+      return Promise.resolve({ exitCode: 0, stdout: '', stderr: '' });
+    };
+
+    // URL-aware via lastLsUrl (ls-remote always runs before checkout for a catalog).
+    const tmpFactory: TmpDirFactory = async () => {
+      const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'rigger-m1c3-multi-co-'));
+      tmpDirs.push(tmpDir);
+      const other = isOtherUrl(lastLsUrl);
+      const entries: CatalogEntry[] = other
+        ? [{
+          kind: 'artifact',
+          id: 'skill:other-only',
+          nature: 'skill',
+          targets: ['claude'],
+          scopes: ['user', 'project'],
+        }]
+        : [REMOTE_SKILL_ENTRY];
+      await fs.writeFile(
+        path.join(tmpDir, 'catalog.json'),
+        JSON.stringify({ meta: { name: other ? 'other' : 'principal' }, entries }),
+        'utf8',
+      );
+      const skillId = other ? 'other-only' : 'remote-demo';
+      await fs.mkdir(path.join(tmpDir, 'skills', skillId), { recursive: true });
+      await fs.writeFile(
+        path.join(tmpDir, 'skills', skillId, 'SKILL.md'),
+        `# ${skillId}\n`,
+        'utf8',
+      );
+      return {
+        path: tmpDir,
+        cleanup: async () => {
+          await fs.rm(tmpDir, { recursive: true, force: true });
+        },
+      };
+    };
+
+    try {
+      // Pre-install principal/skill:remote-demo at v1.0.0.
+      const cap0 = makeCapture();
+      await runCli(['install', 'principal/skill:remote-demo', '--yes'], {
+        print: cap0.print,
+        env,
+        remote: { run: runner, tmpFactory, scanner: stubScanner },
+      });
+
+      // Update ALL — must not crash on the empty `other` catalog.
+      const cap = makeCapture();
+      const code = await runCli(['update', '--yes'], {
+        print: cap.print,
+        env,
+        remote: { run: runner, tmpFactory, scanner: stubScanner },
+      });
+
+      const output = cap.lines.join('\n');
+      expect(output).not.toMatch(/Unknown catalog entry/i);
+      expect(code).toBe(0);
+    } finally {
+      await fs.rm(homeDir, { recursive: true, force: true });
+      for (const d of tmpDirs) {
+        await fs.rm(d, { recursive: true, force: true }).catch(() => {});
+      }
+    }
   });
 });
 
