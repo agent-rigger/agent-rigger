@@ -39,6 +39,17 @@ jobs:
           bun run typecheck
           bun test
 
+      - name: Stamp version from tag
+        # The git tag is the source of truth for the released version. Stamp it
+        # into package.json (build-only, not committed) so the compiled binary —
+        # which inlines package.json via the version import — reports the tag.
+        working-directory: packages/cli
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          tmp=$(mktemp)
+          jq --arg v "$VERSION" '.version = $v' package.json > "$tmp" && mv "$tmp" package.json
+          echo "Stamped version: $VERSION"
+
       - name: Build standalone binaries (all targets)
         working-directory: packages/cli
         run: |

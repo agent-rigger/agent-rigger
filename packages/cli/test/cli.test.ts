@@ -17,6 +17,7 @@ import path from 'node:path';
 import type { CatalogEntry, TmpDirFactory } from '@agent-rigger/catalog';
 import type { CommandRunner } from '@agent-rigger/catalog/tool-check';
 
+import pkg from '../package.json';
 import { parseArgs, runCli } from '../src/cli';
 import type { CliPrompts } from '../src/cli';
 
@@ -162,6 +163,12 @@ describe('runCli — --version', () => {
     const out = cap.lines.join('\n');
     // Should look like a semver or at least contain a number
     expect(out).toMatch(/\d/);
+  });
+
+  it('reports the version sourced from package.json (not a hardcoded constant)', async () => {
+    const cap = makeCapture();
+    await runCli(['--version'], { print: cap.print });
+    expect(cap.lines.join('\n').trim()).toBe(pkg.version);
   });
 });
 

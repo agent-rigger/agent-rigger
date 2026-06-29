@@ -60,11 +60,15 @@ import { defaultTmpFactory, fetchRemoteCatalog } from './remote';
 import { runRemoteInstall, ScanBlockedError } from './remote-install';
 import { renderEntryInfo } from './ui';
 
+import pkg from '../package.json';
+
 // ---------------------------------------------------------------------------
-// Version — sourced from package.json at build time; fallback to "0.0.0"
+// Version — sourced from package.json, embedded at build time.
+// `bun build --compile` inlines this JSON import, so the standalone binary
+// reports the package version without reading any file at runtime.
 // ---------------------------------------------------------------------------
 
-const CLI_VERSION = '0.0.0';
+const CLI_VERSION: string = pkg.version;
 
 // ---------------------------------------------------------------------------
 // isAdHocTarget — detect whether an arg is a URL or local path (not a qualified id)
