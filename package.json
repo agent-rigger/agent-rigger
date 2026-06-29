@@ -2,6 +2,7 @@
   "name": "@agent-rigger/root",
   "private": true,
   "type": "module",
+  "license": "Apache-2.0",
   "engines": {
     "bun": ">=1.3.0"
   },
