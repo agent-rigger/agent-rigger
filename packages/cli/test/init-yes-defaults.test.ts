@@ -218,7 +218,24 @@ async function readManifest(env: Env): Promise<{ artifacts: Array<{ id: string }
 
 let fix: Awaited<ReturnType<typeof makeInitEnv>>;
 
+/**
+ * Pin process.stdout.isTTY so the init interactive-picker branch is never taken
+ * by accident. The non-TTY init tests (D1–D4) assert config-only behaviour; if
+ * the suite runs in a real terminal (isTTY=true) the production code enters the
+ * interactive proposeInstall branch and awaits a real stdin prompt → 5s timeout.
+ * Forcing it false makes these tests hermetic regardless of where `bun test`
+ * runs. D5 deliberately overrides to true in its own beforeEach.
+ */
+function setStdoutIsTTY(value: boolean | undefined): void {
+  Object.defineProperty(process.stdout, 'isTTY', { value, configurable: true });
+}
+
+beforeEach(() => {
+  setStdoutIsTTY(false);
+});
+
 afterEach(async () => {
+  setStdoutIsTTY(false);
   await fix.cleanupAll();
 });
 
@@ -389,8 +406,6 @@ describe('D4 — init --yes: empty meta → config saved, no install, no crash',
 // ---------------------------------------------------------------------------
 
 describe('D5 — init --yes with isTTY=true: defaults installed, picker NOT invoked', () => {
-  const originalIsTTY = process.stdout.isTTY;
-
   beforeEach(async () => {
     fix = await makeInitEnv({
       meta: {
@@ -399,15 +414,10 @@ describe('D5 — init --yes with isTTY=true: defaults installed, picker NOT invo
       },
       entries: [REQUIRED_SKILL_ENTRY, RECOMMENDED_SKILL_ENTRY, OPTIONAL_SKILL_ENTRY],
     });
-    // Temporarily simulate a TTY so the isTTY branch would normally fire.
-    Object.defineProperty(process.stdout, 'isTTY', { value: true, configurable: true });
-  });
-
-  afterEach(() => {
-    Object.defineProperty(process.stdout, 'isTTY', {
-      value: originalIsTTY,
-      configurable: true,
-    });
+    // Override the file-level non-TTY pin: simulate a real TTY so the isTTY
+    // picker branch WOULD fire — proving --yes still primes over it. The
+    // file-level afterEach resets isTTY back to false (no cross-file leak).
+    setStdoutIsTTY(true);
   });
 
   it('returns exit code 0 even with isTTY=true', async () => {

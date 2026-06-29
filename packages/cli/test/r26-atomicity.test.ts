@@ -278,11 +278,24 @@ async function countFilesUnder(dir: string): Promise<number> {
 
 let env_: AtomicityEnv;
 
+/**
+ * Pin process.stdout.isTTY = false so the init/ad-hoc interactive picker branch
+ * is never taken when this suite runs in a real terminal. The R26-CLI
+ * "no proposeInstall injected → config-only" test asserts the non-TTY path; with
+ * an ambient TTY the production code would enter the interactive proposeInstall
+ * branch and await a real stdin prompt → 5s timeout (flaky in a real terminal).
+ */
+function setStdoutIsTTY(value: boolean | undefined): void {
+  Object.defineProperty(process.stdout, 'isTTY', { value, configurable: true });
+}
+
 beforeEach(async () => {
+  setStdoutIsTTY(false);
   env_ = await makeAtomicityEnv();
 });
 
 afterEach(async () => {
+  setStdoutIsTTY(false);
   await env_.cleanupAll();
 });
 
