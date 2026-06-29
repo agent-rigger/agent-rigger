@@ -1,0 +1,117 @@
+---
+title: agent-rigger
+description: The harness package manager for teams. Pin, share and audit your AI coding setup so it never drifts.
+template: splash
+tableOfContents: false
+editUrl: false
+---
+
+import { Icon } from '@astrojs/starlight/components';
+import Terminal from '../../components/Terminal.astro';
+
+export const withBase = (p) =>
+  `${import.meta.env.BASE_URL.replace(/\/$/, '')}/${String(p).replace(/^\//, '')}`;
+
+<div class="ar-landing">
+
+<section class="ar-hero">
+
+<span class="ar-eyebrow"><Icon name="seti:config" size="1rem" /> harness package manager · Claude Code</span>
+
+# Your team’s AI harness <span class="accent">drifts</span>. Pin it.
+
+<p class="lead">Every dev hand-edits their own <code>settings.json</code>, deny lists, hooks, skills and agents. They go stale, silently. agent-rigger makes the harness a <strong>versioned package</strong>: one catalog, one command, zero drift.</p>
+
+<div class="ar-cta">
+  <a class="ar-btn ar-btn-primary" href={withBase('getting-started/')}>Get started</a>
+  <a class="ar-btn ar-btn-ghost" href="https://github.com/agent-rigger/agent-rigger"><Icon name="github" size="1.1rem" /> Star on GitHub</a>
+</div>
+
+<Terminal />
+
+<figure class="ar-demo">
+  <img src={withBase('demo.gif')} alt="agent-rigger: doctor, browse the team catalog, install the rig in one command, verify zero drift" />
+  <figcaption>doctor → browse the catalog → install in one command → check: zero drift. Runs in a throwaway home — your real ~/.claude is never touched.</figcaption>
+</figure>
+
+</section>
+
+<section>
+
+<h2 class="ar-h2">Setups drift. Nobody notices until it breaks.</h2>
+<p class="ar-sub">The harness is config sprawl — and config sprawl rots in the dark.</p>
+
+<div class="ar-grid">
+  <div class="ar-card">
+    <span class="num">01 — MANUAL</span>
+    <h3>Installed by hand</h3>
+    <p>Each machine gets its guardrails, hooks and skills copied in by hand. No source of truth, no record of what landed.</p>
+  </div>
+  <div class="ar-card">
+    <span class="num">02 — INCONSISTENT</span>
+    <h3>Updated unevenly</h3>
+    <p>A skill gets patched on one laptop and forgotten on five others. The team runs five different harnesses without knowing it.</p>
+  </div>
+  <div class="ar-card">
+    <span class="num">03 — UNAUDITABLE</span>
+    <h3>Impossible to audit</h3>
+    <p>A guardrail goes missing or a deny rule drops off. You find out when something you trusted to be blocked wasn’t.</p>
+  </div>
+</div>
+
+</section>
+
+<section>
+
+<h2 class="ar-h2">Catalog in, rig out.</h2>
+<p class="ar-sub">A shared catalog says what should be installed. A manifest records what is. <code>check</code> tells you the difference.</p>
+
+<div class="ar-grid">
+  <div class="ar-card">
+    <span class="num">CATALOG</span>
+    <h3>The team decision</h3>
+    <p>A versioned content repo lists the artifacts and packs your team agreed on. The engine ships <strong>no content of its own</strong> — zero opinion baked in.</p>
+  </div>
+  <div class="ar-card">
+    <span class="num">INSTALL</span>
+    <h3>One command, a plan first</h3>
+    <p><code>install</code> resolves packs and dependencies, shows a terraform-style plan, backs up every file, and never writes without confirmation.</p>
+  </div>
+  <div class="ar-card">
+    <span class="num">CHECK</span>
+    <h3>Drift, caught</h3>
+    <p>Put <code>check</code> in CI or a machine hook. Exit 0 means every guardrail and context entry matches the catalog. Anything else is drift.</p>
+  </div>
+</div>
+
+</section>
+
+<section>
+
+<h2 class="ar-h2">Guarantees, not vibes.</h2>
+<p class="ar-sub">Four invariants hold across every command.</p>
+
+<div class="ar-strip">
+  <span class="ar-chip">idempotent</span>
+  <span class="ar-chip">backup before write</span>
+  <span class="ar-chip">human in the loop</span>
+  <span class="ar-chip">no silent failures</span>
+  <span class="ar-chip">content scanned on install</span>
+</div>
+
+</section>
+
+<section class="ar-final">
+
+## Pin your harness in the next five minutes.
+
+<p>Clone it, point it at a catalog, run <code>check</code>. It’s Apache-2.0, pre-1.0, and shipping.</p>
+
+<div class="ar-cta">
+  <a class="ar-btn ar-btn-primary" href={withBase('getting-started/')}>Read the docs</a>
+  <a class="ar-btn ar-btn-ghost" href="https://github.com/agent-rigger/agent-rigger"><Icon name="github" size="1.1rem" /> View the source</a>
+</div>
+
+</section>
+
+</div>

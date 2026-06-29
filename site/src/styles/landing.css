@@ -1,0 +1,307 @@
+/* =========================================================================
+   agent-rigger — dark terminal theme + landing styles
+   Inspired registers: rtk-ai.app, caveman.so (dark, mono, neon accent,
+   numbered layers, chunky claims).
+   ========================================================================= */
+
+:root {
+  /* Accent: the green of a passing `check` ([ ok ]) — ties the site to the CLI. */
+  --ar-accent: #4ade80;
+  --ar-accent-strong: #22c55e;
+  --ar-accent-dim: #155e3a;
+  --ar-ink: #e6edf3;
+  --ar-muted: #9aa7b4;
+  --ar-bg: #0a0d12;
+  --ar-bg-soft: #11161f;
+  --ar-bg-card: #0f141c;
+  --ar-border: #1e2630;
+  --ar-mono: ui-monospace, "SF Mono", "JetBrains Mono", "Fira Code", Menlo, Consolas, monospace;
+}
+
+/* ---- Starlight token overrides (dark) ---------------------------------- */
+:root,
+:root[data-theme="dark"] {
+  --sl-color-accent-low: #0e2b1c;
+  --sl-color-accent: var(--ar-accent-strong);
+  --sl-color-accent-high: #bbf7d0;
+  --sl-color-white: #f3f7fb;
+  --sl-color-gray-1: #e6edf3;
+  --sl-color-gray-2: #c2cdd9;
+  --sl-color-gray-3: #9aa7b4;
+  --sl-color-gray-4: #66727f;
+  --sl-color-gray-5: #2a323c;
+  --sl-color-gray-6: #161c24;
+  --sl-color-black: #0a0d12;
+  --sl-color-bg: var(--ar-bg);
+  --sl-color-bg-nav: rgba(10, 13, 18, 0.7);
+  --sl-color-bg-sidebar: var(--ar-bg);
+}
+
+/* Force the dark register even in light mode for the marketing surface. */
+:root[data-theme="light"] {
+  --sl-color-bg: var(--ar-bg);
+  --sl-color-text: var(--ar-ink);
+}
+
+/* =========================================================================
+   Splash landing
+   ========================================================================= */
+
+.ar-landing {
+  --ar-gap: clamp(3rem, 7vw, 6rem);
+  max-width: 1120px;
+  margin-inline: auto;
+  padding-inline: 1.25rem;
+}
+
+.ar-landing section {
+  margin-block: var(--ar-gap);
+}
+
+/* ---- Hero --------------------------------------------------------------- */
+.ar-hero {
+  position: relative;
+  text-align: center;
+  padding-top: clamp(2rem, 6vw, 4.5rem);
+}
+
+.ar-hero::before {
+  content: "";
+  position: absolute;
+  inset: -20% -10% auto -10%;
+  height: 480px;
+  background: radial-gradient(60% 60% at 50% 0%, rgba(74, 222, 128, 0.14), transparent 70%);
+  pointer-events: none;
+  z-index: -1;
+}
+
+.ar-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5ch;
+  font-family: var(--ar-mono);
+  font-size: 0.8rem;
+  letter-spacing: 0.02em;
+  color: var(--ar-accent);
+  border: 1px solid var(--ar-border);
+  background: var(--ar-bg-soft);
+  padding: 0.35rem 0.75rem;
+  border-radius: 999px;
+}
+
+.ar-hero h1 {
+  font-size: clamp(2.4rem, 6vw, 4rem);
+  line-height: 1.04;
+  letter-spacing: -0.02em;
+  margin: 1.1rem auto 0.6rem;
+  max-width: 14ch;
+}
+
+.ar-hero h1 .accent {
+  color: var(--ar-accent);
+}
+
+.ar-hero p.lead {
+  color: var(--ar-muted);
+  font-size: clamp(1.05rem, 2.2vw, 1.3rem);
+  max-width: 46ch;
+  margin: 0 auto 1.8rem;
+}
+
+/* ---- CTA buttons -------------------------------------------------------- */
+.ar-cta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  justify-content: center;
+}
+
+.ar-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5ch;
+  font-weight: 600;
+  font-size: 0.98rem;
+  padding: 0.7rem 1.25rem;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  text-decoration: none;
+  transition: transform 0.12s ease, background 0.12s ease, border-color 0.12s ease;
+}
+
+.ar-btn:hover { transform: translateY(-1px); }
+
+.ar-btn-primary {
+  background: var(--ar-accent);
+  color: #04140a;
+}
+
+.ar-btn-primary:hover { background: #6ee79a; }
+
+.ar-btn-ghost {
+  background: var(--ar-bg-soft);
+  color: var(--ar-ink);
+  border-color: var(--ar-border);
+}
+
+.ar-btn-ghost:hover { border-color: var(--ar-accent-dim); }
+
+/* ---- Terminal install snippet ------------------------------------------ */
+.ar-term {
+  margin: 1.6rem auto 0;
+  max-width: 560px;
+  text-align: left;
+  background: var(--ar-bg-card);
+  border: 1px solid var(--ar-border);
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 24px 60px -30px rgba(0, 0, 0, 0.8);
+}
+
+.ar-term-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.6rem 0.8rem;
+  border-bottom: 1px solid var(--ar-border);
+  background: var(--ar-bg-soft);
+}
+
+.ar-dot { width: 11px; height: 11px; border-radius: 50%; }
+.ar-dot.r { background: #ff5f56; }
+.ar-dot.y { background: #ffbd2e; }
+.ar-dot.g { background: #27c93f; }
+
+.ar-term pre {
+  margin: 0;
+  padding: 0.95rem 1.1rem;
+  font-family: var(--ar-mono);
+  font-size: 0.92rem;
+  line-height: 1.6;
+  background: transparent;
+  color: var(--ar-ink);
+  overflow-x: auto;
+}
+
+.ar-term .prompt { color: var(--ar-accent); }
+.ar-term .comment { color: var(--ar-muted); }
+
+/* ---- Hero demo gif ------------------------------------------------------ */
+.ar-demo {
+  margin: 2.4rem auto 0;
+  max-width: 980px;
+}
+
+.ar-demo img {
+  width: 100%;
+  height: auto;
+  border-radius: 14px;
+  border: 1px solid var(--ar-border);
+  box-shadow: 0 30px 80px -40px rgba(0, 0, 0, 0.9);
+}
+
+.ar-demo figcaption {
+  margin-top: 0.7rem;
+  font-family: var(--ar-mono);
+  font-size: 0.78rem;
+  color: var(--ar-muted);
+  text-align: center;
+}
+
+/* ---- Section heading ---------------------------------------------------- */
+.ar-h2 {
+  font-size: clamp(1.6rem, 3.5vw, 2.2rem);
+  letter-spacing: -0.01em;
+  text-align: center;
+  margin-bottom: 0.5rem;
+}
+
+.ar-sub {
+  text-align: center;
+  color: var(--ar-muted);
+  max-width: 52ch;
+  margin: 0 auto 2.2rem;
+}
+
+/* ---- Feature / step grid ------------------------------------------------ */
+.ar-grid {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+}
+
+.ar-card {
+  position: relative;
+  background: var(--ar-bg-card);
+  border: 1px solid var(--ar-border);
+  border-radius: 14px;
+  padding: 1.4rem 1.3rem;
+  transition: border-color 0.15s ease, transform 0.15s ease;
+}
+
+.ar-card:hover {
+  border-color: var(--ar-accent-dim);
+  transform: translateY(-2px);
+}
+
+.ar-card .num {
+  font-family: var(--ar-mono);
+  font-size: 0.8rem;
+  color: var(--ar-accent);
+  letter-spacing: 0.1em;
+}
+
+.ar-card h3 {
+  font-size: 1.1rem;
+  margin: 0.5rem 0 0.4rem;
+}
+
+.ar-card p {
+  color: var(--ar-muted);
+  font-size: 0.95rem;
+  margin: 0;
+  line-height: 1.55;
+}
+
+/* ---- Invariants strip --------------------------------------------------- */
+.ar-strip {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.6rem;
+}
+
+.ar-chip {
+  font-family: var(--ar-mono);
+  font-size: 0.85rem;
+  color: var(--ar-ink);
+  background: var(--ar-bg-soft);
+  border: 1px solid var(--ar-border);
+  border-radius: 999px;
+  padding: 0.45rem 0.95rem;
+}
+
+.ar-chip::before {
+  content: "✓ ";
+  color: var(--ar-accent);
+}
+
+/* ---- Final CTA ---------------------------------------------------------- */
+.ar-final {
+  text-align: center;
+  background: linear-gradient(180deg, var(--ar-bg-soft), var(--ar-bg-card));
+  border: 1px solid var(--ar-border);
+  border-radius: 18px;
+  padding: clamp(2rem, 5vw, 3.4rem);
+}
+
+.ar-final h2 { font-size: clamp(1.6rem, 4vw, 2.4rem); margin-bottom: 0.8rem; }
+.ar-final p { color: var(--ar-muted); margin-bottom: 1.6rem; }
+
+/* Landing only: hide Starlight's auto page title — our <h1> is the hero. */
+body:has(.ar-landing) h1#_top { display: none; }
+
+/* Tighten the top of the landing so the hero sits high. */
+.ar-landing { padding-top: 0; }
+.ar-landing > section:first-child { margin-top: clamp(0.5rem, 2vw, 1.5rem); }
+.ar-hero { padding-top: clamp(0.5rem, 3vw, 2rem); }

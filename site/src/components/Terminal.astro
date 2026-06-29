@@ -1,0 +1,15 @@
+---
+// Hero terminal snippet. Lives in a .astro component (not MDX) so the literal
+// newlines inside <pre> are preserved and the URL is not auto-linked.
+---
+
+<div class="ar-term">
+  <div class="ar-term-bar">
+    <span class="ar-dot r"></span><span class="ar-dot y"></span><span class="ar-dot g"></span>
+  </div>
+  <pre><span class="comment"># clone, build, and audit your setup</span>
+<span class="prompt">$</span> git clone https://github.com/agent-rigger/agent-rigger
+<span class="prompt">$</span> bun install && bun run build
+<span class="prompt">$</span> agent-rigger check
+<span class="comment">  [ ok ] guardrails-claude   [ ok ] context-claude</span></pre>
+</div>

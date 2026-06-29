@@ -1,0 +1,7 @@
+# Astro
+dist/
+.astro/
+node_modules/
+
+# Local preview artifacts
+*-preview.png
