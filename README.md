@@ -4,6 +4,17 @@ The harness package manager for teams. Share, install, and update the AI coding
 assistant harness (Claude Code at M0) in a reproducible way across a team's
 machines.
 
+[![CI](https://github.com/agent-rigger/agent-rigger/actions/workflows/ci.yml/badge.svg)](https://github.com/agent-rigger/agent-rigger/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
+[![Bun](https://img.shields.io/badge/runtime-Bun%20%E2%89%A5%201.3-000?logo=bun)](https://bun.sh)
+[![Conventional Commits](https://img.shields.io/badge/commits-conventional-fe5196?logo=conventionalcommits)](https://www.conventionalcommits.org/)
+
+![agent-rigger in action: doctor, browse the team catalog, install the rig in one command, verify zero drift](./docs/demo.gif)
+
+> A throwaway `$RIGGER_HOME` is used for the recording — your real `~/.claude` is
+> never touched. Regenerate the GIF with `vhs docs/demo.tape` (see
+> [`docs/demo.tape`](./docs/demo.tape)).
+
 ---
 
 ## The problem
@@ -84,7 +95,7 @@ M0 does not distribute a pre-built binary. Clone the repository and run from
 source:
 
 ```sh
-git clone https://github.com/your-org/agent-rigger.git
+git clone https://github.com/agent-rigger/agent-rigger.git
 cd agent-rigger
 bun install
 ```
@@ -389,8 +400,12 @@ bun run typecheck    # tsc --noEmit
 Commits must follow [Conventional Commits](https://www.conventionalcommits.org/)
 (enforced by commitlint via lefthook).
 
+See [CONTRIBUTING.md](./CONTRIBUTING.md) for the full workflow, the quality
+gates, and the workspace layout. Changes are tracked in
+[CHANGELOG.md](./CHANGELOG.md).
+
 ---
 
 ## License
 
-MIT
+Released under the [MIT License](./LICENSE).
