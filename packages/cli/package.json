@@ -3,6 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "license": "MIT",
   "bin": {
     "agent-rigger": "./dist/agent-rigger",
     "rigger": "./dist/agent-rigger"
