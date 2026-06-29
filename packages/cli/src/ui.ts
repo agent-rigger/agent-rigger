@@ -2,7 +2,7 @@
  * UI layer for the agent-rigger CLI.
  *
  * Responsibilities:
- *  - Pure rendering: renderPlan, renderReport (fully testable, no I/O).
+ *  - Pure rendering: renderPlan, renderRemovalPlan, renderReport (fully testable, no I/O).
  *  - Interactive prompts: selectArtifacts, selectScope, confirmApply
  *    (thin glue around @clack/prompts; not unit-tested due to TTY requirement).
  *
@@ -65,12 +65,67 @@ export function abbreviatePath(p: string, opts: AbbreviatePathOpts = {}): string
   return p;
 }
 
+// ---------------------------------------------------------------------------
+// Group types — new terraform-style plan model
+// ---------------------------------------------------------------------------
+
+/**
+ * One artefact group in the install plan.
+ * Produced by cmd-install; consumed by renderPlan.
+ */
+export interface PlanGroup {
+  /** Qualified artefact id, e.g. 'principal/guardrail:claude'. */
+  id: string;
+  /** Nature string, e.g. 'guardrail'. */
+  nature: string;
+  /** '+' when absent from pre-run manifest, '~' when already tracked. */
+  action: 'install' | 'update';
+  /** Ops planned by the adapter for this artefact. */
+  ops: WriteOp[];
+}
+
+/**
+ * One artefact group in the removal plan.
+ * Produced by cmd-remove; consumed by renderRemovalPlan.
+ */
+export interface PlanRemovalGroup {
+  id: string;
+  nature: string;
+  /** Removal ops planned by the adapter. Action is implicitly 'remove'. */
+  ops: RemovalOp[];
+}
+
+// ---------------------------------------------------------------------------
+// RenderPlanOpts / RenderRemovalPlanOpts
+// ---------------------------------------------------------------------------
+
 /**
  * Options passed to renderPlan.
  */
 export interface RenderPlanOpts {
   home?: string;
   cwd?: string;
+  /** Installation scope — shown in the plan header when provided. */
+  scope?: Scope;
+  /**
+   * Enable ANSI colour codes.
+   * Defaults to `process.stdout.isTTY === true && process.env.NO_COLOR === undefined`.
+   * Pass `color: false` in tests to get deterministic plain-text output.
+   */
+  color?: boolean;
+  /** Maximum detail lines rendered per op before truncation. Defaults to 6. */
+  maxDetail?: number;
+}
+
+/**
+ * Options passed to renderRemovalPlan.
+ */
+export interface RenderRemovalPlanOpts {
+  home?: string;
+  cwd?: string;
+  scope?: Scope;
+  color?: boolean;
+  maxDetail?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -80,161 +135,386 @@ export interface RenderPlanOpts {
 export { cancel, intro, isCancel, note, outro, spinner };
 
 // ---------------------------------------------------------------------------
-// Pure rendering helpers
+// ANSI colour helpers (hand-rolled — zero external deps)
 // ---------------------------------------------------------------------------
 
-/** Fixed-width verb column for plan rendering. */
-const VERB_WIDTH = 8;
-
-/** Pad a verb string to VERB_WIDTH with trailing spaces. */
-function padVerb(verb: string): string {
-  return verb.padEnd(VERB_WIDTH);
-}
-
-/** Detail indent (verb column + 2 spaces for the leading "  " prefix). */
-const DETAIL_INDENT = '  ' + ' '.repeat(VERB_WIDTH + 1);
+const ANSI = {
+  green: '\x1b[32m',
+  yellow: '\x1b[33m',
+  red: '\x1b[31m',
+  bold: '\x1b[1m',
+  dim: '\x1b[2m',
+  reset: '\x1b[0m',
+} as const;
 
 /**
- * Render a human-readable diff plan from a list of WriteOps.
- *
- * Format:
- *   Plan (N change(s)):
- *
- *     <verb>   <abbreviated-target>
- *                <detail line(s)>
- *
- * Verbs (ASCII, fixed width):
- *   deny     merge-deny
- *   import   ensure-import
- *   write    write-text / write-json
- *   link     link
- *   plugin   plugin-install
- *
- * Returns a "nothing to apply" message when `ops` is empty.
+ * Wrap `s` with an ANSI escape code when `on` is true.
+ * Returns `s` unchanged when `on` is false — deterministic for tests.
  */
-export function renderPlan(ops: WriteOp[], opts: RenderPlanOpts = {}): string {
-  if (ops.length === 0) {
+function paint(s: string, code: string, on: boolean): string {
+  return on ? `${code}${s}${ANSI.reset}` : s;
+}
+
+// ---------------------------------------------------------------------------
+// Internal helpers for group rendering
+// ---------------------------------------------------------------------------
+
+/**
+ * Return the primary target string for a group header line.
+ * Priority: link > merge-hooks > path-based ops > plugin-install.
+ */
+function getGroupPrimaryTarget(ops: WriteOp[], abbr: (p: string) => string): string {
+  for (const op of ops) {
+    if (op.kind === 'link') return abbr(op.target);
+  }
+  for (const op of ops) {
+    if (op.kind === 'merge-hooks') {
+      const hookSuffix = op.scriptStore === undefined
+        ? ''
+        : ` (+ ${op.scriptStore.split('/').pop() ?? ''})`;
+      return `${abbr(op.path)}${hookSuffix}`;
+    }
+  }
+  for (const op of ops) {
+    if (
+      op.kind === 'merge-deny'
+      || op.kind === 'merge-allow'
+      || op.kind === 'write-text'
+      || op.kind === 'write-json'
+      || op.kind === 'ensure-import'
+    ) {
+      return abbr(op.path);
+    }
+  }
+  for (const op of ops) {
+    if (op.kind === 'plugin-install') return op.plugin;
+  }
+  return '';
+}
+
+/**
+ * Return the primary target string for a removal group header line.
+ */
+function getRemovalGroupPrimaryTarget(ops: RemovalOp[], abbr: (p: string) => string): string {
+  for (const op of ops) {
+    if (op.kind === 'unlink') return abbr(op.target);
+  }
+  for (const op of ops) {
+    if (
+      op.kind === 'remove-deny'
+      || op.kind === 'remove-allow'
+      || op.kind === 'remove-block'
+      || op.kind === 'delete-file'
+      || op.kind === 'remove-hooks'
+    ) {
+      return abbr(op.path);
+    }
+  }
+  for (const op of ops) {
+    if (op.kind === 'plugin-uninstall') return op.plugin;
+  }
+  return '';
+}
+
+// ---------------------------------------------------------------------------
+// renderPlan — grouped terraform-style diff
+// ---------------------------------------------------------------------------
+
+/**
+ * Render a terraform-style install plan grouped by artefact.
+ *
+ * Format (variante A):
+ *   Plan · N changes · scope: user (~/.claude)
+ *
+ *   + guardrail:claude   ~/.claude/settings.json
+ *     deny  (+11)
+ *        + Bash(rm -rf /)
+ *        … +5 more
+ *
+ *   Σ  deny +11 · 1 write · 2 links
+ *
+ * Returns "Nothing to apply — already up to date." when groups is empty.
+ */
+export function renderPlan(groups: PlanGroup[], opts: RenderPlanOpts = {}): string {
+  if (groups.length === 0) {
     return 'Nothing to apply — already up to date.';
   }
 
+  const colorOn = opts.color
+    ?? (process.stdout.isTTY === true && process.env.NO_COLOR === undefined);
+  const maxDetail = opts.maxDetail ?? 6;
   const abbr = (p: string): string => abbreviatePath(p, opts);
 
-  const n = ops.length;
-  const header = `Plan (${n} ${n === 1 ? 'change' : 'changes'}):`;
-  const lines: string[] = [header, ''];
+  const totalOps = groups.reduce((s, g) => s + g.ops.length, 0);
 
-  for (const op of ops) {
-    switch (op.kind) {
-      case 'merge-deny': {
-        lines.push(`  ${padVerb('deny')} ${abbr(op.path)}`);
-        for (const rule of op.toAdd) {
-          lines.push(`${DETAIL_INDENT}+ ${rule}`);
+  let scopePart = '';
+  if (opts.scope !== undefined) {
+    let root = '';
+    if (opts.scope === 'user' && opts.home !== undefined && opts.home !== '') {
+      root = ` (${abbr(opts.home + '/.claude')})`;
+    } else if (opts.scope === 'project' && opts.cwd !== undefined && opts.cwd !== '') {
+      root = ` (${abbr(opts.cwd + '/.claude')})`;
+    }
+    scopePart = ` · scope: ${opts.scope}${root}`;
+  }
+
+  const changeWord = totalOps === 1 ? 'change' : 'changes';
+  const lines: string[] = [`Plan · ${totalOps} ${changeWord}${scopePart}`, ''];
+
+  // Σ counters
+  let denyCount = 0;
+  let allowCount = 0;
+  let writeCount = 0;
+  let importCount = 0;
+  let hooksCount = 0;
+  let linksCount = 0;
+  let pluginsCount = 0;
+
+  for (const group of groups) {
+    const sym = group.action === 'install' ? '+' : '~';
+    const symColor = group.action === 'install' ? ANSI.green : ANSI.yellow;
+    const symStr = paint(sym, symColor, colorOn);
+    const idStr = paint(group.id, ANSI.bold, colorOn);
+    const primaryTarget = getGroupPrimaryTarget(group.ops, abbr);
+    const primaryStr = primaryTarget === '' ? '' : `   ${primaryTarget}`;
+
+    lines.push(`${symStr} ${idStr}${primaryStr}`);
+
+    for (const op of group.ops) {
+      switch (op.kind) {
+        case 'merge-deny': {
+          denyCount += op.toAdd.length;
+          lines.push(`  deny  (+${op.toAdd.length})`);
+          const shownDeny = op.toAdd.slice(0, maxDetail);
+          const remainDeny = op.toAdd.length - shownDeny.length;
+          for (const rule of shownDeny) {
+            lines.push(`     + ${paint(rule, ANSI.green, colorOn)}`);
+          }
+          if (remainDeny > 0) {
+            lines.push(`     … +${remainDeny} more`);
+          }
+          break;
         }
-        break;
-      }
-      case 'ensure-import': {
-        lines.push(`  ${padVerb('import')} ${abbr(op.path)}`);
-        lines.push(`${DETAIL_INDENT}${op.importLine}`);
-        break;
-      }
-      case 'write-text': {
-        lines.push(`  ${padVerb('write')} ${abbr(op.path)}`);
-        break;
-      }
-      case 'write-json': {
-        lines.push(`  ${padVerb('write')} ${abbr(op.path)}`);
-        break;
-      }
-      case 'link': {
-        lines.push(`  ${padVerb('link')} ${abbr(op.target)}`);
-        lines.push(`${DETAIL_INDENT}from ${abbr(op.source)}`);
-        break;
-      }
-      case 'plugin-install': {
-        lines.push(`  ${padVerb('plugin')} ${op.plugin}`);
-        lines.push(`${DETAIL_INDENT}via ${abbr(op.marketplace)}`);
-        break;
-      }
-      case 'merge-hooks': {
-        lines.push(`  ${padVerb('hook')} ${op.event}/${op.matcher}  ${abbr(op.path)}`);
-        lines.push(`${DETAIL_INDENT}${op.command}`);
-        break;
+        case 'merge-allow': {
+          allowCount += op.toAdd.length;
+          lines.push(`  allow  (+${op.toAdd.length})`);
+          const shownAllow = op.toAdd.slice(0, maxDetail);
+          const remainAllow = op.toAdd.length - shownAllow.length;
+          for (const rule of shownAllow) {
+            lines.push(`     + ${paint(rule, ANSI.green, colorOn)}`);
+          }
+          if (remainAllow > 0) {
+            lines.push(`     … +${remainAllow} more`);
+          }
+          break;
+        }
+        case 'write-text': {
+          writeCount++;
+          const contentLines = op.content === '' ? [] : op.content.replace(/\n$/, '').split('\n');
+          const lineCount = contentLines.length;
+          lines.push(`  write  +${lineCount} / -0`);
+          const shownWrite = contentLines.slice(0, maxDetail);
+          const remainWrite = lineCount - shownWrite.length;
+          for (const l of shownWrite) {
+            lines.push(`     ${paint('│', ANSI.dim, colorOn)} ${l}`);
+          }
+          if (remainWrite > 0) {
+            lines.push(`     ${paint('│', ANSI.dim, colorOn)} …`);
+          }
+          break;
+        }
+        case 'write-json': {
+          writeCount++;
+          lines.push(`  write  ${abbr(op.path)}`);
+          break;
+        }
+        case 'ensure-import': {
+          importCount++;
+          lines.push(`  import  ${op.importLine}`);
+          break;
+        }
+        case 'link': {
+          linksCount++;
+          lines.push(`  link  ${abbr(op.target)} → store`);
+          break;
+        }
+        case 'plugin-install': {
+          pluginsCount++;
+          lines.push(`  plugin  ${op.plugin}`);
+          lines.push(`     via ${abbr(op.marketplace)}`);
+          break;
+        }
+        case 'merge-hooks': {
+          hooksCount++;
+          const cmdParts = op.command.trim().split(/\s+/);
+          const cmdLast = cmdParts.at(-1) ?? '';
+          const scriptName = cmdLast.split('/').pop() ?? cmdLast;
+          lines.push(`  hook  ${op.event}/${op.matcher} → ${scriptName}`);
+          if (op.scriptStore !== undefined) {
+            lines.push(`  link  ${abbr(op.scriptStore)}`);
+          }
+          break;
+        }
       }
     }
+
+    lines.push('');
+  }
+
+  // Σ summary line
+  const sigmaParts: string[] = [];
+  if (denyCount > 0) sigmaParts.push(`deny +${denyCount}`);
+  if (allowCount > 0) sigmaParts.push(`allow +${allowCount}`);
+  if (writeCount > 0) sigmaParts.push(`${writeCount} write${writeCount > 1 ? 's' : ''}`);
+  if (importCount > 0) sigmaParts.push(`${importCount} import${importCount > 1 ? 's' : ''}`);
+  if (hooksCount > 0) sigmaParts.push(`${hooksCount} hook${hooksCount > 1 ? 's' : ''}`);
+  if (linksCount > 0) sigmaParts.push(`${linksCount} link${linksCount > 1 ? 's' : ''}`);
+  if (pluginsCount > 0) sigmaParts.push(`${pluginsCount} plugin${pluginsCount > 1 ? 's' : ''}`);
+
+  if (sigmaParts.length > 0) {
+    lines.push(`${paint('Σ', ANSI.bold, colorOn)}  ${sigmaParts.join(' · ')}`);
   }
 
   return lines.join('\n');
 }
 
 // ---------------------------------------------------------------------------
+// renderRemovalPlan — grouped terraform-style removal diff
+// ---------------------------------------------------------------------------
 
 /**
- * Options passed to renderRemovalPlan.
+ * Render a terraform-style removal plan grouped by artefact.
+ *
+ * Format (variante A):
+ *   Removal plan · N changes · scope: user (~/.claude)
+ *
+ *   - guardrail:claude   ~/.claude/settings.json
+ *     deny  (-3)
+ *        - Read(./.env)
+ *
+ *   Σ  deny -3 · 1 delete
+ *
+ * Returns "Nothing to remove — not installed." when groups is empty.
  */
-export interface RenderRemovalPlanOpts {
-  home?: string;
-  cwd?: string;
-}
-
-/**
- * Render a human-readable removal plan from a list of RemovalOps.
- *
- * Format:
- *   Removal plan (N change(s)):
- *
- *     <verb>   <abbreviated-target>
- *                <detail line(s)>
- *
- * Verbs (ASCII, fixed width):
- *   un-deny    remove-deny
- *   un-import  remove-block
- *   delete     delete-file
- *   unlink     unlink
- *   uninstall  plugin-uninstall
- *
- * Returns "Nothing to remove — not installed." when `ops` is empty.
- */
-export function renderRemovalPlan(ops: RemovalOp[], opts: RenderRemovalPlanOpts = {}): string {
-  if (ops.length === 0) {
+export function renderRemovalPlan(
+  groups: PlanRemovalGroup[],
+  opts: RenderRemovalPlanOpts = {},
+): string {
+  if (groups.length === 0) {
     return 'Nothing to remove — not installed.';
   }
 
+  const colorOn = opts.color
+    ?? (process.stdout.isTTY === true && process.env.NO_COLOR === undefined);
+  const maxDetail = opts.maxDetail ?? 6;
   const abbr = (p: string): string => abbreviatePath(p, opts);
 
-  const n = ops.length;
-  const header = `Removal plan (${n} ${n === 1 ? 'change' : 'changes'}):`;
-  const lines: string[] = [header, ''];
+  const totalOps = groups.reduce((s, g) => s + g.ops.length, 0);
 
-  for (const op of ops) {
-    switch (op.kind) {
-      case 'remove-deny': {
-        lines.push(`  ${padVerb('un-deny')} ${abbr(op.path)}`);
-        for (const rule of op.rules) {
-          lines.push(`${DETAIL_INDENT}- ${rule}`);
+  let scopePart = '';
+  if (opts.scope !== undefined) {
+    let root = '';
+    if (opts.scope === 'user' && opts.home !== undefined && opts.home !== '') {
+      root = ` (${abbr(opts.home + '/.claude')})`;
+    } else if (opts.scope === 'project' && opts.cwd !== undefined && opts.cwd !== '') {
+      root = ` (${abbr(opts.cwd + '/.claude')})`;
+    }
+    scopePart = ` · scope: ${opts.scope}${root}`;
+  }
+
+  const changeWord = totalOps === 1 ? 'change' : 'changes';
+  const lines: string[] = [`Removal plan · ${totalOps} ${changeWord}${scopePart}`, ''];
+
+  // Σ counters
+  let denyCount = 0;
+  let allowCount = 0;
+  let deleteCount = 0;
+  let unimportCount = 0;
+  let hooksCount = 0;
+  let unlinksCount = 0;
+  let pluginsCount = 0;
+
+  for (const group of groups) {
+    const symStr = paint('-', ANSI.red, colorOn);
+    const idStr = paint(group.id, ANSI.bold, colorOn);
+    const primaryTarget = getRemovalGroupPrimaryTarget(group.ops, abbr);
+    const primaryStr = primaryTarget === '' ? '' : `   ${primaryTarget}`;
+
+    lines.push(`${symStr} ${idStr}${primaryStr}`);
+
+    for (const op of group.ops) {
+      switch (op.kind) {
+        case 'remove-deny': {
+          denyCount += op.rules.length;
+          lines.push(`  deny  (-${op.rules.length})`);
+          const shownDeny = op.rules.slice(0, maxDetail);
+          const remainDeny = op.rules.length - shownDeny.length;
+          for (const rule of shownDeny) {
+            lines.push(`     - ${paint(rule, ANSI.red, colorOn)}`);
+          }
+          if (remainDeny > 0) {
+            lines.push(`     … -${remainDeny} more`);
+          }
+          break;
         }
-        break;
-      }
-      case 'remove-block': {
-        lines.push(`  ${padVerb('un-import')} ${abbr(op.path)}`);
-        break;
-      }
-      case 'delete-file': {
-        lines.push(`  ${padVerb('delete')} ${abbr(op.path)}`);
-        break;
-      }
-      case 'unlink': {
-        lines.push(`  ${padVerb('unlink')} ${abbr(op.target)}`);
-        break;
-      }
-      case 'plugin-uninstall': {
-        lines.push(`  ${padVerb('uninstall')} ${op.plugin}`);
-        break;
-      }
-      case 'remove-hooks': {
-        lines.push(`  ${padVerb('un-hook')} ${op.event}/${op.matcher}  ${abbr(op.path)}`);
-        break;
+        case 'remove-allow': {
+          allowCount += op.rules.length;
+          lines.push(`  allow  (-${op.rules.length})`);
+          const shownAllow = op.rules.slice(0, maxDetail);
+          const remainAllow = op.rules.length - shownAllow.length;
+          for (const rule of shownAllow) {
+            lines.push(`     - ${paint(rule, ANSI.red, colorOn)}`);
+          }
+          if (remainAllow > 0) {
+            lines.push(`     … -${remainAllow} more`);
+          }
+          break;
+        }
+        case 'remove-block': {
+          unimportCount++;
+          lines.push(`  unimport  ${abbr(op.path)}`);
+          break;
+        }
+        case 'delete-file': {
+          deleteCount++;
+          lines.push(`  delete  ${abbr(op.path)}`);
+          break;
+        }
+        case 'unlink': {
+          unlinksCount++;
+          lines.push(`  unlink  ${abbr(op.target)}`);
+          break;
+        }
+        case 'plugin-uninstall': {
+          pluginsCount++;
+          lines.push(`  uninstall  ${op.plugin}`);
+          break;
+        }
+        case 'remove-hooks': {
+          hooksCount++;
+          lines.push(`  un-hook  ${op.event}/${op.matcher}`);
+          break;
+        }
       }
     }
+
+    lines.push('');
+  }
+
+  // Σ summary line
+  const sigmaParts: string[] = [];
+  if (denyCount > 0) sigmaParts.push(`deny -${denyCount}`);
+  if (allowCount > 0) sigmaParts.push(`allow -${allowCount}`);
+  if (deleteCount > 0) sigmaParts.push(`${deleteCount} delete${deleteCount > 1 ? 's' : ''}`);
+  if (unimportCount > 0) {
+    sigmaParts.push(`${unimportCount} unimport${unimportCount > 1 ? 's' : ''}`);
+  }
+  if (hooksCount > 0) sigmaParts.push(`${hooksCount} hook${hooksCount > 1 ? 's' : ''}`);
+  if (unlinksCount > 0) sigmaParts.push(`${unlinksCount} unlink${unlinksCount > 1 ? 's' : ''}`);
+  if (pluginsCount > 0) sigmaParts.push(`${pluginsCount} plugin${pluginsCount > 1 ? 's' : ''}`);
+
+  if (sigmaParts.length > 0) {
+    lines.push(`${paint('Σ', ANSI.bold, colorOn)}  ${sigmaParts.join(' · ')}`);
   }
 
   return lines.join('\n');

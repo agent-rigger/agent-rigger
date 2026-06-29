@@ -1,9 +1,13 @@
 /**
  * Tests for ui.ts — pure rendering functions.
  *
- * Only renderPlan, renderReport, and abbreviatePath are exercised here.
+ * Only renderPlan, renderRemovalPlan, renderReport, abbreviatePath,
+ * renderCatalogList, renderEntryInfo are exercised here.
  * Interactive functions (selectArtifacts, selectScope, confirmApply) are
  * exported/typed checks only — clack must not be invoked in a non-TTY env.
+ *
+ * ALL renderPlan / renderRemovalPlan tests pass color: false explicitly so
+ * output is deterministic regardless of the terminal environment.
  */
 
 import { describe, expect, it } from 'bun:test';
@@ -20,6 +24,7 @@ import {
   selectArtifacts,
   selectScope,
 } from '../src/ui';
+import type { PlanGroup, PlanRemovalGroup } from '../src/ui';
 
 // ---------------------------------------------------------------------------
 // abbreviatePath
@@ -66,11 +71,11 @@ describe('abbreviatePath', () => {
 });
 
 // ---------------------------------------------------------------------------
-// renderPlan — empty list
+// renderPlan — empty groups
 // ---------------------------------------------------------------------------
 
-describe('renderPlan — empty list', () => {
-  it('returns a "nothing to apply" message when ops is empty', () => {
+describe('renderPlan — empty groups', () => {
+  it('returns a "nothing to apply" message when groups is empty', () => {
     const result = renderPlan([]);
     expect(result.length).toBeGreaterThan(0);
     expect(result.toLowerCase()).toMatch(/nothing|already up.to.date|no operation/);
@@ -82,35 +87,104 @@ describe('renderPlan — empty list', () => {
 // ---------------------------------------------------------------------------
 
 describe('renderPlan — header', () => {
-  it('starts with "Plan (1 change):" for a single op', () => {
-    const op: WriteOp = {
-      kind: 'write-text',
-      path: '/tmp/x.md',
-      content: '',
-      description: 'test',
+  it('contains "Plan · N change(s)" for total ops count', () => {
+    const group: PlanGroup = {
+      id: 'guardrail:claude',
+      nature: 'guardrail',
+      action: 'install',
+      ops: [{ kind: 'write-json', path: '/p', description: '' }],
     };
-    const result = renderPlan([op]);
-    expect(result).toMatch(/^Plan \(1 change\):/);
+    const result = renderPlan([group], { color: false });
+    expect(result).toContain('Plan · 1 change');
   });
 
-  it('starts with "Plan (N changes):" for multiple ops', () => {
-    const ops: WriteOp[] = [
-      { kind: 'write-text', path: '/a', content: '', description: '' },
-      { kind: 'write-json', path: '/b', description: '' },
+  it('counts total ops across all groups', () => {
+    const groups: PlanGroup[] = [
+      {
+        id: 'a',
+        nature: 'guardrail',
+        action: 'install',
+        ops: [
+          { kind: 'write-json', path: '/a', description: '' },
+          { kind: 'write-json', path: '/b', description: '' },
+        ],
+      },
+      {
+        id: 'b',
+        nature: 'skill',
+        action: 'install',
+        ops: [{ kind: 'write-json', path: '/c', description: '' }],
+      },
     ];
-    const result = renderPlan(ops);
-    expect(result).toMatch(/^Plan \(2 changes\):/);
+    const result = renderPlan(groups, { color: false });
+    expect(result).toContain('Plan · 3 changes');
+  });
+
+  it('includes "scope: user" and home root when scope user provided', () => {
+    const group: PlanGroup = {
+      id: 'a',
+      nature: 'guardrail',
+      action: 'install',
+      ops: [{ kind: 'write-json', path: '/p', description: '' }],
+    };
+    const result = renderPlan([group], { color: false, scope: 'user', home: '/home/me' });
+    expect(result).toContain('scope: user');
+    expect(result).toContain('~/.claude');
+  });
+
+  it('includes "scope: project" and cwd root when scope project provided', () => {
+    const group: PlanGroup = {
+      id: 'a',
+      nature: 'skill',
+      action: 'install',
+      ops: [{ kind: 'write-json', path: '/p', description: '' }],
+    };
+    const result = renderPlan([group], { color: false, scope: 'project', cwd: '/workspace' });
+    expect(result).toContain('scope: project');
+    expect(result).toContain('./.claude');
   });
 
   it('has a blank line after the header', () => {
-    const op: WriteOp = {
-      kind: 'write-text',
-      path: '/tmp/x.md',
-      content: '',
-      description: 'test',
+    const group: PlanGroup = {
+      id: 'a',
+      nature: 'guardrail',
+      action: 'install',
+      ops: [{ kind: 'write-json', path: '/p', description: '' }],
     };
-    const lines = renderPlan([op]).split('\n');
+    const lines = renderPlan([group], { color: false }).split('\n');
     expect(lines[1]).toBe('');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// renderPlan — action + vs ~
+// ---------------------------------------------------------------------------
+
+describe('renderPlan — action install vs update', () => {
+  it('prefixes group line with "+" for install action', () => {
+    const group: PlanGroup = {
+      id: 'guardrail:claude',
+      nature: 'guardrail',
+      action: 'install',
+      ops: [{ kind: 'write-json', path: '/p', description: '' }],
+    };
+    const result = renderPlan([group], { color: false });
+    const groupLine = result.split('\n').find((l) => l.includes('guardrail:claude'));
+    expect(groupLine).toBeDefined();
+    expect(groupLine!.trimStart()).toMatch(/^\+/);
+  });
+
+  it('prefixes group line with "~" for update action', () => {
+    const group: PlanGroup = {
+      id: 'guardrail:claude',
+      nature: 'guardrail',
+      action: 'update',
+      ops: [{ kind: 'write-json', path: '/p', description: '' }],
+    };
+    const result = renderPlan([group], { color: false });
+    const groupLine = result.split('\n').find((l) => l.includes('guardrail:claude'));
+    expect(groupLine).toBeDefined();
+    expect(groupLine!.trimStart()).toMatch(/^~/);
   });
 });
 
@@ -119,73 +193,97 @@ describe('renderPlan — header', () => {
 // ---------------------------------------------------------------------------
 
 describe('renderPlan — merge-deny', () => {
-  it('renders verb "deny" and abbreviated path', () => {
+  it('renders "deny  (+N)" with each rule prefixed "+"', () => {
     const op: WriteOp = {
       kind: 'merge-deny',
       path: '/home/me/.claude/settings.json',
-      toAdd: ['Bash(rm:-rf)', 'Bash(curl:*)'],
+      toAdd: ['Bash(rm:-rf)', 'Read(~/.ssh/**)'],
     };
-    const result = renderPlan([op], { home: '/home/me' });
-    expect(result).toContain('deny');
+    const group: PlanGroup = {
+      id: 'guardrail:claude',
+      nature: 'guardrail',
+      action: 'install',
+      ops: [op],
+    };
+    const result = renderPlan([group], { color: false, home: '/home/me' });
+    expect(result).toContain('deny  (+2)');
+    expect(result).toContain('+ Bash(rm:-rf)');
+    expect(result).toContain('+ Read(~/.ssh/**)');
+  });
+
+  it('truncates rules beyond maxDetail with "… +K more"', () => {
+    const rules = ['r1', 'r2', 'r3', 'r4', 'r5', 'r6', 'r7', 'r8'];
+    const op: WriteOp = { kind: 'merge-deny', path: '/p', toAdd: rules };
+    const group: PlanGroup = { id: 'a', nature: 'guardrail', action: 'install', ops: [op] };
+    const result = renderPlan([group], { color: false, maxDetail: 3 });
+    expect(result).toContain('deny  (+8)');
+    expect(result).toContain('+ r1');
+    expect(result).toContain('+ r3');
+    expect(result).not.toContain('+ r4');
+    expect(result).toContain('… +5 more');
+  });
+
+  it('shows all rules when count <= maxDetail', () => {
+    const op: WriteOp = { kind: 'merge-deny', path: '/p', toAdd: ['r1', 'r2'] };
+    const group: PlanGroup = { id: 'a', nature: 'guardrail', action: 'install', ops: [op] };
+    const result = renderPlan([group], { color: false, maxDetail: 6 });
+    expect(result).toContain('+ r1');
+    expect(result).toContain('+ r2');
+    expect(result).not.toContain('more');
+  });
+
+  it('shows abbreviated path in group header', () => {
+    const op: WriteOp = {
+      kind: 'merge-deny',
+      path: '/home/me/.claude/settings.json',
+      toAdd: ['r1'],
+    };
+    const group: PlanGroup = {
+      id: 'guardrail:claude',
+      nature: 'guardrail',
+      action: 'install',
+      ops: [op],
+    };
+    const result = renderPlan([group], { color: false, home: '/home/me' });
     expect(result).toContain('~/.claude/settings.json');
     expect(result).not.toContain('/home/me/.claude/settings.json');
   });
 
-  it('renders each rule on its own indented line with + prefix', () => {
-    const op: WriteOp = {
-      kind: 'merge-deny',
-      path: 'settings.json',
-      toAdd: ['rule-a', 'rule-b'],
-    };
-    const result = renderPlan([op]);
-    const lines = result.split('\n');
-    expect(lines.some((l) => l.includes('rule-a') && l.includes('+'))).toBe(true);
-    expect(lines.some((l) => l.includes('rule-b') && l.includes('+'))).toBe(true);
-  });
-
   it('renders path without abbreviation when no opts provided', () => {
-    const op: WriteOp = {
-      kind: 'merge-deny',
-      path: '.claude/settings.json',
-      toAdd: ['Bash(rm:-rf)'],
-    };
-    const result = renderPlan([op]);
+    const op: WriteOp = { kind: 'merge-deny', path: '.claude/settings.json', toAdd: ['r1'] };
+    const group: PlanGroup = { id: 'a', nature: 'guardrail', action: 'install', ops: [op] };
+    const result = renderPlan([group], { color: false });
     expect(result).toContain('.claude/settings.json');
-    expect(result).toContain('Bash(rm:-rf)');
   });
 });
 
 // ---------------------------------------------------------------------------
-// renderPlan — ensure-import
+// renderPlan — merge-allow
 // ---------------------------------------------------------------------------
 
-describe('renderPlan — ensure-import', () => {
-  it('renders verb "import" and abbreviated path with importLine as detail', () => {
+describe('renderPlan — merge-allow', () => {
+  it('renders "allow  (+N)" with each rule', () => {
     const op: WriteOp = {
-      kind: 'ensure-import',
-      path: '/home/me/.claude/CLAUDE.md',
-      importLine: '@~/.claude/skills/my-skill/SKILL.md',
+      kind: 'merge-allow',
+      path: '/p',
+      toAdd: ['Bash(git status)', 'Read(./src/*)'],
     };
-    const result = renderPlan([op], { home: '/home/me' });
-    expect(result).toContain('import');
-    expect(result).toContain('~/.claude/CLAUDE.md');
-    expect(result).toContain('@~/.claude/skills/my-skill/SKILL.md');
+    const group: PlanGroup = { id: 'a', nature: 'guardrail', action: 'install', ops: [op] };
+    const result = renderPlan([group], { color: false });
+    expect(result).toContain('allow  (+2)');
+    expect(result).toContain('+ Bash(git status)');
+    expect(result).toContain('+ Read(./src/*)');
   });
 
-  it('renders importLine indented below the verb line', () => {
+  it('truncates allow rules beyond maxDetail', () => {
     const op: WriteOp = {
-      kind: 'ensure-import',
-      path: 'CLAUDE.md',
-      importLine: '@skill.md',
+      kind: 'merge-allow',
+      path: '/p',
+      toAdd: ['r1', 'r2', 'r3', 'r4', 'r5'],
     };
-    const lines = renderPlan([op]).split('\n');
-    const verbLineIdx = lines.findIndex((l) => l.includes('import') && l.includes('CLAUDE.md'));
-    expect(verbLineIdx).toBeGreaterThanOrEqual(0);
-    const detailLine = lines[verbLineIdx + 1];
-    expect(detailLine).toBeDefined();
-    expect(detailLine).toContain('@skill.md');
-    // Detail must be indented (starts with spaces)
-    expect(detailLine).toMatch(/^\s+/);
+    const group: PlanGroup = { id: 'a', nature: 'guardrail', action: 'install', ops: [op] };
+    const result = renderPlan([group], { color: false, maxDetail: 2 });
+    expect(result).toContain('… +3 more');
   });
 });
 
@@ -194,27 +292,60 @@ describe('renderPlan — ensure-import', () => {
 // ---------------------------------------------------------------------------
 
 describe('renderPlan — write-text', () => {
-  it('renders verb "write" and abbreviated path', () => {
+  it('renders "write  +L / -0" with the content line count', () => {
+    const content = 'line1\nline2\nline3';
+    const op: WriteOp = { kind: 'write-text', path: '/p', content, description: '' };
+    const group: PlanGroup = { id: 'a', nature: 'context', action: 'install', ops: [op] };
+    const result = renderPlan([group], { color: false });
+    expect(result).toContain('write  +3 / -0');
+  });
+
+  it('shows first N lines with "│" prefix up to maxDetail', () => {
+    const content = 'l1\nl2\nl3\nl4\nl5\nl6\nl7';
+    const op: WriteOp = { kind: 'write-text', path: '/p', content, description: '' };
+    const group: PlanGroup = { id: 'a', nature: 'context', action: 'install', ops: [op] };
+    const result = renderPlan([group], { color: false, maxDetail: 3 });
+    expect(result).toContain('│ l1');
+    expect(result).toContain('│ l3');
+    expect(result).not.toContain('│ l4');
+    expect(result).toContain('│ …');
+  });
+
+  it('shows all lines when count <= maxDetail without truncation marker', () => {
+    const content = 'a\nb\nc';
+    const op: WriteOp = { kind: 'write-text', path: '/p', content, description: '' };
+    const group: PlanGroup = { id: 'a', nature: 'context', action: 'install', ops: [op] };
+    const result = renderPlan([group], { color: false, maxDetail: 6 });
+    expect(result).toContain('│ a');
+    expect(result).toContain('│ c');
+    expect(result).not.toContain('│ …');
+  });
+
+  it('abbreviates path in abbreviated form', () => {
     const op: WriteOp = {
       kind: 'write-text',
       path: '/home/user/.claude/skills/foo/SKILL.md',
-      content: '# skill content',
-      description: 'Write skill file',
+      content: '# skill',
+      description: '',
     };
-    const result = renderPlan([op], { home: '/home/user' });
-    expect(result).toContain('write');
+    const group: PlanGroup = { id: 'skill:foo', nature: 'skill', action: 'install', ops: [op] };
+    const result = renderPlan([group], { color: false, home: '/home/user' });
     expect(result).toContain('~/.claude/skills/foo/SKILL.md');
   });
 
-  it('renders absolute path when no abbreviation applies', () => {
-    const op: WriteOp = {
-      kind: 'write-text',
-      path: '/home/user/.claude/skills/foo/SKILL.md',
-      content: '# skill content',
-      description: 'Write skill file',
-    };
-    const result = renderPlan([op]);
-    expect(result).toContain('/home/user/.claude/skills/foo/SKILL.md');
+  it('reports +0 for empty content', () => {
+    const op: WriteOp = { kind: 'write-text', path: '/p', content: '', description: '' };
+    const group: PlanGroup = { id: 'a', nature: 'context', action: 'install', ops: [op] };
+    const result = renderPlan([group], { color: false });
+    expect(result).toContain('write  +0 / -0');
+  });
+
+  it('ignores trailing newline in line count', () => {
+    // 'a\nb\n' is 2 logical lines, not 3
+    const op: WriteOp = { kind: 'write-text', path: '/p', content: 'a\nb\n', description: '' };
+    const group: PlanGroup = { id: 'a', nature: 'context', action: 'install', ops: [op] };
+    const result = renderPlan([group], { color: false });
+    expect(result).toContain('write  +2 / -0');
   });
 });
 
@@ -223,15 +354,49 @@ describe('renderPlan — write-text', () => {
 // ---------------------------------------------------------------------------
 
 describe('renderPlan — write-json', () => {
-  it('renders verb "write" and path', () => {
+  it('renders "write  <abbr path>" without content dump', () => {
     const op: WriteOp = {
       kind: 'write-json',
-      path: '.agent-rigger/state.json',
-      description: 'Update manifest',
+      path: '/home/me/.claude/settings.json',
+      description: '',
     };
-    const result = renderPlan([op]);
-    expect(result).toContain('write');
-    expect(result).toContain('.agent-rigger/state.json');
+    const group: PlanGroup = { id: 'a', nature: 'guardrail', action: 'install', ops: [op] };
+    const result = renderPlan([group], { color: false, home: '/home/me' });
+    expect(result).toContain('write  ~/.claude/settings.json');
+  });
+
+  it('renders absolute path when no abbreviation applies', () => {
+    const op: WriteOp = { kind: 'write-json', path: '/state.json', description: '' };
+    const group: PlanGroup = { id: 'a', nature: 'guardrail', action: 'install', ops: [op] };
+    const result = renderPlan([group], { color: false });
+    expect(result).toContain('write  /state.json');
+  });
+
+  it('counts write-json in Σ write total', () => {
+    const ops: WriteOp[] = [
+      { kind: 'write-json', path: '/a.json', description: '' },
+      { kind: 'write-json', path: '/b.json', description: '' },
+    ];
+    const group: PlanGroup = { id: 'a', nature: 'guardrail', action: 'install', ops };
+    const result = renderPlan([group], { color: false });
+    expect(result).toContain('2 writes');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// renderPlan — ensure-import
+// ---------------------------------------------------------------------------
+
+describe('renderPlan — ensure-import', () => {
+  it('renders "import  <importLine>"', () => {
+    const op: WriteOp = {
+      kind: 'ensure-import',
+      path: '/home/me/.claude/CLAUDE.md',
+      importLine: '@~/.claude/skills/foo/SKILL.md',
+    };
+    const group: PlanGroup = { id: 'skill:foo', nature: 'skill', action: 'install', ops: [op] };
+    const result = renderPlan([group], { color: false });
+    expect(result).toContain('import  @~/.claude/skills/foo/SKILL.md');
   });
 });
 
@@ -240,34 +405,43 @@ describe('renderPlan — write-json', () => {
 // ---------------------------------------------------------------------------
 
 describe('renderPlan — link', () => {
-  it('renders verb "link", abbreviated target and source as detail', () => {
+  it('renders "link  <abbr target> → store"', () => {
     const op: WriteOp = {
       kind: 'link',
-      source: '/project/skills/foo',
-      store: '/home/user/.agent-rigger/store/foo',
-      target: '/home/user/.claude/skills/foo',
+      source: '/src/foo',
+      store: '/store/foo',
+      target: '/home/me/.claude/skills/foo',
     };
-    const result = renderPlan([op], { home: '/home/user', cwd: '/project' });
-    expect(result).toContain('link');
-    expect(result).toContain('~/.claude/skills/foo');
-    expect(result).toContain('./skills/foo');
-    // store path shown as detail via "from" keyword
-    expect(result).toContain('from');
+    const group: PlanGroup = { id: 'skill:foo', nature: 'skill', action: 'install', ops: [op] };
+    const result = renderPlan([group], { color: false, home: '/home/me' });
+    expect(result).toContain('link  ~/.claude/skills/foo → store');
   });
 
-  it('renders "from <source>" indented as detail when no abbreviation', () => {
+  it('renders unabbreviated link when no opts match', () => {
     const op: WriteOp = {
       kind: 'link',
-      source: '/repo/skills/foo',
-      store: '/home/user/.agent-rigger/store/foo',
-      target: '/home/user/.claude/skills/foo',
+      source: '/src/foo',
+      store: '/store/foo',
+      target: '/other/path/foo',
     };
-    const lines = renderPlan([op]).split('\n');
-    const verbLineIdx = lines.findIndex((l) => l.includes('link'));
-    expect(verbLineIdx).toBeGreaterThanOrEqual(0);
-    const detailLine = lines[verbLineIdx + 1];
-    expect(detailLine).toContain('from');
-    expect(detailLine).toContain('/repo/skills/foo');
+    const group: PlanGroup = { id: 'skill:foo', nature: 'skill', action: 'install', ops: [op] };
+    const result = renderPlan([group], { color: false });
+    expect(result).toContain('link  /other/path/foo → store');
+  });
+
+  it('group header shows target without redundant → store', () => {
+    const op: WriteOp = {
+      kind: 'link',
+      source: '/src/foo',
+      store: '/store/foo',
+      target: '/home/me/.claude/skills/foo',
+    };
+    const group: PlanGroup = { id: 'skill:foo', nature: 'skill', action: 'install', ops: [op] };
+    const result = renderPlan([group], { color: false, home: '/home/me' });
+    const headerLine = result.split('\n').find((l) => l.startsWith('+ '));
+    expect(headerLine).toBe('+ skill:foo   ~/.claude/skills/foo');
+    // → store appears exactly once (body only, not header)
+    expect(result.split('→ store').length - 1).toBe(1);
   });
 });
 
@@ -276,54 +450,287 @@ describe('renderPlan — link', () => {
 // ---------------------------------------------------------------------------
 
 describe('renderPlan — plugin-install', () => {
-  it('renders verb "plugin", plugin name and marketplace as detail', () => {
+  it('renders "plugin  <name>" and "via <abbr marketplace>"', () => {
     const op: WriteOp = {
       kind: 'plugin-install',
       plugin: 'my-plugin',
-      marketplace: 'https://marketplace.example.com/manifest.json',
-    };
-    const result = renderPlan([op]);
-    expect(result).toContain('plugin');
-    expect(result).toContain('my-plugin');
-    expect(result).toContain('https://marketplace.example.com/manifest.json');
-    expect(result).toContain('via');
-  });
-
-  it('abbreviates marketplace path when cwd matches', () => {
-    const op: WriteOp = {
-      kind: 'plugin-install',
-      plugin: 'local-plugin',
       marketplace: '/project/.claude-plugin/marketplace.json',
     };
-    const result = renderPlan([op], { cwd: '/project' });
-    expect(result).toContain('./.claude-plugin/marketplace.json');
+    const group: PlanGroup = { id: 'plugin:my', nature: 'plugin', action: 'install', ops: [op] };
+    const result = renderPlan([group], { color: false, cwd: '/project' });
+    expect(result).toContain('plugin  my-plugin');
+    expect(result).toContain('via ./.claude-plugin/marketplace.json');
+  });
+
+  it('shows full marketplace URL when it cannot be abbreviated', () => {
+    const op: WriteOp = {
+      kind: 'plugin-install',
+      plugin: 'remote-plugin',
+      marketplace: 'https://marketplace.example.com/manifest.json',
+    };
+    const group: PlanGroup = {
+      id: 'plugin:remote',
+      nature: 'plugin',
+      action: 'install',
+      ops: [op],
+    };
+    const result = renderPlan([group], { color: false });
+    expect(result).toContain('via https://marketplace.example.com/manifest.json');
   });
 });
 
 // ---------------------------------------------------------------------------
-// renderPlan — path abbreviation with home and cwd
+// renderPlan — merge-hooks
 // ---------------------------------------------------------------------------
 
-describe('renderPlan — path abbreviation', () => {
-  it('abbreviates home paths to ~ in merge-deny', () => {
+describe('renderPlan — merge-hooks', () => {
+  it('renders "hook  event/matcher → scriptname"', () => {
+    const op: WriteOp = {
+      kind: 'merge-hooks',
+      path: '/home/me/.claude/settings.json',
+      event: 'PreToolUse',
+      matcher: 'Bash',
+      command: 'bun run /store/hooks/guard-bash.ts',
+    };
+    const group: PlanGroup = {
+      id: 'hook:guard-bash',
+      nature: 'hook',
+      action: 'install',
+      ops: [op],
+    };
+    const result = renderPlan([group], { color: false, home: '/home/me' });
+    expect(result).toContain('hook  PreToolUse/Bash → guard-bash.ts');
+  });
+
+  it('shows group header with abbreviated settings path', () => {
+    const op: WriteOp = {
+      kind: 'merge-hooks',
+      path: '/home/me/.claude/settings.json',
+      event: 'PreToolUse',
+      matcher: 'Bash',
+      command: 'bun run x',
+    };
+    const group: PlanGroup = {
+      id: 'hook:guard-bash',
+      nature: 'hook',
+      action: 'install',
+      ops: [op],
+    };
+    const result = renderPlan([group], { color: false, home: '/home/me' });
+    expect(result).toContain('~/.claude/settings.json');
+    expect(result).not.toContain('/home/me/.claude/settings.json');
+  });
+
+  it('adds "link  <abbr scriptStore>" when scriptStore is defined', () => {
+    const op: WriteOp = {
+      kind: 'merge-hooks',
+      path: '/home/me/.claude/settings.json',
+      event: 'PreToolUse',
+      matcher: 'Bash',
+      command: 'bun run /store/hooks/guard-bash.ts',
+      scriptStore: '/home/me/.config/agent-rigger/hooks',
+    };
+    const group: PlanGroup = {
+      id: 'hook:guard-bash',
+      nature: 'hook',
+      action: 'install',
+      ops: [op],
+    };
+    const result = renderPlan([group], { color: false, home: '/home/me' });
+    expect(result).toContain('link  ~/.config/agent-rigger/hooks');
+  });
+
+  it('extracts script name from scriptStore basename when provided', () => {
+    const op: WriteOp = {
+      kind: 'merge-hooks',
+      path: '/h/.claude/settings.json',
+      event: 'PreToolUse',
+      matcher: '*',
+      command: 'bun run x',
+      scriptStore: '/h/.config/agent-rigger/hooks',
+    };
+    const group: PlanGroup = { id: 'a', nature: 'hook', action: 'install', ops: [op] };
+    const result = renderPlan([group], { color: false });
+    // scriptStore basename is 'hooks' → shown after →
+    expect(result).toContain('hooks');
+  });
+
+  it('counts the op in the plan header', () => {
+    const op: WriteOp = {
+      kind: 'merge-hooks',
+      path: '/h/.claude/settings.json',
+      event: 'PreToolUse',
+      matcher: 'Bash',
+      command: 'bun run x',
+    };
+    const group: PlanGroup = { id: 'a', nature: 'hook', action: 'install', ops: [op] };
+    const result = renderPlan([group], { color: false });
+    expect(result).toContain('Plan · 1 change');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// renderPlan — Σ line
+// ---------------------------------------------------------------------------
+
+describe('renderPlan — Σ line', () => {
+  it('shows deny +N in Σ line (total rule count)', () => {
+    const op: WriteOp = { kind: 'merge-deny', path: '/p', toAdd: ['r1', 'r2', 'r3'] };
+    const group: PlanGroup = { id: 'a', nature: 'guardrail', action: 'install', ops: [op] };
+    const result = renderPlan([group], { color: false });
+    expect(result).toContain('deny +3');
+  });
+
+  it('omits zero-count categories from Σ line', () => {
+    const op: WriteOp = { kind: 'merge-deny', path: '/p', toAdd: ['r1'] };
+    const group: PlanGroup = { id: 'a', nature: 'guardrail', action: 'install', ops: [op] };
+    const result = renderPlan([group], { color: false });
+    const sigmaLine = result.split('\n').find((l) => l.includes('Σ'));
+    expect(sigmaLine).toBeDefined();
+    expect(sigmaLine).not.toContain('write');
+    expect(sigmaLine).not.toContain('link');
+    expect(sigmaLine).not.toContain('plugin');
+  });
+
+  it('aggregates deny+write across multiple groups', () => {
+    const groups: PlanGroup[] = [
+      {
+        id: 'guardrail:claude',
+        nature: 'guardrail',
+        action: 'install',
+        ops: [{ kind: 'merge-deny', path: '/p', toAdd: ['r1', 'r2'] }],
+      },
+      {
+        id: 'context:agents',
+        nature: 'context',
+        action: 'install',
+        ops: [{ kind: 'write-text', path: '/q', content: 'hello\nworld', description: '' }],
+      },
+    ];
+    const result = renderPlan(groups, { color: false });
+    expect(result).toContain('deny +2');
+    expect(result).toContain('1 write');
+  });
+
+  it('shows link count in Σ', () => {
+    const groups: PlanGroup[] = [
+      {
+        id: 'skill:foo',
+        nature: 'skill',
+        action: 'install',
+        ops: [{ kind: 'link', source: '/s', store: '/st', target: '/t1' }],
+      },
+      {
+        id: 'agent:bar',
+        nature: 'agent',
+        action: 'install',
+        ops: [{ kind: 'link', source: '/s2', store: '/st2', target: '/t2' }],
+      },
+    ];
+    const result = renderPlan(groups, { color: false });
+    expect(result).toContain('2 links');
+  });
+
+  it('shows hook count in Σ', () => {
+    const op: WriteOp = {
+      kind: 'merge-hooks',
+      path: '/p',
+      event: 'PreToolUse',
+      matcher: 'Bash',
+      command: 'x',
+    };
+    const group: PlanGroup = { id: 'a', nature: 'hook', action: 'install', ops: [op] };
+    const result = renderPlan([group], { color: false });
+    expect(result).toContain('1 hook');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// renderPlan — color
+// ---------------------------------------------------------------------------
+
+describe('renderPlan — color', () => {
+  it('contains ANSI escape codes when color:true', () => {
+    const group: PlanGroup = {
+      id: 'guardrail:claude',
+      nature: 'guardrail',
+      action: 'install',
+      ops: [{ kind: 'merge-deny', path: '/p', toAdd: ['r1'] }],
+    };
+    const result = renderPlan([group], { color: true });
+    expect(result).toContain('\x1b[');
+  });
+
+  it('contains no ANSI escape codes when color:false', () => {
+    const group: PlanGroup = {
+      id: 'guardrail:claude',
+      nature: 'guardrail',
+      action: 'install',
+      ops: [{ kind: 'merge-deny', path: '/p', toAdd: ['r1'] }],
+    };
+    const result = renderPlan([group], { color: false });
+    expect(result).not.toContain('\x1b[');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// renderPlan — multi-group
+// ---------------------------------------------------------------------------
+
+describe('renderPlan — multi-group', () => {
+  it('renders all groups in output', () => {
+    const groups: PlanGroup[] = [
+      {
+        id: 'guardrail:claude',
+        nature: 'guardrail',
+        action: 'install',
+        ops: [{ kind: 'merge-deny', path: '/p', toAdd: ['r1'] }],
+      },
+      {
+        id: 'skill:foo',
+        nature: 'skill',
+        action: 'update',
+        ops: [{ kind: 'link', source: '/s', store: '/st', target: '/t' }],
+      },
+    ];
+    const result = renderPlan(groups, { color: false });
+    expect(result).toContain('guardrail:claude');
+    expect(result).toContain('skill:foo');
+    expect(result).toContain('deny  (+1)');
+    expect(result).toContain('link  /t → store');
+  });
+
+  it('path abbreviation works for home in merge-deny', () => {
     const op: WriteOp = {
       kind: 'merge-deny',
       path: '/home/me/.claude/settings.json',
       toAdd: ['Read(./.env)'],
     };
-    const result = renderPlan([op], { home: '/home/me' });
+    const group: PlanGroup = {
+      id: 'guardrail:claude',
+      nature: 'guardrail',
+      action: 'install',
+      ops: [op],
+    };
+    const result = renderPlan([group], { color: false, home: '/home/me' });
     expect(result).toContain('~/.claude/settings.json');
     expect(result).not.toContain('/home/me/.claude/settings.json');
   });
 
-  it('abbreviates cwd paths to ./ in write-text', () => {
+  it('path abbreviation works for cwd in write-text', () => {
     const op: WriteOp = {
       kind: 'write-text',
       path: '/workspace/project/.claude/CLAUDE.md',
       content: '',
       description: '',
     };
-    const result = renderPlan([op], { cwd: '/workspace/project' });
+    const group: PlanGroup = {
+      id: 'context:agents',
+      nature: 'context',
+      action: 'install',
+      ops: [op],
+    };
+    const result = renderPlan([group], { color: false, cwd: '/workspace/project' });
     expect(result).toContain('./.claude/CLAUDE.md');
     expect(result).not.toContain('/workspace/project/.claude/CLAUDE.md');
   });
@@ -335,51 +742,9 @@ describe('renderPlan — path abbreviation', () => {
       content: '',
       description: '',
     };
-    const result = renderPlan([op], { home: '/home/me', cwd: '/project' });
+    const group: PlanGroup = { id: 'a', nature: 'context', action: 'install', ops: [op] };
+    const result = renderPlan([group], { color: false, home: '/home/me', cwd: '/project' });
     expect(result).toContain('/other/place/file.md');
-  });
-});
-
-// ---------------------------------------------------------------------------
-// renderPlan — multiple ops
-// ---------------------------------------------------------------------------
-
-describe('renderPlan — multiple ops', () => {
-  it('renders all ops in the output', () => {
-    const ops: WriteOp[] = [
-      {
-        kind: 'write-text',
-        path: '/path/to/file.md',
-        content: 'content',
-        description: 'desc',
-      },
-      {
-        kind: 'ensure-import',
-        path: 'CLAUDE.md',
-        importLine: '@skill.md',
-      },
-      {
-        kind: 'plugin-install',
-        plugin: 'plugin-x',
-        marketplace: 'https://mkt.example.com',
-      },
-    ];
-    const result = renderPlan(ops);
-    expect(result).toContain('/path/to/file.md');
-    expect(result).toContain('CLAUDE.md');
-    expect(result).toContain('@skill.md');
-    expect(result).toContain('plugin-x');
-    expect(result).toContain('https://mkt.example.com');
-  });
-
-  it('counts ops correctly in the header', () => {
-    const ops: WriteOp[] = [
-      { kind: 'write-text', path: '/a', content: '', description: '' },
-      { kind: 'write-json', path: '/b', description: '' },
-      { kind: 'write-json', path: '/c', description: '' },
-    ];
-    const result = renderPlan(ops);
-    expect(result).toMatch(/Plan \(3 changes\):/);
   });
 });
 
@@ -507,11 +872,11 @@ describe('new pure rendering exports', () => {
 });
 
 // ---------------------------------------------------------------------------
-// renderRemovalPlan — empty list
+// renderRemovalPlan — empty groups
 // ---------------------------------------------------------------------------
 
-describe('renderRemovalPlan — empty list', () => {
-  it('returns "Nothing to remove — not installed." when ops is empty', () => {
+describe('renderRemovalPlan — empty groups', () => {
+  it('returns "Nothing to remove — not installed." when groups is empty', () => {
     const result = renderRemovalPlan([]);
     expect(result).toBe('Nothing to remove — not installed.');
   });
@@ -522,32 +887,34 @@ describe('renderRemovalPlan — empty list', () => {
 // ---------------------------------------------------------------------------
 
 describe('renderRemovalPlan — header', () => {
-  it('starts with "Removal plan (1 change):" for a single op', () => {
-    const op: RemovalOp = {
-      kind: 'remove-deny',
-      path: '/home/me/.claude/settings.json',
-      rules: ['Read(./.env)'],
-    };
-    const result = renderRemovalPlan([op]);
-    expect(result).toMatch(/^Removal plan \(1 change\):/);
+  it('starts with "Removal plan · N change(s)"', () => {
+    const op: RemovalOp = { kind: 'remove-deny', path: '/p', rules: ['r1'] };
+    const group: PlanRemovalGroup = { id: 'a', nature: 'guardrail', ops: [op] };
+    const result = renderRemovalPlan([group], { color: false });
+    expect(result).toContain('Removal plan · 1 change');
   });
 
-  it('starts with "Removal plan (N changes):" for multiple ops', () => {
-    const ops: RemovalOp[] = [
-      { kind: 'remove-deny', path: '/a', rules: ['rule-a'] },
-      { kind: 'remove-block', path: '/b' },
+  it('counts total ops across multiple groups', () => {
+    const groups: PlanRemovalGroup[] = [
+      { id: 'a', nature: 'guardrail', ops: [{ kind: 'remove-deny', path: '/p', rules: ['r1'] }] },
+      { id: 'b', nature: 'context', ops: [{ kind: 'delete-file', path: '/q' }] },
     ];
-    const result = renderRemovalPlan(ops);
-    expect(result).toMatch(/^Removal plan \(2 changes\):/);
+    const result = renderRemovalPlan(groups, { color: false });
+    expect(result).toContain('Removal plan · 2 changes');
+  });
+
+  it('includes scope in header when provided', () => {
+    const op: RemovalOp = { kind: 'remove-deny', path: '/p', rules: ['r1'] };
+    const group: PlanRemovalGroup = { id: 'a', nature: 'guardrail', ops: [op] };
+    const result = renderRemovalPlan([group], { color: false, scope: 'user', home: '/home/me' });
+    expect(result).toContain('scope: user');
+    expect(result).toContain('~/.claude');
   });
 
   it('has a blank line after the header', () => {
-    const op: RemovalOp = {
-      kind: 'remove-deny',
-      path: '/home/me/.claude/settings.json',
-      rules: ['Read(./.env)'],
-    };
-    const lines = renderRemovalPlan([op]).split('\n');
+    const op: RemovalOp = { kind: 'remove-deny', path: '/p', rules: ['r1'] };
+    const group: PlanRemovalGroup = { id: 'a', nature: 'guardrail', ops: [op] };
+    const lines = renderRemovalPlan([group], { color: false }).split('\n');
     expect(lines[1]).toBe('');
   });
 });
@@ -557,39 +924,63 @@ describe('renderRemovalPlan — header', () => {
 // ---------------------------------------------------------------------------
 
 describe('renderRemovalPlan — remove-deny', () => {
-  it('renders verb "un-deny" and abbreviated path', () => {
+  it('renders "deny  (-N)" with rules prefixed "-"', () => {
     const op: RemovalOp = {
       kind: 'remove-deny',
       path: '/home/me/.claude/settings.json',
-      rules: ['Read(./.env)'],
+      rules: ['r1', 'r2'],
     };
-    const result = renderRemovalPlan([op], { home: '/home/me' });
-    expect(result).toContain('un-deny');
+    const group: PlanRemovalGroup = { id: 'a', nature: 'guardrail', ops: [op] };
+    const result = renderRemovalPlan([group], { color: false, home: '/home/me' });
+    expect(result).toContain('deny  (-2)');
+    expect(result).toContain('- r1');
+    expect(result).toContain('- r2');
+  });
+
+  it('abbreviates path in group header', () => {
+    const op: RemovalOp = {
+      kind: 'remove-deny',
+      path: '/home/me/.claude/settings.json',
+      rules: ['r1'],
+    };
+    const group: PlanRemovalGroup = { id: 'a', nature: 'guardrail', ops: [op] };
+    const result = renderRemovalPlan([group], { color: false, home: '/home/me' });
     expect(result).toContain('~/.claude/settings.json');
     expect(result).not.toContain('/home/me/.claude/settings.json');
   });
 
-  it('renders each rule on its own indented line with - prefix', () => {
-    const op: RemovalOp = {
-      kind: 'remove-deny',
-      path: '/home/me/.claude/settings.json',
-      rules: ['rule-a', 'rule-b'],
-    };
-    const result = renderRemovalPlan([op]);
-    const lines = result.split('\n');
-    expect(lines.some((l) => l.includes('rule-a') && l.includes('-'))).toBe(true);
-    expect(lines.some((l) => l.includes('rule-b') && l.includes('-'))).toBe(true);
+  it('truncates rules beyond maxDetail with "… -K more"', () => {
+    const rules = ['r1', 'r2', 'r3', 'r4', 'r5'];
+    const op: RemovalOp = { kind: 'remove-deny', path: '/p', rules };
+    const group: PlanRemovalGroup = { id: 'a', nature: 'guardrail', ops: [op] };
+    const result = renderRemovalPlan([group], { color: false, maxDetail: 2 });
+    expect(result).toContain('deny  (-5)');
+    expect(result).toContain('- r1');
+    expect(result).toContain('- r2');
+    expect(result).not.toContain('- r3');
+    expect(result).toContain('… -3 more');
   });
 
   it('renders path without abbreviation when no opts provided', () => {
-    const op: RemovalOp = {
-      kind: 'remove-deny',
-      path: '.claude/settings.json',
-      rules: ['Bash(rm:-rf)'],
-    };
-    const result = renderRemovalPlan([op]);
+    const op: RemovalOp = { kind: 'remove-deny', path: '.claude/settings.json', rules: ['r'] };
+    const group: PlanRemovalGroup = { id: 'a', nature: 'guardrail', ops: [op] };
+    const result = renderRemovalPlan([group], { color: false });
     expect(result).toContain('.claude/settings.json');
-    expect(result).toContain('Bash(rm:-rf)');
+    expect(result).toContain('- r');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// renderRemovalPlan — remove-allow
+// ---------------------------------------------------------------------------
+
+describe('renderRemovalPlan — remove-allow', () => {
+  it('renders "allow  (-N)" with rules prefixed "-"', () => {
+    const op: RemovalOp = { kind: 'remove-allow', path: '/p', rules: ['r1', 'r2'] };
+    const group: PlanRemovalGroup = { id: 'a', nature: 'guardrail', ops: [op] };
+    const result = renderRemovalPlan([group], { color: false });
+    expect(result).toContain('allow  (-2)');
+    expect(result).toContain('- r1');
   });
 });
 
@@ -598,14 +989,11 @@ describe('renderRemovalPlan — remove-deny', () => {
 // ---------------------------------------------------------------------------
 
 describe('renderRemovalPlan — remove-block', () => {
-  it('renders verb "un-import" and abbreviated path', () => {
-    const op: RemovalOp = {
-      kind: 'remove-block',
-      path: '/home/me/.claude/CLAUDE.md',
-    };
-    const result = renderRemovalPlan([op], { home: '/home/me' });
-    expect(result).toContain('un-import');
-    expect(result).toContain('~/.claude/CLAUDE.md');
+  it('renders "unimport  <abbr path>"', () => {
+    const op: RemovalOp = { kind: 'remove-block', path: '/home/me/.claude/CLAUDE.md' };
+    const group: PlanRemovalGroup = { id: 'a', nature: 'context', ops: [op] };
+    const result = renderRemovalPlan([group], { color: false, home: '/home/me' });
+    expect(result).toContain('unimport  ~/.claude/CLAUDE.md');
     expect(result).not.toContain('/home/me/.claude/CLAUDE.md');
   });
 });
@@ -615,24 +1003,27 @@ describe('renderRemovalPlan — remove-block', () => {
 // ---------------------------------------------------------------------------
 
 describe('renderRemovalPlan — delete-file', () => {
-  it('renders verb "delete" and abbreviated path', () => {
-    const op: RemovalOp = {
-      kind: 'delete-file',
-      path: '/home/me/.claude/harness/AGENTS.md',
-    };
-    const result = renderRemovalPlan([op], { home: '/home/me' });
-    expect(result).toContain('delete');
-    expect(result).toContain('~/.claude/harness/AGENTS.md');
+  it('renders "delete  <abbr path>"', () => {
+    const op: RemovalOp = { kind: 'delete-file', path: '/home/me/.claude/harness/AGENTS.md' };
+    const group: PlanRemovalGroup = { id: 'a', nature: 'context', ops: [op] };
+    const result = renderRemovalPlan([group], { color: false, home: '/home/me' });
+    expect(result).toContain('delete  ~/.claude/harness/AGENTS.md');
     expect(result).not.toContain('/home/me/.claude/harness/AGENTS.md');
   });
 
   it('renders absolute path when no abbreviation applies', () => {
-    const op: RemovalOp = {
-      kind: 'delete-file',
-      path: '/other/path/AGENTS.md',
-    };
-    const result = renderRemovalPlan([op]);
-    expect(result).toContain('/other/path/AGENTS.md');
+    const op: RemovalOp = { kind: 'delete-file', path: '/other/path/AGENTS.md' };
+    const group: PlanRemovalGroup = { id: 'a', nature: 'context', ops: [op] };
+    const result = renderRemovalPlan([group], { color: false });
+    expect(result).toContain('delete  /other/path/AGENTS.md');
+  });
+
+  it('abbreviates cwd paths in delete-file', () => {
+    const op: RemovalOp = { kind: 'delete-file', path: '/workspace/project/.claude/AGENTS.md' };
+    const group: PlanRemovalGroup = { id: 'a', nature: 'context', ops: [op] };
+    const result = renderRemovalPlan([group], { color: false, cwd: '/workspace/project' });
+    expect(result).toContain('./.claude/AGENTS.md');
+    expect(result).not.toContain('/workspace/project/.claude/AGENTS.md');
   });
 });
 
@@ -641,15 +1032,15 @@ describe('renderRemovalPlan — delete-file', () => {
 // ---------------------------------------------------------------------------
 
 describe('renderRemovalPlan — unlink', () => {
-  it('renders verb "unlink" and abbreviated target', () => {
+  it('renders "unlink  <abbr target>"', () => {
     const op: RemovalOp = {
       kind: 'unlink',
       target: '/home/me/.claude/skills/spec-workflow',
       store: '/home/me/.config/agent-rigger/skills/spec-workflow',
     };
-    const result = renderRemovalPlan([op], { home: '/home/me' });
-    expect(result).toContain('unlink');
-    expect(result).toContain('~/.claude/skills/spec-workflow');
+    const group: PlanRemovalGroup = { id: 'skill:spec-workflow', nature: 'skill', ops: [op] };
+    const result = renderRemovalPlan([group], { color: false, home: '/home/me' });
+    expect(result).toContain('unlink  ~/.claude/skills/spec-workflow');
     expect(result).not.toContain('/home/me/.claude/skills/spec-workflow');
   });
 });
@@ -659,102 +1050,11 @@ describe('renderRemovalPlan — unlink', () => {
 // ---------------------------------------------------------------------------
 
 describe('renderRemovalPlan — plugin-uninstall', () => {
-  it('renders verb "uninstall" and plugin id', () => {
-    const op: RemovalOp = {
-      kind: 'plugin-uninstall',
-      plugin: 'my-plugin',
-    };
-    const result = renderRemovalPlan([op]);
-    expect(result).toContain('uninstall');
-    expect(result).toContain('my-plugin');
-  });
-});
-
-// ---------------------------------------------------------------------------
-// renderRemovalPlan — path abbreviation
-// ---------------------------------------------------------------------------
-
-describe('renderRemovalPlan — path abbreviation', () => {
-  it('abbreviates home paths to ~ in remove-deny', () => {
-    const op: RemovalOp = {
-      kind: 'remove-deny',
-      path: '/home/me/.claude/settings.json',
-      rules: ['Read(./.env)'],
-    };
-    const result = renderRemovalPlan([op], { home: '/home/me' });
-    expect(result).toContain('~/.claude/settings.json');
-    expect(result).not.toContain('/home/me/.claude/settings.json');
-  });
-
-  it('abbreviates cwd paths to ./ in delete-file', () => {
-    const op: RemovalOp = {
-      kind: 'delete-file',
-      path: '/workspace/project/.claude/AGENTS.md',
-    };
-    const result = renderRemovalPlan([op], { cwd: '/workspace/project' });
-    expect(result).toContain('./.claude/AGENTS.md');
-    expect(result).not.toContain('/workspace/project/.claude/AGENTS.md');
-  });
-});
-
-// ---------------------------------------------------------------------------
-// renderPlan — merge-hooks
-// ---------------------------------------------------------------------------
-
-describe('renderPlan — merge-hooks', () => {
-  it('output is non-empty and contains event, matcher and abbreviated path', () => {
-    const op: WriteOp = {
-      kind: 'merge-hooks',
-      path: '/h/.claude/settings.json',
-      event: 'PreToolUse',
-      matcher: 'Bash',
-      command: 'bun run /h/.config/agent-rigger/hooks/guard-command.ts',
-      timeout: 5,
-    };
-    const result = renderPlan([op], { home: '/h' });
-    expect(result).not.toBe('');
-    expect(result).not.toBe('Nothing to apply — already up to date.');
-    expect(result).toContain('PreToolUse');
-    expect(result).toContain('Bash');
-    expect(result).toContain('~/.claude/settings.json');
-  });
-
-  it('renders verb "hook" and command as detail line', () => {
-    const op: WriteOp = {
-      kind: 'merge-hooks',
-      path: '/home/me/.claude/settings.json',
-      event: 'UserPromptSubmit',
-      matcher: '*',
-      command: 'bun run /store/hooks/guard-prompt.ts',
-    };
-    const result = renderPlan([op], { home: '/home/me' });
-    expect(result).toContain('hook');
-    expect(result).toContain('bun run /store/hooks/guard-prompt.ts');
-  });
-
-  it('abbreviates home path in the hook line', () => {
-    const op: WriteOp = {
-      kind: 'merge-hooks',
-      path: '/home/me/.claude/settings.json',
-      event: 'PreToolUse',
-      matcher: 'Read|Edit|Write',
-      command: 'bun run x',
-    };
-    const result = renderPlan([op], { home: '/home/me' });
-    expect(result).toContain('~/.claude/settings.json');
-    expect(result).not.toContain('/home/me/.claude/settings.json');
-  });
-
-  it('counts the op in the plan header', () => {
-    const op: WriteOp = {
-      kind: 'merge-hooks',
-      path: '/h/.claude/settings.json',
-      event: 'PreToolUse',
-      matcher: 'Bash',
-      command: 'bun run x',
-    };
-    const result = renderPlan([op]);
-    expect(result).toMatch(/Plan \(1 change\):/);
+  it('renders "uninstall  <plugin>"', () => {
+    const op: RemovalOp = { kind: 'plugin-uninstall', plugin: 'my-plugin' };
+    const group: PlanRemovalGroup = { id: 'plugin:my', nature: 'plugin', ops: [op] };
+    const result = renderRemovalPlan([group], { color: false });
+    expect(result).toContain('uninstall  my-plugin');
   });
 });
 
@@ -763,43 +1063,29 @@ describe('renderPlan — merge-hooks', () => {
 // ---------------------------------------------------------------------------
 
 describe('renderRemovalPlan — remove-hooks', () => {
-  it('output is non-empty and contains event, matcher and abbreviated path', () => {
+  it('renders "un-hook  event/matcher"', () => {
     const op: RemovalOp = {
       kind: 'remove-hooks',
-      path: '/h/.claude/settings.json',
+      path: '/home/me/.claude/settings.json',
       event: 'PreToolUse',
       matcher: 'Bash',
-      command: 'bun run /h/.config/agent-rigger/hooks/guard-command.ts',
+      command: 'bun run x',
     };
-    const result = renderRemovalPlan([op], { home: '/h' });
-    expect(result).not.toBe('');
-    expect(result).not.toBe('Nothing to remove — not installed.');
-    expect(result).toContain('PreToolUse');
-    expect(result).toContain('Bash');
-    expect(result).toContain('~/.claude/settings.json');
+    const group: PlanRemovalGroup = { id: 'hook:guard-bash', nature: 'hook', ops: [op] };
+    const result = renderRemovalPlan([group], { color: false, home: '/home/me' });
+    expect(result).toContain('un-hook  PreToolUse/Bash');
   });
 
-  it('renders verb "un-hook"', () => {
+  it('shows abbreviated settings path in group header', () => {
     const op: RemovalOp = {
       kind: 'remove-hooks',
       path: '/home/me/.claude/settings.json',
       event: 'UserPromptSubmit',
       matcher: '*',
-      command: 'bun run x',
+      command: 'x',
     };
-    const result = renderRemovalPlan([op], { home: '/home/me' });
-    expect(result).toContain('un-hook');
-  });
-
-  it('abbreviates home path in the un-hook line', () => {
-    const op: RemovalOp = {
-      kind: 'remove-hooks',
-      path: '/home/me/.claude/settings.json',
-      event: 'PreToolUse',
-      matcher: 'Write|Edit|MultiEdit',
-      command: 'bun run x',
-    };
-    const result = renderRemovalPlan([op], { home: '/home/me' });
+    const group: PlanRemovalGroup = { id: 'a', nature: 'hook', ops: [op] };
+    const result = renderRemovalPlan([group], { color: false, home: '/home/me' });
     expect(result).toContain('~/.claude/settings.json');
     expect(result).not.toContain('/home/me/.claude/settings.json');
   });
@@ -810,40 +1096,93 @@ describe('renderRemovalPlan — remove-hooks', () => {
       path: '/h/.claude/settings.json',
       event: 'PreToolUse',
       matcher: 'Bash',
-      command: 'bun run x',
+      command: 'x',
     };
-    const result = renderRemovalPlan([op]);
-    expect(result).toMatch(/Removal plan \(1 change\):/);
+    const group: PlanRemovalGroup = { id: 'a', nature: 'hook', ops: [op] };
+    const result = renderRemovalPlan([group], { color: false });
+    expect(result).toContain('Removal plan · 1 change');
   });
 });
 
 // ---------------------------------------------------------------------------
-// renderRemovalPlan — multiple ops
+// renderRemovalPlan — Σ line
 // ---------------------------------------------------------------------------
 
-describe('renderRemovalPlan — multiple ops', () => {
-  it('renders all ops in the output', () => {
-    const ops: RemovalOp[] = [
-      { kind: 'remove-deny', path: '/settings.json', rules: ['rule-a'] },
-      { kind: 'remove-block', path: '/CLAUDE.md' },
-      { kind: 'delete-file', path: '/AGENTS.md' },
-    ];
-    const result = renderRemovalPlan(ops);
-    expect(result).toContain('un-deny');
-    expect(result).toContain('un-import');
-    expect(result).toContain('delete');
-    expect(result).toContain('/settings.json');
-    expect(result).toContain('/CLAUDE.md');
-    expect(result).toContain('/AGENTS.md');
+describe('renderRemovalPlan — Σ line', () => {
+  it('shows deny -N in Σ line', () => {
+    const op: RemovalOp = { kind: 'remove-deny', path: '/p', rules: ['r1', 'r2'] };
+    const group: PlanRemovalGroup = { id: 'a', nature: 'guardrail', ops: [op] };
+    const result = renderRemovalPlan([group], { color: false });
+    expect(result).toContain('deny -2');
   });
 
-  it('counts ops correctly in the header', () => {
-    const ops: RemovalOp[] = [
-      { kind: 'remove-deny', path: '/a', rules: ['r'] },
-      { kind: 'remove-block', path: '/b' },
-      { kind: 'delete-file', path: '/c' },
+  it('shows delete count in Σ line', () => {
+    const op: RemovalOp = { kind: 'delete-file', path: '/p' };
+    const group: PlanRemovalGroup = { id: 'a', nature: 'context', ops: [op] };
+    const result = renderRemovalPlan([group], { color: false });
+    expect(result).toContain('1 delete');
+  });
+
+  it('omits zero-count categories', () => {
+    const op: RemovalOp = { kind: 'remove-deny', path: '/p', rules: ['r1'] };
+    const group: PlanRemovalGroup = { id: 'a', nature: 'guardrail', ops: [op] };
+    const result = renderRemovalPlan([group], { color: false });
+    const sigmaLine = result.split('\n').find((l) => l.includes('Σ'));
+    expect(sigmaLine).toBeDefined();
+    expect(sigmaLine).not.toContain('delete');
+    expect(sigmaLine).not.toContain('unlink');
+    expect(sigmaLine).not.toContain('plugin');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// renderRemovalPlan — multi-group
+// ---------------------------------------------------------------------------
+
+describe('renderRemovalPlan — multi-group', () => {
+  it('renders all removal groups', () => {
+    const groups: PlanRemovalGroup[] = [
+      {
+        id: 'guardrail:claude',
+        nature: 'guardrail',
+        ops: [{ kind: 'remove-deny', path: '/p', rules: ['r1'] }],
+      },
+      {
+        id: 'skill:foo',
+        nature: 'skill',
+        ops: [
+          {
+            kind: 'unlink',
+            target: '/home/me/.claude/skills/foo',
+            store: '/store/foo',
+          },
+        ],
+      },
     ];
-    const result = renderRemovalPlan(ops);
-    expect(result).toMatch(/Removal plan \(3 changes\):/);
+    const result = renderRemovalPlan(groups, { color: false, home: '/home/me' });
+    expect(result).toContain('guardrail:claude');
+    expect(result).toContain('skill:foo');
+    expect(result).toContain('deny  (-1)');
+    expect(result).toContain('unlink  ~/.claude/skills/foo');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// renderRemovalPlan — color
+// ---------------------------------------------------------------------------
+
+describe('renderRemovalPlan — color', () => {
+  it('contains ANSI escape codes when color:true', () => {
+    const op: RemovalOp = { kind: 'remove-deny', path: '/p', rules: ['r1'] };
+    const group: PlanRemovalGroup = { id: 'a', nature: 'guardrail', ops: [op] };
+    const result = renderRemovalPlan([group], { color: true });
+    expect(result).toContain('\x1b[');
+  });
+
+  it('contains no ANSI codes when color:false', () => {
+    const op: RemovalOp = { kind: 'remove-deny', path: '/p', rules: ['r1'] };
+    const group: PlanRemovalGroup = { id: 'a', nature: 'guardrail', ops: [op] };
+    const result = renderRemovalPlan([group], { color: false });
+    expect(result).not.toContain('\x1b[');
   });
 });

@@ -442,42 +442,6 @@ async function rollbackCompensations(
 }
 
 // ---------------------------------------------------------------------------
-// planRemoval
-// ---------------------------------------------------------------------------
-
-/**
- * Compute the aggregated removal plan for a set of entries — read-only.
- *
- * Reads the manifest and enriches each entry with its `applied` payload (B-iii)
- * before calling adapter.planRemove(). This is what makes the plan PREVIEW match
- * what remove() will actually do: without enrichment the adapter falls back to an
- * empty canonical (denyRef=[]) and reports "nothing to remove" for an installed
- * entry whose canonical content lives only in the manifest.
- *
- * @param adapter       The adapter to use for planning.
- * @param entries       Catalog entries to plan removal for.
- * @param scope         Installation scope ('user' | 'project').
- * @param env           Injectable env for HOME resolution.
- * @param manifestPath  Absolute path to state.json.
- * @returns             Flattened RemovalOp[] across all entries.
- */
-export async function planRemoval(
-  adapter: Adapter,
-  entries: AdapterEntry[],
-  scope: Scope,
-  env: Env,
-  manifestPath: string,
-): Promise<RemovalOp[]> {
-  const manifest = await readManifest(manifestPath);
-
-  const opsPerEntry = await Promise.all(
-    entries.map((entry) => adapter.planRemove(enrichWithApplied(entry, manifest), scope, env)),
-  );
-
-  return opsPerEntry.flat();
-}
-
-// ---------------------------------------------------------------------------
 // remove
 // ---------------------------------------------------------------------------
 
@@ -680,7 +644,10 @@ function extractApplied(ops: WriteOp[], targets: string[]): AppliedPayload | und
  * If the manifest is absent or the entry is not found, the original entry is
  * returned unchanged (legacy behaviour — no applied payload).
  */
-function enrichWithApplied(entry: AdapterEntry, manifest: Manifest | undefined): AdapterEntry {
+export function enrichWithApplied(
+  entry: AdapterEntry,
+  manifest: Manifest | undefined,
+): AdapterEntry {
   if (manifest === undefined) {
     return entry;
   }

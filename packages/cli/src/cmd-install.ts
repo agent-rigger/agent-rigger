@@ -21,9 +21,10 @@ import path from 'node:path';
 
 import type { Adapter, AdapterEntry } from '@agent-rigger/core/adapter';
 import { apply } from '@agent-rigger/core/engine';
+import { findEntry, readManifest } from '@agent-rigger/core/manifest';
 import type { Env } from '@agent-rigger/core/paths';
 import { resolveHome } from '@agent-rigger/core/paths';
-import type { Scope, WriteOp } from '@agent-rigger/core/types';
+import type { Scope } from '@agent-rigger/core/types';
 
 import type { ArtifactEntry, CatalogEntry } from '@agent-rigger/catalog';
 import { resolve } from '@agent-rigger/catalog/resolver';
@@ -31,6 +32,7 @@ import { checkTools, missingRecommended, missingRequired } from '@agent-rigger/c
 import type { CommandRunner } from '@agent-rigger/catalog/tool-check';
 
 import { renderPlan } from './ui';
+import type { PlanGroup } from './ui';
 
 // ---------------------------------------------------------------------------
 // InstallResult
@@ -210,10 +212,17 @@ export async function runInstall(opts: RunInstallOptions): Promise<InstallResult
       scope,
     }));
 
-  const allOps: WriteOp[] = [];
+  // Read manifest once to determine action (install vs update) per entry.
+  const manifest = await readManifest(manifestPath);
+  const groups: PlanGroup[] = [];
   for (const entry of adapterEntries) {
     const ops = await adapter.plan(entry, scope, env);
-    allOps.push(...ops);
+    if (ops.length > 0) {
+      const action: 'install' | 'update' = findEntry(manifest, entry.id, scope) === undefined
+        ? 'install'
+        : 'update';
+      groups.push({ id: entry.id, nature: entry.nature, action, ops });
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -222,9 +231,10 @@ export async function runInstall(opts: RunInstallOptions): Promise<InstallResult
 
   const effectiveCwd = opts.cwd ?? process.cwd();
 
-  const renderedPlan = renderPlan(allOps, {
+  const renderedPlan = renderPlan(groups, {
     home: resolveHome(env),
     cwd: effectiveCwd,
+    scope,
   });
 
   // Prepend project-scope note (cwd + optional git-repo warning) when relevant.
@@ -240,7 +250,7 @@ export async function runInstall(opts: RunInstallOptions): Promise<InstallResult
   // Empty plan → already up to date, skip confirm + apply
   // -------------------------------------------------------------------------
 
-  if (allOps.length === 0) {
+  if (groups.length === 0) {
     const output = buildOutput({
       planText,
       reason: 'up-to-date',

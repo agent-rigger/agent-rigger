@@ -16,14 +16,16 @@
  */
 
 import type { Adapter, AdapterEntry } from '@agent-rigger/core/adapter';
-import { planRemoval, remove } from '@agent-rigger/core/engine';
+import { enrichWithApplied, remove } from '@agent-rigger/core/engine';
+import { readManifest } from '@agent-rigger/core/manifest';
 import type { Env } from '@agent-rigger/core/paths';
 import { resolveHome } from '@agent-rigger/core/paths';
-import type { RemovalOp, Scope } from '@agent-rigger/core/types';
+import type { Scope } from '@agent-rigger/core/types';
 
 import type { CatalogEntry } from '@agent-rigger/catalog';
 
 import { renderRemovalPlan } from './ui';
+import type { PlanRemovalGroup } from './ui';
 
 // ---------------------------------------------------------------------------
 // RemoveCommandResult
@@ -142,27 +144,36 @@ export async function runRemove(opts: RunRemoveOptions): Promise<RemoveCommandRe
   });
 
   // -------------------------------------------------------------------------
-  // Step 3: Plan — aggregate RemovalOps from all entries.
-  // Entries are enriched with their manifest `applied` payload (B-iii) so the
-  // preview matches what remove() will actually do for installed entries.
+  // Step 3: Plan — build per-entry removal groups.
+  // Entries are enriched with their manifest `applied` payload so the preview
+  // matches what remove() will actually do.
   // -------------------------------------------------------------------------
 
-  const allOps: RemovalOp[] = await planRemoval(adapter, adapterEntries, scope, env, manifestPath);
+  const manifest = await readManifest(manifestPath);
+  const groups: PlanRemovalGroup[] = [];
+  for (const entry of adapterEntries) {
+    const enriched = enrichWithApplied(entry, manifest);
+    const ops = await adapter.planRemove(enriched, scope, env);
+    if (ops.length > 0) {
+      groups.push({ id: entry.id, nature: entry.nature, ops });
+    }
+  }
 
   // -------------------------------------------------------------------------
   // Step 4: Render plan
   // -------------------------------------------------------------------------
 
-  const planText = renderRemovalPlan(allOps, {
+  const planText = renderRemovalPlan(groups, {
     home: resolveHome(env),
     cwd: opts.cwd ?? process.cwd(),
+    scope,
   });
 
   // -------------------------------------------------------------------------
   // Empty plan → nothing to remove, skip confirm + apply
   // -------------------------------------------------------------------------
 
-  if (allOps.length === 0) {
+  if (groups.length === 0) {
     const output = buildOutput({ planText, reason: 'not-installed', removed: [], backedUp: [] });
     return { applied: false, removed: [], backedUp: [], output };
   }
