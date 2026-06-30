@@ -5,15 +5,22 @@ just downloads the right release asset and installs it — no build step.
 
 ## How it works
 
-1. A release is published by [`.github/workflows/release.yml`](../../.github/workflows/release.yml)
-   (triggered by a `v*` tag). It attaches the per-platform binaries and a
-   `SHA256SUMS.txt`.
-2. [`.github/workflows/homebrew.yml`](../../.github/workflows/homebrew.yml) then
-   renders [`agent-rigger.rb.tmpl`](./agent-rigger.rb.tmpl) with the released
-   version + checksums (via [`render-formula.sh`](./render-formula.sh)) and
-   pushes the result to `Formula/agent-rigger.rb` in the tap repo.
+[`.github/workflows/release.yml`](../../.github/workflows/release.yml) (triggered
+by a `v*` tag) runs two jobs:
 
-The Homebrew job is a **no-op until the tap is set up** — it skips when the
+1. `release` — builds the per-platform binaries and a `SHA256SUMS.txt`, then
+   publishes the GitHub Release with those assets.
+2. `formula` (`needs: release`) — renders
+   [`agent-rigger.rb.tmpl`](./agent-rigger.rb.tmpl) with the released version +
+   checksums (via [`render-formula.sh`](./render-formula.sh)) and pushes the
+   result to `Formula/agent-rigger.rb` in the tap repo.
+
+The formula step lives **inside the release workflow**, not in a separate
+`on: release` workflow: GitHub does not fire workflows for events emitted by the
+`GITHUB_TOKEN` (the release is published with that token), so an `on: release`
+trigger would never run. Keeping both jobs in one run sidesteps that.
+
+The `formula` job is a **no-op until the tap is set up** — it skips when the
 `HOMEBREW_TAP_TOKEN` secret is absent, so it never blocks a release.
 
 ## One-time setup (org admin)

@@ -4,6 +4,13 @@ name: Release
 # GitHub Release. Bun cross-compiles all targets from a single host
 # (`bun build --compile --target=...`), so one ubuntu job produces the full
 # matrix — no per-OS runners or artifact passing required.
+#
+# A second job (`formula`) then renders the Homebrew formula from the released
+# checksums and pushes it to the tap. It runs here — as `needs: release` in the
+# SAME workflow — rather than on a separate `release: published` trigger, because
+# GitHub does NOT fire workflows for events emitted by the GITHUB_TOKEN (the
+# release is published by action-gh-release using that token), so a standalone
+# `on: release` workflow would never run. Keeping it in this run sidesteps that.
 
 on:
   push:
@@ -82,3 +89,59 @@ jobs:
             packages/cli/dist/SHA256SUMS.txt
           generate_release_notes: true
           fail_on_unmatched_files: true
+
+  formula:
+    name: Update Homebrew formula
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # read this repo (render script) + the release assets; the tap is pushed via HOMEBREW_TAP_TOKEN
+    steps:
+      - name: Gate on tap token
+        id: gate
+        env:
+          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          if [ -n "$TAP_TOKEN" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::HOMEBREW_TAP_TOKEN not set — skipping Homebrew formula update."
+          fi
+
+      - name: Checkout source
+        if: steps.gate.outputs.enabled == 'true'
+        uses: actions/checkout@v4
+
+      - name: Download release checksums
+        if: steps.gate.outputs.enabled == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release download "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --pattern SHA256SUMS.txt --dir /tmp
+
+      - name: Render formula
+        if: steps.gate.outputs.enabled == 'true'
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          bash packaging/homebrew/render-formula.sh "$VERSION" /tmp/SHA256SUMS.txt > /tmp/agent-rigger.rb
+          echo "--- rendered formula ---"
+          cat /tmp/agent-rigger.rb
+
+      - name: Push to tap
+        if: steps.gate.outputs.enabled == 'true'
+        env:
+          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          git clone "https://x-access-token:${TAP_TOKEN}@github.com/agent-rigger/homebrew-tap.git" tap
+          mkdir -p tap/Formula
+          cp /tmp/agent-rigger.rb tap/Formula/agent-rigger.rb
+          cd tap
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/agent-rigger.rb
+          if git diff --cached --quiet; then
+            echo "Formula already up to date — nothing to push."
+            exit 0
+          fi
+          git commit -m "agent-rigger ${GITHUB_REF_NAME}"
+          git push origin HEAD
