@@ -127,24 +127,29 @@ self-contained (nothing to bundle).
 
 ### Try it in isolation (sandbox)
 
-Want to try `rigger` without touching your real config? Source the sandbox
-helper: it builds the binary if needed, points a `rigger` shell function at it,
-and redirects **all** writes to a disposable `RIGGER_HOME` under `/tmp`.
+Want to try `rigger` without touching your real setup? Source the sandbox
+helper: it points a `rigger` shell function at the binary (a local build, or an
+installed one on your `PATH` such as Homebrew) and isolates **both** scopes — a
+disposable `RIGGER_HOME` for user-scope writes and a disposable project dir it
+cd's you into for project-scope writes.
 
 ```sh
 source scripts/sandbox
-# [sandbox] RIGGER_HOME : /tmp/rigger-sandbox.XXXXXX  (your real config is untouched)
+# [sandbox] RIGGER_HOME : /tmp/rigger-sandbox.XXXXXX  (user-scope writes isolated here)
+# [sandbox] project dir : /tmp/rigger-sandbox-project.XXXXXX  (now your cwd)
 
 rigger catalog add example "$RIGGER_EXAMPLE_CATALOG"   # public demo catalog
 rigger ls
-rigger install            # pick artifacts; nothing is written outside RIGGER_HOME
+rigger install            # pick artifacts; nothing is written outside the sandbox
 
-source scripts/reset      # wipe and start from a blank slate
+rigger_reset              # wipe and start from a blank slate (works from /tmp)
+rigger_exit               # tear down: cd back, delete temp dirs, unset everything
 ```
 
-Your real config (`~/.claude`, `~/.config/agent-rigger`) is never read or
-written. When done, `rm -rf "$RIGGER_HOME"` leaves nothing behind. Must be
-**sourced**, not executed (it mutates your current shell).
+Your real config (`~/.claude`, `~/.config/agent-rigger`) and your real projects
+are never read or written. Must be **sourced**, not executed — it mutates your
+current shell (env, the `rigger`/`rigger_reset`/`rigger_exit` functions, and your
+cwd). Full guide: [docs/sandbox.md](docs/sandbox.md).
 
 ---
 

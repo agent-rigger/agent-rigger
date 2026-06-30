@@ -2,14 +2,25 @@
 #
 #   source scripts/sandbox
 #
-# Creates a disposable RIGGER_HOME under /tmp and a `rigger` shell function bound
-# to the locally built binary. Every `rigger …` then writes ONLY under that
-# RIGGER_HOME — your real config (~/.claude, ~/.config/agent-rigger) is never
-# read or written. Reset between runs with `source scripts/reset`.
+# Creates a disposable RIGGER_HOME *and* a disposable project directory under
+# /tmp, cd's you into the project dir, and binds a `rigger` shell function to
+# the binary. From there EVERY `rigger …` — user-scope AND project-scope —
+# writes ONLY under those throwaway dirs: your real config (~/.claude,
+# ~/.config/agent-rigger) and your real projects are never read or written.
 #
-# (It must be SOURCED, not executed: it exports RIGGER_HOME and defines the
-#  `rigger` function, which have to live in your current shell. Run in a
-#  sub-shell they would vanish immediately.)
+# Binary resolution:
+#   1. a locally built ./packages/cli/dist/agent-rigger, if present;
+#   2. else, when run from inside the repo, it is built on the fly;
+#   3. else an installed `agent-rigger` on PATH (e.g. Homebrew) — so you can
+#      also exercise a brew-installed build, not just a local checkout.
+#
+# Reset between runs with `rigger_reset`. Tear everything down with `rigger_exit`
+# (cd's back, deletes the throwaway dirs, unsets the vars + functions). Both are
+# functions this defines. Full guide: docs/sandbox.md.
+#
+# (It must be SOURCED, not executed: it exports vars, defines the `rigger`,
+#  `rigger_reset` and `rigger_exit` functions, and changes your cwd — all of
+#  which must live in your current shell. Run in a sub-shell they would vanish.)
 
 # --- Guard: refuse direct execution (portable bash + zsh) --------------------
 _rigger_sourced=0
@@ -25,35 +36,97 @@ if [ "$_rigger_sourced" -eq 0 ]; then
 fi
 unset _rigger_sourced
 
-# --- Resolve this file's path → repo root → binary (portable bash + zsh) -----
+# --- Resolve this file's path → repo root (portable bash + zsh) --------------
 if [ -n "${ZSH_VERSION:-}" ]; then
   _rigger_self="${(%):-%x}"
 else
   _rigger_self="${BASH_SOURCE[0]}"
 fi
 _RIGGER_ROOT="$(cd "$(dirname "$_rigger_self")/.." && pwd)"
-RIGGER_BIN="$_RIGGER_ROOT/packages/cli/dist/agent-rigger"
+_RIGGER_LOCAL_BIN="$_RIGGER_ROOT/packages/cli/dist/agent-rigger"
 
-# --- Build the binary if it is missing ---------------------------------------
-if [ ! -x "$RIGGER_BIN" ]; then
+# --- Pick the binary: local build first, else an installed one (brew/PATH) ----
+RIGGER_BIN=""
+if [ -x "$_RIGGER_LOCAL_BIN" ]; then
+  RIGGER_BIN="$_RIGGER_LOCAL_BIN"
+  echo "[sandbox] binary      : $RIGGER_BIN  (local build)"
+elif [ -f "$_RIGGER_ROOT/packages/cli/src/cli.ts" ]; then
+  # Inside the repo but not built yet → build it.
   echo "[sandbox] binary missing — building…"
-  ( cd "$_RIGGER_ROOT" && bun run build ) || {
+  if ( cd "$_RIGGER_ROOT" && bun run build ); then
+    RIGGER_BIN="$_RIGGER_LOCAL_BIN"
+    echo "[sandbox] binary      : $RIGGER_BIN  (local build)"
+  else
     echo "[sandbox] build failed — check Bun (bun --version)" >&2
-    unset _rigger_self _RIGGER_ROOT
+    unset _rigger_self _RIGGER_ROOT _RIGGER_LOCAL_BIN
     return 1
-  }
+  fi
+elif command -v agent-rigger >/dev/null 2>&1; then
+  # Not in the repo → use whatever is installed on PATH (Homebrew, etc.).
+  RIGGER_BIN="$(command -v agent-rigger)"
+  echo "[sandbox] binary      : $RIGGER_BIN  (installed — PATH/Homebrew)"
+else
+  echo "[sandbox] no agent-rigger binary found." >&2
+  echo "[sandbox]   build locally:  bun run build      (from the repo)" >&2
+  echo "[sandbox]   or install:     brew install agent-rigger/tap/agent-rigger" >&2
+  unset _rigger_self _RIGGER_ROOT _RIGGER_LOCAL_BIN
+  return 1
 fi
-unset _rigger_self _RIGGER_ROOT
+unset _rigger_self _RIGGER_ROOT _RIGGER_LOCAL_BIN
 
 # --- Convenience: public example catalog (5 natures, 2 packs) ----------------
 # Nothing is added automatically — this is just a handy URL to test against.
 export RIGGER_EXAMPLE_CATALOG="https://github.com/agent-rigger/agent-rigger-catalog-example.git"
 
-# --- Disposable isolated home + rigger function ------------------------------
+# --- Disposable isolated home + project dir + rigger function ----------------
 export RIGGER_HOME="$(mktemp -d /tmp/rigger-sandbox.XXXXXX)"
+export RIGGER_SANDBOX_PROJECT="$(mktemp -d /tmp/rigger-sandbox-project.XXXXXX)"
+# Remember where you came from — only the first time, so re-sourcing keeps it.
+: "${RIGGER_SANDBOX_ORIGIN:=$PWD}"
+export RIGGER_SANDBOX_ORIGIN
 rigger() { "$RIGGER_BIN" "$@"; }
 
-echo "[sandbox] binary      : $RIGGER_BIN"
-echo "[sandbox] RIGGER_HOME : $RIGGER_HOME  (isolated — your real config is untouched)"
-echo "[sandbox] ready — use:  rigger <command>     (reset: source scripts/reset)"
+# Reset to a blank slate — a function, not a separate sourced file: a function
+# already runs in your current shell, which is exactly what the cd + exports
+# below need (and it works from /tmp, where a relative `scripts/reset` would not).
+rigger_reset() {
+  # Wipe the old home (anti-rm guard: must live under /tmp/rigger-sandbox.*).
+  if [ -n "${RIGGER_HOME:-}" ] && [ "${RIGGER_HOME#/tmp/rigger-sandbox.}" != "$RIGGER_HOME" ]; then
+    rm -rf "$RIGGER_HOME"
+    echo "[reset] removed old RIGGER_HOME: $RIGGER_HOME"
+  fi
+  export RIGGER_HOME="$(mktemp -d /tmp/rigger-sandbox.XXXXXX)"
+  echo "[reset] fresh RIGGER_HOME: $RIGGER_HOME"
+
+  # Wipe the old project dir (anti-rm guard: /tmp/rigger-sandbox-project.*).
+  if [ -n "${RIGGER_SANDBOX_PROJECT:-}" ] && [ "${RIGGER_SANDBOX_PROJECT#/tmp/rigger-sandbox-project.}" != "$RIGGER_SANDBOX_PROJECT" ]; then
+    rm -rf "$RIGGER_SANDBOX_PROJECT"
+    echo "[reset] removed old project dir: $RIGGER_SANDBOX_PROJECT"
+  fi
+  export RIGGER_SANDBOX_PROJECT="$(mktemp -d /tmp/rigger-sandbox-project.XXXXXX)"
+  cd "$RIGGER_SANDBOX_PROJECT" || return 1
+  echo "[reset] fresh project dir: $RIGGER_SANDBOX_PROJECT  (now your cwd)"
+}
+
+# Tear down: cd back to where you started, delete the throwaway dirs, and remove
+# the sandbox's vars + functions — leaving your shell exactly as it was before.
+rigger_exit() {
+  # Leave the project dir before deleting it (anti-rm guards on both prefixes).
+  cd "${RIGGER_SANDBOX_ORIGIN:-$HOME}" 2>/dev/null || cd "$HOME" || return 1
+  if [ -n "${RIGGER_HOME:-}" ] && [ "${RIGGER_HOME#/tmp/rigger-sandbox.}" != "$RIGGER_HOME" ]; then
+    rm -rf "$RIGGER_HOME"
+  fi
+  if [ -n "${RIGGER_SANDBOX_PROJECT:-}" ] && [ "${RIGGER_SANDBOX_PROJECT#/tmp/rigger-sandbox-project.}" != "$RIGGER_SANDBOX_PROJECT" ]; then
+    rm -rf "$RIGGER_SANDBOX_PROJECT"
+  fi
+  echo "[sandbox] cleaned up — back in $PWD"
+  unset RIGGER_HOME RIGGER_SANDBOX_PROJECT RIGGER_SANDBOX_ORIGIN RIGGER_EXAMPLE_CATALOG RIGGER_BIN
+  unset -f rigger rigger_reset rigger_exit
+}
+
+cd "$RIGGER_SANDBOX_PROJECT" || return 1
+
+echo "[sandbox] RIGGER_HOME : $RIGGER_HOME  (user-scope writes isolated here)"
+echo "[sandbox] project dir : $RIGGER_SANDBOX_PROJECT  (now your cwd — project-scope writes isolated here)"
+echo "[sandbox] ready — use:  rigger <command>     (reset: rigger_reset · quit: rigger_exit)"
 echo "[sandbox] try:          rigger catalog add example \"\$RIGGER_EXAMPLE_CATALOG\""
