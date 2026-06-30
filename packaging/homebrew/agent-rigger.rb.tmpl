@@ -1,0 +1,48 @@
+# typed: false
+# frozen_string_literal: true
+
+# Homebrew formula for agent-rigger.
+#
+# GENERATED from this template by packaging/homebrew/render-formula.sh at release
+# time (it fills the version and the per-platform checksums from the release's
+# SHA256SUMS.txt). Do not edit the rendered Formula/agent-rigger.rb by hand —
+# change this template instead.
+class AgentRigger < Formula
+  desc "Package manager for AI coding assistant harness config"
+  homepage "https://github.com/agent-rigger/agent-rigger"
+  version "__VERSION__"
+  license "Apache-2.0"
+
+  on_macos do
+    on_arm do
+      url "https://github.com/agent-rigger/agent-rigger/releases/download/v#{version}/agent-rigger-darwin-arm64"
+      sha256 "__SHA_DARWIN_ARM64__"
+    end
+    on_intel do
+      url "https://github.com/agent-rigger/agent-rigger/releases/download/v#{version}/agent-rigger-darwin-x64"
+      sha256 "__SHA_DARWIN_X64__"
+    end
+  end
+
+  on_linux do
+    on_arm do
+      url "https://github.com/agent-rigger/agent-rigger/releases/download/v#{version}/agent-rigger-linux-arm64"
+      sha256 "__SHA_LINUX_ARM64__"
+    end
+    on_intel do
+      url "https://github.com/agent-rigger/agent-rigger/releases/download/v#{version}/agent-rigger-linux-x64"
+      sha256 "__SHA_LINUX_X64__"
+    end
+  end
+
+  def install
+    # Each platform downloads exactly one bare binary named agent-rigger-<os>-<arch>.
+    # Install it under the canonical name and expose the short `rigger` alias.
+    bin.install Dir["agent-rigger-*"].first => "agent-rigger"
+    bin.install_symlink "agent-rigger" => "rigger"
+  end
+
+  test do
+    assert_match version.to_s, shell_output("#{bin}/agent-rigger --version")
+  end
+end

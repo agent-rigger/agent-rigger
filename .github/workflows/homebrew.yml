@@ -1,0 +1,70 @@
+name: Homebrew
+
+# After a GitHub Release is published, regenerate the Homebrew formula with the
+# released version + checksums and push it to the tap repo (agent-rigger/homebrew-tap).
+#
+# Safe to merge before the tap exists: the job is a no-op when the
+# HOMEBREW_TAP_TOKEN secret is absent, so it never blocks or fails a release.
+# Enable it later by creating the tap repo and adding the secret (see
+# packaging/homebrew/README.md).
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read # read this repo's release assets; the tap is pushed via HOMEBREW_TAP_TOKEN
+
+jobs:
+  formula:
+    name: Update Homebrew formula
+    runs-on: ubuntu-latest
+    steps:
+      - name: Gate on tap token
+        id: gate
+        env:
+          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          if [ -n "$TAP_TOKEN" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::HOMEBREW_TAP_TOKEN not set — skipping Homebrew formula update."
+          fi
+
+      - name: Checkout source
+        if: steps.gate.outputs.enabled == 'true'
+        uses: actions/checkout@v4
+
+      - name: Download release checksums
+        if: steps.gate.outputs.enabled == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release download "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --pattern SHA256SUMS.txt --dir /tmp
+
+      - name: Render formula
+        if: steps.gate.outputs.enabled == 'true'
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          bash packaging/homebrew/render-formula.sh "$VERSION" /tmp/SHA256SUMS.txt > /tmp/agent-rigger.rb
+          echo "--- rendered formula ---"
+          cat /tmp/agent-rigger.rb
+
+      - name: Push to tap
+        if: steps.gate.outputs.enabled == 'true'
+        env:
+          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          git clone "https://x-access-token:${TAP_TOKEN}@github.com/agent-rigger/homebrew-tap.git" tap
+          mkdir -p tap/Formula
+          cp /tmp/agent-rigger.rb tap/Formula/agent-rigger.rb
+          cd tap
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/agent-rigger.rb
+          if git diff --cached --quiet; then
+            echo "Formula already up to date — nothing to push."
+            exit 0
+          fi
+          git commit -m "agent-rigger ${GITHUB_REF_NAME}"
+          git push origin HEAD
