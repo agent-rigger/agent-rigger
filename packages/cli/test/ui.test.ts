@@ -12,6 +12,7 @@
 
 import { describe, expect, it } from 'bun:test';
 
+import type { CatalogEntry } from '@agent-rigger/catalog';
 import type { RemovalOp, Report, WriteOp } from '@agent-rigger/core';
 import {
   abbreviatePath,
@@ -833,6 +834,28 @@ describe('renderReport', () => {
     const result = renderReport(report);
     expect(result.length).toBeGreaterThan(0);
   });
+
+  it('emits ANSI escape codes when color:true, keeping tags contiguous', () => {
+    const report: Report = {
+      entries: [
+        { id: 'a', nature: 'skill', state: 'present' },
+        { id: 'b', nature: 'mcp', state: 'missing' },
+        { id: 'c', nature: 'agent', state: 'drift' },
+      ],
+    };
+    const result = renderReport(report, { color: true });
+    expect(result).toContain('\x1b[');
+    expect(result).toContain('[ ok  ]');
+    expect(result).toContain('[miss ]');
+    expect(result).toContain('[drift]');
+  });
+
+  it('emits no ANSI escape codes when color:false', () => {
+    const report: Report = {
+      entries: [{ id: 'a', nature: 'skill', state: 'present' }],
+    };
+    expect(renderReport(report, { color: false })).not.toContain('\x1b[');
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -860,6 +883,25 @@ describe('interactive exports', () => {
 describe('new pure rendering exports', () => {
   it('renderCatalogList is a function', () => {
     expect(typeof renderCatalogList).toBe('function');
+  });
+
+  it('renderCatalogList emits ANSI codes when color:true, tag contiguous', () => {
+    const entries: CatalogEntry[] = [
+      { kind: 'artifact', id: 'skill:foo', nature: 'skill', targets: ['claude'], scopes: ['user'] },
+    ];
+    const result = renderCatalogList(entries, {
+      installedIds: new Set(['skill:foo']),
+      color: true,
+    });
+    expect(result).toContain('\x1b[');
+    expect(result).toContain('[installed]');
+  });
+
+  it('renderCatalogList emits no ANSI codes when color:false', () => {
+    const entries: CatalogEntry[] = [
+      { kind: 'artifact', id: 'skill:foo', nature: 'skill', targets: ['claude'], scopes: ['user'] },
+    ];
+    expect(renderCatalogList(entries, { color: false })).not.toContain('\x1b[');
   });
 
   it('renderEntryInfo is a function', () => {

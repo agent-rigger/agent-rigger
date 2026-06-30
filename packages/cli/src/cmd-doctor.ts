@@ -19,6 +19,8 @@
 
 import { defaultWhich, type WhichFn } from '@agent-rigger/core';
 
+import { ANSI, paint, shouldColor } from './ui';
+
 // ---------------------------------------------------------------------------
 // DoctorDep — descriptor for each checked dependency
 // ---------------------------------------------------------------------------
@@ -62,6 +64,12 @@ export interface RunDoctorOpts {
   which?: WhichFn;
   /** Output sink. */
   print: (s: string) => void;
+  /**
+   * Enable ANSI colour codes.
+   * Defaults to TTY auto-detection (see {@link shouldColor}).
+   * Pass `false` in tests for deterministic plain-text output.
+   */
+  color?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -82,8 +90,9 @@ export interface RunDoctorOpts {
 export async function runDoctor(opts: RunDoctorOpts): Promise<void> {
   const which = opts.which ?? defaultWhich;
   const { print } = opts;
+  const colorOn = shouldColor(opts.color);
 
-  print('--- agent-rigger doctor ---');
+  print(paint('--- agent-rigger doctor ---', ANSI.bold, colorOn));
   print('');
 
   let gitleaksPresent = false;
@@ -92,9 +101,18 @@ export async function runDoctor(opts: RunDoctorOpts): Promise<void> {
   for (const dep of DOCTOR_DEPS) {
     const resolved = which(dep.name);
     if (resolved === null) {
-      print(`✗ ${dep.name} — missing  hint: ${dep.installHint}`);
+      // Paint "✗ <name>" as one unit (red) and the hint dim — keeps the
+      // "✗ <name>" substring contiguous for assertions.
+      print(
+        `${paint(`✗ ${dep.name}`, ANSI.red, colorOn)} — missing  `
+          + paint(`hint: ${dep.installHint}`, ANSI.dim, colorOn),
+      );
     } else {
-      print(`✓ ${dep.name} (${resolved})`);
+      print(
+        `${paint(`✓ ${dep.name}`, ANSI.green, colorOn)} ${
+          paint(`(${resolved})`, ANSI.dim, colorOn)
+        }`,
+      );
       if (dep.name === 'gitleaks') gitleaksPresent = true;
       if (dep.name === 'trivy') trivyPresent = true;
     }
@@ -103,10 +121,14 @@ export async function runDoctor(opts: RunDoctorOpts): Promise<void> {
   print('');
 
   if (gitleaksPresent || trivyPresent) {
-    print('mode : full scan');
+    print(paint('mode : full scan', ANSI.green, colorOn));
   } else {
     print(
-      'mode : warn-only (external content not scanned — install gitleaks or trivy)',
+      paint(
+        'mode : warn-only (external content not scanned — install gitleaks or trivy)',
+        ANSI.yellow,
+        colorOn,
+      ),
     );
   }
 }

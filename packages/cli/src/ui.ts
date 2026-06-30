@@ -138,7 +138,7 @@ export { cancel, intro, isCancel, note, outro, spinner };
 // ANSI colour helpers (hand-rolled — zero external deps)
 // ---------------------------------------------------------------------------
 
-const ANSI = {
+export const ANSI = {
   green: '\x1b[32m',
   yellow: '\x1b[33m',
   red: '\x1b[31m',
@@ -151,8 +151,19 @@ const ANSI = {
  * Wrap `s` with an ANSI escape code when `on` is true.
  * Returns `s` unchanged when `on` is false — deterministic for tests.
  */
-function paint(s: string, code: string, on: boolean): string {
+export function paint(s: string, code: string, on: boolean): string {
   return on ? `${code}${s}${ANSI.reset}` : s;
+}
+
+/**
+ * Resolve whether ANSI colour should be emitted.
+ *
+ * Precedence: explicit `color` flag > auto-detection.
+ * Auto-detection enables colour only on a real TTY with NO_COLOR unset
+ * (https://no-color.org). Pass `false` in tests for deterministic output.
+ */
+export function shouldColor(color?: boolean): boolean {
+  return color ?? (process.stdout.isTTY === true && process.env.NO_COLOR === undefined);
 }
 
 // ---------------------------------------------------------------------------
@@ -240,8 +251,7 @@ export function renderPlan(groups: PlanGroup[], opts: RenderPlanOpts = {}): stri
     return 'Nothing to apply — already up to date.';
   }
 
-  const colorOn = opts.color
-    ?? (process.stdout.isTTY === true && process.env.NO_COLOR === undefined);
+  const colorOn = shouldColor(opts.color);
   const maxDetail = opts.maxDetail ?? 6;
   const abbr = (p: string): string => abbreviatePath(p, opts);
 
@@ -404,8 +414,7 @@ export function renderRemovalPlan(
     return 'Nothing to remove — not installed.';
   }
 
-  const colorOn = opts.color
-    ?? (process.stdout.isTTY === true && process.env.NO_COLOR === undefined);
+  const colorOn = shouldColor(opts.color);
   const maxDetail = opts.maxDetail ?? 6;
   const abbr = (p: string): string => abbreviatePath(p, opts);
 
@@ -522,36 +531,50 @@ export function renderRemovalPlan(
 
 // ---------------------------------------------------------------------------
 
+/** Options for renderReport. */
+export interface RenderReportOpts {
+  /**
+   * Enable ANSI colour codes.
+   * Defaults to TTY auto-detection (see {@link shouldColor}).
+   * Pass `false` in tests for deterministic plain-text output.
+   */
+  color?: boolean;
+}
+
 /**
  * Render an audit Report as a human-readable status list.
  *
- * State tags are padded to equal width for column alignment:
- *   [ ok  ]   present
- *   [miss ]   missing
- *   [drift]   drift — detail appended when provided
+ * State tags are padded to equal width for column alignment, and colourised
+ * as a contiguous unit (green/red/yellow) so substring assertions stay stable:
+ *   [ ok  ]   present  (green)
+ *   [miss ]   missing  (red)
+ *   [drift]   drift    (yellow) — detail appended when provided
  *
  * Returns a "no entries" message when entries is empty.
  */
-export function renderReport(report: Report): string {
+export function renderReport(report: Report, opts: RenderReportOpts = {}): string {
   if (report.entries.length === 0) {
     return 'Audit complete — no entries to report.';
   }
 
+  const colorOn = shouldColor(opts.color);
   const lines: string[] = [];
 
   for (const entry of report.entries) {
     switch (entry.state) {
       case 'present': {
-        lines.push(`  [ ok  ]  ${entry.id}  (${entry.nature})`);
+        lines.push(`  ${paint('[ ok  ]', ANSI.green, colorOn)}  ${entry.id}  (${entry.nature})`);
         break;
       }
       case 'missing': {
-        lines.push(`  [miss ]  ${entry.id}  (${entry.nature})`);
+        lines.push(`  ${paint('[miss ]', ANSI.red, colorOn)}  ${entry.id}  (${entry.nature})`);
         break;
       }
       case 'drift': {
         const detail = entry.detail === undefined ? '' : `  — ${entry.detail}`;
-        lines.push(`  [drift]  ${entry.id}  (${entry.nature})${detail}`);
+        lines.push(
+          `  ${paint('[drift]', ANSI.yellow, colorOn)}  ${entry.id}  (${entry.nature})${detail}`,
+        );
         break;
       }
     }
@@ -739,6 +762,12 @@ export interface RenderCatalogListOpts {
   installedIds?: Set<string>;
   /** Human label for filtered listing, e.g. "Skills". When absent: "Catalog". */
   label?: string;
+  /**
+   * Enable ANSI colour codes.
+   * Defaults to TTY auto-detection (see {@link shouldColor}).
+   * Pass `false` in tests for deterministic plain-text output.
+   */
+  color?: boolean;
 }
 
 /**
@@ -763,6 +792,7 @@ export function renderCatalogList(
   opts: RenderCatalogListOpts = {},
 ): string {
   const { installedIds, label } = opts;
+  const colorOn = shouldColor(opts.color);
 
   const n = entries.length;
   const entryWord = n === 1 ? 'entry' : 'entries';
@@ -776,8 +806,10 @@ export function renderCatalogList(
 
   const tagFor = (id: string): string => {
     const installed = installedIds !== undefined && installedIds.has(id);
-    const raw = installed ? INSTALLED : AVAILABLE;
-    return raw.padEnd(TAG_WIDTH);
+    // Pad first, then colour as one unit — ANSI codes are zero-width so column
+    // alignment is preserved while `[installed]`/`[available]` stay contiguous.
+    const raw = (installed ? INSTALLED : AVAILABLE).padEnd(TAG_WIDTH);
+    return paint(raw, installed ? ANSI.green : ANSI.dim, colorOn);
   };
 
   // Build rows first, then pad the id and nature columns to their max width so

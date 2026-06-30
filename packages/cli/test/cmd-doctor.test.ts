@@ -174,4 +174,26 @@ describe('runDoctor', () => {
     const output = lines().join('\n');
     expect(output).toContain('/custom/path/gitleaks');
   });
+
+  it('emits ANSI colour codes when color:true', async () => {
+    const which = makeWhich({ git: '/usr/bin/git' });
+    const { print, lines } = captureLines();
+
+    await runDoctor({ which, print, color: true });
+
+    const output = lines().join('\n');
+    expect(output).toContain('\x1b[');
+    // status substrings remain contiguous despite colour
+    expect(output).toContain('✓ git');
+    expect(output).toContain('✗ gitleaks');
+  });
+
+  it('emits no ANSI colour codes when color:false', async () => {
+    const which = makeWhich({ git: '/usr/bin/git' });
+    const { print, lines } = captureLines();
+
+    await runDoctor({ which, print, color: false });
+
+    expect(lines().join('\n')).not.toContain('\x1b[');
+  });
 });
