@@ -58,7 +58,7 @@ import { LegacyConfigError, loadConfig } from './config';
 import { PreflightAuthError } from './preflight-auth';
 import { defaultTmpFactory, fetchRemoteCatalog } from './remote';
 import { runRemoteInstall, ScanBlockedError } from './remote-install';
-import { renderEntryInfo, type StatusedEntry } from './ui';
+import { ANSI, paint, renderEntryInfo, shouldColor, type StatusedEntry } from './ui';
 
 import pkg from '../package.json';
 
@@ -754,7 +754,14 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
     if (command === 'check') {
       const effective = await resolveEffectiveCatalog(env, print, deps.remote);
 
+      // Best-effort catalog status + update-available annotation (R22.4).
+      // Computed from the manifest + configured catalogs, independent of whether
+      // the catalog listing could be fetched — so an unreachable catalog still
+      // surfaces here. Never throws: check exit code is unaffected.
+      const remoteSections = await resolveCheckRemoteSections(env, scope, deps.remote);
+
       if (effective.length === 0) {
+        printRemoteSections(print, remoteSections);
         return 0;
       }
 
@@ -770,17 +777,10 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
           scope,
         }));
 
-      // Best-effort update-available annotation (R22.4).
-      // Always run when catalog is non-empty, independent of guardrail/context presence.
-      // Never throws: failures are silently swallowed so check exit code is unaffected.
-      const updateLines = await resolveUpdateAvailable(env, scope, deps.remote);
-
       if (entries.length === 0) {
         // Catalog has entries but no guardrail/context to check.
-        // Still show update-available annotation if relevant.
-        if (updateLines.length > 0) {
-          print(updateLines.join('\n'));
-        }
+        // Still show catalog status + update annotation if relevant.
+        printRemoteSections(print, remoteSections);
         return 0;
       }
 
@@ -798,9 +798,7 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
 
       print(result.output);
 
-      if (updateLines.length > 0) {
-        print(updateLines.join('\n'));
-      }
+      printRemoteSections(print, remoteSections);
 
       return result.exitCode;
     }
@@ -1267,11 +1265,9 @@ async function handleResourceCommand(opts: ResourceCommandOpts): Promise<number>
 
     print(result.output);
 
-    // Best-effort update-available annotation (same as top-level check).
-    const updateLines = await resolveUpdateAvailable(env, scope, deps.remote);
-    if (updateLines.length > 0) {
-      print(updateLines.join('\n'));
-    }
+    // Best-effort catalog status + update-available annotation (same as top-level check).
+    const remoteSections = await resolveCheckRemoteSections(env, scope, deps.remote);
+    printRemoteSections(print, remoteSections);
 
     return result.exitCode;
   }
@@ -1903,54 +1899,118 @@ async function handleUpdate(opts: HandleUpdateOpts): Promise<number> {
 }
 
 // ---------------------------------------------------------------------------
-// resolveUpdateAvailable — best-effort update-available annotation for check
+// resolveCheckRemoteSections — best-effort catalog + update status for check
 // ---------------------------------------------------------------------------
 
+/** Per-catalog status + per-artifact stale detail rendered by `check`. */
+interface CheckRemoteSections {
+  /** One status line per configured catalog (always shown when catalogs exist). */
+  catalogLines: string[];
+  /** Per-artifact "[update available]" detail lines (only for stale artifacts). */
+  updateLines: string[];
+}
+
 /**
- * Returns formatted lines listing external entries with newer remote versions.
- * Best-effort: any error → returns [] (never throws).
+ * Render a per-catalog status line, aligned and coloured to match check/doctor.
+ *
+ * kinds: current (green) · update (yellow) · available (dim) · unreachable (red).
+ */
+function catalogStatusLine(
+  kind: 'current' | 'update' | 'available' | 'unreachable',
+  name: string,
+  ref: string,
+  staleCount: number,
+  colorOn: boolean,
+): string {
+  const TAG_WIDTH = 13; // widest tag is "[unreachable]"
+  const tagged = (tag: string, color: string): string =>
+    `  ${paint(tag, color, colorOn)}${' '.repeat(TAG_WIDTH - tag.length + 2)}${name}`;
+  switch (kind) {
+    case 'current':
+      return `${tagged('[up-to-date]', ANSI.green)}  (${ref})`;
+    case 'update':
+      return `${tagged('[update]', ANSI.yellow)}  → ${ref}  (${staleCount} artifact(s) behind)`;
+    case 'available':
+      return `${tagged('[available]', ANSI.dim)}  (latest ${ref})`;
+    case 'unreachable':
+      return `${tagged('[unreachable]', ANSI.red)}  (version could not be resolved)`;
+  }
+}
+
+/**
+ * Resolve, per configured catalog, whether installed artifacts are up-to-date and
+ * which ones are stale. Best-effort: any top-level error → empty sections (never
+ * throws); a single unreachable catalog degrades to an "[unreachable]" line.
  * Zero writes.
  */
-async function resolveUpdateAvailable(
+async function resolveCheckRemoteSections(
   env: Env,
   scope: 'user' | 'project',
   remote: CliDeps['remote'],
-): Promise<string[]> {
+): Promise<CheckRemoteSections> {
+  const empty: CheckRemoteSections = { catalogLines: [], updateLines: [] };
   try {
     const config = await loadCliConfig(env);
-    if (config.catalogs.length === 0) return [];
+    if (config.catalogs.length === 0) return empty;
 
     const runner: CommandRunner = remote?.run ?? defaultRunner;
-
     const { readManifest } = await import('@agent-rigger/core/manifest');
-    const manifestPath = resolveManifestPath(env);
-    const manifest = await readManifest(manifestPath);
+    const manifest = await readManifest(resolveManifestPath(env));
+    const colorOn = shouldColor();
 
-    // Check each configured catalog independently for stale entries.
-    // Best-effort: a failing catalog is silently skipped.
-    const staleIds: string[] = [];
+    const catalogLines: string[] = [];
+    const updateLines: string[] = [];
 
     for (const catalog of config.catalogs) {
+      const prefix = catalog.name + '/';
+      const installed = manifest.artifacts.filter(
+        (e) => e.scope === scope && e.ref !== 'v0.0.0' && e.id.startsWith(prefix),
+      );
+
+      let remoteVersion: Awaited<ReturnType<typeof resolveVersion>>;
       try {
-        const remoteVersion = await resolveVersion(catalog.url, runner);
-        const prefix = catalog.name + '/';
-
-        const catalogStale = manifest.artifacts
-          .filter((e) => e.scope === scope && e.ref !== 'v0.0.0' && e.id.startsWith(prefix))
-          .filter((e) => isUpdateAvailable(e.ref, remoteVersion))
-          .map((e) => `  [update available]  ${e.id}  ${e.ref} → ${remoteVersion.ref}`);
-
-        staleIds.push(...catalogStale);
+        remoteVersion = await resolveVersion(catalog.url, runner);
       } catch {
-        // Network failure on this catalog — silently skip (best-effort).
+        catalogLines.push(catalogStatusLine('unreachable', catalog.name, '', 0, colorOn));
+        continue;
+      }
+
+      const stale = installed.filter((e) => isUpdateAvailable(e.ref, remoteVersion));
+      if (installed.length === 0) {
+        catalogLines.push(
+          catalogStatusLine('available', catalog.name, remoteVersion.ref, 0, colorOn),
+        );
+      } else if (stale.length === 0) {
+        catalogLines.push(
+          catalogStatusLine('current', catalog.name, remoteVersion.ref, 0, colorOn),
+        );
+      } else {
+        catalogLines.push(
+          catalogStatusLine('update', catalog.name, remoteVersion.ref, stale.length, colorOn),
+        );
+        for (const e of stale) {
+          updateLines.push(`  [update available]  ${e.id}  ${e.ref} → ${remoteVersion.ref}`);
+        }
       }
     }
 
-    if (staleIds.length === 0) return [];
-
-    return ['', '--- Updates ---', ...staleIds];
+    return { catalogLines, updateLines };
   } catch {
-    return [];
+    return empty;
+  }
+}
+
+/** Print the "--- Catalogs ---" / "--- Updates ---" sections (skips empty ones). */
+function printRemoteSections(print: (m: string) => void, sections: CheckRemoteSections): void {
+  if (sections.catalogLines.length > 0) {
+    print('');
+    print('--- Catalogs ---');
+    print(sections.catalogLines.join('\n'));
+  }
+  if (sections.updateLines.length > 0) {
+    print('');
+    print('--- Updates ---');
+    print(sections.updateLines.join('\n'));
   }
 }
 

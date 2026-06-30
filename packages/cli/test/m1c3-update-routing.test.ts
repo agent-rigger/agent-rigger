@@ -588,6 +588,54 @@ describe('check — update-available annotation (Part B)', () => {
     const output = cap.lines.join('\n');
     expect(output).not.toMatch(/update available/i);
   });
+
+  it('shows a Catalogs section with up-to-date status when current', async () => {
+    await preInstall(iso.env, TAG_V1_0_0, SHA_V1_0_0);
+    // Remote stays at v1.0.0 → installed artifact is current.
+
+    const cap = makeCapture();
+    await runCli(['check'], {
+      print: cap.print,
+      env: iso.env,
+      remote: { run: iso.makeRunner(), tmpFactory: iso.makeTmpFactory(), scanner: stubScanner },
+    });
+
+    const output = cap.lines.join('\n');
+    expect(output).toMatch(/--- Catalogs ---/);
+    expect(output).toMatch(/\[up-to-date\]/);
+    expect(output).toContain(TAG_V1_0_0);
+  });
+
+  it('Catalogs section flags an update when the catalog is stale', async () => {
+    await preInstall(iso.env, TAG_V1_0_0, SHA_V1_0_0);
+    iso.setRemoteTag(TAG_V1_1_0, SHA_V1_1_0);
+
+    const cap = makeCapture();
+    await runCli(['check'], {
+      print: cap.print,
+      env: iso.env,
+      remote: { run: iso.makeRunner(), tmpFactory: iso.makeTmpFactory(), scanner: stubScanner },
+    });
+
+    const output = cap.lines.join('\n');
+    expect(output).toMatch(/--- Catalogs ---/);
+    expect(output).toMatch(/\[update\]/);
+    expect(output).toMatch(/artifact\(s\) behind/);
+  });
+
+  it('Catalogs section reports unreachable when version cannot be resolved', async () => {
+    await preInstall(iso.env, TAG_V1_0_0, SHA_V1_0_0);
+
+    const cap = makeCapture();
+    await runCli(['check'], {
+      print: cap.print,
+      env: iso.env,
+      remote: { run: failRunner, tmpFactory: iso.makeTmpFactory(), scanner: stubScanner },
+    });
+
+    const output = cap.lines.join('\n');
+    expect(output).toMatch(/\[unreachable\]/);
+  });
 });
 
 // ---------------------------------------------------------------------------
