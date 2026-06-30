@@ -29,7 +29,7 @@ jobs:
     name: Build binaries & publish release
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -78,7 +78,7 @@ jobs:
         run: sha256sum agent-rigger-* > SHA256SUMS.txt
 
       - name: Publish GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: |
             packages/cli/dist/agent-rigger-linux-x64
@@ -111,7 +111,7 @@ jobs:
 
       - name: Checkout source
         if: steps.gate.outputs.enabled == 'true'
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Download release checksums
         if: steps.gate.outputs.enabled == 'true'
