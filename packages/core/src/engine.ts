@@ -254,21 +254,27 @@ export async function apply(
         return [];
       });
 
-      // Backup every 'path'-based target that currently exists on disk; these are
-      // the only writes the rollback ledger can undo. Link ops (store copy +
-      // symlink) and plugin-install (external CLI) are NOT backed up — see the
-      // KNOWN BOUNDARY note on apply().
+      // Backup every 'path'-based target that currently exists on disk — but
+      // only ONCE per path per run. A file touched by several ops within this
+      // entry, or by several entries (e.g. settings.json hit by guardrails
+      // deny+allow and again by every hook merge), must produce a SINGLE .bak,
+      // not one backup per op. The rollback ledger is the dedup key: a path it
+      // already records was backed up earlier this run, so skip it here. Link
+      // ops (store copy + symlink) and plugin-install (external CLI) are NOT
+      // backed up — see the KNOWN BOUNDARY note on apply().
       const backupTargets = ops
         .filter((op) => 'path' in op)
-        .map((op) => (op as { path: string }).path);
+        .map((op) => (op as { path: string }).path)
+        .filter((p, i, arr) => arr.indexOf(p) === i && !rollbackLedger.has(p));
       const bakResults = await Promise.all(backupTargets.map((p) => backup(p)));
 
-      // Record the pre-write state for rollback (first-wins per path).
-      // backup() returns the .bak path when the file existed, null when it did not.
+      // Record the pre-write state for rollback. Every target here is new to the
+      // ledger (filtered above), so this is the first-wins entry for each path —
+      // rollback always restores the ORIGINAL pre-run state, never an
+      // intermediate one. backup() returns the .bak path when the file existed,
+      // null when it did not.
       backupTargets.forEach((p, i) => {
-        if (!rollbackLedger.has(p)) {
-          rollbackLedger.set(p, bakResults[i] ?? null);
-        }
+        rollbackLedger.set(p, bakResults[i] ?? null);
       });
 
       const backedUp = bakResults.filter((b): b is string => b !== null);

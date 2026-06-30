@@ -311,3 +311,67 @@ describe('apply result shape', () => {
     expect(result.written).toContain(targets.claudeSettings);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Single-backup-per-file invariant (regression)
+//
+// A file touched by several ops within an entry, or by several entries in the
+// same run (the real-world case: settings.json hit by guardrails deny+allow and
+// again by every hook merge), must yield exactly ONE .bak — not one per op.
+// ---------------------------------------------------------------------------
+
+/** Adapter whose every entry plans two ops on the SAME settings.json path. */
+function makeMultiOpSettingsAdapter(): Adapter {
+  return {
+    id: 'claude',
+    async audit(entry) {
+      return { id: entry.id, nature: entry.nature, state: 'present' };
+    },
+    async plan(_entry, _scope, env): Promise<WriteOp[]> {
+      const t = resolveUserTargets(env);
+      // Two ops, both targeting settings.json — exercises intra-entry dedup.
+      return [
+        { kind: 'merge-deny', path: t.claudeSettings, toAdd: ['Read(~/.x/**)'] },
+        { kind: 'merge-allow', path: t.claudeSettings, toAdd: ['Bash(ls)'] },
+      ];
+    },
+    async apply(ops): Promise<void> {
+      for (const op of ops) {
+        if (op.kind === 'merge-deny' || op.kind === 'merge-allow') {
+          const raw = await readJson(op.path);
+          await writeJson(op.path, { ...raw, touched: true });
+        }
+      }
+    },
+    async planRemove() {
+      return [];
+    },
+    async applyRemove(): Promise<void> {},
+  };
+}
+
+describe('apply() — single backup per file per run', () => {
+  it('creates exactly one .bak for settings.json hit by many ops across entries', async () => {
+    const adapter = makeMultiOpSettingsAdapter();
+    // 3 distinct entries × 2 ops each = 6 ops on the same settings.json path.
+    const entries = [
+      makeCatalogEntry('a'),
+      makeCatalogEntry('b'),
+      makeCatalogEntry('c'),
+    ];
+    const settingsDir = path.dirname(targets.claudeSettings);
+
+    await fs.mkdir(settingsDir, { recursive: true });
+    await writeJson(targets.claudeSettings, { permissions: { deny: [], allow: [] } });
+
+    const result = await apply(adapter, entries, 'user', env, manifestPath);
+
+    // Pre-fix: 6 backups. Post-fix: exactly 1.
+    // Source of truth = the engine's own report, plus a direct readdir count
+    // (countBakFiles' Bun.file(dir).exists() guard is unreliable for dirs).
+    const bakOnDisk = (await fs.readdir(settingsDir)).filter((e) => e.includes('.bak-'));
+    expect(bakOnDisk).toHaveLength(1);
+    expect(result.backedUp).toHaveLength(1);
+    expect(result.backedUp[0]).toContain('settings.json.bak-');
+  });
+});
