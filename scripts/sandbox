@@ -1,0 +1,59 @@
+# agent-rigger — isolated sandbox. SOURCE this file (do not execute):
+#
+#   source scripts/sandbox
+#
+# Creates a disposable RIGGER_HOME under /tmp and a `rigger` shell function bound
+# to the locally built binary. Every `rigger …` then writes ONLY under that
+# RIGGER_HOME — your real config (~/.claude, ~/.config/agent-rigger) is never
+# read or written. Reset between runs with `source scripts/reset`.
+#
+# (It must be SOURCED, not executed: it exports RIGGER_HOME and defines the
+#  `rigger` function, which have to live in your current shell. Run in a
+#  sub-shell they would vanish immediately.)
+
+# --- Guard: refuse direct execution (portable bash + zsh) --------------------
+_rigger_sourced=0
+if [ -n "${ZSH_VERSION:-}" ]; then
+  case "${ZSH_EVAL_CONTEXT:-}" in *:file) _rigger_sourced=1 ;; esac
+elif [ -n "${BASH_VERSION:-}" ]; then
+  (return 0 2>/dev/null) && _rigger_sourced=1
+fi
+if [ "$_rigger_sourced" -eq 0 ]; then
+  echo "Error: source me, do not execute:" >&2
+  echo "  source scripts/sandbox" >&2
+  exit 1
+fi
+unset _rigger_sourced
+
+# --- Resolve this file's path → repo root → binary (portable bash + zsh) -----
+if [ -n "${ZSH_VERSION:-}" ]; then
+  _rigger_self="${(%):-%x}"
+else
+  _rigger_self="${BASH_SOURCE[0]}"
+fi
+_RIGGER_ROOT="$(cd "$(dirname "$_rigger_self")/.." && pwd)"
+RIGGER_BIN="$_RIGGER_ROOT/packages/cli/dist/agent-rigger"
+
+# --- Build the binary if it is missing ---------------------------------------
+if [ ! -x "$RIGGER_BIN" ]; then
+  echo "[sandbox] binary missing — building…"
+  ( cd "$_RIGGER_ROOT" && bun run build ) || {
+    echo "[sandbox] build failed — check Bun (bun --version)" >&2
+    unset _rigger_self _RIGGER_ROOT
+    return 1
+  }
+fi
+unset _rigger_self _RIGGER_ROOT
+
+# --- Convenience: public example catalog (5 natures, 2 packs) ----------------
+# Nothing is added automatically — this is just a handy URL to test against.
+export RIGGER_EXAMPLE_CATALOG="https://github.com/agent-rigger/agent-rigger-catalog-example.git"
+
+# --- Disposable isolated home + rigger function ------------------------------
+export RIGGER_HOME="$(mktemp -d /tmp/rigger-sandbox.XXXXXX)"
+rigger() { "$RIGGER_BIN" "$@"; }
+
+echo "[sandbox] binary      : $RIGGER_BIN"
+echo "[sandbox] RIGGER_HOME : $RIGGER_HOME  (isolated — your real config is untouched)"
+echo "[sandbox] ready — use:  rigger <command>     (reset: source scripts/reset)"
+echo "[sandbox] try:          rigger catalog add example \"\$RIGGER_EXAMPLE_CATALOG\""

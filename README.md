@@ -125,6 +125,27 @@ Note: the CLI ships no content of its own — every artifact comes from a
 configured catalog fetched at runtime. The compiled binary is therefore
 self-contained (nothing to bundle).
 
+### Try it in isolation (sandbox)
+
+Want to try `rigger` without touching your real config? Source the sandbox
+helper: it builds the binary if needed, points a `rigger` shell function at it,
+and redirects **all** writes to a disposable `RIGGER_HOME` under `/tmp`.
+
+```sh
+source scripts/sandbox
+# [sandbox] RIGGER_HOME : /tmp/rigger-sandbox.XXXXXX  (your real config is untouched)
+
+rigger catalog add example "$RIGGER_EXAMPLE_CATALOG"   # public demo catalog
+rigger ls
+rigger install            # pick artifacts; nothing is written outside RIGGER_HOME
+
+source scripts/reset      # wipe and start from a blank slate
+```
+
+Your real config (`~/.claude`, `~/.config/agent-rigger`) is never read or
+written. When done, `rm -rf "$RIGGER_HOME"` leaves nothing behind. Must be
+**sourced**, not executed (it mutates your current shell).
+
 ---
 
 ## Usage
