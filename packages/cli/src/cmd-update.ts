@@ -62,6 +62,7 @@ function localId(id: string): string {
 
 import { buildClaudeAdapter } from './cli';
 import { scanEntries } from './remote-install';
+import { ANSI, paint, shouldColor } from './ui';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -89,6 +90,11 @@ export interface RunUpdateOptions {
    * When false/absent, a blocking scan throws ScanBlockedError (fail-closed).
    */
   force?: boolean;
+  /**
+   * Emit ANSI colour in the output. Defaults to TTY auto-detection
+   * (see {@link shouldColor}). Pass false in tests for deterministic output.
+   */
+  color?: boolean;
 }
 
 export interface UpdateResult {
@@ -138,6 +144,15 @@ export async function runUpdate(opts: RunUpdateOptions): Promise<UpdateResult> {
 
   const force = opts.force === true;
   const scanner: Scanner = opts.scanner ?? createCompositeScanner();
+
+  // Outcome line renderer — one artifact per line, aligned tag column, mirrors
+  // renderReport()'s `[ ok  ] id` aesthetic. Colour is a no-op when colorOn=false.
+  const colorOn = shouldColor(opts.color);
+  const TAG_WIDTH = 12;
+  const outcomeLine = (tag: string, tagColor: string, id: string, suffix: string): string => {
+    const gap = ' '.repeat(TAG_WIDTH - tag.length + 2);
+    return `  ${paint(tag, tagColor, colorOn)}${gap}${id}  ${suffix}`;
+  };
 
   const manifest = await readManifest(manifestPath);
 
@@ -319,17 +334,21 @@ export async function runUpdate(opts: RunUpdateOptions): Promise<UpdateResult> {
         outputParts.push(...checkoutResult.scanWarnings);
       }
       outputParts.push('--- Update ---');
-      outputParts.push(`  [updated] ${staleIds.join(', ')} → ${remote.ref}`);
+      for (const id of staleIds) {
+        outputParts.push(outcomeLine('[updated]', ANSI.green, id, `→ ${remote.ref}`));
+      }
     }
   }
 
   if (upToDateIds.length > 0) {
-    outputParts.push(`  [already up-to-date] ${upToDateIds.join(', ')} (${remote.ref})`);
+    for (const id of upToDateIds) {
+      outputParts.push(outcomeLine('[up-to-date]', ANSI.dim, id, `(${remote.ref})`));
+    }
   }
 
   for (const id of skippedIds) {
     const reason = skipReasons.get(id) ?? 'skipped';
-    outputParts.push(`  [skipped] ${id}: ${reason}`);
+    outputParts.push(outcomeLine('[skipped]', ANSI.yellow, id, reason));
   }
 
   const output = outputParts.join('\n');
