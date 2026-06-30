@@ -683,10 +683,11 @@ async function runInteractiveProposeInstall(
     runner: CommandRunner;
     tmpFactory: TmpDirFactory;
     scanner?: import('@agent-rigger/core/scan').Scanner;
+    print: (msg: string) => void;
   },
 ): Promise<string[]> {
   const { selectArtifactsWithDefaults } = await import('./ui');
-  const { scope, env, runner, tmpFactory, scanner } = opts;
+  const { scope, env, runner, tmpFactory, scanner, print } = opts;
 
   // Qualify meta.required/recommended with the source name so that they
   // match the qualified entries in the picker (ADR-0017).
@@ -708,7 +709,7 @@ async function runInteractiveProposeInstall(
 
   const manifestPath = resolveManifestPath(env);
 
-  await runRemoteInstall({
+  const result = await runRemoteInstall({
     ids: selectedIds,
     catalogUrl: installSource.catalogUrl,
     sourceName: installSource.sourceName,
@@ -720,6 +721,10 @@ async function runInteractiveProposeInstall(
     confirm: true,
     ...(scanner === undefined ? {} : { scanner }),
   });
+
+  // Surface the plan + result recap + scan/tool warnings. Without this the
+  // install happens silently after the picker (no feedback to the user).
+  print(result.output);
 
   return selectedIds;
 }
@@ -1004,6 +1009,7 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
             env,
             runner,
             tmpFactory,
+            print,
             ...(deps.remote?.scanner === undefined ? {} : { scanner: deps.remote.scanner }),
           });
         };
@@ -1148,6 +1154,7 @@ async function handleResourceCommand(opts: ResourceCommandOpts): Promise<number>
           env,
           runner,
           tmpFactory,
+          print,
           ...(deps.remote?.scanner === undefined ? {} : { scanner: deps.remote.scanner }),
         });
       };
