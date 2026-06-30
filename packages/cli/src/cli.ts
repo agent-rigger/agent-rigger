@@ -58,7 +58,7 @@ import { LegacyConfigError, loadConfig } from './config';
 import { PreflightAuthError } from './preflight-auth';
 import { defaultTmpFactory, fetchRemoteCatalog } from './remote';
 import { runRemoteInstall, ScanBlockedError } from './remote-install';
-import { renderEntryInfo } from './ui';
+import { renderEntryInfo, type StatusedEntry } from './ui';
 
 import pkg from '../package.json';
 
@@ -396,6 +396,16 @@ Examples:
 /** Prompt callbacks injected by the CLI entry or tests. */
 export interface CliPrompts {
   selectArtifacts: (entries: CatalogEntry[]) => Promise<string[]>;
+  /**
+   * Optional status-aware grouped picker (install / update / current).
+   *
+   * When provided (real CLI via importUiPrompts), the interactive install flow
+   * asks for scope first, classifies each entry against the manifest + remote
+   * version, short-circuits when nothing is actionable, and renders the grouped
+   * picker. When absent (legacy / injected-prompt tests), the flow falls back to
+   * the flat `selectArtifacts` picker with scope asked afterwards.
+   */
+  selectArtifactsByStatus?: (entries: StatusedEntry[]) => Promise<string[]>;
   selectScope: () => Promise<'user' | 'project'>;
   confirmApply: (planText: string) => Promise<boolean>;
   askUrl: () => Promise<string>;
@@ -549,6 +559,65 @@ async function resolveEffectiveCatalog(
   }
 
   return effective.entries;
+}
+
+// ---------------------------------------------------------------------------
+// computeArtifactStatuses — classify effective entries vs manifest + remote
+// ---------------------------------------------------------------------------
+
+/**
+ * Classify each effective catalog entry as install / update / current for the
+ * given scope.
+ *
+ * - Reads the manifest to find installed ids (+ their ref) for `scope`.
+ * - Resolves the remote version (top semver tag) per configured catalog so an
+ *   installed entry at an older ref is flagged 'update'. A catalog whose version
+ *   cannot be resolved degrades gracefully (its installed entries → 'current').
+ * - Packs and any non-manifest-tracked entry fall through to 'install'.
+ */
+async function computeArtifactStatuses(
+  effective: CatalogEntry[],
+  scope: 'user' | 'project',
+  env: Env,
+  deps: CliDeps,
+): Promise<StatusedEntry[]> {
+  const runner: CommandRunner = deps.remote?.run ?? defaultRunner;
+  const manifestPath = resolveManifestPath(env);
+  const { readManifest } = await import('@agent-rigger/core/manifest');
+  const manifest = await readManifest(manifestPath);
+
+  const installedRefById = new Map<string, string>();
+  for (const a of manifest.artifacts) {
+    if (a.scope === scope) installedRefById.set(a.id, a.ref);
+  }
+
+  // Resolve remote version per catalog (keyed by source name = id prefix).
+  // Degrade to null on failure — update detection is skipped for that catalog.
+  const config = await loadCliConfig(env);
+  const remoteByName = new Map<string, Awaited<ReturnType<typeof resolveVersion>> | null>();
+  await Promise.all(
+    config.catalogs.map(async (c) => {
+      try {
+        remoteByName.set(c.name, await resolveVersion(c.url, runner));
+      } catch {
+        remoteByName.set(c.name, null);
+      }
+    }),
+  );
+
+  return effective.map((e) => {
+    const installedRef = installedRefById.get(e.id);
+    if (installedRef === undefined) {
+      return { id: e.id, status: 'install' as const };
+    }
+    const slash = e.id.indexOf('/');
+    const prefix = slash === -1 ? '' : e.id.slice(0, slash);
+    const remote = remoteByName.get(prefix) ?? null;
+    if (remote !== null && isUpdateAvailable(installedRef, remote)) {
+      return { id: e.id, status: 'update' as const, installedRef, remoteRef: remote.ref };
+    }
+    return { id: e.id, status: 'current' as const, installedRef };
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -1437,13 +1506,39 @@ async function handleInstall(opts: HandleInstallOpts): Promise<number> {
     return 0;
   }
 
-  const selectedIds = await prompts.selectArtifacts(effective);
-  if (selectedIds.length === 0) {
-    print('No artifacts selected — nothing to install.');
-    return 0;
+  let selectedIds: string[];
+  let interactiveScope: 'user' | 'project';
+
+  const statusPicker = prompts.selectArtifactsByStatus;
+  if (statusPicker === undefined) {
+    // Legacy flow (preserved order for injected-prompt tests without the picker).
+    selectedIds = await prompts.selectArtifacts(effective);
+    if (selectedIds.length === 0) {
+      print('No artifacts selected — nothing to install.');
+      return 0;
+    }
+    interactiveScope = await prompts.selectScope();
+  } else {
+    // Status-aware flow: scope first (status is per-scope), classify each entry
+    // against the manifest + remote version, short-circuit when nothing is
+    // actionable, then render the grouped install/update picker.
+    interactiveScope = await prompts.selectScope();
+    const statuses = await computeArtifactStatuses(effective, interactiveScope, env, deps);
+    const actionable = statuses.filter((s) => s.status !== 'current');
+    if (actionable.length === 0) {
+      print(
+        `✓ Everything already up-to-date for scope "${interactiveScope}" `
+          + `(${statuses.length} artifact(s) installed). Use \`agent-rigger remove\` to uninstall.`,
+      );
+      return 0;
+    }
+    selectedIds = await statusPicker(statuses);
+    if (selectedIds.length === 0) {
+      print('No artifacts selected — nothing to install.');
+      return 0;
+    }
   }
 
-  const interactiveScope = await prompts.selectScope();
   const interactiveManifestPath = resolveManifestPath(env);
   const interactiveConfig = await loadCliConfig(env);
 
@@ -1946,6 +2041,7 @@ async function importUiPrompts(): Promise<CliPrompts> {
   const ui = await import('./ui');
   return {
     selectArtifacts: (entries) => ui.selectArtifacts(entries),
+    selectArtifactsByStatus: (entries) => ui.selectArtifactsByStatus(entries),
     selectScope: () => ui.selectScope(),
     confirmApply: (planText) => ui.confirmApply(planText),
     askUrl: async () => {

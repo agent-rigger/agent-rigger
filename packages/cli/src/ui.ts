@@ -15,6 +15,7 @@
 import {
   cancel,
   confirm,
+  groupMultiselect,
   intro,
   isCancel,
   multiselect,
@@ -728,6 +729,83 @@ export async function selectArtifactsWithDefaults(
     }
   }
   return enforced;
+}
+
+// ---------------------------------------------------------------------------
+// selectArtifactsByStatus — status-aware grouped install/update picker
+// ---------------------------------------------------------------------------
+
+/** Install-time status of a catalog entry relative to the manifest + remote. */
+export type ArtifactStatus = 'install' | 'update' | 'current';
+
+/**
+ * A catalog entry annotated with its install status.
+ *
+ * - install : not present in the manifest for the target scope.
+ * - update  : installed, but the remote has a newer version (installedRef < remoteRef).
+ * - current : installed and already at the latest resolved version.
+ */
+export interface StatusedEntry {
+  id: string;
+  status: ArtifactStatus;
+  /** Installed version (present for update/current). */
+  installedRef?: string;
+  /** Target/remote version (present for install/update). */
+  remoteRef?: string;
+}
+
+/**
+ * Status-aware grouped picker (groupMultiselect).
+ *
+ * Three groups, only rendered when non-empty:
+ *   - "À installer"                  → not installed; pre-checked.
+ *   - "À mettre à jour"              → newer version available; pre-checked, hint `old → new`.
+ *   - "À jour (cocher = réinstaller)" → already current; unchecked, hint `✓ ref`.
+ *
+ * Pre-checked set = install ∪ update. The "current" group lets the user opt into
+ * a reinstall by checking an item. Cancellation returns [] (install nothing).
+ */
+export async function selectArtifactsByStatus(entries: StatusedEntry[]): Promise<string[]> {
+  const install = entries.filter((e) => e.status === 'install');
+  const update = entries.filter((e) => e.status === 'update');
+  const current = entries.filter((e) => e.status === 'current');
+
+  const options: Record<string, Array<{ value: string; label: string; hint?: string }>> = {};
+  if (install.length > 0) {
+    options['À installer'] = install.map((e) => ({ value: e.id, label: e.id }));
+  }
+  if (update.length > 0) {
+    options['À mettre à jour'] = update.map((e) => ({
+      value: e.id,
+      label: e.id,
+      hint: `${e.installedRef} → ${e.remoteRef}`,
+    }));
+  }
+  if (current.length > 0) {
+    options['À jour (cocher = réinstaller)'] = current.map((e) => ({
+      value: e.id,
+      label: e.id,
+      hint: `✓ ${e.installedRef}`,
+    }));
+  }
+
+  const initialValues = [...install, ...update].map((e) => e.id);
+
+  const result = await groupMultiselect<string>({
+    message: 'Select artifacts to install / update:',
+    options,
+    initialValues,
+    required: false,
+    selectableGroups: false,
+    groupSpacing: 1,
+  });
+
+  if (isCancel(result)) {
+    cancel('Operation cancelled.');
+    return [];
+  }
+
+  return result;
 }
 
 /**
