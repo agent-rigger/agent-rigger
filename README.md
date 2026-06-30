@@ -64,7 +64,15 @@ and when. Used by `check` to detect drift.
 
 **Store + symlink** — skills are written to a managed store
 (`~/.config/agent-rigger/skills/`) and symlinked into place. The source of
-truth is the store; the symlink is the target.
+truth is the store; the symlink is the target. The symlinks use **absolute
+paths**, and the store is always under `~/.config/agent-rigger/` regardless of
+scope.
+
+> **Invariant — fixed paths.** Do not move, rename, or `mv` the install
+> directory (`~/.config/agent-rigger/`, `~/.claude/`) or any artifact by hand:
+> the absolute symlinks and the `state.json` manifest both assume stable paths,
+> so a manual move breaks the links and desyncs the manifest. To rename or
+> relocate an artifact, go through the CLI (`remove` then `install`).
 
 **Delegate-first** — `agent-rigger` delegates external tool installation to the
 host package manager (brew, mise). It detects presence via `command -v` and
