@@ -16,6 +16,7 @@ import type { CatalogEntry } from '@agent-rigger/catalog';
 import type { RemovalOp, Report, WriteOp } from '@agent-rigger/core';
 import {
   abbreviatePath,
+  buildStatusOptions,
   confirmApply,
   renderCatalogList,
   renderEntryInfo,
@@ -25,7 +26,7 @@ import {
   selectArtifacts,
   selectScope,
 } from '../src/ui';
-import type { PlanGroup, PlanRemovalGroup } from '../src/ui';
+import type { PlanGroup, PlanRemovalGroup, StatusedEntry } from '../src/ui';
 
 // ---------------------------------------------------------------------------
 // abbreviatePath
@@ -1226,5 +1227,57 @@ describe('renderRemovalPlan — color', () => {
     const group: PlanRemovalGroup = { id: 'a', nature: 'guardrail', ops: [op] };
     const result = renderRemovalPlan([group], { color: false });
     expect(result).not.toContain('\x1b[');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// buildStatusOptions — version is embedded in the label (always visible)
+// ---------------------------------------------------------------------------
+
+describe('buildStatusOptions', () => {
+  it('embeds the installed version in the "À jour" label, not a hint', () => {
+    const entries: StatusedEntry[] = [
+      { id: 'jr/hook:guard-command', status: 'current', installedRef: 'v0.2.1' },
+    ];
+    const opts = buildStatusOptions(entries);
+    const current = opts['À jour (cocher = réinstaller)'];
+    expect(current).toEqual([
+      { value: 'jr/hook:guard-command', label: 'jr/hook:guard-command (✓ v0.2.1)' },
+    ]);
+    // No `hint` key — clack would hide it on unchecked rows.
+    expect(current?.[0]).not.toHaveProperty('hint');
+  });
+
+  it('embeds old → new in the "À mettre à jour" label', () => {
+    const entries: StatusedEntry[] = [
+      { id: 'jr/agent:pm', status: 'update', installedRef: 'v0.1.0', remoteRef: 'v0.2.1' },
+    ];
+    const opts = buildStatusOptions(entries);
+    expect(opts['À mettre à jour']).toEqual([
+      { value: 'jr/agent:pm', label: 'jr/agent:pm (v0.1.0 → v0.2.1)' },
+    ]);
+  });
+
+  it('shows the target version on "À installer" rows when remoteRef is known', () => {
+    const entries: StatusedEntry[] = [
+      { id: 'jr/skill:react-testing', status: 'install', remoteRef: 'v0.2.1' },
+    ];
+    const opts = buildStatusOptions(entries);
+    expect(opts['À installer']).toEqual([
+      { value: 'jr/skill:react-testing', label: 'jr/skill:react-testing (→ v0.2.1)' },
+    ]);
+  });
+
+  it('falls back to the bare id on "À installer" when remoteRef is unavailable', () => {
+    const entries: StatusedEntry[] = [{ id: 'jr/skill:react-testing', status: 'install' }];
+    const opts = buildStatusOptions(entries);
+    expect(opts['À installer']).toEqual([
+      { value: 'jr/skill:react-testing', label: 'jr/skill:react-testing' },
+    ]);
+  });
+
+  it('omits empty groups', () => {
+    const opts = buildStatusOptions([{ id: 'a', status: 'install', remoteRef: 'v1' }]);
+    expect(Object.keys(opts)).toEqual(['À installer']);
   });
 });

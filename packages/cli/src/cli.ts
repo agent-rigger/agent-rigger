@@ -606,13 +606,16 @@ async function computeArtifactStatuses(
   );
 
   return effective.map((e) => {
-    const installedRef = installedRefById.get(e.id);
-    if (installedRef === undefined) {
-      return { id: e.id, status: 'install' as const };
-    }
     const slash = e.id.indexOf('/');
     const prefix = slash === -1 ? '' : e.id.slice(0, slash);
     const remote = remoteByName.get(prefix) ?? null;
+    const installedRef = installedRefById.get(e.id);
+    if (installedRef === undefined) {
+      // Surface the to-be-installed version when the remote resolved.
+      return remote === null
+        ? { id: e.id, status: 'install' as const }
+        : { id: e.id, status: 'install' as const, remoteRef: remote.ref };
+    }
     if (remote !== null && isUpdateAvailable(installedRef, remote)) {
       return { id: e.id, status: 'update' as const, installedRef, remoteRef: remote.ref };
     }

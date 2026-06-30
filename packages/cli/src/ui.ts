@@ -754,42 +754,65 @@ export interface StatusedEntry {
   remoteRef?: string;
 }
 
+/** A single picker option: stable `value` (the artifact id) + display `label`. */
+export interface StatusOption {
+  value: string;
+  label: string;
+}
+
 /**
- * Status-aware grouped picker (groupMultiselect).
+ * Build the grouped option map for the status-aware picker (pure, testable).
  *
- * Three groups, only rendered when non-empty:
- *   - "À installer"                  → not installed; pre-checked.
- *   - "À mettre à jour"              → newer version available; pre-checked, hint `old → new`.
- *   - "À jour (cocher = réinstaller)" → already current; unchecked, hint `✓ ref`.
+ * The version annotation is embedded in the `label` — NOT in clack's `hint`.
+ * `groupMultiselect` only renders `hint` for the focused or selected row, so a
+ * version placed there vanishes on unchecked rows (the "À jour" group is
+ * unchecked by default). Putting it in the label keeps it visible in every
+ * state. Groups are only emitted when non-empty.
  *
- * Pre-checked set = install ∪ update. The "current" group lets the user opt into
- * a reinstall by checking an item. Cancellation returns [] (install nothing).
+ *   - "À installer"                  → not installed; label `id (→ target)`.
+ *   - "À mettre à jour"              → newer available; label `id (old → new)`.
+ *   - "À jour (cocher = réinstaller)" → current; label `id (✓ ref)`.
  */
-export async function selectArtifactsByStatus(entries: StatusedEntry[]): Promise<string[]> {
+export function buildStatusOptions(entries: StatusedEntry[]): Record<string, StatusOption[]> {
   const install = entries.filter((e) => e.status === 'install');
   const update = entries.filter((e) => e.status === 'update');
   const current = entries.filter((e) => e.status === 'current');
 
-  const options: Record<string, Array<{ value: string; label: string; hint?: string }>> = {};
+  const options: Record<string, StatusOption[]> = {};
   if (install.length > 0) {
-    options['À installer'] = install.map((e) => ({ value: e.id, label: e.id }));
+    options['À installer'] = install.map((e) => ({
+      value: e.id,
+      label: e.remoteRef === undefined ? e.id : `${e.id} (→ ${e.remoteRef})`,
+    }));
   }
   if (update.length > 0) {
     options['À mettre à jour'] = update.map((e) => ({
       value: e.id,
-      label: e.id,
-      hint: `${e.installedRef} → ${e.remoteRef}`,
+      label: `${e.id} (${e.installedRef} → ${e.remoteRef})`,
     }));
   }
   if (current.length > 0) {
     options['À jour (cocher = réinstaller)'] = current.map((e) => ({
       value: e.id,
-      label: e.id,
-      hint: `✓ ${e.installedRef}`,
+      label: `${e.id} (✓ ${e.installedRef})`,
     }));
   }
+  return options;
+}
 
-  const initialValues = [...install, ...update].map((e) => e.id);
+/**
+ * Status-aware grouped picker (groupMultiselect).
+ *
+ * Three groups, only rendered when non-empty (see {@link buildStatusOptions}).
+ * Pre-checked set = install ∪ update. The "current" group lets the user opt into
+ * a reinstall by checking an item. Cancellation returns [] (install nothing).
+ */
+export async function selectArtifactsByStatus(entries: StatusedEntry[]): Promise<string[]> {
+  const options = buildStatusOptions(entries);
+
+  const initialValues = entries
+    .filter((e) => e.status === 'install' || e.status === 'update')
+    .map((e) => e.id);
 
   const result = await groupMultiselect<string>({
     message:
