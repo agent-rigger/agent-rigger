@@ -18,6 +18,7 @@ import { join } from 'node:path';
 
 import {
   type CatalogEntry,
+  type CatalogMeta,
   fetchCatalog,
   mergeCatalogs,
   resolveVersion,
@@ -32,6 +33,8 @@ import { type CommandRunner, defaultRunner } from '@agent-rigger/catalog/tool-ch
 /** Result of a successful remote catalog fetch. */
 export interface RemoteCatalog {
   entries: CatalogEntry[];
+  /** The catalog's `meta` block (name + required/recommended governance). */
+  meta: CatalogMeta;
   version: { ref: string; sha: string; isTag: boolean };
 }
 
@@ -74,12 +77,13 @@ export async function fetchRemoteCatalog(opts: {
   const { url, run = defaultRunner, tmpFactory = defaultTmpFactory } = opts;
 
   const version = await resolveVersion(url, run);
-  const { entries, sha } = await fetchCatalog(url, version.ref, version.isTag, run, {
+  const { meta, entries, sha } = await fetchCatalog(url, version.ref, version.isTag, run, {
     tmpFactory,
   });
 
   return {
     entries,
+    meta,
     version: { ref: version.ref, sha, isTag: version.isTag },
   };
 }

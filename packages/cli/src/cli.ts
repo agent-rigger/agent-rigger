@@ -55,6 +55,7 @@ import { RESOURCE_NATURE_MAP, runLs } from './cmd-ls';
 import { runRemove, UnknownRemoveIdError } from './cmd-remove';
 import { runUpdate } from './cmd-update';
 import { LegacyConfigError, loadConfig } from './config';
+import { auditableGovernanceIds, type CatalogGovernanceMeta } from './governance';
 import { PreflightAuthError } from './preflight-auth';
 import { defaultTmpFactory, fetchRemoteCatalog } from './remote';
 import { runRemoteInstall, ScanBlockedError } from './remote-install';
@@ -493,11 +494,23 @@ async function loadCliConfig(env: Env): Promise<Awaited<ReturnType<typeof loadCo
  * - Folds all qualified arrays via foldCatalogs(sources).
  * - Reports id collisions (same qualified id in multiple sources) as a warning.
  */
-async function resolveEffectiveCatalog(
+/** Effective catalog + the governance meta of every source that resolved. */
+interface EffectiveCatalog {
+  entries: CatalogEntry[];
+  /** sourceName → its meta.required/recommended. Absent for failed sources. */
+  metaBySource: Map<string, CatalogGovernanceMeta>;
+}
+
+/**
+ * Like {@link resolveEffectiveCatalog} but also returns each source's governance
+ * meta (required/recommended), needed by `check` to decide which guardrail/
+ * context entries to audit. The single fetch is shared — no extra remote work.
+ */
+async function resolveEffectiveCatalogFull(
   env: Env,
   print: (msg: string) => void,
   remote: CliDeps['remote'],
-): Promise<CatalogEntry[]> {
+): Promise<EffectiveCatalog> {
   let config: Awaited<ReturnType<typeof loadCliConfig>>;
   try {
     config = await loadCliConfig(env);
@@ -506,14 +519,14 @@ async function resolveEffectiveCatalog(
       print(
         `[warning] ${err.message}`,
       );
-      return [];
+      return { entries: [], metaBySource: new Map() };
     }
     throw err;
   }
 
   if (config.catalogs.length === 0) {
     print('no catalog configured — run `agent-rigger init`');
-    return [];
+    return { entries: [], metaBySource: new Map() };
   }
 
   const run: CommandRunner | undefined = remote?.run;
@@ -530,10 +543,11 @@ async function resolveEffectiveCatalog(
         if (run !== undefined) fetchOpts.run = run;
         if (tmpFactory !== undefined) fetchOpts.tmpFactory = tmpFactory;
 
-        const { entries } = await fetchRemoteCatalog(fetchOpts);
+        const { entries, meta } = await fetchRemoteCatalog(fetchOpts);
         return {
           name: source.name,
           entries: qualifyEntries(source.name, entries),
+          meta: { required: meta.required, recommended: meta.recommended } as CatalogGovernanceMeta,
           ok: true,
         };
       } catch (err) {
@@ -542,7 +556,12 @@ async function resolveEffectiveCatalog(
           `[warning] Catalog "${source.name}" (${source.url}) unavailable (${msg}). `
             + `Check the URL or run \`agent-rigger init\`.`,
         );
-        return { name: source.name, entries: [] as CatalogEntry[], ok: false };
+        return {
+          name: source.name,
+          entries: [] as CatalogEntry[],
+          meta: undefined as CatalogGovernanceMeta | undefined,
+          ok: false,
+        };
       }
     }),
   );
@@ -558,7 +577,25 @@ async function resolveEffectiveCatalog(
     );
   }
 
-  return effective.entries;
+  const metaBySource = new Map<string, CatalogGovernanceMeta>();
+  for (const r of sourceResults) {
+    if (r.meta !== undefined) metaBySource.set(r.name, r.meta);
+  }
+
+  return { entries: effective.entries, metaBySource };
+}
+
+/**
+ * Resolve the effective catalog by fetching all configured sources in parallel.
+ * Thin wrapper over {@link resolveEffectiveCatalogFull} for the many call-sites
+ * that only need the merged, qualified entries.
+ */
+async function resolveEffectiveCatalog(
+  env: Env,
+  print: (msg: string) => void,
+  remote: CliDeps['remote'],
+): Promise<CatalogEntry[]> {
+  return (await resolveEffectiveCatalogFull(env, print, remote)).entries;
 }
 
 // ---------------------------------------------------------------------------
@@ -755,7 +792,11 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
 
     // ----- check -----
     if (command === 'check') {
-      const effective = await resolveEffectiveCatalog(env, print, deps.remote);
+      const { entries: effective, metaBySource } = await resolveEffectiveCatalogFull(
+        env,
+        print,
+        deps.remote,
+      );
 
       // Best-effort catalog status + update-available annotation (R22.4).
       // Computed from the manifest + configured catalogs, independent of whether
@@ -768,11 +809,28 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
         return 0;
       }
 
-      // Entries for check: all guardrails and contexts in the effective catalog.
-      // (No hardcoded ids — catalog is fully remote, content comes from catalogUrl.)
+      const manifestPath = resolveManifestPath(env);
+
+      // Which guardrail/context to audit: a catalog entry is an offer, not an
+      // obligation. Audit only the DECLARED governance baseline (required ∪
+      // recommended, packs expanded) plus whatever is already installed (so
+      // drift is still caught). This keeps `check` green when an extra catalog
+      // merely OFFERS guardrails/context the user never opted into.
+      const { readManifest } = await import('@agent-rigger/core/manifest');
+      const manifestForCheck = await readManifest(manifestPath);
+      const installedGovernanceIds = manifestForCheck.artifacts
+        .filter(
+          (a) => a.scope === scope && (a.nature === 'guardrail' || a.nature === 'context'),
+        )
+        .map((a) => a.id);
+      const auditable = auditableGovernanceIds(effective, metaBySource, installedGovernanceIds);
+
       const entries: AdapterEntry[] = effective
         .filter(
-          (e) => e.kind === 'artifact' && (e.nature === 'guardrail' || e.nature === 'context'),
+          (e) =>
+            e.kind === 'artifact'
+            && (e.nature === 'guardrail' || e.nature === 'context')
+            && auditable.has(e.id),
         )
         .map((e) => ({
           id: e.id,
@@ -781,13 +839,11 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
         }));
 
       if (entries.length === 0) {
-        // Catalog has entries but no guardrail/context to check.
-        // Still show catalog status + update annotation if relevant.
+        // Nothing declared-or-installed to audit — still show catalog status.
         printRemoteSections(print, remoteSections);
         return 0;
       }
 
-      const manifestPath = resolveManifestPath(env);
       const adapter = await buildClaudeAdapter(env);
 
       const result = await runCheck({
