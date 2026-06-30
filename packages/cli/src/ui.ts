@@ -792,11 +792,14 @@ export async function selectArtifactsByStatus(entries: StatusedEntry[]): Promise
   const initialValues = [...install, ...update].map((e) => e.id);
 
   const result = await groupMultiselect<string>({
-    message: 'Select artifacts to install / update:',
+    message:
+      'Select artifacts to install / update (Space on a group header toggles the whole group):',
     options,
     initialValues,
     required: false,
-    selectableGroups: false,
+    // Group headers are selectable: Space on "À installer" / "À mettre à jour"
+    // toggles every item in that group at once (select-all / deselect-all).
+    selectableGroups: true,
     groupSpacing: 1,
   });
 
