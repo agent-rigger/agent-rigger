@@ -59,22 +59,22 @@ export function auditableGovernanceIds(
   };
 
   // 1. Declared governance: expand required ∪ recommended through packs.
+  // Recursive DFS through pack membership (transitive); `seen` guards cycles.
+  // No while loop (project convention): recursion + for...of instead of a stack.
   for (const [source, meta] of metaBySource) {
-    const seeds = [...(meta.required ?? []), ...(meta.recommended ?? [])].map((id) =>
-      qualify(source, id)
-    );
-    const stack = [...seeds];
     const seen = new Set<string>();
-    while (stack.length > 0) {
-      const id = stack.pop() as string;
-      if (seen.has(id)) continue;
+    const visit = (id: string): void => {
+      if (seen.has(id)) return;
       seen.add(id);
       const members = packMembers.get(id);
       if (members === undefined) {
         addIfGovernance(id);
       } else {
-        for (const member of members) stack.push(member);
+        for (const member of members) visit(member);
       }
+    };
+    for (const seed of [...(meta.required ?? []), ...(meta.recommended ?? [])]) {
+      visit(qualify(source, seed));
     }
   }
 
