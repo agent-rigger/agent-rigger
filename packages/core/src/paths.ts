@@ -44,6 +44,34 @@ export interface ProjectTargets {
   agentsMd: string;
 }
 
+/** Absolute paths for opencode user-scope targets (M3). */
+export interface OpencodeUserTargets {
+  /** ~/.config/opencode/opencode.json */
+  opencodeJson: string;
+  /** ~/.config/opencode/AGENTS.md */
+  agentsMd: string;
+  /** ~/.config/opencode/agents/ */
+  agentsDir: string;
+  /** ~/.config/opencode/plugin/ */
+  pluginDir: string;
+  /** ~/.config/opencode/skills/ (symlink target; physical store stays under agent-rigger). */
+  skillsDir: string;
+}
+
+/** Absolute paths for opencode project-scope targets (M3). */
+export interface OpencodeProjectTargets {
+  /** <cwd>/opencode.json */
+  opencodeJson: string;
+  /** <cwd>/AGENTS.md */
+  agentsMd: string;
+  /** <cwd>/.opencode/agents/ */
+  agentsDir: string;
+  /** <cwd>/.opencode/plugin/ */
+  pluginDir: string;
+  /** <cwd>/.opencode/skills/ */
+  skillsDir: string;
+}
+
 // ---------------------------------------------------------------------------
 // Core resolver
 // ---------------------------------------------------------------------------
@@ -110,5 +138,46 @@ export function resolveProjectTargets(cwd: string = process.cwd()): ProjectTarge
     claudeSettings: path.join(claudeDir, 'settings.json'),
     claudeMd: path.join(claudeDir, 'CLAUDE.md'),
     agentsMd: path.join(cwd, 'AGENTS.md'),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// opencode-scope targets (M3)
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolve all opencode user-scope target paths under the effective home.
+ * Config root is ~/.config/opencode (opencode's native global location).
+ */
+export function resolveOpencodeUserTargets(env: Env = Bun.env): OpencodeUserTargets {
+  const home = resolveHome(env);
+  const opencodeDir = path.join(home, '.config', 'opencode');
+
+  return {
+    opencodeJson: path.join(opencodeDir, 'opencode.json'),
+    agentsMd: path.join(opencodeDir, 'AGENTS.md'),
+    agentsDir: path.join(opencodeDir, 'agents'),
+    pluginDir: path.join(opencodeDir, 'plugin'),
+    skillsDir: path.join(opencodeDir, 'skills'),
+  };
+}
+
+/**
+ * Resolve all opencode project-scope target paths under the given cwd.
+ * opencode.json + AGENTS.md live at the project root; the rest under .opencode/.
+ *
+ * @param cwd  Project root. Defaults to process.cwd().
+ */
+export function resolveOpencodeProjectTargets(
+  cwd: string = process.cwd(),
+): OpencodeProjectTargets {
+  const opencodeDir = path.join(cwd, '.opencode');
+
+  return {
+    opencodeJson: path.join(cwd, 'opencode.json'),
+    agentsMd: path.join(cwd, 'AGENTS.md'),
+    agentsDir: path.join(opencodeDir, 'agents'),
+    pluginDir: path.join(opencodeDir, 'plugin'),
+    skillsDir: path.join(opencodeDir, 'skills'),
   };
 }

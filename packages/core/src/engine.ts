@@ -25,11 +25,14 @@ import { lstat } from 'node:fs/promises';
 import type { Adapter, AdapterEntry } from './adapter';
 import { backup, removeDir, removeFile, restore } from './backup';
 import { findEntry, readManifest, upsertEntry, writeManifest } from './manifest';
+import { mergePermission } from './opencode-json';
 import type { Env } from './paths';
 import type {
   AppliedPayload,
   Manifest,
   ManifestEntry,
+  OpencodeMcpServer,
+  OpencodePermission,
   RemovalOp,
   Report,
   Scope,
@@ -600,6 +603,37 @@ function extractApplied(ops: WriteOp[], targets: string[]): AppliedPayload | und
       .filter((op) => op.kind === 'merge-allow')
       .flatMap((op) => (op as { kind: 'merge-allow'; toAdd: string[] }).toAdd);
     return { kind: 'guardrail', denyRules, allowRules };
+  }
+
+  // opencode guardrail: one or more merge-permission ops → AppliedOpencodePermission.
+  // Fold every fragment into a single permission object for exact reversal.
+  const hasPermission = ops.some((op) => op.kind === 'merge-permission');
+  if (hasPermission) {
+    const permission = ops
+      .filter((op) => op.kind === 'merge-permission')
+      .reduce(
+        (acc, op) =>
+          mergePermission(
+            acc,
+            (op as { kind: 'merge-permission'; permission: OpencodePermission }).permission,
+          ),
+        {} as OpencodePermission,
+      );
+    return { kind: 'opencode-permission', permission };
+  }
+
+  // opencode mcp: a merge-mcp op → AppliedOpencodeMcp.
+  const mcpOp = ops.find((op) => op.kind === 'merge-mcp') as
+    | {
+      kind: 'merge-mcp';
+      path: string;
+      server: string;
+      config: OpencodeMcpServer;
+      description: string;
+    }
+    | undefined;
+  if (mcpOp !== undefined) {
+    return { kind: 'opencode-mcp', server: mcpOp.server, config: mcpOp.config };
   }
 
   const writeTextOp = ops.find((op) => op.kind === 'write-text') as
