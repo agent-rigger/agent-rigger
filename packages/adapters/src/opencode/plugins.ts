@@ -1,0 +1,233 @@
+/**
+ * Plugins handler for the opencode adapter.
+ *
+ * opencode has no native plugin install (delegate-first, ADR-0003, does not
+ * apply — ADR-0020 §4): a plugin is a JS/TS module (API `tool.execute.before/
+ * after`) that the CATALOG provides verbatim; the adapter only copies it into
+ * `pluginDir`. This mirrors skills.ts's store+symlink mechanism (core/linker's
+ * `link`/`unlink`) — a plugin module is a FILE rather than a directory, but
+ * `syncToStore`/`linkOrCopy` handle files the same way (cp / symlink), so the
+ * 'link'/'unlink' op kinds and their existing opKindHandlers (applySkill /
+ * applyRemoveSkill, already wired in adapter.ts) are reused verbatim: applySkill
+ * is nature-agnostic (scans op.source, then links store→target) — no new apply
+ * function is needed here, and no new op kind either (tasks.md A2).
+ *
+ * Store: ~/.config/agent-rigger/plugins/<name>.<ext> — a sibling of the shared
+ * skills store (derived from resolveUserTargets(env).skillsDir's parent; kept
+ * OUT of core/paths.ts since it is opencode-specific and core stays frozen
+ * post-review). Target: resolveOpencode{User,Project}Targets().pluginDir/<name>.<ext>.
+ *
+ * Three functions mirror skills.ts's shape:
+ *   auditPlugin       — read-only, returns NatureReport
+ *   planPlugin        — read-only, returns WriteOp[] (zero or one link op)
+ *   planRemovePlugin  — read-only, returns RemovalOp[] (zero or one unlink op)
+ *
+ * The target filename carries an extension resolved from the source module, so
+ * unlike skillName-only lookups, audit/planRemove locate the installed file by
+ * searching pluginDir for any entry whose basename (extension stripped) equals
+ * the plugin name — this keeps planRemove fully offline (no `pluginSource`
+ * resolver required, R12.1) and keeps auditPlugin's signature aligned with
+ * auditSkill's (no source needed for a read-only presence check either).
+ *
+ * Invariants:
+ * - auditPlugin and planPlugin/planRemovePlugin are read-only (no fs writes).
+ * - The scanner runs at apply time (applySkill's responsibility, not this module's).
+ * - No while loops; no process.exit().
+ * - All path resolution goes through resolveUserTargets / resolveOpencodeUserTargets /
+ *   resolveOpencodeProjectTargets.
+ */
+
+import { readdir } from 'node:fs/promises';
+import path from 'node:path';
+
+import type { AdapterEntry } from '@agent-rigger/core/adapter';
+import { assertSafeArtifactName } from '@agent-rigger/core/artifact-name';
+import {
+  resolveOpencodeProjectTargets,
+  resolveOpencodeUserTargets,
+  resolveUserTargets,
+} from '@agent-rigger/core/paths';
+import type { Env } from '@agent-rigger/core/paths';
+import type {
+  NatureReport,
+  RemovalOp,
+  Scope,
+  WriteOp,
+  WriteOpLink,
+} from '@agent-rigger/core/types';
+
+// ---------------------------------------------------------------------------
+// pluginName
+// ---------------------------------------------------------------------------
+
+/**
+ * Derive the plugin name from the entry id and assert it is safe for filesystem use.
+ *
+ * 'plugin:enforce-tests' → 'enforce-tests'
+ * 'my-plugin'            → 'my-plugin'
+ *
+ * Throws UnsafeArtifactNameError when the derived name contains path traversal
+ * segments (e.g. '../../../../etc/evil'), dots-only names ('.', '..'), or
+ * characters outside [a-zA-Z0-9._-].
+ */
+export function pluginName(entry: AdapterEntry): string {
+  const prefix = 'plugin:';
+  // Strip source qualifier if present (ADR-0017: ids may be 'principal/plugin:foo')
+  const localPart = entry.id.includes('/') ? entry.id.slice(entry.id.indexOf('/') + 1) : entry.id;
+  const name = localPart.startsWith(prefix) ? localPart.slice(prefix.length) : localPart;
+  assertSafeArtifactName(name, entry.id);
+  return name;
+}
+
+// ---------------------------------------------------------------------------
+// Path resolution helpers
+// ---------------------------------------------------------------------------
+
+/** Derive the store/target filename: the artifact name plus the source module's extension. */
+function fileNameFor(name: string, source: string): string {
+  return `${name}${path.extname(source)}`;
+}
+
+/**
+ * Resolve the store path for a plugin (always user-scope, sibling of the
+ * shared skills store under ~/.config/agent-rigger/).
+ * ~/.config/agent-rigger/plugins/<name>.<ext>
+ */
+function resolveStorePath(fileName: string, env: Env): string {
+  const skillsDir = resolveUserTargets(env).skillsDir;
+  return path.join(path.dirname(skillsDir), 'plugins', fileName);
+}
+
+/**
+ * Resolve the directory where the plugin is linked (opencode-owned).
+ *
+ * - user scope:    ~/.config/opencode/plugin/
+ * - project scope: <cwd>/.opencode/plugin/
+ */
+function resolveTargetDir(scope: Scope, env: Env, cwd?: string): string {
+  if (scope === 'project') {
+    return resolveOpencodeProjectTargets(cwd).pluginDir;
+  }
+  return resolveOpencodeUserTargets(env).pluginDir;
+}
+
+/**
+ * Search `dir` for a file whose basename (extension stripped) equals `name`.
+ * Returns the matching filename, or undefined when none is found (dir absent
+ * or no match) — never throws.
+ */
+async function findInstalledFile(dir: string, name: string): Promise<string | undefined> {
+  const entries = await readdir(dir).catch(() => [] as string[]);
+  return entries.find((entry) => path.parse(entry).name === name);
+}
+
+// ---------------------------------------------------------------------------
+// auditPlugin
+// ---------------------------------------------------------------------------
+
+/**
+ * Audit the current state of a plugin artifact on disk.
+ *
+ * Returns:
+ * - 'present' if pluginDir contains a file whose name (any extension) matches.
+ * - 'missing' otherwise.
+ *
+ * Read-only: no filesystem writes.
+ *
+ * @param entry  Artifact entry (id carries the plugin name).
+ * @param scope  Installation scope.
+ * @param env    Injectable env for HOME resolution.
+ * @param cwd    Working directory (only used when scope is 'project').
+ */
+export async function auditPlugin(
+  entry: AdapterEntry,
+  scope: Scope,
+  env: Env,
+  cwd?: string,
+): Promise<NatureReport> {
+  const name = pluginName(entry);
+  const targetDir = resolveTargetDir(scope, env, cwd);
+  const found = await findInstalledFile(targetDir, name);
+
+  return {
+    id: entry.id,
+    nature: 'plugin',
+    state: found === undefined ? 'missing' : 'present',
+  };
+}
+
+// ---------------------------------------------------------------------------
+// planPlugin
+// ---------------------------------------------------------------------------
+
+/**
+ * Compute the write operations needed to install a plugin.
+ *
+ * Returns [] when the plugin is already present (idempotent).
+ * Returns [{ kind: 'link', source, store, target }] when installation is needed.
+ *
+ * Read-only: no filesystem writes.
+ *
+ * @param entry         Artifact entry (id carries the plugin name).
+ * @param scope         Installation scope.
+ * @param env           Injectable env for HOME resolution.
+ * @param pluginSource  Resolver: entry → absolute path to the plugin's `.ts`/`.js` source module.
+ * @param cwd           Working directory (only used when scope is 'project').
+ */
+export async function planPlugin(
+  entry: AdapterEntry,
+  scope: Scope,
+  env: Env,
+  pluginSource: (entry: AdapterEntry) => string,
+  cwd?: string,
+): Promise<WriteOp[]> {
+  const report = await auditPlugin(entry, scope, env, cwd);
+  if (report.state === 'present') {
+    return [];
+  }
+
+  const name = pluginName(entry);
+  const source = pluginSource(entry);
+  const fileName = fileNameFor(name, source);
+  const store = resolveStorePath(fileName, env);
+  const target = path.join(resolveTargetDir(scope, env, cwd), fileName);
+
+  const op: WriteOpLink = { kind: 'link', source, store, target };
+  return [op];
+}
+
+// ---------------------------------------------------------------------------
+// planRemovePlugin
+// ---------------------------------------------------------------------------
+
+/**
+ * Compute the removal operations needed to uninstall a plugin.
+ *
+ * Discovers the actually installed file (and its extension) from disk — fully
+ * offline, no `pluginSource` resolver required (R12.1). Returns [] when nothing
+ * is installed. Returns [{ kind: 'unlink', target, store }] otherwise.
+ *
+ * Read-only: no filesystem writes.
+ *
+ * @param entry  Artifact entry (id carries the plugin name).
+ * @param scope  Installation scope.
+ * @param env    Injectable env for HOME resolution.
+ * @param cwd    Working directory (only used when scope is 'project').
+ */
+export async function planRemovePlugin(
+  entry: AdapterEntry,
+  scope: Scope,
+  env: Env,
+  cwd?: string,
+): Promise<RemovalOp[]> {
+  const name = pluginName(entry);
+  const targetDir = resolveTargetDir(scope, env, cwd);
+  const fileName = await findInstalledFile(targetDir, name);
+  if (fileName === undefined) {
+    return [];
+  }
+
+  const store = resolveStorePath(fileName, env);
+  const target = path.join(targetDir, fileName);
+  return [{ kind: 'unlink', target, store }];
+}
