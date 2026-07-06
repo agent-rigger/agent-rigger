@@ -10,8 +10,9 @@
  *   guarantee cleanup in finally.
  * - Inside the callback: readCatalogDir → frontier guard (path traversal) →
  *   security scan (external entries only) → mergeCatalogs → resolve ids →
- *   buildClaudeAdapter({externalIds, externalBaseDir, catalogUrl, pluginRunner}) →
- *   versionFor → runInstall.
+ *   buildAdapter(assistant, env, {externalIds, externalBaseDir, catalogUrl, pluginRunner}) →
+ *   versionFor → runInstall. `assistant` defaults to 'claude' when omitted
+ *   (back-compat — the CLI always resolves and passes one explicitly, slice A).
  *
  * Security policy (ADR-0014):
  * - All fetched content is scanned uniformly: skills and agents by their checkout path,
@@ -30,6 +31,7 @@
 import path from 'node:path';
 
 import type { PluginRunner } from '@agent-rigger/adapters';
+import type { Assistant } from '@agent-rigger/core';
 import { createCompositeScanner } from '@agent-rigger/core';
 import { assertSafeArtifactName } from '@agent-rigger/core/artifact-name';
 import type { Env } from '@agent-rigger/core/paths';
@@ -48,7 +50,7 @@ import {
 import { resolve } from '@agent-rigger/catalog/resolver';
 import type { CommandRunner } from '@agent-rigger/catalog/tool-check';
 
-import { buildClaudeAdapter } from './adapter-builder';
+import { buildAdapter } from './adapter-dispatch';
 import type { InstallResult } from './cmd-install';
 import { runInstall } from './cmd-install';
 
@@ -216,7 +218,7 @@ export async function scanEntries(opts: {
  * 2. withRemoteCheckout(url, ref, runner, {tmpFactory}, async (dir) => {
  *      readCatalogDir(dir) → frontier guard → scanExternalEntries (external only) →
  *      mergeCatalogs → resolve →
- *      buildClaudeAdapter({externalIds, externalBaseDir, catalogUrl, pluginRunner}) →
+ *      buildAdapter(assistant, env, {externalIds, externalBaseDir, catalogUrl, pluginRunner}) →
  *      versionFor → runInstall
  *    })
  * 3. Returns InstallResult from runInstall.
@@ -224,9 +226,11 @@ export async function scanEntries(opts: {
  * cleanup is guaranteed by withRemoteCheckout (finally).
  * Path-traversal ids are rejected before any file operation (UnsafeArtifactNameError).
  *
- * @param opts.scanner - Optional scanner override. Defaults to createCompositeScanner().
- * @param opts.force   - When true, a blocking scan emits a warning but install proceeds.
- *                       When false/absent, a blocking scan throws ScanBlockedError.
+ * @param opts.scanner   - Optional scanner override. Defaults to createCompositeScanner().
+ * @param opts.force     - When true, a blocking scan emits a warning but install proceeds.
+ *                         When false/absent, a blocking scan throws ScanBlockedError.
+ * @param opts.assistant - Target assistant (resolved upstream by assistant-select.ts).
+ *                         Defaults to 'claude' when omitted (back-compat).
  */
 export async function runRemoteInstall(opts: {
   ids: string[];
@@ -239,6 +243,7 @@ export async function runRemoteInstall(opts: {
   confirm: boolean | ((planText: string) => Promise<boolean>);
   scanner?: Scanner;
   force?: boolean;
+  assistant?: Assistant;
   /**
    * When provided, raw catalog ids are qualified as `<sourceName>/<id>` so that
    * the manifest stores fully-qualified ids (ADR-0017). The caller is responsible
@@ -257,6 +262,8 @@ export async function runRemoteInstall(opts: {
     tmpFactory,
     confirm,
   } = opts;
+
+  const assistant: Assistant = opts.assistant ?? 'claude';
 
   const force = opts.force === true;
   const scanner = opts.scanner ?? createCompositeScanner();
@@ -348,7 +355,7 @@ export async function runRemoteInstall(opts: {
       // Build effectiveEntries map for hookSpec resolution (qualified ids).
       const effectiveEntries = new Map(effective.map((e) => [e.id, e]));
 
-      const adapter = await buildClaudeAdapter(env, {
+      const adapter = await buildAdapter(assistant, env, {
         externalIds: remoteIds,
         externalBaseDir: dir,
         catalogUrl,

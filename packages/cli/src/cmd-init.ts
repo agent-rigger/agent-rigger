@@ -26,10 +26,21 @@
  *   and treated as an empty config — the user will be prompted for a URL which rewrites correctly).
  * - Merges: { ...DEFAULT_CONFIG, ...existing, catalogs: [{name:'principal', url}], authMethod }.
  * - A second runInit starts from the existing state and only updates the provided fields.
+ *
+ * Target assistant(s) (E7, R1):
+ * - askAssistants (TTY / injected) is called and validated; invalid/reserved values
+ *   (e.g. 'copilot') are dropped.
+ * - When askAssistants is absent (non-TTY / no injection): falls back to on-disk
+ *   detection (detectAssistants(env)) — no prompt, the one filesystem probe this
+ *   otherwise I/O-free module performs (no network, no TTY read).
+ * - Neither source resolves anything → the existing persisted value is preserved
+ *   (idempotence), or config.assistants stays absent for a brand-new config.
  */
 
 import type { CatalogEntry, CatalogMeta } from '@agent-rigger/catalog';
+import type { Assistant } from '@agent-rigger/core';
 
+import { detectAssistants } from './assistant-select';
 import { DEFAULT_CONFIG, LegacyConfigError, loadConfigFile, persistConfig } from './config';
 import type { Config } from './config';
 import { preflightAuth, PreflightAuthError } from './preflight-auth';
@@ -90,6 +101,13 @@ export interface RunInitOpts {
    * Failures are caught non-fatally — config stays saved.
    */
   proposeInstall?: (catalog: CatalogProposal) => Promise<string[]>;
+  /**
+   * Injected picker for target assistant(s) (TTY / interactive mode, R1).
+   * Invalid/unknown values (e.g. 'copilot') are dropped from the result.
+   * When absent (non-TTY / no injection), runInit falls back to on-disk
+   * detection (detectAssistants(env)) — no prompt, no network.
+   */
+  askAssistants?: () => Promise<Assistant[]>;
 }
 
 // ---------------------------------------------------------------------------
@@ -170,6 +188,7 @@ export async function runInit(opts: RunInitOpts): Promise<InitResult> {
     defaultScope = 'user',
     fetchCatalogFn,
     proposeInstall,
+    askAssistants,
   } = opts;
 
   // Step 1 — read existing config (graceful: missing file → {}; LegacyConfigError → {} so init
@@ -221,6 +240,19 @@ export async function runInit(opts: RunInitOpts): Promise<InitResult> {
     throw err;
   }
 
+  // Step 3b — resolve target assistant(s) (E7, R1): injected prompt (TTY) or
+  // on-disk detection (non-TTY). Neither resolving anything preserves the
+  // existing persisted value (idempotence).
+  let resolvedAssistants: Assistant[] | undefined = existing.assistants;
+  if (askAssistants === undefined) {
+    const detected = await detectAssistants(env ?? {});
+    if (detected.length > 0) resolvedAssistants = detected;
+  } else {
+    const asked = await askAssistants();
+    const valid = asked.filter((a): a is Assistant => a === 'claude' || a === 'opencode');
+    if (valid.length > 0) resolvedAssistants = valid;
+  }
+
   // Step 4 — merge + persist
   // Priority: opts.defaultScope > existing.defaultScope > DEFAULT_CONFIG.defaultScope
   // (explicit init opts override the saved value so a re-init can change the scope)
@@ -231,6 +263,7 @@ export async function runInit(opts: RunInitOpts): Promise<InitResult> {
     defaultScope: resolvedScope,
     catalogs: [{ name: 'principal', url }],
     ...(authMethod === undefined ? {} : { authMethod }),
+    ...(resolvedAssistants === undefined ? {} : { assistants: resolvedAssistants }),
   };
 
   await persistConfig(configPath, config);
@@ -239,7 +272,11 @@ export async function runInit(opts: RunInitOpts): Promise<InitResult> {
   const methodLine = authMethod === undefined
     ? ''
     : `\nAuth method  : ${authMethod}`;
-  let output = `Catalog      : ${url} (principal)${methodLine}\nConfig saved : ${configPath}`;
+  const assistantsLine = resolvedAssistants === undefined || resolvedAssistants.length === 0
+    ? ''
+    : `\nAssistant(s) : ${resolvedAssistants.join(', ')}`;
+  let output =
+    `Catalog      : ${url} (principal)${methodLine}${assistantsLine}\nConfig saved : ${configPath}`;
 
   // Step 6 — post-init catalog proposal (interactive / TTY mode only)
   // Both fetchCatalogFn and proposeInstall must be provided; otherwise skip silently.

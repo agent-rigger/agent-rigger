@@ -22,8 +22,15 @@ export type Nature =
 /** Installation scope: user-level (~/) or project-level (cwd). */
 export type Scope = 'user' | 'project';
 
-/** Target assistant for an installed artefact. */
-export type Assistant = 'claude' | 'opencode';
+/**
+ * Target assistant for an installed artefact.
+ *
+ * The full set of assistants the domain recognises — aligned with `Adapter.id`
+ * and the catalog `targets` enum. `copilot` is reserved (M4): it is a valid
+ * domain value but has no adapter yet, so assistant selection and adapter
+ * dispatch reject it at runtime with an actionable error.
+ */
+export type Assistant = 'claude' | 'opencode' | 'copilot';
 
 // ---------------------------------------------------------------------------
 // opencode value types (types-only — shared engine↔adapter vocabulary)
@@ -229,6 +236,12 @@ export interface WriteOpWriteText {
   /** UTF-8 content to write verbatim to the file. */
   content: string;
   description: string;
+  /**
+   * Translation warnings surfaced to the user before confirm (R6.3 / HIGH-2):
+   * used by the opencode agent handler when frontmatter fields cannot be
+   * translated. Absent for plain writes (e.g. context AGENTS.md).
+   */
+  warnings?: string[];
 }
 
 /**
@@ -332,6 +345,12 @@ export interface WriteOpMergePermission {
   /** Permission fragment to merge (already translated from the canonical guardrail). */
   permission: OpencodePermission;
   description: string;
+  /**
+   * Translation warnings surfaced to the user before confirm (R5.3 / HIGH-2):
+   * canonical rules that could not be translated faithfully to opencode. Empty
+   * or absent when the translation was lossless.
+   */
+  warnings?: string[];
 }
 
 /**

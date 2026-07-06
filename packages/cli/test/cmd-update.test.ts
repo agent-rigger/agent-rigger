@@ -747,3 +747,115 @@ describe('runUpdate — interactive confirm: installs when confirmed', () => {
     expect(capturedPlanText).toMatch(/v1\.1\.0/);
   });
 });
+
+// ---------------------------------------------------------------------------
+// E6 — two-assistant manifest: assistant scoping (wiring slice B)
+// ---------------------------------------------------------------------------
+
+describe('runUpdate — two-assistant manifest (E6)', () => {
+  it('assistant: "opencode" only updates the opencode entry — the identical claude id stays untouched', async () => {
+    const twoAssistantIso = await makeIsolatedEnv({
+      catalog: [{ ...REMOTE_SKILL_ENTRY, targets: ['claude', 'opencode'] }],
+    });
+    const twoAssistantTargets = resolveUserTargets(twoAssistantIso.env);
+
+    try {
+      // Install the same id for BOTH assistants at v1.0.0.
+      twoAssistantIso.setRemoteTag(TAG_V1_0_0, SHA_V1_0_0);
+      await runCli(['install', 'principal/skill:remote-demo', '--yes', '--assistant=claude'], {
+        print: makeCapture().print,
+        env: twoAssistantIso.env,
+        remote: {
+          run: twoAssistantIso.makeRunner(),
+          tmpFactory: twoAssistantIso.makeTmpFactory(),
+          scanner: stubScanner,
+        },
+      });
+      await runCli(['install', 'principal/skill:remote-demo', '--yes', '--assistant=opencode'], {
+        print: makeCapture().print,
+        env: twoAssistantIso.env,
+        remote: {
+          run: twoAssistantIso.makeRunner(),
+          tmpFactory: twoAssistantIso.makeTmpFactory(),
+          scanner: stubScanner,
+        },
+      });
+
+      // Remote advances to v1.1.0.
+      twoAssistantIso.setRemoteTag(TAG_V1_1_0, SHA_V1_1_0);
+
+      const result = await runUpdate({
+        ids: ['principal/skill:remote-demo'],
+        scope: 'user',
+        env: twoAssistantIso.env,
+        manifestPath: twoAssistantTargets.stateJson,
+        catalogUrl: 'https://example.com/catalog.git',
+        runner: twoAssistantIso.makeRunner(),
+        tmpFactory: twoAssistantIso.makeTmpFactory(),
+        scanner: stubScanner,
+        confirm: true,
+        assistant: 'opencode',
+      });
+
+      expect(result.updated).toContain('principal/skill:remote-demo');
+
+      const raw = await fs.readFile(twoAssistantTargets.stateJson, 'utf8');
+      const parsed = JSON.parse(raw) as {
+        artifacts: Array<{ id: string; ref?: string; assistant?: string }>;
+      };
+      const opencodeEntry = parsed.artifacts.find(
+        (a) => a.id === 'principal/skill:remote-demo' && a.assistant === 'opencode',
+      );
+      const claudeEntry = parsed.artifacts.find(
+        (a) => a.id === 'principal/skill:remote-demo' && (a.assistant ?? 'claude') === 'claude',
+      );
+
+      expect(opencodeEntry?.ref).toBe(TAG_V1_1_0);
+      // The claude entry is a DIFFERENT manifest identity (id, scope, assistant) —
+      // updating opencode must never touch it.
+      expect(claudeEntry?.ref).toBe(TAG_V1_0_0);
+    } finally {
+      await twoAssistantIso.cleanupAll();
+    }
+  });
+
+  it('candidateIds (ids: []) only auto-selects entries installed for the given assistant', async () => {
+    const twoAssistantIso = await makeIsolatedEnv({
+      catalog: [{ ...REMOTE_SKILL_ENTRY, targets: ['claude', 'opencode'] }],
+    });
+    const twoAssistantTargets = resolveUserTargets(twoAssistantIso.env);
+
+    try {
+      twoAssistantIso.setRemoteTag(TAG_V1_0_0, SHA_V1_0_0);
+      await runCli(['install', 'principal/skill:remote-demo', '--yes', '--assistant=claude'], {
+        print: makeCapture().print,
+        env: twoAssistantIso.env,
+        remote: {
+          run: twoAssistantIso.makeRunner(),
+          tmpFactory: twoAssistantIso.makeTmpFactory(),
+          scanner: stubScanner,
+        },
+      });
+
+      const result = await runUpdate({
+        ids: [],
+        scope: 'user',
+        env: twoAssistantIso.env,
+        manifestPath: twoAssistantTargets.stateJson,
+        catalogUrl: 'https://example.com/catalog.git',
+        runner: twoAssistantIso.makeRunner(),
+        tmpFactory: twoAssistantIso.makeTmpFactory(),
+        scanner: stubScanner,
+        confirm: true,
+        assistant: 'opencode',
+      });
+
+      // Nothing is installed for opencode yet — the claude-only entry must
+      // never become a candidate just because ids is empty ("update all").
+      expect(result.output).toBe('No external artifacts to update.');
+      expect(result.updated).toEqual([]);
+    } finally {
+      await twoAssistantIso.cleanupAll();
+    }
+  });
+});

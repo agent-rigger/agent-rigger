@@ -28,7 +28,7 @@ import type { Env } from '@agent-rigger/core/paths';
 import type { Scanner } from '@agent-rigger/core/scan';
 import type { Scope, Verdict } from '@agent-rigger/core/types';
 
-import { createClaudeAdapter } from '@agent-rigger/adapters';
+import { createClaudeAdapter, createOpencodeAdapter } from '@agent-rigger/adapters';
 
 import type { CatalogEntry } from '@agent-rigger/catalog';
 import type { CommandRunner } from '@agent-rigger/catalog/tool-check';
@@ -734,5 +734,147 @@ describe('runInstall — scan blocking (optional)', () => {
       });
 
     await expect(fn).toThrow(/scan blocked/i);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// E-targets: assistant-based routing (R1.5/R9.2) — never silent
+// ---------------------------------------------------------------------------
+
+describe('runInstall — E-targets (assistant-based filtering)', () => {
+  it('opencode selection skips claude-only entries, with a visible [skipped] line', async () => {
+    const adapter = createOpencodeAdapter({ agentsContent: AGENTS_CONTENT });
+
+    const catalog: CatalogEntry[] = [
+      {
+        kind: 'artifact',
+        id: 'context:main',
+        nature: 'context',
+        targets: ['claude', 'opencode'],
+        scopes: ['user'],
+      },
+      {
+        kind: 'artifact',
+        id: 'guardrail:claude-only',
+        nature: 'guardrail',
+        targets: ['claude'],
+        scopes: ['user'],
+      },
+    ];
+
+    const result = await runInstall({
+      catalog,
+      adapter,
+      scope: SCOPE,
+      env,
+      manifestPath,
+      selectedIds: ['context:main', 'guardrail:claude-only'],
+      confirm: true,
+    });
+
+    expect(result.skipped).toEqual([{ id: 'guardrail:claude-only', targets: ['claude'] }]);
+    expect(result.output).toContain(
+      '[skipped] guardrail:claude-only — targets [claude], not opencode',
+    );
+    // The opencode-targeted entry still installs — skipping one entry never blocks the rest.
+    expect(result.applied).toBe(true);
+  });
+
+  it('claude selection installs all matching entries — skipped stays empty, no [skipped] line', async () => {
+    const adapter = createClaudeAdapter({ denyRef: REF_DENY, agentsContent: AGENTS_CONTENT });
+
+    const result = await runInstall({
+      catalog: MINI_CATALOG,
+      adapter,
+      scope: SCOPE,
+      env,
+      manifestPath,
+      selectedIds: ['guardrails-claude', 'context-claude'],
+      confirm: true,
+    });
+
+    expect(result.skipped).toEqual([]);
+    expect(result.output).not.toContain('[skipped]');
+    expect(result.applied).toBe(true);
+  });
+
+  it('skips every entry (all claude-only) under opencode → nothing applied, all listed', async () => {
+    const adapter = createOpencodeAdapter({});
+
+    const result = await runInstall({
+      catalog: MINI_CATALOG,
+      adapter,
+      scope: SCOPE,
+      env,
+      manifestPath,
+      selectedIds: ['guardrails-claude', 'context-claude'],
+      confirm: true,
+    });
+
+    expect(result.skipped).toEqual([
+      { id: 'guardrails-claude', targets: ['claude'] },
+      { id: 'context-claude', targets: ['claude'] },
+    ]);
+    expect(result.applied).toBe(false);
+    expect(result.output).toContain('[skipped] guardrails-claude — targets [claude], not opencode');
+    expect(result.output).toContain('[skipped] context-claude — targets [claude], not opencode');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// E-warn (HIGH-2): translation warnings are surfaced visibly, not silent.
+// ---------------------------------------------------------------------------
+
+describe('runInstall — translation warnings are visible (E-warn / HIGH-2)', () => {
+  const OPENCODE_GUARDRAIL: CatalogEntry = {
+    kind: 'artifact',
+    id: 'guardrails-opencode',
+    nature: 'guardrail',
+    targets: ['opencode'],
+    scopes: ['user', 'project'],
+  };
+
+  it('surfaces guardrail translation warnings in result.warnings and output', async () => {
+    // REF_DENY has path-scoped Read(...) rules → opencode read is tool-level →
+    // "path specificity lost" warnings that MUST reach the user (never silent).
+    const adapter = createOpencodeAdapter({ denyRef: REF_DENY });
+
+    const result = await runInstall({
+      catalog: [OPENCODE_GUARDRAIL],
+      adapter,
+      scope: SCOPE,
+      env,
+      manifestPath,
+      selectedIds: ['guardrails-opencode'],
+      confirm: true,
+    });
+
+    expect(result.warnings.length).toBeGreaterThan(0);
+    expect(result.output).toContain('--- Warnings ---');
+    expect(result.output).toContain('Path specificity lost');
+  });
+
+  it('emits no Warnings section for a lossless install', async () => {
+    const adapter = createOpencodeAdapter({ agentsContent: AGENTS_CONTENT });
+    const opencodeContext: CatalogEntry = {
+      kind: 'artifact',
+      id: 'context-opencode',
+      nature: 'context',
+      targets: ['opencode'],
+      scopes: ['user', 'project'],
+    };
+
+    const result = await runInstall({
+      catalog: [opencodeContext],
+      adapter,
+      scope: SCOPE,
+      env,
+      manifestPath,
+      selectedIds: ['context-opencode'],
+      confirm: true,
+    });
+
+    expect(result.warnings).toEqual([]);
+    expect(result.output).not.toContain('--- Warnings ---');
   });
 });

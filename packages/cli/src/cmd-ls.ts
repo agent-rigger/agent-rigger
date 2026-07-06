@@ -14,6 +14,7 @@
  */
 
 import type { CatalogEntry } from '@agent-rigger/catalog';
+import type { Assistant } from '@agent-rigger/core';
 import { readManifest } from '@agent-rigger/core/manifest';
 import type { Env } from '@agent-rigger/core/paths';
 import { resolveUserTargets } from '@agent-rigger/core/paths';
@@ -66,6 +67,13 @@ export interface RunLsOptions {
   resourceFilter?: string;
   /** Scope used to resolve the manifest path. Defaults to 'user'. */
   scope?: Scope;
+  /**
+   * Optional assistant filter (M3, E6, read-only — no fallback, no prompt).
+   * When provided, "[installed]" only reflects THIS assistant's manifest
+   * entries. When absent, an id installed for ANY assistant is "[installed]"
+   * and every row still shows which assistant(s) it's installed for.
+   */
+  assistant?: Assistant;
 }
 
 // ---------------------------------------------------------------------------
@@ -88,12 +96,15 @@ export interface RunLsResult {
  * List catalog entries, marking installed ones from the manifest.
  *
  * Step 1 — Filter: apply resourceFilter to narrow entries.
- * Step 2 — Manifest: read state.json → build Set of installed ids.
- * Step 3 — Render: call renderCatalogList (pure).
+ * Step 2 — Manifest: read state.json → build the per-id installed-assistants
+ *   map (ALL assistants, scope-filtered), then derive installedIds — either
+ *   "any assistant" or, when `assistant` is given, only that one (E6, R1).
+ * Step 3 — Render: call renderCatalogList (pure), passing the assistants map
+ *   so every row shows which assistant(s) it's installed for.
  * Step 4 — Return { output, count }.
  */
 export async function runLs(opts: RunLsOptions): Promise<RunLsResult> {
-  const { catalog, env, resourceFilter, scope = 'user' } = opts;
+  const { catalog, env, resourceFilter, scope = 'user', assistant } = opts;
 
   // -------------------------------------------------------------------------
   // Step 1: Filter entries by resource
@@ -109,7 +120,7 @@ export async function runLs(opts: RunLsOptions): Promise<RunLsResult> {
     });
 
   // -------------------------------------------------------------------------
-  // Step 2: Read manifest to build installed ids set
+  // Step 2: Read manifest to build the installed-assistants map + ids set
   // -------------------------------------------------------------------------
 
   const targets = resolveUserTargets(env);
@@ -117,17 +128,28 @@ export async function runLs(opts: RunLsOptions): Promise<RunLsResult> {
     ? targets.stateJson // project scope uses same resolution in M0
     : targets.stateJson;
 
-  let installedIds: Set<string>;
+  const installedAssistants = new Map<string, Assistant[]>();
   try {
     const manifest = await readManifest(stateJsonPath);
-    installedIds = new Set(
-      manifest.artifacts
-        .filter((a) => a.scope === scope)
-        .map((a) => a.id),
-    );
+    for (const a of manifest.artifacts) {
+      if (a.scope !== scope) continue;
+      const entryAssistant = a.assistant ?? 'claude';
+      const existing = installedAssistants.get(a.id);
+      if (existing === undefined) {
+        installedAssistants.set(a.id, [entryAssistant]);
+      } else if (!existing.includes(entryAssistant)) {
+        existing.push(entryAssistant);
+      }
+    }
   } catch {
-    installedIds = new Set();
+    // Absent/corrupt manifest → nothing installed, every entry [available].
   }
+
+  const installedIds = new Set(
+    [...installedAssistants.entries()]
+      .filter(([, assistants]) => assistant === undefined || assistants.includes(assistant))
+      .map(([id]) => id),
+  );
 
   // -------------------------------------------------------------------------
   // Step 3: Render
@@ -135,8 +157,12 @@ export async function runLs(opts: RunLsOptions): Promise<RunLsResult> {
 
   const hasLabel = resourceFilter !== undefined && resourceFilter !== 'catalog';
   const output = hasLabel
-    ? renderCatalogList(filtered, { installedIds, label: capitalize(resourceFilter) })
-    : renderCatalogList(filtered, { installedIds });
+    ? renderCatalogList(filtered, {
+      installedIds,
+      installedAssistants,
+      label: capitalize(resourceFilter),
+    })
+    : renderCatalogList(filtered, { installedIds, installedAssistants });
 
   return { output, count: filtered.length };
 }

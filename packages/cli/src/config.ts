@@ -21,6 +21,8 @@ import path from 'node:path';
 
 import { parse as parseJsonc } from 'jsonc-parser';
 
+import type { Assistant } from '@agent-rigger/core';
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -39,6 +41,11 @@ export interface Config {
   authMethod?: 'provider-cli' | 'https' | 'ssh';
   /** List of content catalogs (M1+M4). Each source is fetched independently, qualified, and folded. */
   catalogs: CatalogEntry[];
+  /**
+   * Target assistant(s) for install/check/remove/update (M3 — opencode adapter).
+   * When it holds exactly one value, assistant-select.ts uses it without prompting.
+   */
+  assistants?: Assistant[];
 }
 
 /**
@@ -194,7 +201,10 @@ export function resolveConfig(layers: ConfigLayers): Config {
 // ---------------------------------------------------------------------------
 
 /** Known Config keys for safe mapping (unknown keys are stripped). */
-const KNOWN_KEYS = new Set<keyof Config>(['defaultScope', 'authMethod', 'catalogs']);
+const KNOWN_KEYS = new Set<keyof Config>(['defaultScope', 'authMethod', 'catalogs', 'assistants']);
+
+/** Valid Assistant literals — anything else in config.assistants[] is dropped. */
+const VALID_ASSISTANTS = new Set<Assistant>(['claude', 'opencode']);
 
 /**
  * Read and parse a JSONC config file.
@@ -268,10 +278,26 @@ export async function loadConfigFile(filePath: string): Promise<Partial<Config>>
     throw new LegacyConfigError(filePath);
   }
 
+  // Parse assistants[]: accept only the 'claude'|'opencode' literals, drop unknowns.
+  const rawAssistants = raw2['assistants'];
+  let parsedAssistants: Assistant[] | undefined;
+  if (Array.isArray(rawAssistants)) {
+    parsedAssistants = rawAssistants.filter(
+      (a): a is Assistant => VALID_ASSISTANTS.has(a as Assistant),
+    );
+  }
+
   for (const key of KNOWN_KEYS) {
     if (key === 'catalogs') {
       if (parsedCatalogs !== undefined) {
         result.catalogs = parsedCatalogs;
+      }
+      continue;
+    }
+
+    if (key === 'assistants') {
+      if (parsedAssistants !== undefined) {
+        result.assistants = parsedAssistants;
       }
       continue;
     }

@@ -871,3 +871,53 @@ describe('exported types — CatalogMeta and CatalogFile', () => {
     expect(_file.meta.name).toBe('test-catalog');
   });
 });
+
+// ---------------------------------------------------------------------------
+// E3 (opencode-adapter) — mcp entries carry a raw `config` object
+// ---------------------------------------------------------------------------
+
+describe('ArtifactEntrySchema — mcp config field (E3, additive)', () => {
+  it('parses an mcp entry with a config object', () => {
+    const result = ArtifactEntrySchema.safeParse({
+      kind: 'artifact',
+      id: 'mcp:my-server',
+      nature: 'mcp',
+      targets: ['opencode'],
+      scopes: ['user'],
+      config: { type: 'local', command: ['bunx', 'my-mcp-server'] },
+    });
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    expect(result.data.config).toEqual({ type: 'local', command: ['bunx', 'my-mcp-server'] });
+  });
+
+  it('config is absent when not provided (non-mcp entries)', () => {
+    const result = ArtifactEntrySchema.safeParse(minimalArtifact);
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    expect(result.data.config).toBeUndefined();
+  });
+
+  it('config is not required for mcp entries at the schema level (builder enforces it)', () => {
+    const result = ArtifactEntrySchema.safeParse({
+      kind: 'artifact',
+      id: 'mcp:my-server',
+      nature: 'mcp',
+      targets: ['opencode'],
+      scopes: ['user'],
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects a non-object config value', () => {
+    const result = ArtifactEntrySchema.safeParse({
+      kind: 'artifact',
+      id: 'mcp:my-server',
+      nature: 'mcp',
+      targets: ['opencode'],
+      scopes: ['user'],
+      config: 'not-an-object',
+    });
+    expect(result.success).toBe(false);
+  });
+});

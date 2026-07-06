@@ -23,7 +23,6 @@ import {
   mergePermission,
   removePermission,
 } from '@agent-rigger/core';
-import { readJson, writeJson } from '@agent-rigger/core/fs-json';
 import {
   resolveOpencodeProjectTargets,
   resolveOpencodeUserTargets,
@@ -37,6 +36,7 @@ import type {
   WriteOp,
   WriteOpMergePermission,
 } from '@agent-rigger/core/types';
+import { applyOpencodeKey, readOpencodeJson } from './opencode-json-io';
 
 // ---------------------------------------------------------------------------
 // Internal constants / helpers
@@ -90,7 +90,7 @@ export async function auditGuardrail(
   cwd?: string,
 ): Promise<NatureReport> {
   const opencodeJsonPath = resolveOpencodeJsonPath(scope, env, cwd);
-  const settings = await readJson(opencodeJsonPath);
+  const settings = await readOpencodeJson(opencodeJsonPath);
   const current = extractPermission(settings);
 
   return {
@@ -118,8 +118,8 @@ export async function auditGuardrail(
  * @param env         Injectable env for HOME resolution.
  * @param permission  The (already translated) canonical permission fragment to install.
  * @param cwd         Working directory (only used when scope is 'project').
- * @param warnings    Translation warnings (R5.3) surfaced in the op's description
- *                    so they stay visible without changing the WriteOp shape.
+ * @param warnings    Translation warnings (R5.3 / HIGH-2) attached to the emitted
+ *                    op's `warnings` field so the CLI renders them before confirm.
  */
 export async function planGuardrail(
   scope: Scope,
@@ -129,7 +129,7 @@ export async function planGuardrail(
   warnings: string[] = [],
 ): Promise<WriteOp[]> {
   const opencodeJsonPath = resolveOpencodeJsonPath(scope, env, cwd);
-  const settings = await readJson(opencodeJsonPath);
+  const settings = await readOpencodeJson(opencodeJsonPath);
   const current = extractPermission(settings);
 
   const missing = computeMissingPermission(permission, current);
@@ -137,16 +137,18 @@ export async function planGuardrail(
     return [];
   }
 
-  const description = warnings.length > 0
-    ? `Merge opencode permission rules from guardrail (warnings: ${warnings.join('; ')})`
-    : 'Merge opencode permission rules from guardrail';
-
   const op: WriteOpMergePermission = {
     kind: 'merge-permission',
     path: opencodeJsonPath,
     permission: missing,
-    description,
+    description: 'Merge opencode permission rules from guardrail',
   };
+  // Surface translation warnings on the op (R5.3 / HIGH-2): the CLI renders them
+  // in the plan/confirm/output so a non-translatable deny rule is never silently
+  // dropped. exactOptionalPropertyTypes: only set the key when there are warnings.
+  if (warnings.length > 0) {
+    op.warnings = warnings;
+  }
   return [op];
 }
 
@@ -180,7 +182,7 @@ export async function planRemoveGuardrail(
   }
 
   const opencodeJsonPath = resolveOpencodeJsonPath(scope, env, cwd);
-  const settings = await readJson(opencodeJsonPath);
+  const settings = await readOpencodeJson(opencodeJsonPath);
   const current = extractPermission(settings);
 
   if (!hasPermission(current, permission)) {
@@ -211,10 +213,10 @@ export async function planRemoveGuardrail(
 export async function applyGuardrail(ops: WriteOp[], _env: Env): Promise<void> {
   for (const op of ops) {
     if (op.kind === 'merge-permission') {
-      const settings = await readJson(op.path);
+      const settings = await readOpencodeJson(op.path);
       const current = extractPermission(settings);
       const merged = mergePermission(current, op.permission);
-      await writeJson(op.path, { ...settings, permission: merged });
+      await applyOpencodeKey(op.path, 'permission', merged);
     }
   }
 }
@@ -239,10 +241,10 @@ export async function applyGuardrail(ops: WriteOp[], _env: Env): Promise<void> {
 export async function applyRemoveGuardrail(ops: RemovalOp[], _env: Env): Promise<void> {
   for (const op of ops) {
     if (op.kind === 'remove-permission') {
-      const settings = await readJson(op.path);
+      const settings = await readOpencodeJson(op.path);
       const current = extractPermission(settings);
       const updated = removePermission(current, op.permission);
-      await writeJson(op.path, { ...settings, permission: updated });
+      await applyOpencodeKey(op.path, 'permission', updated);
     }
   }
 }

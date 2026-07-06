@@ -23,7 +23,6 @@
  */
 
 import { hasMcp, mergeMcp, removeMcp } from '@agent-rigger/core';
-import { readJson, writeJson } from '@agent-rigger/core/fs-json';
 import {
   resolveOpencodeProjectTargets,
   resolveOpencodeUserTargets,
@@ -37,6 +36,7 @@ import type {
   WriteOp,
   WriteOpMergeMcp,
 } from '@agent-rigger/core/types';
+import { applyOpencodeKey, readOpencodeJson } from './opencode-json-io';
 
 // ---------------------------------------------------------------------------
 // Internal helpers
@@ -88,7 +88,7 @@ export async function auditMcp(
   cwd?: string,
 ): Promise<NatureReport> {
   const opencodeJsonPath = resolveOpencodeJsonPath(scope, env, cwd);
-  const settings = await readJson(opencodeJsonPath);
+  const settings = await readOpencodeJson(opencodeJsonPath);
   const current = extractMcp(settings);
 
   return {
@@ -193,10 +193,10 @@ export async function planRemoveMcp(
 export async function applyMcp(ops: WriteOp[], _env: Env): Promise<void> {
   for (const op of ops) {
     if (op.kind === 'merge-mcp') {
-      const settings = await readJson(op.path);
+      const settings = await readOpencodeJson(op.path);
       const current = extractMcp(settings);
       const merged = mergeMcp(current, op.server, op.config);
-      await writeJson(op.path, { ...settings, mcp: merged });
+      await applyOpencodeKey(op.path, 'mcp', merged);
     }
   }
 }
@@ -221,10 +221,10 @@ export async function applyMcp(ops: WriteOp[], _env: Env): Promise<void> {
 export async function applyRemoveMcp(ops: RemovalOp[], _env: Env): Promise<void> {
   for (const op of ops) {
     if (op.kind === 'remove-mcp') {
-      const settings = await readJson(op.path);
+      const settings = await readOpencodeJson(op.path);
       const current = extractMcp(settings);
       const updated = removeMcp(current, op.server);
-      await writeJson(op.path, { ...settings, mcp: updated });
+      await applyOpencodeKey(op.path, 'mcp', updated);
     }
   }
 }

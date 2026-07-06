@@ -263,11 +263,17 @@ export async function planAgent(
     return [];
   }
 
-  const description = warnings.length > 0
-    ? `Translate and write opencode sub-agent "${name}" (warnings: ${warnings.join('; ')})`
-    : `Translate and write opencode sub-agent "${name}"`;
-
-  const op: WriteOpWriteText = { kind: 'write-text', path: targetPath, content, description };
+  const op: WriteOpWriteText = {
+    kind: 'write-text',
+    path: targetPath,
+    content,
+    description: `Translate and write opencode sub-agent "${name}"`,
+  };
+  // Surface frontmatter-translation warnings on the op (R6.3 / HIGH-2) so the CLI
+  // renders them before confirm. Only set the key when non-empty (exactOptional).
+  if (warnings.length > 0) {
+    op.warnings = warnings;
+  }
   return [op];
 }
 

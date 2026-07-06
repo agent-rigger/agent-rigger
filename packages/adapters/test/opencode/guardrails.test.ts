@@ -165,12 +165,14 @@ describe('planGuardrail', () => {
     expect(ops).toHaveLength(0);
   });
 
-  it('appends warnings to the op description when provided', async () => {
+  it('surfaces warnings on the op (not the description) when provided', async () => {
     const { permission } = translateRules(REF_DENY, REF_ALLOW);
     const ops = await planGuardrail('user', env, permission, undefined, ['a lossy rule warning']);
 
     const op = ops[0] as WriteOpMergePermission;
-    expect(op.description).toContain('a lossy rule warning');
+    expect(op.warnings).toEqual(['a lossy rule warning']);
+    // Description stays clean — warnings have their own channel (HIGH-2).
+    expect(op.description).not.toContain('a lossy rule warning');
   });
 
   it('op path targets the opencode.json path for the given scope', async () => {

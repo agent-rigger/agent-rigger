@@ -275,7 +275,7 @@ describe('planAgent', () => {
     expect(op.content).not.toContain('effort:');
   });
 
-  it('description surfaces translation warnings', async () => {
+  it('surfaces translation warnings on the op (HIGH-2)', async () => {
     const entry: AdapterEntry = { id: 'agent:reviewer', nature: 'agent', scope: 'user' };
     const sourcePath = path.join(tmp.dir, 'source.md');
     await writeText(sourcePath, REVIEWER_SOURCE);
@@ -284,7 +284,8 @@ describe('planAgent', () => {
     const ops = await planAgent(entry, 'user', env, agentSource);
 
     const op = ops[0] as WriteOpWriteText;
-    expect(op.description).toContain('effort');
+    expect(op.warnings?.some((w) => w.includes('effort'))).toBe(true);
+    expect(op.description).not.toContain('effort');
   });
 
   it('returns [] when the translated content is already installed (idempotent)', async () => {

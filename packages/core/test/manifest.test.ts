@@ -373,3 +373,47 @@ describe('detectDrift', () => {
     expect(result.missing.length).toBeGreaterThan(0);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Manifest identity is (id, scope, assistant) — M3 keying
+// ---------------------------------------------------------------------------
+
+describe('manifest identity keyed by assistant', () => {
+  const claudeEntry: ManifestEntry = { ...makeEntry('skill:x', 'user'), assistant: 'claude' };
+  const opencodeEntry: ManifestEntry = { ...makeEntry('skill:x', 'user'), assistant: 'opencode' };
+
+  it('upsertEntry keeps claude and opencode entries of the same (id, scope) side by side', () => {
+    let m = emptyManifest();
+    m = upsertEntry(m, claudeEntry);
+    m = upsertEntry(m, opencodeEntry);
+    expect(m.artifacts).toHaveLength(2);
+  });
+
+  it('upsertEntry replaces only the same-assistant entry', () => {
+    let m = emptyManifest();
+    m = upsertEntry(m, claudeEntry);
+    m = upsertEntry(m, opencodeEntry);
+    const updatedOpencode: ManifestEntry = { ...opencodeEntry, sha: 'newsha' };
+    m = upsertEntry(m, updatedOpencode);
+    expect(m.artifacts).toHaveLength(2);
+    expect(findEntry(m, 'skill:x', 'user', 'opencode')?.sha).toBe('newsha');
+    expect(findEntry(m, 'skill:x', 'user', 'claude')?.sha).toBe(claudeEntry.sha);
+  });
+
+  it('findEntry resolves per assistant; a legacy entry (no assistant) is claude', () => {
+    let m = emptyManifest();
+    m = upsertEntry(m, makeEntry('skill:x', 'user')); // legacy, no assistant field
+    m = upsertEntry(m, opencodeEntry);
+    // legacy coexists with opencode (treated as a distinct claude identity)
+    expect(m.artifacts).toHaveLength(2);
+    expect(findEntry(m, 'skill:x', 'user', 'claude')).toBeDefined();
+    expect(findEntry(m, 'skill:x', 'user')).toBeDefined(); // default assistant = claude
+    expect(findEntry(m, 'skill:x', 'user', 'opencode')).toBeDefined();
+  });
+
+  it('findEntry returns undefined for an assistant with no entry', () => {
+    let m = emptyManifest();
+    m = upsertEntry(m, claudeEntry);
+    expect(findEntry(m, 'skill:x', 'user', 'opencode')).toBeUndefined();
+  });
+});

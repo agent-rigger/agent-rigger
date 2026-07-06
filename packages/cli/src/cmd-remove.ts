@@ -152,7 +152,11 @@ export async function runRemove(opts: RunRemoveOptions): Promise<RemoveCommandRe
   const manifest = await readManifest(manifestPath);
   const groups: PlanRemovalGroup[] = [];
   for (const entry of adapterEntries) {
-    const enriched = enrichWithApplied(entry, manifest);
+    // Keyed by adapter.id (E6): the preview must enrich from the SAME manifest
+    // identity (id, scope, assistant) that the real remove() call below will
+    // read — otherwise a two-assistant manifest would preview one assistant's
+    // `applied` payload while removing the other's.
+    const enriched = enrichWithApplied(entry, manifest, adapter.id);
     const ops = await adapter.planRemove(enriched, scope, env);
     if (ops.length > 0) {
       groups.push({ id: entry.id, nature: entry.nature, ops });

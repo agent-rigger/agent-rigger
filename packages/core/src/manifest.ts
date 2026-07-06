@@ -12,7 +12,17 @@
  */
 
 import { readJson, writeJson } from './fs-json';
-import type { Manifest, ManifestEntry, Scope } from './types';
+import type { Assistant, Manifest, ManifestEntry, Scope } from './types';
+
+/**
+ * The assistant an entry belongs to, defaulting legacy entries (written before
+ * M3, with no `assistant` field) to 'claude'. Manifest identity is the triple
+ * (id, scope, assistant): the same artifact can be installed for both claude and
+ * opencode without one clobbering the other.
+ */
+function entryAssistant(entry: ManifestEntry): Assistant {
+  return entry.assistant ?? 'claude';
+}
 
 // ---------------------------------------------------------------------------
 // emptyManifest
@@ -78,9 +88,14 @@ export async function writeManifest(filePath: string, manifest: Manifest): Promi
  */
 export function upsertEntry(manifest: Manifest, entry: ManifestEntry): Manifest {
   let replaced = false;
+  const targetAssistant = entryAssistant(entry);
 
   const artifacts = manifest.artifacts.map((existing) => {
-    if (existing.id === entry.id && existing.scope === entry.scope) {
+    if (
+      existing.id === entry.id
+      && existing.scope === entry.scope
+      && entryAssistant(existing) === targetAssistant
+    ) {
       replaced = true;
       return entry;
     }
@@ -105,8 +120,11 @@ export function findEntry(
   manifest: Manifest,
   id: string,
   scope: Scope,
+  assistant: Assistant = 'claude',
 ): ManifestEntry | undefined {
-  return manifest.artifacts.find((e) => e.id === id && e.scope === scope);
+  return manifest.artifacts.find(
+    (e) => e.id === id && e.scope === scope && entryAssistant(e) === assistant,
+  );
 }
 
 // ---------------------------------------------------------------------------

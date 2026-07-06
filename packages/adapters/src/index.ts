@@ -66,6 +66,7 @@ export {
   planMcp as planOpencodeMcp,
   planRemoveMcp as planRemoveOpencodeMcp,
 } from './opencode/mcp';
+export { applyOpencodeKey, InvalidOpencodeJsonError, readOpencodeJson } from './opencode/opencode-json-io';
 export { translateRules } from './opencode/permission-translate';
 export type { TranslateRulesResult } from './opencode/permission-translate';
 export {
