@@ -5,6 +5,12 @@
  *
  * Mapping table:
  * - `Bash(<pattern>)`            → `{ bash: { <pattern>: state } }` (nested, nvpattern-level).
+ * - `Bash(<prefix>:*)`           → `{ bash: { <prefix>: state, "<prefix> *": state } }` —
+ *                                  Claude's `:*` prefix syntax matches `<prefix>` exactly AND
+ *                                  `<prefix> <anything>`; opencode globs treat `:` literally,
+ *                                  so a verbatim pass-through would never match (inert rule).
+ *                                  A `:*` anywhere but at the end is not faithfully
+ *                                  expressible → omitted, warning emitted.
  * - `Read|Write|Edit(<arg>)`     → `{ <tool>: state }` (opencode read/write/edit is tool-level,
  *                                  not pattern-level); a specific arg (not "" / "*") loses
  *                                  granularity → warning, rule still applied at tool level.
@@ -61,6 +67,51 @@ interface RuleTranslation {
   warning?: string;
 }
 
+/**
+ * Translate one pattern of a pattern-level tool (e.g. bash), converting Claude's
+ * `:*` prefix syntax into equivalent opencode globs (review H8).
+ *
+ * Claude semantics of `<prefix>:*`: matches `<prefix>` exactly AND
+ * `<prefix> <anything>`. opencode glob matching treats `:` literally (it is not
+ * a separator or wildcard), so a verbatim `<prefix>:*` would only ever match
+ * commands containing a literal `<prefix>:` — i.e. the rule would be silently
+ * inert. The faithful mapping is two glob leaves: `<prefix>` and `<prefix> *`.
+ *
+ * A `:*` marker anywhere but at the very end (mid-pattern, or repeated) has no
+ * faithful glob equivalent → the rule is omitted with an actionable warning,
+ * never emitted as an inoperative glob.
+ */
+function translatePatternLevel(
+  key: string,
+  pattern: string,
+  state: OpencodePermissionState,
+  rule: string,
+): RuleTranslation {
+  const marker = pattern.indexOf(':*');
+
+  if (marker === -1) {
+    // No Claude prefix syntax involved: the pattern is already a plain opencode
+    // glob (a lone `:` stays literal on both sides).
+    return { fragment: { [key]: { [pattern]: state } } };
+  }
+
+  if (marker !== pattern.length - 2) {
+    return {
+      warning: `Rule "${rule}" uses Claude's ":*" prefix syntax somewhere other than the end `
+        + `of the pattern; it has no faithful opencode glob equivalent and was omitted `
+        + `(a verbatim copy would never match). Rewrite it as "<prefix>:*" or as an `
+        + `explicit opencode glob.`,
+    };
+  }
+
+  const prefix = pattern.slice(0, -2);
+  if (prefix === '') {
+    // A bare ":*" (empty prefix) means "everything" → the `*` glob.
+    return { fragment: { [key]: { '*': state } } };
+  }
+  return { fragment: { [key]: { [prefix]: state, [`${prefix} *`]: state } } };
+}
+
 /** Translate a single Claude-style rule string into an opencode permission fragment. */
 function translateRule(rule: string, state: OpencodePermissionState): RuleTranslation {
   const qualified = QUALIFIED_RULE_RE.exec(rule);
@@ -72,7 +123,7 @@ function translateRule(rule: string, state: OpencodePermissionState): RuleTransl
     if (PATTERN_LEVEL_TOOLS.has(key)) {
       // Empty argument means "the whole tool" → the `*` pattern (not an empty key).
       const pattern = arg === '' ? '*' : arg;
-      return { fragment: { [key]: { [pattern]: state } } };
+      return translatePatternLevel(key, pattern, state, rule);
     }
 
     const fragment: OpencodePermission = { [key]: state };
@@ -126,6 +177,11 @@ export function translateRules(deny: string[], allow: string[]): TranslateRulesR
     }
   };
 
+  // SECURITY INVARIANT (review M15): deny rules MUST be applied before allow
+  // rules. mergePermission is first-writer-wins per leaf, so this ordering is
+  // what makes deny take precedence when the same leaf appears in both lists.
+  // Swapping these loops silently turns conflicts fail-open (allow over deny);
+  // the invariant is locked by the "deny-over-allow precedence" test suite.
   for (const rule of deny) {
     applyRule(rule, 'deny');
   }

@@ -78,6 +78,69 @@ export async function unlink(target: string, store: string): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
+// unlinkTarget
+// ---------------------------------------------------------------------------
+
+/**
+ * Remove only `target` (symlink, file, or directory), leaving the store
+ * untouched. Tolerant to absence: a non-existent target is a no-op.
+ *
+ * Companion of removeStoreIfUnreferenced() — together they implement the
+ * "one store, N symlinks" removal contract (ADR-0020 §3): deleting one
+ * assistant's symlink must never destroy a store still referenced by another.
+ *
+ * @param target  Path to the symlink or installed file/directory.
+ */
+export async function unlinkTarget(target: string): Promise<void> {
+  await rm(target, { recursive: true, force: true });
+}
+
+// ---------------------------------------------------------------------------
+// removeStoreIfUnreferenced
+// ---------------------------------------------------------------------------
+
+/**
+ * Delete `store` unless at least one of `candidateTargets` is a symlink that
+ * resolves to it (ADR-0020 §3 — one store, N symlinks).
+ *
+ * Reference detection uses filesystem truth, fully offline:
+ * - each candidate is lstat'd; absent or non-symlink entries are skipped
+ *   (copy-fallback installs are NOT counted as references);
+ * - symlink values are resolved relative to the symlink's own directory, so
+ *   both absolute and relative link values are compared against the store.
+ *
+ * Store removal is tolerant to absence (rm force).
+ *
+ * @param store             Path to the managed store entry.
+ * @param candidateTargets  Install target paths that may reference the store.
+ * @returns true when the store was removed, false when a live reference kept it.
+ */
+export async function removeStoreIfUnreferenced(
+  store: string,
+  candidateTargets: string[],
+): Promise<boolean> {
+  const storeResolved = path.resolve(store);
+
+  for (const candidate of candidateTargets) {
+    const stat = await lstat(candidate).catch(() => null);
+    if (stat === null || !stat.isSymbolicLink()) {
+      continue;
+    }
+    const linkValue = await readlink(candidate).catch(() => null);
+    if (linkValue === null) {
+      continue;
+    }
+    const resolved = path.resolve(path.dirname(candidate), linkValue);
+    if (resolved === storeResolved) {
+      return false;
+    }
+  }
+
+  await rm(store, { recursive: true, force: true });
+  return true;
+}
+
+// ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
 

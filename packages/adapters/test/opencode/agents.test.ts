@@ -3,8 +3,13 @@
  *
  * Covers:
  * - agentName: strips 'agent:' prefix (mirrors claude/skills.ts skillName guard).
- * - translateAgentFrontmatter: description/mode/tools→permission/model passthrough,
- *   unknown fields omitted + warning, 'name' silently dropped (id = filename).
+ * - translateAgentFrontmatter: description/mode/model passthrough, 'tools' translated
+ *   into a 'permission' allow-list ('"*": deny' first, then one 'allow' per mapped
+ *   tool — opencode resolves permission rules with findLast over key order, so the
+ *   catch-all must be serialized first), unmappable tool names omitted + warning
+ *   (fail-safe: stay denied by '*'), Write/Edit/NotebookEdit fusion warning (opencode's
+ *   single 'edit' category also covers apply_patch), unknown fields omitted + warning,
+ *   'name' silently dropped (id = filename).
  * - auditAgent: missing (target absent) / present (content matches translation) /
  *   drift (target exists but diverges).
  * - planAgent: [] when translation already installed; [write-text] with translated
@@ -124,25 +129,75 @@ describe('translateAgentFrontmatter', () => {
     expect(frontmatter['mode']).toBe('subagent');
   });
 
-  it('translates a comma-separated tools string into a permission allow map', () => {
-    const { frontmatter } = translateAgentFrontmatter({ tools: 'Read, Grep, Glob, Bash' });
+  it('translates a clean comma-separated tools whitelist into a permission allow-list', () => {
+    const { frontmatter, warnings } = translateAgentFrontmatter({
+      tools: 'Read, Grep, Glob, Bash',
+    });
+
+    expect(frontmatter['tools']).toBeUndefined();
     expect(frontmatter['permission']).toEqual({
+      '*': 'deny',
       read: 'allow',
       grep: 'allow',
       glob: 'allow',
       bash: 'allow',
     });
+    expect(Object.keys(frontmatter['permission'] as Record<string, unknown>)[0]).toBe('*');
+    expect(warnings).toEqual([]);
   });
 
   it('translates a tools array the same way', () => {
-    const { frontmatter } = translateAgentFrontmatter({ tools: ['Read', 'Bash'] });
-    expect(frontmatter['permission']).toEqual({ read: 'allow', bash: 'allow' });
+    const { frontmatter, warnings } = translateAgentFrontmatter({ tools: ['Read', 'Bash'] });
+
+    expect(frontmatter['tools']).toBeUndefined();
+    expect(frontmatter['permission']).toEqual({ '*': 'deny', read: 'allow', bash: 'allow' });
+    expect(warnings).toEqual([]);
   });
 
   it('omits permission entirely when tools is absent (no restriction, no warning)', () => {
     const { frontmatter, warnings } = translateAgentFrontmatter({ description: 'x' });
     expect(frontmatter['permission']).toBeUndefined();
     expect(warnings).toEqual([]);
+  });
+
+  it('dedups tools mapping to the same category, keeping source order', () => {
+    const { frontmatter } = translateAgentFrontmatter({ tools: 'Write, Edit, Read' });
+
+    expect(frontmatter['permission']).toEqual({ '*': 'deny', edit: 'allow', read: 'allow' });
+  });
+
+  it('maps Write-only to "edit" and emits a fusion warning (broader than the source)', () => {
+    const { frontmatter, warnings } = translateAgentFrontmatter({ tools: 'Write' });
+
+    expect(frontmatter['permission']).toEqual({ '*': 'deny', edit: 'allow' });
+    expect(
+      warnings.some((w) => w.includes('edit') && w.includes('write') && w.includes('apply_patch')),
+    ).toBe(true);
+  });
+
+  it('does not emit the fusion warning when both Write and Edit are already listed', () => {
+    const { warnings } = translateAgentFrontmatter({ tools: 'Write, Edit' });
+
+    expect(warnings).toEqual([]);
+  });
+
+  it('omits an unmappable tool from the allow-list and emits a warning naming it', () => {
+    const { frontmatter, warnings } = translateAgentFrontmatter({
+      tools: 'Read, mcp__foo__bar',
+    });
+
+    expect(frontmatter['permission']).toEqual({ '*': 'deny', read: 'allow' });
+    expect(warnings.some((w) => w.includes('mcp__foo__bar'))).toBe(true);
+  });
+
+  it('reports a collision when the source has both "tools" and an explicit "permission" field', () => {
+    const { frontmatter, warnings } = translateAgentFrontmatter({
+      tools: 'Read',
+      permission: { bash: 'allow' },
+    });
+
+    expect(frontmatter['permission']).toEqual({ '*': 'deny', read: 'allow' });
+    expect(warnings.some((w) => w.includes('tools') && w.includes('permission'))).toBe(true);
   });
 
   it('passes model through unchanged when already in provider/model form', () => {
@@ -172,7 +227,7 @@ describe('translateAgentFrontmatter', () => {
     expect(warnings.some((w) => w.includes('effort'))).toBe(true);
   });
 
-  it('translates the full reviewer-shaped frontmatter with one warning (effort)', () => {
+  it('translates the full reviewer-shaped frontmatter with no "tools" warning (clean whitelist)', () => {
     const { frontmatter, warnings } = translateAgentFrontmatter({
       name: 'reviewer',
       description: 'Reviewer agent.',
@@ -185,9 +240,11 @@ describe('translateAgentFrontmatter', () => {
       description: 'Reviewer agent.',
       mode: 'subagent',
       model: 'opus',
-      permission: { read: 'allow', grep: 'allow', glob: 'allow', bash: 'allow' },
+      permission: { '*': 'deny', read: 'allow', grep: 'allow', glob: 'allow', bash: 'allow' },
     });
+    expect(warnings.filter((w) => w.includes('opus'))).toHaveLength(1);
     expect(warnings.filter((w) => w.includes('effort'))).toHaveLength(1);
+    expect(warnings.filter((w) => w.includes('tools'))).toHaveLength(0);
   });
 });
 
@@ -273,6 +330,15 @@ describe('planAgent', () => {
     expect(op.content).toContain('mode: subagent');
     expect(op.content).toContain('Body content.');
     expect(op.content).not.toContain('effort:');
+    expect(op.content).not.toContain('tools:');
+    expect(op.content).toContain('permission:');
+    expect(op.content).toContain('  "*": deny');
+    expect(op.content).toContain('  read: allow');
+    expect(op.content).toContain('  bash: allow');
+    // "*" must be serialized first: opencode resolves permission rules with
+    // findLast over key insertion order, so a later "*" would silently override
+    // the allow entries above it.
+    expect(op.content.indexOf('"*"')).toBeLessThan(op.content.indexOf('read: allow'));
   });
 
   it('surfaces translation warnings on the op (HIGH-2)', async () => {
@@ -284,6 +350,7 @@ describe('planAgent', () => {
     const ops = await planAgent(entry, 'user', env, agentSource);
 
     const op = ops[0] as WriteOpWriteText;
+    // REVIEWER_SOURCE's tools (Read, Grep, Glob, Bash) all map cleanly — no tools warning.
     expect(op.warnings?.some((w) => w.includes('effort'))).toBe(true);
     expect(op.description).not.toContain('effort');
   });

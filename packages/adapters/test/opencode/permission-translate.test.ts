@@ -155,3 +155,133 @@ describe('translateRules — §7.1 table', () => {
     expect(warnings).toEqual([]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Review H8 regression: Claude ":*" prefix syntax (`Bash(cmd:*)`) must be
+// converted to equivalent opencode globs — opencode treats ":" literally, so a
+// verbatim "cmd:*" pattern would NEVER match "cmd <args>" (silently inert deny).
+// Claude semantics of "<prefix>:*": matches "<prefix>" exactly AND
+// "<prefix> <anything>" → two glob leaves: "<prefix>" and "<prefix> *".
+// ---------------------------------------------------------------------------
+
+describe('translateRules — Claude ":*" prefix syntax (H8)', () => {
+  it('expands a deny Bash(git push:*) into the exact prefix and the "prefix *" glob', () => {
+    const { permission, warnings } = translateRules(['Bash(git push:*)'], []);
+
+    expect(permission).toEqual({ bash: { 'git push': 'deny', 'git push *': 'deny' } });
+    expect(warnings).toEqual([]);
+  });
+
+  it('expands an allow Bash(npm run build:*) the same way (state "allow")', () => {
+    const { permission, warnings } = translateRules([], ['Bash(npm run build:*)']);
+
+    expect(permission).toEqual({
+      bash: { 'npm run build': 'allow', 'npm run build *': 'allow' },
+    });
+    expect(warnings).toEqual([]);
+  });
+
+  it('expands a single-word prefix Bash(git:*) into "git" and "git *"', () => {
+    const { permission, warnings } = translateRules(['Bash(git:*)'], []);
+
+    expect(permission).toEqual({ bash: { git: 'deny', 'git *': 'deny' } });
+    expect(warnings).toEqual([]);
+  });
+
+  it('keeps a literal ":" inside the prefix (Bash(npm run test:unit:*))', () => {
+    const { permission, warnings } = translateRules(['Bash(npm run test:unit:*)'], []);
+
+    expect(permission).toEqual({
+      bash: { 'npm run test:unit': 'deny', 'npm run test:unit *': 'deny' },
+    });
+    expect(warnings).toEqual([]);
+  });
+
+  it('maps a bare ":*" pattern (empty prefix = everything) to the "*" glob', () => {
+    const { permission, warnings } = translateRules(['Bash(:*)'], []);
+
+    expect(permission).toEqual({ bash: { '*': 'deny' } });
+    expect(warnings).toEqual([]);
+  });
+
+  it('passes a ":" pattern without the ":*" marker through verbatim (":" is literal on both sides)', () => {
+    const { permission, warnings } = translateRules(['Bash(npm run build:prod)'], []);
+
+    expect(permission).toEqual({ bash: { 'npm run build:prod': 'deny' } });
+    expect(warnings).toEqual([]);
+  });
+
+  it('omits a mid-pattern ":*" with an actionable warning instead of an inert glob', () => {
+    const { permission, warnings } = translateRules(['Bash(git push:* --force)'], []);
+
+    expect(permission).toEqual({});
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain('git push:* --force');
+  });
+
+  it('omits a pattern with several ":*" markers with a warning (no faithful mapping)', () => {
+    const { permission, warnings } = translateRules(['Bash(docker:*:*)'], []);
+
+    expect(permission).toEqual({});
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain('docker:*:*');
+  });
+
+  it('never leaks a ":*" marker into any emitted glob leaf', () => {
+    const { permission } = translateRules(
+      ['Bash(git push:*)', 'Bash(docker:*:*)', 'Bash(rm -rf *)'],
+      ['Bash(npm run build:*)'],
+    );
+
+    const bash = permission['bash'];
+    expect(typeof bash).toBe('object');
+    for (const pattern of Object.keys(bash as Record<string, string>)) {
+      expect(pattern).not.toContain(':*');
+    }
+  });
+
+  it('dedups the exact-prefix leaf when both "foo:*" and bare "foo" forms are given', () => {
+    const { permission } = translateRules(['Bash(git push:*)', 'Bash(git push)'], []);
+
+    expect(permission).toEqual({ bash: { 'git push': 'deny', 'git push *': 'deny' } });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Review M15 regression: deny-over-allow precedence is a security invariant.
+// It currently emerges from loop order (deny first) + first-writer-wins merge;
+// these tests lock it so an order-inverting refactor fails loudly (fail-open).
+// ---------------------------------------------------------------------------
+
+describe('translateRules — deny-over-allow precedence (M15)', () => {
+  it('keeps deny when the same bash pattern rule is in both deny and allow', () => {
+    const { permission } = translateRules(['Bash(git push)'], ['Bash(git push)']);
+
+    expect(permission).toEqual({ bash: { 'git push': 'deny' } });
+  });
+
+  it('keeps deny when the same tool-level leaf comes from different Read rules', () => {
+    // Both rules collapse onto the single tool-level `read` leaf → deny must win.
+    const { permission } = translateRules(['Read(./.env)'], ['Read(./docs/**)']);
+
+    expect(permission).toEqual({ read: 'deny' });
+  });
+
+  it('keeps deny for a bare tool token present in both lists', () => {
+    const { permission } = translateRules(['WebFetch'], ['WebFetch']);
+
+    expect(permission).toEqual({ webfetch: 'deny' });
+  });
+
+  it('keeps deny on both expanded ":*" leaves when the same prefix rule is in both lists', () => {
+    const { permission } = translateRules(['Bash(git push:*)'], ['Bash(git push:*)']);
+
+    expect(permission).toEqual({ bash: { 'git push': 'deny', 'git push *': 'deny' } });
+  });
+
+  it('keeps deny on the exact-prefix leaf when allow lists the bare command', () => {
+    const { permission } = translateRules(['Bash(git push:*)'], ['Bash(git push)']);
+
+    expect(permission).toEqual({ bash: { 'git push': 'deny', 'git push *': 'deny' } });
+  });
+});

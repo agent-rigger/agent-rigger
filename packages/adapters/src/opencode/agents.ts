@@ -3,9 +3,10 @@
  *
  * Unlike Claude (which links the sub-agent `.md` opaquely, `claude/agents.ts`),
  * opencode requires a translated frontmatter schema (design.md §7.2): the source
- * `.md` is READ, its frontmatter TRANSLATED (description/tools→permission/model
- * passthrough, `mode: subagent` default, unknown fields omitted + warning), and
- * the result WRITTEN — a `write-text` op, not a `link`. `apply`/`applyRemove`
+ * `.md` is READ, its frontmatter TRANSLATED (description/model passthrough,
+ * `mode: subagent` default, `tools` translated into a `permission` allow-list,
+ * unknown fields omitted + warning), and the result WRITTEN — a `write-text`
+ * op, not a `link`. `apply`/`applyRemove`
  * are therefore reused as-is from context.ts (`write-text`→applyContext,
  * `delete-file`→applyRemoveContext, already wired in adapter.ts) — no new op
  * kind, no new apply function needed here.
@@ -39,6 +40,8 @@ import {
 import type { Env } from '@agent-rigger/core/paths';
 import type {
   NatureReport,
+  OpencodePermission,
+  OpencodePermissionState,
   RemovalOp,
   Scope,
   WriteOp,
@@ -81,29 +84,123 @@ export interface AgentFrontmatterTranslation {
   warnings: string[];
 }
 
-/** Source frontmatter fields this translation understands (whether translated or dropped). */
+/**
+ * Source frontmatter fields this translation understands (whether translated or
+ * dropped). `tools` is handled (translated into `permission`, see
+ * `translateToolsToPermission` below); a bare `permission` field on the source
+ * is only added dynamically (see the collision check in `translateAgentFrontmatter`)
+ * when `tools` is also present — otherwise it falls through to the generic
+ * unhandled-field path below.
+ */
 const HANDLED_FIELDS = new Set(['name', 'description', 'model', 'tools']);
 
-/** Normalize a `tools` field (comma-separated string or array) into a tool-name list. */
-function extractToolNames(tools: unknown): string[] {
-  if (typeof tools === 'string') {
-    return tools.split(',').map((t) => t.trim()).filter((t) => t !== '');
+/**
+ * Claude tool name (case-insensitive) → opencode permission category.
+ *
+ * opencode has no separate "write" category: `write`, `edit` and `apply_patch`
+ * are all gated by the single `edit` permission — see the fusion warning
+ * emitted by `translateToolsToPermission` when the source whitelist didn't
+ * already grant both `Write` and `Edit`.
+ */
+const TOOL_TO_PERMISSION: Readonly<Record<string, string>> = {
+  read: 'read',
+  grep: 'grep',
+  glob: 'glob',
+  bash: 'bash',
+  edit: 'edit',
+  write: 'edit',
+  notebookedit: 'edit',
+  webfetch: 'webfetch',
+  websearch: 'websearch',
+  task: 'task',
+  agent: 'task',
+  todowrite: 'todowrite',
+  skill: 'skill',
+};
+
+/** Parse a Claude `tools` field (comma-separated string, or array) into a name list. */
+function parseToolNames(tools: unknown): string[] | undefined {
+  const raw = typeof tools === 'string'
+    ? tools.split(',')
+    : Array.isArray(tools)
+    ? tools
+    : undefined;
+  if (raw === undefined) {
+    return undefined;
   }
-  if (Array.isArray(tools)) {
-    return tools.map((t) => String(t).trim()).filter((t) => t !== '');
+  const names = raw
+    .filter((t): t is string => typeof t === 'string')
+    .map((t) => t.trim())
+    .filter((t) => t !== '');
+  return names.length > 0 ? names : undefined;
+}
+
+/**
+ * Translate a Claude `tools` availability whitelist into an opencode `permission`
+ * allow-list: `"*": "deny"` first (fail-safe default — required to come first in
+ * insertion order, opencode resolves rules with `findLast` over key order), then
+ * one `<category>: "allow"` per successfully mapped tool, deduplicated, in
+ * source order.
+ *
+ * - An unmappable name (incl. `mcp__*` tools) is NOT allow-listed — it stays
+ *   denied by `"*"` (fail-safe) — and produces a warning naming it.
+ * - When any listed tool maps to opencode's fused `edit` category and the
+ *   source did not list both `Write` and `Edit`, a warning flags that granting
+ *   `edit` is broader than the source whitelist (it also covers apply_patch).
+ */
+function translateToolsToPermission(
+  toolNames: string[],
+): { permission: OpencodePermission; warnings: string[] } {
+  const warnings: string[] = [];
+  const permission: OpencodePermission = { '*': 'deny' };
+  const mappedSeen = new Set<string>();
+  let grantsEdit = false;
+
+  for (const name of toolNames) {
+    const category = TOOL_TO_PERMISSION[name.toLowerCase()];
+    if (category === undefined) {
+      warnings.push(
+        `Tool "${name}" has no opencode permission equivalent; it was omitted from the `
+          + `allow-list (denied by default via "*": deny).`,
+      );
+      continue;
+    }
+    if (category === 'edit') {
+      grantsEdit = true;
+    }
+    if (!mappedSeen.has(category)) {
+      mappedSeen.add(category);
+      permission[category] = 'allow' satisfies OpencodePermissionState;
+    }
   }
-  return [];
+
+  if (grantsEdit) {
+    const lowerNames = new Set(toolNames.map((n) => n.toLowerCase()));
+    if (!(lowerNames.has('write') && lowerNames.has('edit'))) {
+      warnings.push(
+        'opencode has a single "edit" permission category covering write/edit/apply_patch; '
+          + 'granting it here is broader than the source "tools" whitelist.',
+      );
+    }
+  }
+
+  return { permission, warnings };
 }
 
 /**
  * Translate a Claude sub-agent's frontmatter fields into opencode's schema (§7.2):
  * - `description` → passed through unchanged.
  * - `name`        → silently dropped (opencode's id is the filename, not a field).
- * - `tools`       → `permission` map (`{ <tool lowercased>: 'allow' }`); absent → no
- *                   `permission` key at all (opencode default = unrestricted, not a loss).
+ * - `tools`       → translated into a `permission` allow-list via
+ *                   `translateToolsToPermission` (denies everything else by default).
+ *                   Absent/empty `tools` → no `permission` key emitted.
  * - `model`       → passed through unchanged; a warning is emitted when the value is not
  *                   already in opencode's "provider/model" form (ambiguous, not fatal).
  * - `mode`        → always set to `'subagent'` (distributed artifacts are sub-agents).
+ * - `permission`  → only meaningful when `tools` is also present (unusual, but the source
+ *                   may carry both): the tools-derived permission wins and a warning
+ *                   reports the collision. A bare `permission` with no `tools` falls
+ *                   through to the generic unhandled-field path below.
  * - any other field (e.g. `effort`, Claude-specific) → omitted, warning emitted (R6.3).
  *
  * Pure, total: never throws.
@@ -113,6 +210,7 @@ export function translateAgentFrontmatter(
 ): AgentFrontmatterTranslation {
   const warnings: string[] = [];
   const frontmatter: Record<string, unknown> = {};
+  const extraHandled = new Set<string>();
 
   if (typeof source['description'] === 'string') {
     frontmatter['description'] = source['description'];
@@ -130,17 +228,24 @@ export function translateAgentFrontmatter(
     frontmatter['model'] = model;
   }
 
-  const toolNames = extractToolNames(source['tools']);
-  if (toolNames.length > 0) {
-    const permission: Record<string, 'allow'> = {};
-    for (const tool of toolNames) {
-      permission[tool.toLowerCase()] = 'allow';
-    }
+  const toolNames = parseToolNames(source['tools']);
+  if (toolNames !== undefined) {
+    const { permission, warnings: toolWarnings } = translateToolsToPermission(toolNames);
     frontmatter['permission'] = permission;
+    warnings.push(...toolWarnings);
+
+    if (source['permission'] !== undefined) {
+      extraHandled.add('permission');
+      warnings.push(
+        'Source frontmatter has both "tools" and an explicit "permission" field; the '
+          + 'tools-derived permission takes precedence and the explicit "permission" field '
+          + 'was ignored.',
+      );
+    }
   }
 
   for (const key of Object.keys(source)) {
-    if (HANDLED_FIELDS.has(key)) {
+    if (HANDLED_FIELDS.has(key) || extraHandled.has(key)) {
       continue;
     }
     warnings.push(`Field "${key}" has no opencode equivalent and was omitted.`);

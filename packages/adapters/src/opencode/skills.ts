@@ -17,6 +17,9 @@
  * Invariants:
  * - auditSkill and planSkill are read-only (no fs writes).
  * - applySkill is idempotent (linkOrCopy handles existing symlinks).
+ * - applyRemoveSkill removes the requested symlink but deletes the shared store
+ *   ONLY when no other install target (claude/opencode × user/project) still
+ *   references it (ADR-0020 §3 — remove opencode never impacts Claude).
  * - Scanner is called with the source path; blocked verdict → SkillScanBlockedError.
  * - No while loops; no process.exit().
  * - All path resolution goes through resolveUserTargets / resolveOpencodeUserTargets /
@@ -28,7 +31,7 @@ import path from 'node:path';
 
 import type { AdapterEntry } from '@agent-rigger/core/adapter';
 import { assertSafeArtifactName } from '@agent-rigger/core/artifact-name';
-import { link, unlink } from '@agent-rigger/core/linker';
+import { link, removeStoreIfUnreferenced, unlinkTarget } from '@agent-rigger/core/linker';
 import {
   resolveOpencodeProjectTargets,
   resolveOpencodeUserTargets,
@@ -115,6 +118,25 @@ function resolveTargetPath(name: string, scope: Scope, env: Env, cwd?: string): 
     return path.join(resolveOpencodeProjectTargets(cwd).skillsDir, name);
   }
   return path.join(resolveOpencodeUserTargets(env).skillsDir, name);
+}
+
+/**
+ * Enumerate every known install target path that may reference the shared
+ * skill store for `name`: both assistants (claude, opencode) × both scopes
+ * (user, project under `cwd`).
+ *
+ * Claude's paths mirror claude/skills.ts resolveTargetPath:
+ * - user:    <home>/.claude/skills/<name>
+ * - project: <cwd>/.claude/skills/<name>
+ */
+function skillTargetCandidates(name: string, env: Env, cwd: string): string[] {
+  const claudeDir = path.dirname(resolveUserTargets(env).claudeSettings);
+  return [
+    path.join(claudeDir, 'skills', name),
+    path.join(cwd, '.claude', 'skills', name),
+    path.join(resolveOpencodeUserTargets(env).skillsDir, name),
+    path.join(resolveOpencodeProjectTargets(cwd).skillsDir, name),
+  ];
 }
 
 // ---------------------------------------------------------------------------
@@ -229,20 +251,44 @@ export async function planRemoveSkill(
 /**
  * Execute unlink removal operations produced by planRemoveSkill.
  *
- * For each unlink op: removes both the target (symlink/file/directory) and the
- * store entry. Uses core unlink() which is tolerant to absence (force:true).
+ * For each unlink op (ADR-0020 §3 — one store, N symlinks):
+ * 1. Always remove the requested target (symlink/file/directory).
+ * 2. Remove the store ONLY when no other known install target still references
+ *    it. Reference counting uses filesystem truth (offline): the candidate
+ *    skill target paths of BOTH assistants (claude, opencode) and BOTH scopes
+ *    (user, project under `cwd`) are lstat'd/readlink'd; any symlink resolving
+ *    to the store keeps it alive. Copy-fallback installs (plain directories,
+ *    no symlink) are not counted as references.
  *
+ * Plugin unlink ops also flow through this function (shared 'unlink' op kind,
+ * see adapter.ts). Their store lives under ~/.config/agent-rigger/plugins/,
+ * which no skill candidate ever resolves to, so plugin removal still deletes
+ * target + store as before.
+ *
+ * Both removals are tolerant to absence (rm force).
  * Ops of any other kind are ignored (forward-compatibility).
  *
  * @param ops  Removal operations (only 'unlink' kind are processed).
- * @param env  Injectable env (kept for interface symmetry).
+ * @param env  Injectable env for HOME resolution (candidate enumeration).
+ * @param cwd  Working directory for project-scope candidates. Defaults to
+ *             process.cwd(), matching the adapter's project-scope convention.
  */
-export async function applyRemoveSkill(ops: RemovalOp[], _env: Env): Promise<void> {
+export async function applyRemoveSkill(
+  ops: RemovalOp[],
+  env: Env,
+  cwd?: string,
+): Promise<void> {
   for (const op of ops) {
     if (op.kind !== 'unlink') {
       continue;
     }
-    await unlink(op.target, op.store);
+    await unlinkTarget(op.target);
+    const candidates = skillTargetCandidates(
+      path.basename(op.store),
+      env,
+      cwd ?? process.cwd(),
+    );
+    await removeStoreIfUnreferenced(op.store, candidates);
   }
 }
 

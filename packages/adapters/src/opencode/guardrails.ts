@@ -31,6 +31,7 @@ import type { Env } from '@agent-rigger/core/paths';
 import type {
   NatureReport,
   OpencodePermission,
+  OpencodePermissionState,
   RemovalOp,
   Scope,
   WriteOp,
@@ -60,6 +61,69 @@ function extractPermission(settings: Record<string, unknown>): OpencodePermissio
     return {};
   }
   return perm as OpencodePermission;
+}
+
+/** Render a permission value (flat state or pattern map) for a warning message. */
+function renderPermissionValue(
+  value: OpencodePermissionState | Record<string, OpencodePermissionState>,
+): string {
+  return typeof value === 'string' ? `"${value}"` : JSON.stringify(value);
+}
+
+/** Build one dropped-leaf warning naming the rule and the conflicting user value. */
+function conflictWarning(
+  leafLabel: string,
+  state: OpencodePermissionState,
+  tool: string,
+  existing: OpencodePermissionState | Record<string, OpencodePermissionState>,
+): string {
+  return `Permission ${leafLabel} = "${state}" was not applied: it conflicts with the `
+    + `existing user setting "${tool}" = ${renderPermissionValue(existing)} in opencode.json `
+    + `(existing config is never overwritten); adjust it manually to enforce this rule.`;
+}
+
+/**
+ * Warnings for the leaves of `fragment` that the additive merge will DROP
+ * because the user's config already claims the leaf with a different value
+ * (review M7, R10.4/R5.3: never fail silently).
+ *
+ * A leaf is dropped-with-conflict when it cannot be applied AND the existing
+ * user value differs from the wanted state:
+ * - flat leaf vs existing flat state of a DIFFERENT value → conflict;
+ * - flat leaf vs existing nested map → shape conflict;
+ * - nested leaf vs existing flat state of a DIFFERENT value → shape conflict;
+ * - nested leaf vs existing map carrying the pattern with a DIFFERENT state → conflict.
+ *
+ * A leaf whose existing value already matches the wanted state (exactly, or a
+ * flat state equal to a nested leaf's state — broader but same enforcement)
+ * is genuinely installed: no warning.
+ */
+function computePermissionConflicts(
+  fragment: OpencodePermission,
+  current: OpencodePermission,
+): string[] {
+  const warnings: string[] = [];
+  for (const [tool, wanted] of Object.entries(fragment)) {
+    const existing = current[tool];
+    if (existing === undefined) {
+      continue; // absent → mergeable, not a conflict
+    }
+    if (typeof wanted === 'string') {
+      if (typeof existing === 'string' ? existing !== wanted : true) {
+        warnings.push(conflictWarning(`"${tool}"`, wanted, tool, existing));
+      }
+      continue;
+    }
+    for (const [pattern, state] of Object.entries(wanted)) {
+      const blocked = typeof existing === 'string'
+        ? existing !== state
+        : pattern in existing && existing[pattern] !== state;
+      if (blocked) {
+        warnings.push(conflictWarning(`"${tool}" > "${pattern}"`, state, tool, existing));
+      }
+    }
+  }
+  return warnings;
 }
 
 // ---------------------------------------------------------------------------
@@ -110,7 +174,15 @@ export async function auditGuardrail(
  * Emits a single merge-permission op carrying only the MISSING subset of
  * `permission` (so the resulting `applied` payload — derived by the engine —
  * is exactly what was added, enabling exact reversibility, ADR-0016). Returns
- * [] when nothing is missing (idempotent).
+ * [] when nothing is missing AND nothing conflicts (idempotent).
+ *
+ * Leaves the additive merge would drop because the user's config claims them
+ * with a different value (shape or state conflict, review M7) produce a warning
+ * on the op — even when the missing subset is empty, so a fully-conflicting
+ * install is never a silent no-op (R10.4/R5.3). An op with an EMPTY fragment is
+ * warning-only: applyGuardrail skips it and the engine treats it like an empty
+ * plan (no write, no manifest entry), so `check` keeps truthfully reporting
+ * 'missing' and no phantom install is ever recorded.
  *
  * Read-only: no filesystem writes.
  *
@@ -133,7 +205,8 @@ export async function planGuardrail(
   const current = extractPermission(settings);
 
   const missing = computeMissingPermission(permission, current);
-  if (Object.keys(missing).length === 0) {
+  const conflicts = computePermissionConflicts(permission, current);
+  if (Object.keys(missing).length === 0 && conflicts.length === 0) {
     return [];
   }
 
@@ -141,13 +214,17 @@ export async function planGuardrail(
     kind: 'merge-permission',
     path: opencodeJsonPath,
     permission: missing,
-    description: 'Merge opencode permission rules from guardrail',
+    description: Object.keys(missing).length > 0
+      ? 'Merge opencode permission rules from guardrail'
+      : 'Skip conflicting opencode permission rules (see warnings)',
   };
-  // Surface translation warnings on the op (R5.3 / HIGH-2): the CLI renders them
-  // in the plan/confirm/output so a non-translatable deny rule is never silently
-  // dropped. exactOptionalPropertyTypes: only set the key when there are warnings.
-  if (warnings.length > 0) {
-    op.warnings = warnings;
+  // Surface translation warnings (R5.3 / HIGH-2) and dropped-leaf conflict
+  // warnings (M7) on the op: the CLI renders them in the plan/confirm/output so
+  // a non-translatable or conflict-dropped deny rule is never silently lost.
+  // exactOptionalPropertyTypes: only set the key when there are warnings.
+  const allWarnings = [...warnings, ...conflicts];
+  if (allWarnings.length > 0) {
+    op.warnings = allWarnings;
   }
   return [op];
 }
@@ -213,6 +290,12 @@ export async function planRemoveGuardrail(
 export async function applyGuardrail(ops: WriteOp[], _env: Env): Promise<void> {
   for (const op of ops) {
     if (op.kind === 'merge-permission') {
+      // Warning-only op (M7): an empty fragment merges nothing — skip the
+      // write entirely so the user's opencode.json is never rewritten as a
+      // pure no-op. The engine also filters these ops out before applying.
+      if (Object.keys(op.permission).length === 0) {
+        continue;
+      }
       const settings = await readOpencodeJson(op.path);
       const current = extractPermission(settings);
       const merged = mergePermission(current, op.permission);

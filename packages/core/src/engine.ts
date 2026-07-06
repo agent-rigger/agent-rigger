@@ -237,9 +237,20 @@ export async function apply(
 
   try {
     for (const entry of entries) {
-      const ops = await adapter.plan(entry, scope, env);
+      const plannedOps = await adapter.plan(entry, scope, env);
 
-      // No ops → idempotent no-op; already installed.
+      // Drop warning-only ops before applying: a merge-permission op with an
+      // EMPTY fragment applies nothing — the opencode guardrail plan emits it
+      // solely to carry conflict warnings into the plan preview (review M7,
+      // R10.4). Applying it would upsert a phantom manifest entry whose empty
+      // `applied` payload makes `check` vacuously 'present' (hasPermission(_, {})
+      // is true) and `remove` a permanent silent no-op, so such ops are treated
+      // exactly like an empty plan instead: no write, no backup, no manifest entry.
+      const ops = plannedOps.filter(
+        (op) => !(op.kind === 'merge-permission' && Object.keys(op.permission).length === 0),
+      );
+
+      // No (effective) ops → idempotent no-op; already installed or warning-only.
       // Leave the manifest untouched for this entry (preserve existing record).
       if (ops.length === 0) {
         continue;

@@ -16,7 +16,8 @@
  *
  * Security policy (ADR-0014):
  * - All fetched content is scanned uniformly: skills and agents by their checkout path,
- *   hooks by the entire hooks/ directory (guards + shared libs).
+ *   hooks by the entire hooks/ directory (guards + shared libs), opencode plugins by
+ *   the entire plugins/ directory (native JS modules — ADR-0020 §4, H13).
  * - Scan occurs BEFORE plan/apply — no files are written if scan blocks.
  * - Without --force: a blocking verdict throws ScanBlockedError (fail-closed).
  * - With --force: a blocking verdict emits a warning and install proceeds.
@@ -115,6 +116,15 @@ export function scanPathFor(entry: ArtifactEntry, baseDir: string): string | nul
     // libs (e.g. _shared/hook-lib.ts) are covered by the composite scanner.
     return path.join(baseDir, 'hooks');
   }
+  if (entry.nature === 'plugin' && entry.targets.includes('opencode')) {
+    // An opencode plugin is a native JS/TS module shipped in the checkout's
+    // plugins/ directory and copied verbatim into pluginDir (ADR-0020 §4,
+    // R8.2) — executable code loaded by opencode at runtime, scanned like
+    // hooks (whole directory, so sibling modules are covered too — H13).
+    // Claude-only plugins are delegate-installed via `claude plugin install`
+    // from the marketplace URL (ADR-0003): no module in the checkout → null.
+    return path.join(baseDir, 'plugins');
+  }
   return null;
 }
 
@@ -125,7 +135,8 @@ export function scanPathFor(entry: ArtifactEntry, baseDir: string): string | nul
 /**
  * Scan all entries that have a resolvable checkout path in the given directory.
  *
- * - Resolves each entry to a scan path (skills/agents only; others skipped naturally).
+ * - Resolves each entry to a scan path (skills/agents/hooks/opencode plugins;
+ *   others skipped naturally).
  * - Runs scanner.scan() in parallel via Promise.all.
  * - If any verdict is degraded (no scanner tool installed) → actionable warning + proceeds.
  *   force is NOT needed for this case (ADR-0018).
@@ -330,9 +341,10 @@ export async function runRemoteInstall(opts: {
         : qualifyEntries(sourceName, rawEffective);
 
       // All entries from the remote catalog are sourced from the checkout.
-      // - Skills / agents: have a checkout path (scanPathFor != null).
-      // - Guardrails / contexts / hooks: no scan path but also come from checkout.
-      // - Plugins: from the remote catalog's marketplace URL.
+      // - Skills / agents / hooks / opencode plugins: have a checkout path
+      //   (scanPathFor != null).
+      // - Guardrails / contexts: no scan path but also come from checkout.
+      // - Claude plugins: from the remote catalog's marketplace URL.
       // remoteIds tells buildClaudeAdapter which entries to resolve from externalBaseDir.
       // Use qualified ids here to match the (potentially qualified) resolved entries.
       const qualifiedRemoteEntryIds = new Set(remoteEntries.map((e) => qualify(e.id)));
@@ -343,7 +355,7 @@ export async function runRemoteInstall(opts: {
       );
 
       // Security scan — all entries that have a checkout path (uniform scan, ADR-0014).
-      // Entries without a scanPath (e.g. guardrails, hooks) are naturally skipped.
+      // Entries without a scanPath (e.g. guardrails, contexts) are naturally skipped.
       // scanPathFor uses localId() internally to strip the qualifier before path derivation.
       const { warnings } = await scanEntries({
         entries: resolved,

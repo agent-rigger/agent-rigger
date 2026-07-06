@@ -64,7 +64,10 @@ export function parseFrontmatter(md: string): ParsedFrontmatter {
  *
  * Supported value shapes: string/number/boolean scalars, string arrays
  * (rendered as an inline `[a, b]` list), and one-level-deep plain objects
- * (rendered as an indented nested map).
+ * (rendered as an indented nested map). Nested-map key order follows
+ * `Object.entries` insertion order — load-bearing for opencode's `permission`
+ * map, which resolves rules with `findLast` over key order (a `"*"` catch-all
+ * must therefore stay first).
  */
 export function serializeFrontmatter(data: Record<string, unknown>, body: string): string {
   const lines: string[] = [];
@@ -78,7 +81,7 @@ export function serializeFrontmatter(data: Record<string, unknown>, body: string
     } else if (value !== null && typeof value === 'object') {
       lines.push(`${key}:`);
       for (const [subKey, subValue] of Object.entries(value as Record<string, unknown>)) {
-        lines.push(`  ${subKey}: ${String(subValue)}`);
+        lines.push(`  ${formatMapKey(subKey)}: ${String(subValue)}`);
       }
     } else {
       lines.push(`${key}: ${String(value)}`);
@@ -86,6 +89,17 @@ export function serializeFrontmatter(data: Record<string, unknown>, body: string
   }
 
   return `---\n${lines.join('\n')}\n---\n${body}`;
+}
+
+/** A bare (unquoted) YAML scalar key: leading letter/underscore, then alnum/underscore/hyphen. */
+const BARE_KEY_RE = /^[A-Za-z_][A-Za-z0-9_-]*$/;
+
+/**
+ * Quote a nested-map key when it is not a plain bare YAML scalar — e.g. `"*"`,
+ * which YAML would otherwise parse as an alias-node indicator, not a literal key.
+ */
+function formatMapKey(key: string): string {
+  return BARE_KEY_RE.test(key) ? key : `"${key}"`;
 }
 
 // ---------------------------------------------------------------------------
@@ -161,7 +175,7 @@ function parseNestedBlock(lines: string[], start: number): { value: unknown; con
     if (idx === -1) {
       continue;
     }
-    map[l.slice(0, idx).trim()] = l.slice(idx + 1).trim();
+    map[stripQuotes(l.slice(0, idx).trim())] = l.slice(idx + 1).trim();
   }
   return { value: map, consumed };
 }

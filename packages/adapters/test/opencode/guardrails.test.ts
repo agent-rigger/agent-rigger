@@ -20,7 +20,9 @@ import os from 'node:os';
 import path from 'node:path';
 
 import type { AdapterEntry } from '@agent-rigger/core/adapter';
+import { apply, check, remove } from '@agent-rigger/core/engine';
 import { readJson, writeJson } from '@agent-rigger/core/fs-json';
+import { findEntry, readManifest } from '@agent-rigger/core/manifest';
 import {
   resolveOpencodeProjectTargets,
   resolveOpencodeUserTargets,
@@ -186,6 +188,90 @@ describe('planGuardrail', () => {
 
   it('does not emit an op when permission fragment is empty', async () => {
     const ops = await planGuardrail('user', env, {});
+
+    expect(ops).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// planGuardrail — conflicting user config (M7)
+// ---------------------------------------------------------------------------
+
+describe('planGuardrail — conflicting user config (M7)', () => {
+  it('warns on the op when a deny leaf is dropped because of a flat user state', async () => {
+    const targets = resolveOpencodeUserTargets(env);
+    // Flat "bash": "allow" blocks the nested "rm -rf *": "deny" leaf (never overwritten).
+    await writeJson(targets.opencodeJson, { permission: { bash: 'allow' } });
+
+    const { permission } = translateRules(REF_DENY, REF_ALLOW);
+    const ops = await planGuardrail('user', env, permission);
+
+    expect(ops).toHaveLength(1);
+    const op = ops[0] as WriteOpMergePermission;
+    // Only the non-conflicting leaf is merged...
+    expect(op.permission).toEqual({ read: 'deny' });
+    // ...and the dropped deny leaf is reported, naming the rule and the user value.
+    // "ls *": "allow" matches the user's flat "allow" → no warning for it.
+    expect(op.warnings).toHaveLength(1);
+    expect(op.warnings?.[0]).toContain('rm -rf *');
+    expect(op.warnings?.[0]).toContain('"deny"');
+    expect(op.warnings?.[0]).toContain('"allow"');
+  });
+
+  it('still emits a warning-carrying op when EVERY leaf conflicts (nothing missing)', async () => {
+    const targets = resolveOpencodeUserTargets(env);
+    await writeJson(targets.opencodeJson, { permission: { bash: 'allow', read: 'ask' } });
+
+    const { permission } = translateRules(REF_DENY, REF_ALLOW);
+    const ops = await planGuardrail('user', env, permission);
+
+    // Nothing is mergeable, but the plan must NOT be silently empty (R10.4/R5.3).
+    expect(ops).toHaveLength(1);
+    const op = ops[0] as WriteOpMergePermission;
+    expect(op.permission).toEqual({});
+    expect(op.warnings).toHaveLength(2);
+    const joined = (op.warnings ?? []).join('\n');
+    expect(joined).toContain('rm -rf *');
+    expect(joined).toContain('"read"');
+    expect(joined).toContain('"ask"');
+  });
+
+  it('appends conflict warnings after the translation warnings on the same op', async () => {
+    const targets = resolveOpencodeUserTargets(env);
+    await writeJson(targets.opencodeJson, { permission: { bash: 'allow' } });
+
+    const { permission } = translateRules(REF_DENY, REF_ALLOW);
+    const ops = await planGuardrail('user', env, permission, undefined, ['a lossy rule warning']);
+
+    const op = ops[0] as WriteOpMergePermission;
+    expect(op.warnings?.[0]).toBe('a lossy rule warning');
+    expect(op.warnings).toHaveLength(2);
+    expect(op.warnings?.[1]).toContain('rm -rf *');
+  });
+
+  it('warns when a flat leaf is dropped because the user has a nested map for the tool', async () => {
+    const targets = resolveOpencodeUserTargets(env);
+    await writeJson(targets.opencodeJson, { permission: { read: { '.env': 'allow' } } });
+
+    // 'Read(./.env)' translates to the flat leaf read: 'deny'.
+    const { permission } = translateRules(['Read(./.env)'], []);
+    const ops = await planGuardrail('user', env, permission);
+
+    expect(ops).toHaveLength(1);
+    const op = ops[0] as WriteOpMergePermission;
+    expect(op.permission).toEqual({});
+    expect(op.warnings).toHaveLength(1);
+    expect(op.warnings?.[0]).toContain('"read"');
+    expect(op.warnings?.[0]).toContain('"deny"');
+  });
+
+  it('stays silent ([] and no warnings) when a flat user state already enforces the same state', async () => {
+    const targets = resolveOpencodeUserTargets(env);
+    // Flat "bash": "deny" is broader than the nested deny leaf — same enforcement, no conflict.
+    await writeJson(targets.opencodeJson, { permission: { bash: 'deny' } });
+
+    const { permission } = translateRules(['Bash(rm -rf *)'], []);
+    const ops = await planGuardrail('user', env, permission);
 
     expect(ops).toHaveLength(0);
   });
@@ -372,5 +458,51 @@ describe('createOpencodeAdapter — guardrail end-to-end', () => {
     expect(removeOps).toEqual([
       { kind: 'remove-permission', path: targets.opencodeJson, permission: appliedPermission },
     ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Engine round-trip — fully-conflicting install (M7 follow-up)
+// ---------------------------------------------------------------------------
+
+describe('engine round-trip — fully-conflicting install creates no phantom manifest entry (M7)', () => {
+  it('warning-only plan applies nothing: no manifest entry, check stays missing, remove stays no-op', async () => {
+    const targets = resolveOpencodeUserTargets(env);
+    // Every translated leaf conflicts with the user's config:
+    // read: 'deny' vs 'ask'; bash 'rm -rf *': 'deny' vs flat 'allow'
+    // ('ls *': 'allow' is already satisfied by the flat 'allow').
+    const userConfig = { permission: { bash: 'allow' as const, read: 'ask' as const } };
+    await writeJson(targets.opencodeJson, userConfig);
+
+    const adapter = createOpencodeAdapter({ denyRef: REF_DENY, allowRef: REF_ALLOW });
+    const entry: AdapterEntry = { id: 'guardrail:main', nature: 'guardrail', scope: 'user' };
+    const manifestPath = path.join(tmp.dir, 'state.json');
+
+    // The plan is a warning-carrying op with an EMPTY fragment (R10.4: not silent)...
+    const ops = await adapter.plan(entry, 'user', env);
+    expect(ops).toHaveLength(1);
+    const op = ops[0] as WriteOpMergePermission;
+    expect(op.permission).toEqual({});
+    expect(op.warnings?.length).toBeGreaterThan(0);
+
+    // ...but the engine must treat it as "nothing to apply": no write, no
+    // manifest entry — a recorded applied:{} would flip check to a vacuous
+    // 'present' and make remove a permanent silent no-op (phantom entry).
+    const applyResult = await apply(adapter, [entry], 'user', env, manifestPath);
+    expect(applyResult.written).toHaveLength(0);
+    const manifest = await readManifest(manifestPath);
+    expect(findEntry(manifest, 'guardrail:main', 'user', 'opencode')).toBeUndefined();
+
+    // The user config is untouched (no no-op rewrite of opencode.json).
+    expect(await readJson(targets.opencodeJson)).toEqual(userConfig);
+
+    // check stays truthful: zero enforcement → 'missing' (pre-fix late signal preserved).
+    const report = await check(adapter, [entry], 'user', env, manifestPath);
+    expect(report.entries).toHaveLength(1);
+    expect(report.entries[0]!.state).toBe('missing');
+
+    // remove is a truthful "not installed" no-op, not an unremovable phantom.
+    const removeResult = await remove(adapter, [entry], 'user', env, manifestPath);
+    expect(removeResult.removed).toHaveLength(0);
   });
 });

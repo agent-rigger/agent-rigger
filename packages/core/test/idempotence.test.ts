@@ -375,3 +375,63 @@ describe('apply() — single backup per file per run', () => {
     expect(result.backedUp[0]).toContain('settings.json.bak-');
   });
 });
+
+// ---------------------------------------------------------------------------
+// apply() — warning-only merge-permission plans (M7 follow-up)
+// ---------------------------------------------------------------------------
+
+/**
+ * Adapter whose plan is a single merge-permission op with an EMPTY fragment —
+ * the warning-only op the opencode guardrail emits when every leaf conflicts
+ * with the user's config (it exists solely to surface conflict warnings in the
+ * plan preview). apply() must treat it like an empty plan: applying it would
+ * record a phantom manifest entry with applied:{} that makes `check` vacuously
+ * 'present' and `remove` a permanent silent no-op.
+ */
+function makeWarningOnlyPermissionAdapter(opencodeJsonPath: string): Adapter {
+  return {
+    id: 'opencode',
+    async audit(entry): Promise<NatureReport> {
+      return { id: entry.id, nature: entry.nature, state: 'missing' };
+    },
+    async plan(): Promise<WriteOp[]> {
+      return [{
+        kind: 'merge-permission',
+        path: opencodeJsonPath,
+        permission: {},
+        description: 'Skip conflicting opencode permission rules (see warnings)',
+        warnings: ['Permission "read" = "deny" was not applied: conflicts with user config'],
+      }];
+    },
+    async apply(): Promise<void> {
+      throw new Error('adapter.apply must not be called for a warning-only plan');
+    },
+    async planRemove() {
+      return [];
+    },
+    async applyRemove(): Promise<void> {},
+  };
+}
+
+describe('apply() — warning-only merge-permission op (empty fragment)', () => {
+  it('is treated like an empty plan: no write, no backup, no manifest entry', async () => {
+    const opencodeJsonPath = path.join(tmp.dir, '.config', 'opencode', 'opencode.json');
+    await fs.mkdir(path.dirname(opencodeJsonPath), { recursive: true });
+    await writeJson(opencodeJsonPath, { permission: { bash: 'allow' } });
+
+    const adapter = makeWarningOnlyPermissionAdapter(opencodeJsonPath);
+    const entries = [makeCatalogEntry('guardrail:main')];
+
+    const result = await apply(adapter, entries, 'user', env, manifestPath);
+
+    expect(result.written).toHaveLength(0);
+    expect(result.backedUp).toHaveLength(0);
+    expect(result.manifest.artifacts).toHaveLength(0);
+
+    // The user config is untouched (no no-op rewrite, no .bak).
+    expect(await readJson(opencodeJsonPath)).toEqual({ permission: { bash: 'allow' } });
+    const bakOnDisk = (await fs.readdir(path.dirname(opencodeJsonPath)))
+      .filter((e) => e.includes('.bak-'));
+    expect(bakOnDisk).toHaveLength(0);
+  });
+});

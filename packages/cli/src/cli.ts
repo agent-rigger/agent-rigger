@@ -47,7 +47,7 @@ import { type CommandRunner, defaultRunner } from '@agent-rigger/catalog/tool-ch
 export { buildClaudeAdapter } from './adapter-builder';
 export type { BuildClaudeAdapterOpts } from './adapter-builder';
 import { buildAdapter } from './adapter-dispatch';
-import { resolveAssistant } from './assistant-select';
+import { detectAssistants, resolveAssistant } from './assistant-select';
 import { runCatalog } from './cmd-catalog';
 import { runCheck } from './cmd-check';
 import { runDoctor } from './cmd-doctor';
@@ -541,6 +541,91 @@ async function resolveCliAssistant(
 }
 
 // ---------------------------------------------------------------------------
+// resolveProposalAssistants — assistant(s) for post-init / catalog-add installs
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolve the assistant(s) targeted by a post-init / post-`catalog add`
+ * install proposal (H9).
+ *
+ * config.assistants — persisted by the init wizard BEFORE the proposal step
+ * (cmd-init.ts step 4 vs step 6) — wins: every configured assistant receives
+ * the proposed install, so a user who picked opencode (or both) never
+ * silently falls back to claude. Without configured assistants, a single
+ * detected assistant wins; otherwise 'claude' (pre-M3 back-compat).
+ *
+ * Never prompts: this runs inside picker flows (`init`, `init --yes`,
+ * `catalog add`) where the wizard already asked — an extra assistant prompt
+ * would be redundant in TTY and would hang a `--yes` run.
+ */
+async function resolveProposalAssistants(env: Env): Promise<Assistant[]> {
+  let configAssistants: Assistant[] | undefined;
+  try {
+    configAssistants = (await loadCliConfig(env)).assistants;
+  } catch (err) {
+    if (!(err instanceof LegacyConfigError)) throw err;
+  }
+
+  if (configAssistants !== undefined && configAssistants.length > 0) {
+    return configAssistants;
+  }
+
+  const detected = await detectAssistants(env);
+  return detected.length === 1 ? detected : ['claude'];
+}
+
+// ---------------------------------------------------------------------------
+// resolveManifestAssistant — manifest-first routing for check/remove/update (M18)
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolve the target assistant for manifest-routed commands (check/remove/
+ * update). ADR-0020 §1 / R1.6: the assistant is persisted per manifest entry,
+ * so these commands route the adapter from the manifest WITHOUT re-prompting.
+ *
+ * Priority:
+ * 1. `--assistant` flag: explicit override, delegated to resolveCliAssistant
+ *    (same validation and error behaviour).
+ * 2. Manifest: when every relevant entry (matching `scope`, and `ids` when
+ *    given) belongs to exactly ONE assistant → that assistant. No prompt, no
+ *    config/detection lookup — the manifest already knows.
+ * 3. Fallback: resolveCliAssistant (config > detection > TTY prompt >
+ *    'claude') — only when the manifest genuinely has no answer (no matching
+ *    entries, or entries spread across several assistants).
+ */
+async function resolveManifestAssistant(opts: {
+  flags: Record<string, string | boolean>;
+  env: Env;
+  scope: 'user' | 'project';
+  /** When provided and non-empty, only manifest entries with these ids count. */
+  ids?: string[];
+}): Promise<Assistant> {
+  const { flags, env, scope, ids } = opts;
+
+  if (flags['assistant'] !== undefined) {
+    return resolveCliAssistant(flags, env);
+  }
+
+  const { readManifest } = await import('@agent-rigger/core/manifest');
+  const manifest = await readManifest(resolveManifestPath(env));
+  const idFilter = ids === undefined || ids.length === 0 ? undefined : new Set(ids);
+
+  const distinct = new Set<Assistant>();
+  for (const entry of manifest.artifacts) {
+    if (entry.scope !== scope) continue;
+    if (idFilter !== undefined && !idFilter.has(entry.id)) continue;
+    distinct.add(entry.assistant ?? 'claude');
+  }
+
+  const [only] = distinct;
+  if (distinct.size === 1 && only !== undefined) {
+    return only;
+  }
+
+  return resolveCliAssistant(flags, env);
+}
+
+// ---------------------------------------------------------------------------
 // parseAssistantFilterFlag — optional --assistant filter (read-only commands)
 // ---------------------------------------------------------------------------
 
@@ -760,6 +845,10 @@ async function computeArtifactStatuses(
  * proposal). The caller is responsible for building the CatalogProposal
  * (qualified entries + meta) and for resolving the install source (url/name).
  *
+ * The install targets the assistant(s) resolved by resolveProposalAssistants
+ * (H9): one runRemoteInstall per configured assistant, so a user who picked
+ * opencode in the init wizard never gets a silent claude install.
+ *
  * Returns the list of installed ids (empty if the user cancelled).
  */
 async function runInteractiveProposeInstall(
@@ -797,22 +886,29 @@ async function runInteractiveProposeInstall(
 
   const manifestPath = resolveManifestPath(env);
 
-  const result = await runRemoteInstall({
-    ids: selectedIds,
-    catalogUrl: installSource.catalogUrl,
-    sourceName: installSource.sourceName,
-    scope,
-    env,
-    manifestPath,
-    runner,
-    tmpFactory,
-    confirm: true,
-    ...(scanner === undefined ? {} : { scanner }),
-  });
+  // H9: target the assistant(s) the user configured (persisted before the
+  // proposal step) — one install per assistant, never a silent claude default.
+  const assistants = await resolveProposalAssistants(env);
 
-  // Surface the plan + result recap + scan/tool warnings. Without this the
-  // install happens silently after the picker (no feedback to the user).
-  print(result.output);
+  for (const assistant of assistants) {
+    const result = await runRemoteInstall({
+      ids: selectedIds,
+      catalogUrl: installSource.catalogUrl,
+      sourceName: installSource.sourceName,
+      scope,
+      env,
+      manifestPath,
+      runner,
+      tmpFactory,
+      confirm: true,
+      assistant,
+      ...(scanner === undefined ? {} : { scanner }),
+    });
+
+    // Surface the plan + result recap + scan/tool warnings. Without this the
+    // install happens silently after the picker (no feedback to the user).
+    print(result.output);
+  }
 
   return selectedIds;
 }
@@ -901,9 +997,9 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
 
     // ----- check -----
     if (command === 'check') {
-      // Resolve the target assistant once (R1): flag > config.assistants >
-      // detected > TTY prompt > 'claude' fallback (back-compat).
-      const assistant = await resolveCliAssistant(flags, env);
+      // Resolve the target assistant once (R1/M18): flag > manifest routing
+      // (entry.assistant, ADR-0020 §1 — no re-prompt) > config/detection.
+      const assistant = await resolveManifestAssistant({ flags, env, scope });
 
       const { entries: effective, metaBySource } = await resolveEffectiveCatalogFull(
         env,
@@ -1087,18 +1183,27 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
           }
 
           const manifestPath = resolveManifestPath(env);
-          await runRemoteInstall({
-            ids: defaultIds,
-            catalogUrl: initPrimary.url,
-            sourceName,
-            scope,
-            env,
-            manifestPath,
-            runner,
-            tmpFactory,
-            confirm: true,
-            ...(deps.remote?.scanner === undefined ? {} : { scanner: deps.remote.scanner }),
-          });
+
+          // H9: install the defaults for every assistant the wizard persisted
+          // (config.assistants is saved BEFORE this proposal step) — never a
+          // silent claude default when the user picked opencode.
+          const proposalAssistants = await resolveProposalAssistants(env);
+
+          for (const assistant of proposalAssistants) {
+            await runRemoteInstall({
+              ids: defaultIds,
+              catalogUrl: initPrimary.url,
+              sourceName,
+              scope,
+              env,
+              manifestPath,
+              runner,
+              tmpFactory,
+              confirm: true,
+              assistant,
+              ...(deps.remote?.scanner === undefined ? {} : { scanner: deps.remote.scanner }),
+            });
+          }
 
           return defaultIds;
         };
@@ -1499,7 +1604,16 @@ async function handleResourceCommand(opts: ResourceCommandOpts): Promise<number>
       return 0;
     }
 
-    const assistant = await resolveCliAssistant(flags, env);
+    // Manifest-first assistant routing (M18/ADR-0020 §1), same as top-level
+    // check: when every matching manifest entry belongs to one assistant, use
+    // it — never the silent non-TTY 'claude' fallback while the installed
+    // entries are opencode's. Scoped to the ids being audited (this nature).
+    const assistant = await resolveManifestAssistant({
+      flags,
+      env,
+      scope,
+      ids: filteredEntries.map((e) => e.id),
+    });
     const manifestPath = resolveManifestPath(env);
     const adapter = await buildAdapter(assistant, env);
     const result = await runCheck({
@@ -1989,9 +2103,10 @@ async function handleRemove(opts: HandleRemoveOpts): Promise<number> {
   }
 
   const yes = flags['yes'] === true;
-  // Resolve the target assistant once (R1): flag > config.assistants >
-  // detected > TTY prompt > 'claude' fallback (back-compat).
-  const assistant = await resolveCliAssistant(flags, env);
+  // Resolve the target assistant once (R1/M18): flag > manifest routing
+  // (entry.assistant of the requested ids, ADR-0020 §1 — no re-prompt) >
+  // config/detection fallback when the manifest has no answer.
+  const assistant = await resolveManifestAssistant({ flags, env, scope, ids });
   const adapter = await buildAdapter(assistant, env);
   const manifestPath = resolveManifestPath(env);
 
@@ -2065,9 +2180,10 @@ async function handleUpdate(opts: HandleUpdateOpts): Promise<number> {
   const runner: CommandRunner = deps.remote?.run ?? defaultRunner;
   const tmpFactory: TmpDirFactory = deps.remote?.tmpFactory ?? defaultTmpFactory;
 
-  // Resolve the target assistant once (R1): flag > config.assistants >
-  // detected > TTY prompt > 'claude' fallback (back-compat).
-  const assistant = await resolveCliAssistant(flags, env);
+  // Resolve the target assistant once (R1/M18): flag > manifest routing
+  // (entry.assistant of the requested ids — or all installed entries when ids
+  // is empty, ADR-0020 §1 — no re-prompt) > config/detection fallback.
+  const assistant = await resolveManifestAssistant({ flags, env, scope, ids });
 
   let confirm: boolean | ((planText: string) => Promise<boolean>);
   if (yes) {

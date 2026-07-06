@@ -195,6 +195,11 @@ export async function buildOpencodeAdapter(
     denyRef,
     allowRef,
     agentsContent,
+    // The REAL security scan runs at the pre-apply gate (remote-install.ts
+    // scanEntries) on the checkout paths — skills, agents, and opencode plugin
+    // modules (H13) are all covered there before any write. The adapter-level
+    // scanner re-scans each link-op source at apply time, so it stays a stub
+    // to avoid double-scanning the same checkout content.
     scanner: stubScanner,
     skillSource: (entry) => {
       const name = localId(entry.id).replace(/^skill:/, '');

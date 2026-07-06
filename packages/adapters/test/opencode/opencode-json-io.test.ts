@@ -92,3 +92,137 @@ describe('applyOpencodeKey', () => {
     expect(parsed['mcp']).toEqual({ srv: { type: 'local', command: ['x'] } });
   });
 });
+
+describe('applyOpencodeKey — comments INSIDE the modified key (M6)', () => {
+  const COMMENTED_PERMISSION = `{
+  "permission": {
+    // deny risky commands
+    "bash": {
+      // no recursive delete
+      "rm -rf *": "deny"
+    },
+    "edit": "ask" // asked by the user
+  }
+}`;
+
+  it('preserves comments inside "permission" when a merge adds new leaves', async () => {
+    await fs.writeFile(file, COMMENTED_PERMISSION);
+
+    await applyOpencodeKey(file, 'permission', {
+      bash: { 'rm -rf *': 'deny', 'ls *': 'allow' },
+      edit: 'ask',
+      read: 'deny',
+    });
+
+    const raw = await fs.readFile(file, 'utf-8');
+    expect(raw).toContain('// deny risky commands');
+    expect(raw).toContain('// no recursive delete');
+    expect(raw).toContain('// asked by the user');
+    expect(await readOpencodeJson(file)).toEqual({
+      permission: {
+        bash: { 'rm -rf *': 'deny', 'ls *': 'allow' },
+        edit: 'ask',
+        read: 'deny',
+      },
+    });
+  });
+
+  it('preserves comments inside "permission" when a leaf is removed', async () => {
+    await fs.writeFile(
+      file,
+      `{
+  "permission": {
+    // deny risky commands
+    "bash": {
+      // no recursive delete
+      "rm -rf *": "deny"
+    },
+    "read": "deny",
+    "edit": "ask" // asked by the user
+  }
+}`,
+    );
+
+    // Remove flow: the desired value no longer carries the managed "read" leaf.
+    await applyOpencodeKey(file, 'permission', {
+      bash: { 'rm -rf *': 'deny' },
+      edit: 'ask',
+    });
+
+    const raw = await fs.readFile(file, 'utf-8');
+    expect(raw).toContain('// deny risky commands');
+    expect(raw).toContain('// no recursive delete');
+    expect(raw).toContain('// asked by the user');
+    expect(await readOpencodeJson(file)).toEqual({
+      permission: { bash: { 'rm -rf *': 'deny' }, edit: 'ask' },
+    });
+  });
+
+  it('install → remove round-trip restores the commented file verbatim', async () => {
+    await fs.writeFile(file, COMMENTED_PERMISSION);
+
+    // Install merges a managed leaf, remove takes it back out.
+    await applyOpencodeKey(file, 'permission', {
+      bash: { 'rm -rf *': 'deny' },
+      edit: 'ask',
+      read: 'deny',
+    });
+    await applyOpencodeKey(file, 'permission', {
+      bash: { 'rm -rf *': 'deny' },
+      edit: 'ask',
+    });
+
+    const raw = await fs.readFile(file, 'utf-8');
+    expect(raw).toBe(COMMENTED_PERMISSION + '\n');
+  });
+
+  it('does not touch untouched leaves at all (identical text outside the edit)', async () => {
+    await fs.writeFile(file, COMMENTED_PERMISSION);
+
+    // Idempotent write: same value as on disk → the file text stays intact.
+    await applyOpencodeKey(file, 'permission', {
+      bash: { 'rm -rf *': 'deny' },
+      edit: 'ask',
+    });
+
+    const raw = await fs.readFile(file, 'utf-8');
+    expect(raw).toBe(COMMENTED_PERMISSION + '\n');
+  });
+
+  it('preserves comments inside an existing mcp server when adding a sibling server', async () => {
+    await fs.writeFile(
+      file,
+      `{
+  "mcp": {
+    "existing": {
+      // local dev server
+      "type": "remote",
+      "url": "https://example.com/mcp"
+    }
+  }
+}`,
+    );
+
+    await applyOpencodeKey(file, 'mcp', {
+      existing: { type: 'remote', url: 'https://example.com/mcp' },
+      added: { type: 'local', command: ['x'] },
+    });
+
+    const raw = await fs.readFile(file, 'utf-8');
+    expect(raw).toContain('// local dev server');
+    expect(await readOpencodeJson(file)).toEqual({
+      mcp: {
+        existing: { type: 'remote', url: 'https://example.com/mcp' },
+        added: { type: 'local', command: ['x'] },
+      },
+    });
+  });
+
+  it('falls back to replacing the whole key when the current value is not an object', async () => {
+    await fs.writeFile(file, `{ "permission": "everything" }`);
+
+    await applyOpencodeKey(file, 'permission', { edit: 'ask' });
+
+    expect(await readOpencodeJson(file)).toEqual({ permission: { edit: 'ask' } });
+  });
+});

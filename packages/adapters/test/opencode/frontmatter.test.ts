@@ -113,6 +113,23 @@ describe('serializeFrontmatter', () => {
     expect(out).toContain('  edit: deny');
   });
 
+  it('quotes a "*" nested-map key (bare "*" is a YAML alias indicator, not a literal key)', () => {
+    const out = serializeFrontmatter({ permission: { '*': 'deny', read: 'allow' } }, 'body\n');
+
+    expect(out).toContain('  "*": deny');
+    expect(out).not.toContain('  *: deny');
+  });
+
+  it('preserves nested-map insertion order in the serialized string ("*" first)', () => {
+    const out = serializeFrontmatter(
+      { permission: { '*': 'deny', read: 'allow', bash: 'allow' } },
+      'body\n',
+    );
+
+    expect(out.indexOf('"*"')).toBeLessThan(out.indexOf('read: allow'));
+    expect(out.indexOf('read: allow')).toBeLessThan(out.indexOf('bash: allow'));
+  });
+
   it('omits undefined values', () => {
     const out = serializeFrontmatter({ name: 'demo', model: undefined }, 'body\n');
 
@@ -134,6 +151,16 @@ describe('round-trip', () => {
 
   it('preserves a nested permission map', () => {
     const data = { description: 'x', permission: { read: 'allow', bash: 'deny' } };
+    const body = 'body\n';
+
+    const reparsed = parseFrontmatter(serializeFrontmatter(data, body));
+
+    expect(reparsed.data).toEqual(data);
+    expect(reparsed.body).toBe(body);
+  });
+
+  it('preserves a nested permission map with a quoted "*" key', () => {
+    const data = { permission: { '*': 'deny', read: 'allow' } };
     const body = 'body\n';
 
     const reparsed = parseFrontmatter(serializeFrontmatter(data, body));

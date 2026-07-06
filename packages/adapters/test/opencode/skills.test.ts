@@ -8,6 +8,9 @@
  * - applySkill: poses the skill (store filled + opencode target symlink); scanner called with source.
  * - applySkill: blocking scanner → SkillScanBlockedError, nothing installed.
  * - applySkill: idempotent (2nd apply does not break anything).
+ * - applyRemoveSkill: shared-store ref-counting (H7, ADR-0020 §3) — removing the
+ *   opencode symlink never deletes a store still referenced by Claude; the store
+ *   is deleted only with its last reference.
  * - end-to-end via createOpencodeAdapter: check missing → apply → check present → 2nd apply no-op.
  */
 
@@ -24,12 +27,18 @@ import {
 } from '@agent-rigger/core/paths';
 import type { Env } from '@agent-rigger/core/paths';
 import type { Scanner } from '@agent-rigger/core/scan';
-import type { Verdict } from '@agent-rigger/core/types';
+import type { RemovalOp, Verdict } from '@agent-rigger/core/types';
 
+import {
+  applySkill as applyClaudeSkill,
+  planSkill as planClaudeSkill,
+} from '../../src/claude/skills';
 import { createOpencodeAdapter } from '../../src/opencode/adapter';
 import {
+  applyRemoveSkill,
   applySkill,
   auditSkill,
+  planRemoveSkill,
   planSkill,
   skillName,
   SkillScanBlockedError,
@@ -58,6 +67,9 @@ async function makeSkillFixture(baseDir: string, name: string): Promise<string> 
 }
 
 const PASSING_VERDICT: Verdict = { ok: true };
+
+/** True when `p` exists on disk (lstat: symlinks count even when dangling). */
+const exists = (p: string) => fs.lstat(p).then(() => true).catch(() => false);
 
 /** Spy scanner that records calls. */
 function makeSpyScanner(verdict: Verdict = PASSING_VERDICT): Scanner & { calls: string[] } {
@@ -317,8 +329,7 @@ describe('applySkill', () => {
 
     const targets = resolveOpencodeUserTargets(env);
     const targetPath = path.join(targets.skillsDir, 'dangerous');
-    const exists = await fs.lstat(targetPath).then(() => true).catch(() => false);
-    expect(exists).toBe(false);
+    expect(await exists(targetPath)).toBe(false);
   });
 
   it('SkillScanBlockedError carries source and findings', async () => {
@@ -339,6 +350,124 @@ describe('applySkill', () => {
     const err = caught as SkillScanBlockedError;
     expect(err.source).toBe(srcDir);
     expect(err.findings).toContain('malicious pattern');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// applyRemoveSkill — shared store ref-counting (H7, ADR-0020 §3)
+// ---------------------------------------------------------------------------
+
+describe('applyRemoveSkill: shared store ref-counting', () => {
+  it('removing the opencode skill keeps the store and the Claude symlink alive; removing the last reference deletes the store', async () => {
+    const entry: AdapterEntry = { id: 'skill:spec-workflow', nature: 'skill', scope: 'user' };
+    const srcDir = await makeSkillFixture(fixturesDir, 'spec-workflow');
+    const skillSource = (_e: AdapterEntry) => srcDir;
+    const scanner = makeSpyScanner();
+
+    // Install the SAME skill for opencode and for claude (shared store).
+    const opencodeOps = await planSkill(entry, 'user', env, skillSource);
+    await applySkill(opencodeOps, env, scanner);
+    const claudeOps = await planClaudeSkill(entry, 'user', env, skillSource);
+    await applyClaudeSkill(claudeOps, env, scanner);
+
+    const store = path.join(resolveUserTargets(env).skillsDir, 'spec-workflow');
+    const opencodeTarget = path.join(resolveOpencodeUserTargets(env).skillsDir, 'spec-workflow');
+    const claudeTarget = path.join(tmp.dir, '.claude', 'skills', 'spec-workflow');
+    expect(await exists(opencodeTarget)).toBe(true);
+    expect(await exists(claudeTarget)).toBe(true);
+
+    // Remove the opencode install only.
+    const removeOps = await planRemoveSkill(entry, 'user', env);
+    await applyRemoveSkill(removeOps, env);
+
+    // opencode symlink gone, but store survives and the claude symlink still resolves.
+    expect(await exists(opencodeTarget)).toBe(false);
+    expect(await exists(store)).toBe(true);
+    const claudeSkillMd = await fs.readFile(path.join(claudeTarget, 'SKILL.md'), 'utf-8');
+    expect(claudeSkillMd).toContain('spec-workflow');
+
+    // Remove the last reference (claude symlink) → store is deleted.
+    const lastRemoveOp: RemovalOp = { kind: 'unlink', target: claudeTarget, store };
+    await applyRemoveSkill([lastRemoveOp], env);
+
+    expect(await exists(claudeTarget)).toBe(false);
+    expect(await exists(store)).toBe(false);
+  });
+
+  it('removing the only install deletes the store (last reference)', async () => {
+    const entry: AdapterEntry = { id: 'skill:solo', nature: 'skill', scope: 'user' };
+    const srcDir = await makeSkillFixture(fixturesDir, 'solo');
+    const skillSource = (_e: AdapterEntry) => srcDir;
+    const scanner = makeSpyScanner();
+
+    const ops = await planSkill(entry, 'user', env, skillSource);
+    await applySkill(ops, env, scanner);
+
+    const removeOps = await planRemoveSkill(entry, 'user', env);
+    await applyRemoveSkill(removeOps, env);
+
+    const store = path.join(resolveUserTargets(env).skillsDir, 'solo');
+    const target = path.join(resolveOpencodeUserTargets(env).skillsDir, 'solo');
+    expect(await exists(target)).toBe(false);
+    expect(await exists(store)).toBe(false);
+  });
+
+  it('project-scope removal keeps the store while the user-scope symlink still references it', async () => {
+    const cwd = tmp.dir;
+    const userEntry: AdapterEntry = { id: 'skill:dual', nature: 'skill', scope: 'user' };
+    const projectEntry: AdapterEntry = { id: 'skill:dual', nature: 'skill', scope: 'project' };
+    const srcDir = await makeSkillFixture(fixturesDir, 'dual');
+    const skillSource = (_e: AdapterEntry) => srcDir;
+    const scanner = makeSpyScanner();
+
+    const userOps = await planSkill(userEntry, 'user', env, skillSource);
+    await applySkill(userOps, env, scanner);
+    const projectOps = await planSkill(projectEntry, 'project', env, skillSource, cwd);
+    await applySkill(projectOps, env, scanner);
+
+    const removeOps = await planRemoveSkill(projectEntry, 'project', env, cwd);
+    await applyRemoveSkill(removeOps, env, cwd);
+
+    const store = path.join(resolveUserTargets(env).skillsDir, 'dual');
+    const projectTarget = path.join(resolveOpencodeProjectTargets(cwd).skillsDir, 'dual');
+    const userTarget = path.join(resolveOpencodeUserTargets(env).skillsDir, 'dual');
+    expect(await exists(projectTarget)).toBe(false);
+    expect(await exists(userTarget)).toBe(true);
+    expect(await exists(store)).toBe(true);
+  });
+
+  it('plugin-style unlink ops (store outside the skills dir) still remove target and store', async () => {
+    // Plugin removal shares the 'unlink' op kind and applyRemoveSkill; its store
+    // lives under ~/.config/agent-rigger/plugins/ which no skill candidate ever
+    // references — behavior must stay "remove target + store".
+    const pluginStore = path.join(
+      path.dirname(resolveUserTargets(env).skillsDir),
+      'plugins',
+      'notify.ts',
+    );
+    await fs.mkdir(path.dirname(pluginStore), { recursive: true });
+    await fs.writeFile(pluginStore, 'export const plugin = {};', 'utf-8');
+
+    const pluginTarget = path.join(resolveOpencodeUserTargets(env).pluginDir, 'notify.ts');
+    await fs.mkdir(path.dirname(pluginTarget), { recursive: true });
+    await fs.symlink(pluginStore, pluginTarget);
+
+    const op: RemovalOp = { kind: 'unlink', target: pluginTarget, store: pluginStore };
+    await applyRemoveSkill([op], env);
+
+    expect(await exists(pluginTarget)).toBe(false);
+    expect(await exists(pluginStore)).toBe(false);
+  });
+
+  it('tolerates absent target and store (idempotent removal)', async () => {
+    const op: RemovalOp = {
+      kind: 'unlink',
+      target: path.join(tmp.dir, 'nonexistent', 'target'),
+      store: path.join(tmp.dir, 'nonexistent', 'store'),
+    };
+
+    await expect(applyRemoveSkill([op], env)).resolves.toBeUndefined();
+    await expect(applyRemoveSkill([op], env)).resolves.toBeUndefined();
   });
 });
 
