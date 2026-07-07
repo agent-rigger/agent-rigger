@@ -38,7 +38,6 @@ import {
   planGuardrail,
   planRemoveGuardrail,
 } from '../../src/opencode/guardrails';
-import { translateRules } from '../../src/opencode/permission-translate';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -58,8 +57,18 @@ async function makeTmpHome(prefix = 'rigger-opencode-guardrails-'): Promise<{
 // Constants
 // ---------------------------------------------------------------------------
 
-const REF_DENY = ['Bash(rm -rf *)', 'Read(./.env)'];
-const REF_ALLOW = ['Bash(ls *)'];
+// Native opencode permission descriptors. The handlers consume an
+// OpencodePermission fragment directly — no translation step (ADR-0020 "Option A").
+const REF_PERMISSION: OpencodePermission = {
+  bash: { 'rm -rf *': 'deny', 'ls *': 'allow' },
+  read: 'deny',
+};
+const REF_PERMISSION_DENY_ONLY: OpencodePermission = {
+  bash: { 'rm -rf *': 'deny' },
+  read: 'deny',
+};
+const READ_DENY: OpencodePermission = { read: 'deny' };
+const BASH_RM_DENY: OpencodePermission = { bash: { 'rm -rf *': 'deny' } };
 
 const PREPOPULATED = {
   $schema: 'https://opencode.ai/config.json',
@@ -89,7 +98,7 @@ afterEach(async () => {
 
 describe('auditGuardrail — user scope', () => {
   it('returns missing when opencode.json does not exist', async () => {
-    const { permission } = translateRules(REF_DENY, REF_ALLOW);
+    const permission = REF_PERMISSION;
     const report = await auditGuardrail('user', env, permission);
 
     expect(report.state).toBe('missing');
@@ -101,7 +110,7 @@ describe('auditGuardrail — user scope', () => {
     const targets = resolveOpencodeUserTargets(env);
     await writeJson(targets.opencodeJson, { permission: { bash: { 'rm -rf *': 'deny' } } });
 
-    const { permission } = translateRules(REF_DENY, REF_ALLOW);
+    const permission = REF_PERMISSION;
     const report = await auditGuardrail('user', env, permission);
 
     expect(report.state).toBe('missing');
@@ -109,7 +118,7 @@ describe('auditGuardrail — user scope', () => {
 
   it('returns present when all translated rules are present', async () => {
     const targets = resolveOpencodeUserTargets(env);
-    const { permission } = translateRules(REF_DENY, REF_ALLOW);
+    const permission = REF_PERMISSION;
     await writeJson(targets.opencodeJson, { permission });
 
     const report = await auditGuardrail('user', env, permission);
@@ -122,7 +131,7 @@ describe('auditGuardrail — project scope', () => {
   it('returns present when project opencode.json has the rules', async () => {
     const cwd = tmp.dir;
     const targets = resolveOpencodeProjectTargets(cwd);
-    const { permission } = translateRules(REF_DENY, []);
+    const permission = REF_PERMISSION_DENY_ONLY;
     await writeJson(targets.opencodeJson, { permission });
 
     const report = await auditGuardrail('project', env, permission, cwd);
@@ -137,7 +146,7 @@ describe('auditGuardrail — project scope', () => {
 
 describe('planGuardrail', () => {
   it('returns a merge-permission op with the full fragment when opencode.json is absent', async () => {
-    const { permission } = translateRules(REF_DENY, REF_ALLOW);
+    const permission = REF_PERMISSION;
     const ops = await planGuardrail('user', env, permission);
 
     expect(ops).toHaveLength(1);
@@ -150,7 +159,7 @@ describe('planGuardrail', () => {
     const targets = resolveOpencodeUserTargets(env);
     await writeJson(targets.opencodeJson, { permission: { bash: { 'rm -rf *': 'deny' } } });
 
-    const { permission } = translateRules(REF_DENY, REF_ALLOW);
+    const permission = REF_PERMISSION;
     const ops = await planGuardrail('user', env, permission);
 
     const op = ops[0] as WriteOpMergePermission;
@@ -159,7 +168,7 @@ describe('planGuardrail', () => {
 
   it('returns [] when everything is already present (idempotent)', async () => {
     const targets = resolveOpencodeUserTargets(env);
-    const { permission } = translateRules(REF_DENY, REF_ALLOW);
+    const permission = REF_PERMISSION;
     await writeJson(targets.opencodeJson, { permission });
 
     const ops = await planGuardrail('user', env, permission);
@@ -168,7 +177,7 @@ describe('planGuardrail', () => {
   });
 
   it('surfaces warnings on the op (not the description) when provided', async () => {
-    const { permission } = translateRules(REF_DENY, REF_ALLOW);
+    const permission = REF_PERMISSION;
     const ops = await planGuardrail('user', env, permission, undefined, ['a lossy rule warning']);
 
     const op = ops[0] as WriteOpMergePermission;
@@ -179,7 +188,7 @@ describe('planGuardrail', () => {
 
   it('op path targets the opencode.json path for the given scope', async () => {
     const targets = resolveOpencodeUserTargets(env);
-    const { permission } = translateRules(REF_DENY, []);
+    const permission = REF_PERMISSION_DENY_ONLY;
     const ops = await planGuardrail('user', env, permission);
 
     const op = ops[0] as WriteOpMergePermission;
@@ -203,7 +212,7 @@ describe('planGuardrail — conflicting user config (M7)', () => {
     // Flat "bash": "allow" blocks the nested "rm -rf *": "deny" leaf (never overwritten).
     await writeJson(targets.opencodeJson, { permission: { bash: 'allow' } });
 
-    const { permission } = translateRules(REF_DENY, REF_ALLOW);
+    const permission = REF_PERMISSION;
     const ops = await planGuardrail('user', env, permission);
 
     expect(ops).toHaveLength(1);
@@ -222,7 +231,7 @@ describe('planGuardrail — conflicting user config (M7)', () => {
     const targets = resolveOpencodeUserTargets(env);
     await writeJson(targets.opencodeJson, { permission: { bash: 'allow', read: 'ask' } });
 
-    const { permission } = translateRules(REF_DENY, REF_ALLOW);
+    const permission = REF_PERMISSION;
     const ops = await planGuardrail('user', env, permission);
 
     // Nothing is mergeable, but the plan must NOT be silently empty (R10.4/R5.3).
@@ -240,7 +249,7 @@ describe('planGuardrail — conflicting user config (M7)', () => {
     const targets = resolveOpencodeUserTargets(env);
     await writeJson(targets.opencodeJson, { permission: { bash: 'allow' } });
 
-    const { permission } = translateRules(REF_DENY, REF_ALLOW);
+    const permission = REF_PERMISSION;
     const ops = await planGuardrail('user', env, permission, undefined, ['a lossy rule warning']);
 
     const op = ops[0] as WriteOpMergePermission;
@@ -253,8 +262,8 @@ describe('planGuardrail — conflicting user config (M7)', () => {
     const targets = resolveOpencodeUserTargets(env);
     await writeJson(targets.opencodeJson, { permission: { read: { '.env': 'allow' } } });
 
-    // 'Read(./.env)' translates to the flat leaf read: 'deny'.
-    const { permission } = translateRules(['Read(./.env)'], []);
+    // A path-glob deny that collapses onto the flat read leaf in this scenario.
+    const permission = READ_DENY;
     const ops = await planGuardrail('user', env, permission);
 
     expect(ops).toHaveLength(1);
@@ -270,7 +279,7 @@ describe('planGuardrail — conflicting user config (M7)', () => {
     // Flat "bash": "deny" is broader than the nested deny leaf — same enforcement, no conflict.
     await writeJson(targets.opencodeJson, { permission: { bash: 'deny' } });
 
-    const { permission } = translateRules(['Bash(rm -rf *)'], []);
+    const permission = BASH_RM_DENY;
     const ops = await planGuardrail('user', env, permission);
 
     expect(ops).toHaveLength(0);
@@ -283,7 +292,7 @@ describe('planGuardrail — conflicting user config (M7)', () => {
 
 describe('planRemoveGuardrail', () => {
   it('returns [] when not installed', async () => {
-    const { permission } = translateRules(REF_DENY, REF_ALLOW);
+    const permission = REF_PERMISSION;
     const ops = await planRemoveGuardrail('user', env, permission);
 
     expect(ops).toHaveLength(0);
@@ -291,7 +300,7 @@ describe('planRemoveGuardrail', () => {
 
   it('returns a remove-permission op with the exact applied fragment when installed', async () => {
     const targets = resolveOpencodeUserTargets(env);
-    const { permission } = translateRules(REF_DENY, REF_ALLOW);
+    const permission = REF_PERMISSION;
     await writeJson(targets.opencodeJson, { permission });
 
     const ops = await planRemoveGuardrail('user', env, permission);
@@ -315,7 +324,7 @@ describe('applyGuardrail', () => {
     const targets = resolveOpencodeUserTargets(env);
     await writeJson(targets.opencodeJson, PREPOPULATED);
 
-    const { permission } = translateRules(REF_DENY, REF_ALLOW);
+    const permission = REF_PERMISSION;
     await applyGuardrail(
       [{ kind: 'merge-permission', path: targets.opencodeJson, permission, description: 'x' }],
       env,
@@ -332,7 +341,7 @@ describe('applyGuardrail', () => {
 
   it('is idempotent: applying twice does not duplicate or change the result', async () => {
     const targets = resolveOpencodeUserTargets(env);
-    const { permission } = translateRules(REF_DENY, REF_ALLOW);
+    const permission = REF_PERMISSION;
 
     await applyGuardrail(
       [{ kind: 'merge-permission', path: targets.opencodeJson, permission, description: 'x' }],
@@ -356,7 +365,7 @@ describe('applyGuardrail', () => {
 describe('applyRemoveGuardrail', () => {
   it('removes exactly the managed leaves, preserves $schema/mcp/other permission leaves', async () => {
     const targets = resolveOpencodeUserTargets(env);
-    const { permission } = translateRules(REF_DENY, REF_ALLOW);
+    const permission = REF_PERMISSION;
     await writeJson(targets.opencodeJson, {
       ...PREPOPULATED,
       permission: { ...PREPOPULATED.permission, ...permission },
@@ -380,7 +389,7 @@ describe('applyRemoveGuardrail', () => {
     const targets = resolveOpencodeUserTargets(env);
     await writeJson(targets.opencodeJson, PREPOPULATED);
 
-    const { permission } = translateRules(REF_DENY, REF_ALLOW);
+    const permission = REF_PERMISSION;
     await applyRemoveGuardrail(
       [{ kind: 'remove-permission', path: targets.opencodeJson, permission }],
       env,
@@ -406,7 +415,7 @@ describe('createOpencodeAdapter — guardrail end-to-end', () => {
     const targets = resolveOpencodeUserTargets(env);
     await writeJson(targets.opencodeJson, PREPOPULATED);
 
-    const adapter = createOpencodeAdapter({ denyRef: REF_DENY, allowRef: REF_ALLOW });
+    const adapter = createOpencodeAdapter({ permission: REF_PERMISSION });
 
     const report1 = await adapter.audit(GUARDRAIL_ENTRY, 'user', env);
     expect(report1.state).toBe('missing');
@@ -441,14 +450,14 @@ describe('createOpencodeAdapter — guardrail end-to-end', () => {
 
   it('planRemove reconstructs the effective permission from entry.applied (offline, no re-translation)', async () => {
     const targets = resolveOpencodeUserTargets(env);
-    const adapter = createOpencodeAdapter({ denyRef: REF_DENY, allowRef: REF_ALLOW });
+    const adapter = createOpencodeAdapter({ permission: REF_PERMISSION });
 
     const ops = await adapter.plan(GUARDRAIL_ENTRY, 'user', env);
     await adapter.apply(ops, env);
 
-    // Simulate an entry enriched from the manifest with a DIFFERENT (stale) denyRef context:
-    // planRemove must use entry.applied, not re-translate from a (possibly changed) denyRef.
-    const { permission: appliedPermission } = translateRules(REF_DENY, REF_ALLOW);
+    // Simulate an entry enriched from the manifest with its own applied payload:
+    // planRemove must use entry.applied, not the (possibly changed) canonical descriptor.
+    const appliedPermission = REF_PERMISSION;
     const enriched: AdapterEntry = {
       ...GUARDRAIL_ENTRY,
       applied: { kind: 'opencode-permission', permission: appliedPermission },
@@ -474,7 +483,7 @@ describe('engine round-trip — fully-conflicting install creates no phantom man
     const userConfig = { permission: { bash: 'allow' as const, read: 'ask' as const } };
     await writeJson(targets.opencodeJson, userConfig);
 
-    const adapter = createOpencodeAdapter({ denyRef: REF_DENY, allowRef: REF_ALLOW });
+    const adapter = createOpencodeAdapter({ permission: REF_PERMISSION });
     const entry: AdapterEntry = { id: 'guardrail:main', nature: 'guardrail', scope: 'user' };
     const manifestPath = path.join(tmp.dir, 'state.json');
 

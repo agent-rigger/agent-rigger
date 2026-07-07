@@ -64,7 +64,11 @@ function makeSuccessRunner(): CommandRunner {
   };
 }
 
-/** Checkout writer with a REAL Claude-syntax deny rule (translatable for opencode). */
+/**
+ * Checkout writer shipping a native opencode permission.json descriptor for the
+ * opencode adapter (ADR-0020 "Option A" — no translation). Claude deny/allow are
+ * kept alongside so the same fixture stays usable for the claude adapter.
+ */
 function makeGuardrailTmpFactory(dir: string): TmpDirFactory {
   return async () => {
     await Bun.write(
@@ -78,6 +82,13 @@ function makeGuardrailTmpFactory(dir: string): TmpDirFactory {
       JSON.stringify({ deny: ['Bash(rm -rf *)'] }),
     );
     await Bun.write(path.join(guardrailDir, 'allow.json'), JSON.stringify({ allow: [] }));
+    await Bun.write(
+      path.join(guardrailDir, 'permission.json'),
+      JSON.stringify({
+        $schema: 'https://opencode.ai/config.json',
+        permission: { bash: { 'rm -rf *': 'deny' } },
+      }),
+    );
     return { path: dir, cleanup: async () => {} };
   };
 }

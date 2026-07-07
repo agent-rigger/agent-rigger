@@ -5,9 +5,10 @@
  * nature, adapter.plan() inspected for the right op kind + source/content.
  *
  * Coverage:
- * 1. Without externalBaseDir → denyRef/allowRef = [], agentsContent = ''.
+ * 1. Without an external guardrail → permission unset, agentsContent = ''.
  * 2. skill/agent/plugin source resolution from externalBaseDir (externalIds gate).
- * 3. guardrail denyRef/allowRef loaded from checkout, translated to `permission`.
+ * 3. guardrail native permission.json loaded verbatim from checkout (ADR-0020
+ *    "Option A" — no translation); a missing descriptor is a hard error.
  * 4. context agentsContent loaded from checkout, posed as write-text (no bridge, R3.1).
  * 5. mcp: server + config resolved from effectiveEntries, config passed verbatim.
  */
@@ -20,7 +21,7 @@ import path from 'node:path';
 import type { CatalogEntry } from '@agent-rigger/catalog';
 import type { AdapterEntry } from '@agent-rigger/core/adapter';
 import type { Env } from '@agent-rigger/core/paths';
-import type { WriteOpLink } from '@agent-rigger/core/types';
+import type { OpencodePermission, WriteOpLink } from '@agent-rigger/core/types';
 
 import { buildOpencodeAdapter } from '../src/opencode-adapter-builder';
 
@@ -38,8 +39,7 @@ async function makeCheckoutDir(
   baseDir: string,
   opts: {
     guardrailName?: string;
-    guardrailDeny?: string[];
-    guardrailAllow?: string[];
+    guardrailPermission?: OpencodePermission;
     contextName?: string;
     agentsMdContent?: string;
     skillNames?: string[];
@@ -52,16 +52,15 @@ async function makeCheckoutDir(
   if (opts.guardrailName !== undefined) {
     const grDir = path.join(checkoutDir, 'guardrails', opts.guardrailName);
     await fs.mkdir(grDir, { recursive: true });
-    if (opts.guardrailDeny !== undefined) {
+    // The native opencode descriptor is written only when provided — omitting it
+    // simulates a guardrail directory that ships no permission.json (hard error).
+    if (opts.guardrailPermission !== undefined) {
       await fs.writeFile(
-        path.join(grDir, 'deny.json'),
-        JSON.stringify({ deny: opts.guardrailDeny }),
-      );
-    }
-    if (opts.guardrailAllow !== undefined) {
-      await fs.writeFile(
-        path.join(grDir, 'allow.json'),
-        JSON.stringify({ allow: opts.guardrailAllow }),
+        path.join(grDir, 'permission.json'),
+        JSON.stringify({
+          $schema: 'https://opencode.ai/config.json',
+          permission: opts.guardrailPermission,
+        }),
       );
     }
   }
@@ -126,7 +125,7 @@ describe('buildOpencodeAdapter — without externalBaseDir', () => {
     );
   });
 
-  it('produces no permission ops when planning guardrail without externalBaseDir (denyRef=[])', async () => {
+  it('produces no permission ops when planning guardrail without externalBaseDir (permission unset)', async () => {
     const adapter = await buildOpencodeAdapter(env);
 
     const entry: AdapterEntry = { id: 'guardrail:main', nature: 'guardrail', scope: 'user' };
@@ -247,14 +246,18 @@ describe('buildOpencodeAdapter — skill/agent/plugin external source resolution
 });
 
 // ---------------------------------------------------------------------------
-// guardrail / context — checkout resolution (translation happens in the adapter)
+// guardrail / context — checkout resolution (native descriptor, no translation)
 // ---------------------------------------------------------------------------
 
 describe('buildOpencodeAdapter — external guardrail/context from checkout', () => {
-  it('loads denyRef from checkout and translates it to a merge-permission op', async () => {
+  it('loads the native permission.json descriptor verbatim into a merge-permission op', async () => {
+    const descriptor: OpencodePermission = {
+      read: { '.env.local': 'deny', '.env.example': 'allow' },
+      bash: { 'rm -rf *': 'deny' },
+    };
     const checkoutDir = await makeCheckoutDir(tmp.dir, {
       guardrailName: 'main',
-      guardrailDeny: ['Bash(rm -rf *)'],
+      guardrailPermission: descriptor,
     });
 
     const adapter = await buildOpencodeAdapter(env, {
@@ -265,25 +268,26 @@ describe('buildOpencodeAdapter — external guardrail/context from checkout', ()
     const entry: AdapterEntry = { id: 'guardrail:main', nature: 'guardrail', scope: 'user' };
     const ops = await adapter.plan(entry, 'user', env);
 
-    const permOp = ops.find((op) => op.kind === 'merge-permission');
+    const permOp = ops.find((op) => op.kind === 'merge-permission') as
+      | { kind: string; permission: OpencodePermission }
+      | undefined;
     expect(permOp).toBeDefined();
+    // The descriptor is installed verbatim — no translation, no lossy collapse.
+    expect(permOp!.permission).toEqual(descriptor);
   });
 
-  it('loads allowRef from checkout when present', async () => {
-    const checkoutDir = await makeCheckoutDir(tmp.dir, {
-      guardrailName: 'main',
-      guardrailDeny: ['Bash(rm -rf *)'],
-      guardrailAllow: ['Bash(git status)'],
-    });
+  it('throws a MissingOpencodePermissionError when the external guardrail ships no permission.json', async () => {
+    // guardrailName present but guardrailPermission omitted → the directory
+    // exists with no descriptor: a native guardrail MUST ship one (never a
+    // silent fallback to translation).
+    const checkoutDir = await makeCheckoutDir(tmp.dir, { guardrailName: 'main' });
 
-    const adapter = await buildOpencodeAdapter(env, {
-      externalIds: new Set(['guardrail:main']),
-      externalBaseDir: checkoutDir,
-    });
-
-    const entry: AdapterEntry = { id: 'guardrail:main', nature: 'guardrail', scope: 'user' };
-    const ops = await adapter.plan(entry, 'user', env);
-    expect(ops.length).toBeGreaterThan(0);
+    await expect(
+      buildOpencodeAdapter(env, {
+        externalIds: new Set(['guardrail:main']),
+        externalBaseDir: checkoutDir,
+      }),
+    ).rejects.toThrow(/missing or empty/);
   });
 
   it('loads agentsContent from checkout and poses it verbatim (no import block, R3.1)', async () => {

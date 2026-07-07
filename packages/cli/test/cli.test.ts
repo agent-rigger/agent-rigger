@@ -1152,10 +1152,11 @@ describe('runCli — install --assistant=opencode', () => {
   };
 
   /**
-   * Custom checkout writer (not the shared makeFakeTmpFactory): opencode's
-   * guardrail translation needs a REAL Claude-syntax rule to produce a
-   * `permission` fragment — makeFakeTmpFactory's `fake-deny-rule` has no
-   * expressible opencode equivalent (dropped as a warning, empty plan).
+   * Custom checkout writer (not the shared makeFakeTmpFactory): the opencode
+   * guardrail is a NATIVE `permission.json` descriptor (ADR-0020 "Option A").
+   * makeFakeTmpFactory only writes Claude deny/allow rules, so the opencode
+   * builder would fail with MissingOpencodePermissionError; here we ship the
+   * native descriptor (plus deny/allow, harmless, for parity with the claude side).
    */
   function makeTranslatableGuardrailTmpFactory(dir: string): TmpDirFactory {
     return async () => {
@@ -1170,6 +1171,13 @@ describe('runCli — install --assistant=opencode', () => {
         JSON.stringify({ deny: ['Bash(rm -rf *)'] }),
       );
       await Bun.write(path.join(guardrailDir, 'allow.json'), JSON.stringify({ allow: [] }));
+      await Bun.write(
+        path.join(guardrailDir, 'permission.json'),
+        JSON.stringify({
+          $schema: 'https://opencode.ai/config.json',
+          permission: { bash: { 'rm -rf *': 'deny' } },
+        }),
+      );
       return { path: dir, cleanup: async () => {} };
     };
   }

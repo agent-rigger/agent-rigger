@@ -6,9 +6,10 @@
  * adapter-dispatch.ts.
  *
  * Responsibilities:
- * - Load denyRef/allowRef + agentsContent from externalBaseDir (checkout), same
- *   layout as the Claude builder — guardrail rules are Claude-syntax on disk,
- *   translated to opencode's `permission` key by the adapter itself.
+ * - Load the NATIVE opencode `permission` descriptor + agentsContent from
+ *   externalBaseDir (checkout). The guardrail is a hand-authored
+ *   guardrails/<name>/permission.json (ADR-0020 "Option A") — loaded verbatim,
+ *   never translated from Claude deny/allow rules.
  * - Build all source closures: skillSource, agentSource, pluginSource, mcpSource.
  * - mcpSource resolves { server, config } from effectiveEntries — config is the
  *   catalog entry's raw `config` field, passed through unchanged.
@@ -23,17 +24,13 @@
 import { readdirSync } from 'node:fs';
 import path from 'node:path';
 
-import {
-  createOpencodeAdapter,
-  loadCanonicalAllow,
-  loadCanonicalDeny,
-} from '@agent-rigger/adapters';
+import { createOpencodeAdapter, loadCanonicalOpencodePermission } from '@agent-rigger/adapters';
 import type { Adapter, AdapterEntry } from '@agent-rigger/core/adapter';
 import { assertSafeArtifactName } from '@agent-rigger/core/artifact-name';
 import { readText } from '@agent-rigger/core/fs-json';
 import type { Env } from '@agent-rigger/core/paths';
 import { stubScanner } from '@agent-rigger/core/scan';
-import type { OpencodeMcpServer } from '@agent-rigger/core/types';
+import type { OpencodeMcpServer, OpencodePermission } from '@agent-rigger/core/types';
 
 import type { CatalogEntry } from '@agent-rigger/catalog';
 
@@ -63,7 +60,7 @@ function localId(id: string): string {
  *                         from externalBaseDir.
  * @param externalBaseDir  Absolute path to the root of a remote checkout. Expected
  *                         layout: skills/<name>/, agents/<name>.md, plugins/<name>.<ext>,
- *                         guardrails/<n>/deny.json + allow.json, contexts/<n>/AGENTS.md.
+ *                         guardrails/<n>/permission.json, contexts/<n>/AGENTS.md.
  * @param effectiveEntries Lookup map (id → CatalogEntry) for the resolved effective
  *                         catalog. Used by mcpSource to resolve the raw `config` field.
  */
@@ -109,16 +106,17 @@ function resolveOpencodePluginPath(pluginsDir: string, name: string, id: string)
  * Build an OpencodeAdapter.
  *
  * All artifact content comes from externalBaseDir when externalIds are present:
- * - denyRef/allowRef : loaded from <externalBaseDir>/guardrails/<n>/{deny,allow}.json
- *                       (Claude-syntax source, translated to `permission` by the adapter)
+ * - permission       : loaded verbatim from <externalBaseDir>/guardrails/<n>/permission.json
+ *                       (native opencode descriptor, ADR-0020 "Option A"; a native
+ *                       guardrail REQUIRES a descriptor — missing/empty → hard error)
  * - agentsContent    : loaded from <externalBaseDir>/contexts/<n>/AGENTS.md
  * - skillSource      : resolves id → <externalBaseDir>/skills/<id>
  * - agentSource      : resolves id → <externalBaseDir>/agents/<agentId>.md
  * - pluginSource     : resolves id → <externalBaseDir>/plugins/<id>.<ext> (basename lookup)
  * - mcpSource        : resolves { server, config } from effectiveEntries' raw `config` field
  *
- * Without externalBaseDir: denyRef/allowRef=[], agentsContent='' (graceful degradation,
- * same as buildClaudeAdapter — audit/planRemove fall back to empty defaults for legacy entries).
+ * Without an external guardrail: permission is left unset, agentsContent='' (graceful
+ * degradation — audit/planRemove fall back to entry.applied for legacy entries).
  *
  * @param _env  Injectable environment — kept for signature parity with buildClaudeAdapter
  *              so adapter-dispatch.ts can call either builder uniformly. Unused today:
@@ -130,7 +128,11 @@ export async function buildOpencodeAdapter(
   opts?: BuildOpencodeAdapterOpts,
 ): Promise<Adapter> {
   // ---------------------------------------------------------------------------
-  // Resolve denyRef + allowRef: external guardrail from checkout OR empty default
+  // Resolve the native opencode permission descriptor from the checkout.
+  // A native opencode guardrail REQUIRES a hand-authored permission.json — there
+  // is NO fallback to Claude-rule translation (ADR-0020 "Option A"). Absent when
+  // no external guardrail is selected → permission stays undefined (the handler
+  // then installs {}, resolving via entry.applied for legacy manifest entries).
   // ---------------------------------------------------------------------------
 
   const externalGuardrailId = opts?.externalIds === undefined
@@ -143,23 +145,14 @@ export async function buildOpencodeAdapter(
         )
     );
 
-  let denyRef: string[];
-  let allowRef: string[];
+  let permission: OpencodePermission | undefined;
 
   if (externalGuardrailId !== undefined && opts?.externalBaseDir !== undefined) {
     const local = localId(externalGuardrailId);
     const name = local.startsWith('guardrail:') ? local.replace(/^guardrail:/, '') : local;
     assertSafeArtifactName(name, externalGuardrailId);
     const guardrailDir = path.join(opts.externalBaseDir, 'guardrails', name);
-    const [extDeny, extAllow] = await Promise.all([
-      loadCanonicalDeny(path.join(guardrailDir, 'deny.json')),
-      loadCanonicalAllow(path.join(guardrailDir, 'allow.json')),
-    ]);
-    denyRef = extDeny;
-    allowRef = extAllow;
-  } else {
-    denyRef = [];
-    allowRef = [];
+    permission = await loadCanonicalOpencodePermission(path.join(guardrailDir, 'permission.json'));
   }
 
   // ---------------------------------------------------------------------------
@@ -192,8 +185,6 @@ export async function buildOpencodeAdapter(
   // ---------------------------------------------------------------------------
 
   const createOpts: Parameters<typeof createOpencodeAdapter>[0] = {
-    denyRef,
-    allowRef,
     agentsContent,
     // The REAL security scan runs at the pre-apply gate (remote-install.ts
     // scanEntries) on the checkout paths — skills, agents, and opencode plugin
@@ -264,6 +255,12 @@ export async function buildOpencodeAdapter(
       return { server, config: config as unknown as OpencodeMcpServer };
     },
   };
+
+  // exactOptionalPropertyTypes: only set `permission` when a descriptor was
+  // actually loaded — never assign `undefined` to the optional field.
+  if (permission !== undefined) {
+    createOpts.permission = permission;
+  }
 
   return createOpencodeAdapter(createOpts);
 }

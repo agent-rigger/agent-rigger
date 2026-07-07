@@ -139,6 +139,43 @@ function skillTargetCandidates(name: string, env: Env, cwd: string): string[] {
   ];
 }
 
+/**
+ * Enumerate every known install target that may reference the shared *plugin*
+ * store for `fileName`. Plugins are an opencode-only nature (no Claude
+ * equivalent), so the candidates are the two opencode pluginDir paths — user and
+ * project — mirroring plugins.ts's resolveTargetDir. `fileName` carries the
+ * module extension (e.g. `enforce-tests.ts`), matching the on-disk symlink
+ * basename verbatim.
+ */
+function pluginTargetCandidates(fileName: string, env: Env, cwd: string): string[] {
+  return [
+    path.join(resolveOpencodeUserTargets(env).pluginDir, fileName),
+    path.join(resolveOpencodeProjectTargets(cwd).pluginDir, fileName),
+  ];
+}
+
+/**
+ * Enumerate ALL install targets that may keep `store` alive, spanning both
+ * store families (skills and plugins). `applyRemoveSkill` is the shared unlink
+ * handler for both natures (ADR-0020 §3 — one store, N symlinks), so the store
+ * being removed can be either a skill store (`.../agent-rigger/skills/<name>`)
+ * or a plugin store (`.../agent-rigger/plugins/<name>.<ext>`).
+ *
+ * Both families' candidates are enumerated unconditionally rather than branching
+ * on the store's location: candidates that do not exist are skipped by
+ * removeStoreIfUnreferenced (lstat → null), and a candidate that DOES exist only
+ * counts as a reference when its symlink resolves to *this* store, so the extra
+ * cross-family paths can never produce a false positive. This keeps the handler
+ * nature-agnostic without coupling it to the exact store directory names.
+ */
+function storeReferenceCandidates(store: string, env: Env, cwd: string): string[] {
+  const fileName = path.basename(store);
+  return [
+    ...skillTargetCandidates(fileName, env, cwd),
+    ...pluginTargetCandidates(fileName, env, cwd),
+  ];
+}
+
 // ---------------------------------------------------------------------------
 // auditSkill
 // ---------------------------------------------------------------------------
@@ -254,16 +291,18 @@ export async function planRemoveSkill(
  * For each unlink op (ADR-0020 §3 — one store, N symlinks):
  * 1. Always remove the requested target (symlink/file/directory).
  * 2. Remove the store ONLY when no other known install target still references
- *    it. Reference counting uses filesystem truth (offline): the candidate
- *    skill target paths of BOTH assistants (claude, opencode) and BOTH scopes
- *    (user, project under `cwd`) are lstat'd/readlink'd; any symlink resolving
- *    to the store keeps it alive. Copy-fallback installs (plain directories,
- *    no symlink) are not counted as references.
+ *    it. Reference counting uses filesystem truth (offline): storeReferenceCandidates
+ *    enumerates the skill target paths of BOTH assistants (claude, opencode) AND
+ *    the opencode plugin target paths, across BOTH scopes (user, project under
+ *    `cwd`); each is lstat'd/readlink'd, and any symlink resolving to the store
+ *    keeps it alive. Copy-fallback installs (plain directories, no symlink) are
+ *    not counted as references.
  *
  * Plugin unlink ops also flow through this function (shared 'unlink' op kind,
- * see adapter.ts). Their store lives under ~/.config/agent-rigger/plugins/,
- * which no skill candidate ever resolves to, so plugin removal still deletes
- * target + store as before.
+ * see adapter.ts). Their store lives under ~/.config/agent-rigger/plugins/ and
+ * is ref-counted the SAME way as a skill store: a plugin installed at both
+ * scopes shares one user-scope store, so removing one scope's symlink must NOT
+ * delete the store while the other scope still references it (ADR-0020 §3).
  *
  * Both removals are tolerant to absence (rm force).
  * Ops of any other kind are ignored (forward-compatibility).
@@ -283,11 +322,7 @@ export async function applyRemoveSkill(
       continue;
     }
     await unlinkTarget(op.target);
-    const candidates = skillTargetCandidates(
-      path.basename(op.store),
-      env,
-      cwd ?? process.cwd(),
-    );
+    const candidates = storeReferenceCandidates(op.store, env, cwd ?? process.cwd());
     await removeStoreIfUnreferenced(op.store, candidates);
   }
 }

@@ -2,12 +2,13 @@
  * Guardrail handler for the opencode adapter.
  *
  * Manages the `permission` key of opencode.json (user-scope or project-scope).
- * The canonical source stays Claude-style deny/allow rule arrays (one source of
- * truth, design.md §7.1) — the ADAPTER (opencode/adapter.ts) is responsible for
- * calling `translateRules` and resolving `entry.applied` vs canonical config;
- * this module only operates on an already-translated `OpencodePermission`
- * fragment, mirroring claude/guardrails.ts's shape (audit/plan/planRemove/apply/
- * applyRemove) applied to a different target.
+ * The canonical source is a NATIVE opencode `permission` descriptor authored in
+ * the catalog (`guardrails/<name>/permission.json`, ADR-0020 "Option A") — there
+ * is NO Claude-rule translation. loadCanonicalOpencodePermission reads that
+ * descriptor; the ADAPTER (opencode/adapter.ts) resolves `entry.applied` vs the
+ * canonical fragment and calls into these handlers, which operate on an
+ * `OpencodePermission` fragment directly, mirroring claude/guardrails.ts's shape
+ * (audit/plan/planRemove/apply/applyRemove) applied to a different target.
  *
  * Invariants:
  * - auditGuardrail and planGuardrail/planRemoveGuardrail are read-only: no filesystem writes.
@@ -21,6 +22,7 @@ import {
   computeMissingPermission,
   hasPermission,
   mergePermission,
+  readJson,
   removePermission,
 } from '@agent-rigger/core';
 import {
@@ -124,6 +126,68 @@ function computePermissionConflicts(
     }
   }
   return warnings;
+}
+
+// ---------------------------------------------------------------------------
+// MissingOpencodePermissionError
+// ---------------------------------------------------------------------------
+
+/**
+ * Thrown by loadCanonicalOpencodePermission when the descriptor file is absent,
+ * has no `permission` object, or that object is empty.
+ *
+ * A native opencode guardrail REQUIRES a hand-authored `permission` descriptor:
+ * there is no translation fallback (ADR-0020 "Option A"). An empty/absent
+ * descriptor would cause auditGuardrail to report 'present' when no protection
+ * is actually installed — a false confidence of security — so it fails loudly
+ * instead of silently degrading to a no-op.
+ */
+export class MissingOpencodePermissionError extends Error {
+  /** Absolute path of the permission.json descriptor that was read (or expected). */
+  readonly path: string;
+
+  constructor(path: string) {
+    super(
+      `Canonical opencode permission descriptor is missing or empty: ${path}. `
+        + 'Ensure the file exists, contains a non-empty "permission" object, and is '
+        + 'never silently replaced by a Claude-rule translation.',
+    );
+    this.name = 'MissingOpencodePermissionError';
+    this.path = path;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// loadCanonicalOpencodePermission
+// ---------------------------------------------------------------------------
+
+/**
+ * Read the canonical NATIVE opencode permission descriptor from a permission.json
+ * file (the catalog's `guardrails/<name>/permission.json`, ADR-0020 "Option A").
+ *
+ * - Valid, non-empty `permission` object → returns it verbatim as an OpencodePermission.
+ * - File absent, `permission` missing/non-object/array, or empty object → throws
+ *   MissingOpencodePermissionError (a native guardrail must ship a descriptor;
+ *   there is NEVER a fallback to Claude-rule translation).
+ *
+ * Note: syntactically invalid JSON continues to throw InvalidJsonError from readJson.
+ *
+ * Mirrors loadCanonicalDeny in claude/guardrails.ts (same hard-requirement rationale).
+ */
+export async function loadCanonicalOpencodePermission(
+  permissionJsonPath: string,
+): Promise<OpencodePermission> {
+  const raw = await readJson(permissionJsonPath);
+  const permission = raw['permission'];
+  if (
+    permission === null
+    || typeof permission !== 'object'
+    || Array.isArray(permission)
+    || Object.keys(permission).length === 0
+  ) {
+    throw new MissingOpencodePermissionError(permissionJsonPath);
+  }
+  return permission as OpencodePermission;
 }
 
 // ---------------------------------------------------------------------------

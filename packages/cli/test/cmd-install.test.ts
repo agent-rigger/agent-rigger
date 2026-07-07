@@ -23,10 +23,10 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
-import { resolveUserTargets } from '@agent-rigger/core/paths';
+import { resolveOpencodeUserTargets, resolveUserTargets } from '@agent-rigger/core/paths';
 import type { Env } from '@agent-rigger/core/paths';
 import type { Scanner } from '@agent-rigger/core/scan';
-import type { Scope, Verdict } from '@agent-rigger/core/types';
+import type { OpencodePermission, Scope, Verdict } from '@agent-rigger/core/types';
 
 import { createClaudeAdapter, createOpencodeAdapter } from '@agent-rigger/adapters';
 
@@ -822,10 +822,15 @@ describe('runInstall — E-targets (assistant-based filtering)', () => {
 });
 
 // ---------------------------------------------------------------------------
-// E-warn (HIGH-2): translation warnings are surfaced visibly, not silent.
+// E-warn (HIGH-2): guardrail warnings are surfaced visibly, not silent.
+//
+// Native opencode descriptors carry no translation warnings (ADR-0020 "Option
+// A"). The remaining visible-warning path is the M7 conflict warning: a managed
+// leaf that the additive merge must DROP because the user's config already
+// claims it with a different value. That warning MUST still reach the user.
 // ---------------------------------------------------------------------------
 
-describe('runInstall — translation warnings are visible (E-warn / HIGH-2)', () => {
+describe('runInstall — guardrail conflict warnings are visible (E-warn / HIGH-2)', () => {
   const OPENCODE_GUARDRAIL: CatalogEntry = {
     kind: 'artifact',
     id: 'guardrails-opencode',
@@ -834,10 +839,19 @@ describe('runInstall — translation warnings are visible (E-warn / HIGH-2)', ()
     scopes: ['user', 'project'],
   };
 
-  it('surfaces guardrail translation warnings in result.warnings and output', async () => {
-    // REF_DENY has path-scoped Read(...) rules → opencode read is tool-level →
-    // "path specificity lost" warnings that MUST reach the user (never silent).
-    const adapter = createOpencodeAdapter({ denyRef: REF_DENY });
+  // A native descriptor whose nested "rm -rf *": "deny" leaf conflicts with a
+  // pre-existing flat "bash": "allow" user setting.
+  const CONFLICTING_DESCRIPTOR: OpencodePermission = { bash: { 'rm -rf *': 'deny' } };
+
+  it('surfaces guardrail conflict warnings in result.warnings and output', async () => {
+    // Seed a user opencode.json whose flat "bash": "allow" blocks the descriptor's
+    // nested deny leaf → the merge drops it and MUST surface a visible warning
+    // (never silent — R10.4/R5.3, HIGH-2).
+    const opencodeJson = resolveOpencodeUserTargets(env).opencodeJson;
+    await fs.mkdir(path.dirname(opencodeJson), { recursive: true });
+    await Bun.write(opencodeJson, JSON.stringify({ permission: { bash: 'allow' } }));
+
+    const adapter = createOpencodeAdapter({ permission: CONFLICTING_DESCRIPTOR });
 
     const result = await runInstall({
       catalog: [OPENCODE_GUARDRAIL],
@@ -851,7 +865,7 @@ describe('runInstall — translation warnings are visible (E-warn / HIGH-2)', ()
 
     expect(result.warnings.length).toBeGreaterThan(0);
     expect(result.output).toContain('--- Warnings ---');
-    expect(result.output).toContain('Path specificity lost');
+    expect(result.output).toContain('was not applied');
   });
 
   it('emits no Warnings section for a lossless install', async () => {

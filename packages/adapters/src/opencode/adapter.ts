@@ -4,9 +4,10 @@
  * Implements the core Adapter interface by dispatching each method call to the
  * appropriate nature handler. Phase B registered the "quasi-free" natures
  * ('context', 'skill' — no translation involved, only path differs from
- * Claude). Phase C added the translation natures: 'guardrail' (deny/allow →
- * `permission`, permission-translate.ts) and 'agent' (frontmatter translation,
- * agents.ts). Phase D adds the greenfield natures: 'mcp' (merge into the `mcp`
+ * Claude). Phase C added 'guardrail' (a NATIVE opencode `permission` descriptor
+ * authored in the catalog, ADR-0020 "Option A" — no Claude-rule translation)
+ * and 'agent' (frontmatter translation, agents.ts). Phase D adds the greenfield
+ * natures: 'mcp' (merge into the `mcp`
  * key of opencode.json, mcp.ts) and 'plugin' (store+symlink a catalog-provided
  * JS/TS module, plugins.ts — reuses the 'link'/'unlink' op kinds already wired
  * for 'skill', no new opKindHandlers entry needed). 'hook' is out of scope this
@@ -31,6 +32,7 @@ import type {
   Nature,
   NatureReport,
   OpencodeMcpServer,
+  OpencodePermission,
   RemovalOp,
   Scope,
   WriteOp,
@@ -52,7 +54,6 @@ import {
   planRemoveGuardrail,
 } from './guardrails';
 import { applyMcp, applyRemoveMcp, auditMcp, planMcp, planRemoveMcp } from './mcp';
-import { translateRules } from './permission-translate';
 import { auditPlugin, planPlugin, planRemovePlugin } from './plugins';
 import { applyRemoveSkill, applySkill, auditSkill, planRemoveSkill, planSkill } from './skills';
 
@@ -109,15 +110,13 @@ export interface OpencodeAdapterConfig {
    */
   scanner?: Scanner;
   /**
-   * Canonical deny rules (Claude-style, e.g. `Bash(rm -rf *)`) for the guardrail
-   * handler — translated to opencode's `permission` key (design.md §7.1).
-   * Defaults to [] (no deny rules to install).
+   * Native opencode permission descriptor for the guardrail handler (ADR-0020
+   * "Option A"). This is the human-authored, security-critical policy fragment
+   * loaded verbatim from the catalog's `guardrails/<name>/permission.json` — NOT
+   * a translation of Claude rules. Absent → the guardrail handler installs
+   * nothing ({}), which is a lossless no-op (never a silent partial enforcement).
    */
-  denyRef?: string[];
-  /**
-   * Canonical allow rules (Claude-style) for the guardrail handler. Defaults to [].
-   */
-  allowRef?: string[];
+  permission?: OpencodePermission;
   /**
    * Resolve the source `.md` file of a Claude-style sub-agent from its AdapterEntry.
    * Required when any entry with nature 'agent' is planned or applied — its
@@ -160,8 +159,6 @@ export interface OpencodeAdapterConfig {
 export function createOpencodeAdapter(config: OpencodeAdapterConfig): Adapter {
   const agentsContent = config.agentsContent ?? '';
   const scanner = config.scanner ?? stubScanner;
-  const denyRef = config.denyRef ?? [];
-  const allowRef = config.allowRef ?? [];
 
   /**
    * Resolve the skill source for an entry, or raise a clear error when
@@ -267,22 +264,24 @@ export function createOpencodeAdapter(config: OpencodeAdapterConfig): Adapter {
       {
         audit(entry, scope, env): Promise<NatureReport> {
           const cwd = entry.scope === 'project' ? process.cwd() : undefined;
-          // Prefer applied payload from manifest when available (offline remove/check).
+          // Prefer applied payload from manifest when available (offline remove/check);
+          // otherwise the native descriptor loaded from the catalog (config.permission).
           const effective = entry.applied?.kind === 'opencode-permission'
             ? entry.applied.permission
-            : translateRules(denyRef, allowRef).permission;
+            : (config.permission ?? {});
           return auditGuardrail(scope, env, effective, cwd);
         },
         plan(entry, scope, env): Promise<WriteOp[]> {
           const cwd = entry.scope === 'project' ? process.cwd() : undefined;
-          const { permission, warnings } = translateRules(denyRef, allowRef);
-          return planGuardrail(scope, env, permission, cwd, warnings);
+          // Native descriptor: no translation step, so there are no translation
+          // warnings to surface (the M7 conflict warnings are computed downstream).
+          return planGuardrail(scope, env, config.permission ?? {}, cwd, []);
         },
         planRemove(entry, scope, env): Promise<RemovalOp[]> {
           const cwd = entry.scope === 'project' ? process.cwd() : undefined;
           const effective = entry.applied?.kind === 'opencode-permission'
             ? entry.applied.permission
-            : translateRules(denyRef, allowRef).permission;
+            : (config.permission ?? {});
           return planRemoveGuardrail(scope, env, effective, cwd);
         },
       },

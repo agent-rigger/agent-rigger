@@ -57,6 +57,8 @@ export type { ParsedFrontmatter } from './opencode/frontmatter';
 export {
   applyGuardrail as applyOpencodeGuardrail,
   auditGuardrail as auditOpencodeGuardrail,
+  loadCanonicalOpencodePermission,
+  MissingOpencodePermissionError,
   planGuardrail as planOpencodeGuardrail,
 } from './opencode/guardrails';
 export {
@@ -71,8 +73,6 @@ export {
   InvalidOpencodeJsonError,
   readOpencodeJson,
 } from './opencode/opencode-json-io';
-export { translateRules } from './opencode/permission-translate';
-export type { TranslateRulesResult } from './opencode/permission-translate';
 export {
   auditPlugin as auditOpencodePlugin,
   planPlugin as planOpencodePlugin,
