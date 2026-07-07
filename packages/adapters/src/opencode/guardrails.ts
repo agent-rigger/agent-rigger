@@ -340,12 +340,30 @@ export async function loadCanonicalOpencodePermission(
  * @param permission  The (already translated) canonical permission fragment to verify against.
  * @param cwd         Working directory (only used when scope is 'project').
  */
+/** Whether a permission fragment carries no actual leaf (no tool state, no pattern). */
+function isEmptyPermission(permission: OpencodePermission): boolean {
+  for (const value of Object.values(permission)) {
+    if (typeof value === 'string') return false;
+    if (value !== undefined && Object.keys(value).length > 0) return false;
+  }
+  return true;
+}
+
 export async function auditGuardrail(
   scope: Scope,
   env: Env,
   permission: OpencodePermission,
   cwd?: string,
 ): Promise<NatureReport> {
+  // A guardrail with no permission leaf is not "installed": an empty fragment
+  // must never audit as 'present'. hasPermission(current, {}) is vacuously true,
+  // so guard it here to keep the invariant symmetric with the load path, where
+  // MissingOpencodePermissionError already forbids an empty/absent descriptor
+  // (both prevent reporting protection that is not actually enforced).
+  if (isEmptyPermission(permission)) {
+    return { id: GUARDRAIL_ID, nature: 'guardrail', state: 'missing' };
+  }
+
   const opencodeJsonPath = resolveOpencodeJsonPath(scope, env, cwd);
   const settings = await readOpencodeJson(opencodeJsonPath);
   const current = extractPermission(settings);

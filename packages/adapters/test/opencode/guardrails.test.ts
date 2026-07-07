@@ -125,6 +125,16 @@ describe('auditGuardrail — user scope', () => {
 
     expect(report.state).toBe('present');
   });
+
+  it('returns missing for an empty permission fragment, never vacuously present', async () => {
+    const targets = resolveOpencodeUserTargets(env);
+    // opencode.json exists with unrelated content: an empty guardrail spec must
+    // still audit 'missing' (no false-present of protection that is not installed).
+    await writeJson(targets.opencodeJson, { permission: { bash: { 'ls *': 'allow' } } });
+
+    expect((await auditGuardrail('user', env, {})).state).toBe('missing');
+    expect((await auditGuardrail('user', env, { read: {} })).state).toBe('missing');
+  });
 });
 
 describe('auditGuardrail — project scope', () => {
