@@ -90,10 +90,91 @@ reports what is missing; it does not install tools itself.
 
 ---
 
+## Assistants
+
+`agent-rigger` targets two AI coding assistants: **Claude Code** (`claude`) and
+**opencode** (`opencode`). Each transaction runs through an assistant-specific
+_adapter_ that writes to that assistant's native config locations; the engine
+(`plan → confirm → backup → apply → manifest`) is identical for both.
+
+### Selecting the assistant
+
+Every `install` / `check` / `remove` / `update` targets exactly one assistant,
+resolved in priority order (highest first):
+
+1. **`--assistant claude|opencode`** — an explicit flag always wins; an invalid
+   value is a hard error (fail fast on typos).
+2. **`config.assistants[]`** — when the config names exactly one assistant, it is
+   used without prompting (CI-reproducible).
+3. **Detection** — when exactly one assistant is present on disk (`~/.claude` →
+   `claude`, `~/.config/opencode` → `opencode`), it is used.
+4. **Interactive prompt** — in a TTY with more than one candidate, the picker
+   asks _"Which assistant do you want to target?"_.
+5. Otherwise (non-interactive and ambiguous), an actionable error — never a
+   silent default.
+
+```sh
+agent-rigger install --assistant opencode    # explicit target
+agent-rigger install                          # infer or prompt, then remember it
+```
+
+The chosen assistant is **recorded in the manifest per entry**, so `check`,
+`remove`, and `update` reconstruct the right adapter and operate on the correct
+config **without re-prompting**.
+
+### What installs, per nature (opencode)
+
+For opencode, each nature maps to opencode's own native mechanisms. Paths shown
+are project scope; user scope writes under `~/.config/opencode/` instead of
+`.opencode/`.
+
+| Nature      | opencode target                    | How it lands                                                              |
+| ----------- | ---------------------------------- | ------------------------------------------------------------------------- |
+| `context`   | `AGENTS.md` (root)                 | Written **as-is** — no import block (opencode reads `AGENTS.md` natively) |
+| `skill`     | `.opencode/skills/<n>`             | Symlinked into place; the physical store is **shared** with Claude        |
+| `agent`     | `.opencode/agents/<n>.md`          | Frontmatter **translated** to opencode's schema; Markdown body verbatim   |
+| `mcp`       | `opencode.json` — `mcp` key        | Server merged in; secrets by env indirection (ADR-0019)                   |
+| `plugin`    | `.opencode/plugin/<n>.ts`          | Native JS/TS module **copied** from the catalog (store + symlink)         |
+| `guardrail` | `opencode.json` — `permission` key | Native opencode permission descriptor **merged verbatim**                 |
+| `hook`      | — (Claude-only)                    | **Skipped** for opencode, with a visible message                          |
+
+(`tool` is assistant-agnostic — presence-checked either way.) Merges into
+`opencode.json` are leaf-granular and preserve unrelated keys, comments, and the
+user's own rules.
+
+**Guardrail — a native descriptor, not a translation.** For opencode a guardrail
+installs a hand-written opencode permission descriptor shipped by the catalog
+(`guardrails/opencode/permission.json`), merged verbatim into the `permission`
+key. There is no Claude→opencode rule translation (ADR-0021): a native
+descriptor is auditable and uses opencode's own `read` / `edit` /
+`external_directory` path-globs directly.
+
+**Hooks are Claude-only.** The `hook` nature is executable Claude Code logic
+written to `settings.json`; the opencode adapter has no hook handler. When a
+transaction targets opencode, hook entries — and anything whose `targets` does
+not include opencode — are excluded with a visible line, never silently:
+
+```
+--- Skipped (assistant mismatch) ---
+  [skipped] hook:guard-secret — targets [claude], not opencode
+```
+
+opencode's enforcement is carried by the `plugin` nature (native guard modules)
+and the `permission` descriptor instead.
+
+> **Guardrail `read` denies are defense-in-depth, not a hard barrier.** opencode
+> sub-agents invoked via the Task tool bypass `read` / `grep` deny rules
+> (opencode #32024). Treat the `read` side of the guardrail as one layer, not a
+> guarantee that secrets are unreadable; the `edit` and `external_directory`
+> denies are not affected.
+
+---
+
 ## Prerequisites
 
 - **Bun >= 1.3** — the runtime and package manager.
-- **Claude Code** — the assistant this harness configures.
+- **Claude Code and/or opencode** — the AI coding assistant(s) this harness
+  configures. See [Assistants](#assistants) for how the target is selected.
 - **git** — required for remote catalog operations (`ls` against a configured
   catalog URL). agent-rigger shells out to `git ls-remote` and `git clone`.
 - **gitleaks and/or trivy** — required to **install** `external` artifacts from a
@@ -407,8 +488,12 @@ These properties hold across all commands:
 
 ## Caveats and M0 limitations
 
-- **Claude Code only.** Support for other assistants (opencode, Copilot, etc.)
-  is a later milestone.
+- **Two assistants: Claude Code and opencode.** Both are supported and selected
+  per transaction (see [Assistants](#assistants)); other assistants (Copilot,
+  etc.) are a later milestone. Two opencode limits to note: the `hook` nature is
+  Claude-only (skipped with a visible message), and guardrail `read` denies are
+  defense-in-depth rather than a hard barrier — sub-agents invoked via the Task
+  tool bypass read denies (opencode #32024).
 - **Security scan covers secrets + misconfig, not arbitrary behaviour.** Remote
   `external` content is scanned with gitleaks and/or trivy before install
   (fail-closed; `--force` overrides — you are responsible for what you install).

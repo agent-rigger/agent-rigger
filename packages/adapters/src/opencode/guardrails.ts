@@ -129,6 +129,135 @@ function computePermissionConflicts(
 }
 
 // ---------------------------------------------------------------------------
+// Glob-overlap (cross-pattern) conflict detection (review F4, R10.4/R5.3)
+// ---------------------------------------------------------------------------
+
+/**
+ * Faithful port of opencode's `Wildcard.match` (`util/wildcard.ts`, v1.17.14)
+ * that resolves `read`/`edit`/`external_directory` path permissions.
+ *
+ * Verified against the opencode source: `\` is normalised to `/`, regex
+ * specials are escaped, `*` becomes `.*` (NOT segment-bounded — a single `*`
+ * crosses `/`), `?` becomes `.`, a trailing " *" is made optional, and the
+ * whole thing is anchored `^…$` with the `s` (dotall) flag. Replicated EXACTLY
+ * so the overlap simulation below matches opencode's real precedence.
+ */
+function matchOpencodeGlob(str: string, pattern: string): boolean {
+  const target = str.replace(/\\/g, '/');
+  const escaped = pattern
+    .replace(/\\/g, '/')
+    .replace(/[.+^${}()|[\]\\]/g, '\\$&')
+    .replace(/\*/g, '.*')
+    .replace(/\?/g, '.');
+  const body = escaped.endsWith(' .*') ? `${escaped.slice(0, -3)}( .*)?` : escaped;
+  return new RegExp(`^${body}$`, 's').test(target);
+}
+
+/** Whether a pattern names a literal path (opencode's only wildcards are `*`/`?`). */
+function isConcretePattern(pattern: string): boolean {
+  return !pattern.includes('*') && !pattern.includes('?');
+}
+
+/** The LAST leaf whose pattern matches `path` (opencode's `findLast` precedence). */
+function findLastMatch(
+  leaves: readonly [string, OpencodePermissionState][],
+  path: string,
+): { pattern: string; state: OpencodePermissionState } | undefined {
+  let result: { pattern: string; state: OpencodePermissionState } | undefined;
+  for (const [pattern, state] of leaves) {
+    if (matchOpencodeGlob(path, pattern)) {
+      result = { pattern, state };
+    }
+  }
+  return result;
+}
+
+/** Build one glob-overlap warning naming both patterns and the sample path. */
+function globOverlapWarning(
+  tool: string,
+  witness: string,
+  userDecision: { pattern: string; state: OpencodePermissionState },
+  ourDecision: { pattern: string; state: OpencodePermissionState },
+): string {
+  return `Permission "${tool}" > "${ourDecision.pattern}" = "${ourDecision.state}" overlaps your `
+    + `existing "${tool}" > "${userDecision.pattern}" = "${userDecision.state}": opencode resolves `
+    + `a path by last-match precedence and this guardrail leaf is written after yours, so for a `
+    + `path such as "${witness}" the guardrail's "${ourDecision.state}" wins over your `
+    + `"${userDecision.state}". No leaf was silently dropped, but the effective permission on the `
+    + `overlapping path is the guardrail's — review this overlap manually.`;
+}
+
+/**
+ * Warnings for guardrail leaves whose GLOB overlaps a DIFFERENTLY-SPELLED user
+ * leaf under opencode's last-match (`findLast`) precedence (review F4, R10.4).
+ *
+ * `computePermissionConflicts` only flags leaves the user claims under the SAME
+ * key. But opencode resolves a path by the LAST matching pattern across the
+ * flattened `[default, agent, user]` rulesets (verified against opencode
+ * v1.17.14 `permission/index.ts` + `util/wildcard.ts`), and the merge appends
+ * its leaves AFTER the user's within the same map (jsonc-parser inserts new keys
+ * last). So a guardrail pattern that path-overlaps a differently-spelled user
+ * pattern silently wins for the overlapping paths — e.g. our `.env.example:
+ * allow` overriding a user `*.example: deny` (fail-open), or our `*.env: deny`
+ * overriding a user `config/prod.env: allow` (fail-secure). Neither is caught by
+ * the exact-key detector, contradicting R10.4/R5.3 ("never fail silently").
+ *
+ * Detection SIMULATES opencode's resolution on witness paths — the CONCRETE
+ * pattern keys (no `*`/`?`, opencode's only wildcards) named on either side. For
+ * each witness the user's own last-match decision is compared to the merged
+ * last-match decision; when the appended leaves flip it, a warning is emitted so
+ * the override is never silent.
+ *
+ * Residual (documented) limitation: an overlap that manifests ONLY on paths
+ * where BOTH patterns are globbed (no concrete witness names it) is not flagged.
+ * This never hides the fail-OPEN direction of this descriptor — its sole `allow`
+ * carve-out (`.env.example`) is a concrete key, so every user `deny` overlapping
+ * it IS witnessed; only the fail-SECURE direction (our `deny` winning over a
+ * user `allow`, the safe direction) could hide a both-globbed overlap.
+ */
+function computeGlobOverlapConflicts(
+  fragment: OpencodePermission,
+  current: OpencodePermission,
+): string[] {
+  const warnings: string[] = [];
+  for (const [tool, wanted] of Object.entries(fragment)) {
+    const existing = current[tool];
+    // Cross-pattern overlap only exists when BOTH sides are nested glob maps.
+    // Flat shapes (string states) are fully covered by computePermissionConflicts.
+    if (typeof wanted === 'string' || existing === undefined || typeof existing === 'string') {
+      continue;
+    }
+    const userLeaves = Object.entries(existing);
+    // Leaves the merge will APPEND: our keys absent from the user map (present
+    // keys are untouched and reported by computePermissionConflicts instead).
+    const appended = Object.entries(wanted).filter(([pattern]) => !(pattern in existing));
+    if (appended.length === 0) {
+      continue;
+    }
+    // Witnesses: concrete (wildcard-free) keys from either side — the only paths
+    // opencode names literally, hence the only ones we can resolve precisely.
+    const witnesses = new Set<string>();
+    for (const [pattern] of [...userLeaves, ...appended]) {
+      if (isConcretePattern(pattern)) {
+        witnesses.add(pattern);
+      }
+    }
+    for (const witness of witnesses) {
+      const userDecision = findLastMatch(userLeaves, witness);
+      if (userDecision === undefined) {
+        continue; // the user's config does not decide this path — no override
+      }
+      const ourDecision = findLastMatch(appended, witness);
+      if (ourDecision === undefined || ourDecision.state === userDecision.state) {
+        continue; // merge does not change the effective resolution for this path
+      }
+      warnings.push(globOverlapWarning(tool, witness, userDecision, ourDecision));
+    }
+  }
+  return warnings;
+}
+
+// ---------------------------------------------------------------------------
 // MissingOpencodePermissionError
 // ---------------------------------------------------------------------------
 
@@ -270,7 +399,8 @@ export async function planGuardrail(
 
   const missing = computeMissingPermission(permission, current);
   const conflicts = computePermissionConflicts(permission, current);
-  if (Object.keys(missing).length === 0 && conflicts.length === 0) {
+  const overlaps = computeGlobOverlapConflicts(permission, current);
+  if (Object.keys(missing).length === 0 && conflicts.length === 0 && overlaps.length === 0) {
     return [];
   }
 
@@ -282,11 +412,12 @@ export async function planGuardrail(
       ? 'Merge opencode permission rules from guardrail'
       : 'Skip conflicting opencode permission rules (see warnings)',
   };
-  // Surface translation warnings (R5.3 / HIGH-2) and dropped-leaf conflict
-  // warnings (M7) on the op: the CLI renders them in the plan/confirm/output so
-  // a non-translatable or conflict-dropped deny rule is never silently lost.
+  // Surface translation warnings (R5.3 / HIGH-2), dropped-leaf conflict warnings
+  // (M7) and cross-pattern glob-overlap warnings (F4, R10.4) on the op: the CLI
+  // renders them in the plan/confirm/output so a non-translatable, conflict-
+  // dropped, or last-match-overridden rule is never silently lost.
   // exactOptionalPropertyTypes: only set the key when there are warnings.
-  const allWarnings = [...warnings, ...conflicts];
+  const allWarnings = [...warnings, ...conflicts, ...overlaps];
   if (allWarnings.length > 0) {
     op.warnings = allWarnings;
   }

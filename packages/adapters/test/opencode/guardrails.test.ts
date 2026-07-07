@@ -287,6 +287,101 @@ describe('planGuardrail — conflicting user config (M7)', () => {
 });
 
 // ---------------------------------------------------------------------------
+// planGuardrail — cross-pattern glob-overlap conflicts (F4, R10.4)
+// ---------------------------------------------------------------------------
+
+describe('planGuardrail — cross-pattern glob-overlap conflicts (F4, R10.4)', () => {
+  // Mirrors the shipped catalog descriptor's read map: two globbed denies plus
+  // the concrete `.env.example` allow carve-out that re-opens our own deny.
+  const READ_SECRET_FRAGMENT: OpencodePermission = {
+    read: {
+      '*.env': 'deny',
+      '*.env.*': 'deny',
+      '.env.example': 'allow',
+    },
+  };
+
+  it('warns when our concrete "allow" leaf overrides an overlapping user "deny" (fail-open)', async () => {
+    const targets = resolveOpencodeUserTargets(env);
+    // User denies every *.example file; opencode findLast lets our appended
+    // ".env.example": "allow" (written LAST) win — a silent re-open without F4.
+    await writeJson(targets.opencodeJson, { permission: { read: { '*.example': 'deny' } } });
+
+    const ops = await planGuardrail('user', env, READ_SECRET_FRAGMENT);
+
+    expect(ops).toHaveLength(1);
+    const op = ops[0] as WriteOpMergePermission;
+    // The exact-key detector stays silent (no shared key) — only F4 catches it.
+    expect(op.warnings).toHaveLength(1);
+    const warning = op.warnings?.[0] ?? '';
+    expect(warning).toContain('.env.example');
+    expect(warning).toContain('"allow"');
+    expect(warning).toContain('*.example');
+    expect(warning).toContain('"deny"');
+    // The merge still applies the carve-out (warn, don't drop) — reversibility intact.
+    expect((op.permission.read as Record<string, string>)['.env.example']).toBe('allow');
+  });
+
+  it('warns when our globbed "deny" leaf overrides an overlapping user "allow" (fail-secure)', async () => {
+    const targets = resolveOpencodeUserTargets(env);
+    // User explicitly permits one env file; our "*.env": "deny" matches it
+    // (opencode's `*` crosses `/`) and, written LAST, nullifies the allow.
+    await writeJson(targets.opencodeJson, {
+      permission: { read: { 'config/prod.env': 'allow' } },
+    });
+
+    const ops = await planGuardrail('user', env, READ_SECRET_FRAGMENT);
+
+    expect(ops).toHaveLength(1);
+    const op = ops[0] as WriteOpMergePermission;
+    expect(op.warnings).toHaveLength(1);
+    const warning = op.warnings?.[0] ?? '';
+    expect(warning).toContain('*.env');
+    expect(warning).toContain('"deny"');
+    expect(warning).toContain('config/prod.env');
+    expect(warning).toContain('"allow"');
+  });
+
+  it('warns on a broad user deny (".*") that our ".env.example" allow re-opens', async () => {
+    const targets = resolveOpencodeUserTargets(env);
+    await writeJson(targets.opencodeJson, { permission: { read: { '.*': 'deny' } } });
+
+    const ops = await planGuardrail('user', env, READ_SECRET_FRAGMENT);
+
+    const op = ops[0] as WriteOpMergePermission;
+    expect(op.warnings).toHaveLength(1);
+    expect(op.warnings?.[0]).toContain('.env.example');
+    expect(op.warnings?.[0]).toContain('.*');
+  });
+
+  it('does NOT warn when the overlapping user leaf already enforces the same state', async () => {
+    const targets = resolveOpencodeUserTargets(env);
+    // User already denies config/prod.env; our "*.env": "deny" agrees → no flip.
+    await writeJson(targets.opencodeJson, {
+      permission: { read: { 'config/prod.env': 'deny' } },
+    });
+
+    const ops = await planGuardrail('user', env, READ_SECRET_FRAGMENT);
+
+    expect(ops).toHaveLength(1);
+    const op = ops[0] as WriteOpMergePermission;
+    expect(op.warnings).toBeUndefined();
+  });
+
+  it('does NOT warn when the user map does not overlap any guardrail pattern', async () => {
+    const targets = resolveOpencodeUserTargets(env);
+    await writeJson(targets.opencodeJson, {
+      permission: { read: { 'docs/notes.md': 'deny' } },
+    });
+
+    const ops = await planGuardrail('user', env, READ_SECRET_FRAGMENT);
+
+    const op = ops[0] as WriteOpMergePermission;
+    expect(op.warnings).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // planRemoveGuardrail
 // ---------------------------------------------------------------------------
 
