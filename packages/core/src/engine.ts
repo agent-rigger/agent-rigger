@@ -25,11 +25,15 @@ import { lstat } from 'node:fs/promises';
 import type { Adapter, AdapterEntry } from './adapter';
 import { backup, removeDir, removeFile, restore } from './backup';
 import { findEntry, readManifest, upsertEntry, writeManifest } from './manifest';
+import { mergePermission } from './opencode-json';
 import type { Env } from './paths';
 import type {
   AppliedPayload,
+  Assistant,
   Manifest,
   ManifestEntry,
+  OpencodeMcpServer,
+  OpencodePermission,
   RemovalOp,
   Report,
   Scope,
@@ -105,14 +109,16 @@ export async function check(
     manifest = await readManifest(manifestPath);
   }
 
-  const enriched = entries.map((entry) => enrichWithApplied(entry, manifest));
+  const enriched = entries.map((entry) => enrichWithApplied(entry, manifest, adapter.id));
 
   // When we have a manifest, entries not found in it are definitively missing.
   // This avoids false-positive "present" from adapters that have no canonical
   // content (denyRef=[]) when no manifest `applied` is available.
   const natureReports = await Promise.all(
     enriched.map((entry): Promise<import('./types').NatureReport> => {
-      if (manifest !== undefined && findEntry(manifest, entry.id, scope) === undefined) {
+      if (
+        manifest !== undefined && findEntry(manifest, entry.id, scope, adapter.id) === undefined
+      ) {
         return Promise.resolve({
           id: entry.id,
           nature: entry.nature,
@@ -231,9 +237,20 @@ export async function apply(
 
   try {
     for (const entry of entries) {
-      const ops = await adapter.plan(entry, scope, env);
+      const plannedOps = await adapter.plan(entry, scope, env);
 
-      // No ops → idempotent no-op; already installed.
+      // Drop warning-only ops before applying: a merge-permission op with an
+      // EMPTY fragment applies nothing — the opencode guardrail plan emits it
+      // solely to carry conflict warnings into the plan preview (review M7,
+      // R10.4). Applying it would upsert a phantom manifest entry whose empty
+      // `applied` payload makes `check` vacuously 'present' (hasPermission(_, {})
+      // is true) and `remove` a permanent silent no-op, so such ops are treated
+      // exactly like an empty plan instead: no write, no backup, no manifest entry.
+      const ops = plannedOps.filter(
+        (op) => !(op.kind === 'merge-permission' && Object.keys(op.permission).length === 0),
+      );
+
+      // No (effective) ops → idempotent no-op; already installed or warning-only.
       // Leave the manifest untouched for this entry (preserve existing record).
       if (ops.length === 0) {
         continue;
@@ -315,9 +332,15 @@ export async function apply(
       // Capture the applied payload from the ops for manifest reversibility
       const applied = extractApplied(ops, targets);
 
-      // Upsert manifest entry with the files written and the applied payload
+      // Upsert manifest entry with the files written and the applied payload.
+      // Stamp the target assistant (adapter.id) so the manifest identity is
+      // (id, scope, assistant) — a claude and an opencode install of the same id
+      // coexist instead of clobbering each other.
       const version = versionFor === undefined ? undefined : versionFor(entry);
-      manifest = upsertEntry(manifest, buildManifestEntry(entry, scope, targets, version, applied));
+      manifest = upsertEntry(
+        manifest,
+        buildManifestEntry(entry, scope, targets, adapter.id, version, applied),
+      );
     }
 
     // Persist the manifest once after all entries have been processed
@@ -487,7 +510,11 @@ export async function remove(
   const allBackedUp: string[] = [];
 
   for (const entry of entries) {
-    const ops = await adapter.planRemove(enrichWithApplied(entry, manifest), scope, env);
+    const ops = await adapter.planRemove(
+      enrichWithApplied(entry, manifest, adapter.id),
+      scope,
+      env,
+    );
 
     // No ops → not installed; leave the manifest untouched for this entry.
     if (ops.length === 0) {
@@ -511,8 +538,9 @@ export async function remove(
     // Delegate actual removals to the adapter
     await adapter.applyRemove(ops, env);
 
-    // Remove this entry from the manifest
-    manifest = removeEntry(manifest, entry.id, scope);
+    // Remove this entry from the manifest (keyed by assistant so we only drop
+    // the record for the assistant being operated on).
+    manifest = removeEntry(manifest, entry.id, scope, adapter.id);
     allRemoved.push(entry.id);
   }
 
@@ -530,10 +558,17 @@ export async function remove(
  * Return a new Manifest with the entry matching both `id` and `scope` removed.
  * Pure / immutable: the input manifest is not mutated.
  */
-function removeEntry(manifest: Manifest, id: string, scope: Scope): Manifest {
+function removeEntry(
+  manifest: Manifest,
+  id: string,
+  scope: Scope,
+  assistant: Assistant = 'claude',
+): Manifest {
   return {
     ...manifest,
-    artifacts: manifest.artifacts.filter((e) => !(e.id === id && e.scope === scope)),
+    artifacts: manifest.artifacts.filter(
+      (e) => !(e.id === id && e.scope === scope && (e.assistant ?? 'claude') === assistant),
+    ),
   };
 }
 
@@ -550,6 +585,7 @@ function buildManifestEntry(
   entry: AdapterEntry,
   scope: Scope,
   files: string[],
+  assistant: Assistant,
   version?: { ref: string; sha: string },
   applied?: AppliedPayload,
 ): ManifestEntry {
@@ -564,6 +600,7 @@ function buildManifestEntry(
     scope,
     installedAt: new Date().toISOString(),
     files,
+    assistant,
   };
 
   if (applied !== undefined) {
@@ -600,6 +637,37 @@ function extractApplied(ops: WriteOp[], targets: string[]): AppliedPayload | und
       .filter((op) => op.kind === 'merge-allow')
       .flatMap((op) => (op as { kind: 'merge-allow'; toAdd: string[] }).toAdd);
     return { kind: 'guardrail', denyRules, allowRules };
+  }
+
+  // opencode guardrail: one or more merge-permission ops → AppliedOpencodePermission.
+  // Fold every fragment into a single permission object for exact reversal.
+  const hasPermission = ops.some((op) => op.kind === 'merge-permission');
+  if (hasPermission) {
+    const permission = ops
+      .filter((op) => op.kind === 'merge-permission')
+      .reduce(
+        (acc, op) =>
+          mergePermission(
+            acc,
+            (op as { kind: 'merge-permission'; permission: OpencodePermission }).permission,
+          ),
+        {} as OpencodePermission,
+      );
+    return { kind: 'opencode-permission', permission };
+  }
+
+  // opencode mcp: a merge-mcp op → AppliedOpencodeMcp.
+  const mcpOp = ops.find((op) => op.kind === 'merge-mcp') as
+    | {
+      kind: 'merge-mcp';
+      path: string;
+      server: string;
+      config: OpencodeMcpServer;
+      description: string;
+    }
+    | undefined;
+  if (mcpOp !== undefined) {
+    return { kind: 'opencode-mcp', server: mcpOp.server, config: mcpOp.config };
   }
 
   const writeTextOp = ops.find((op) => op.kind === 'write-text') as
@@ -653,11 +721,12 @@ function extractApplied(ops: WriteOp[], targets: string[]): AppliedPayload | und
 export function enrichWithApplied(
   entry: AdapterEntry,
   manifest: Manifest | undefined,
+  assistant: Assistant = 'claude',
 ): AdapterEntry {
   if (manifest === undefined) {
     return entry;
   }
-  const manifestEntry = findEntry(manifest, entry.id, entry.scope);
+  const manifestEntry = findEntry(manifest, entry.id, entry.scope, assistant);
   if (manifestEntry === undefined || manifestEntry.applied === undefined) {
     return entry;
   }

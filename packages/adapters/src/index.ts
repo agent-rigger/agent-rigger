@@ -35,3 +35,54 @@ export {
   skillName,
   SkillScanBlockedError,
 } from './claude/skills';
+export {
+  createOpencodeAdapter,
+  UnsupportedNatureError as OpencodeUnsupportedNatureError,
+} from './opencode/adapter';
+export type { OpencodeAdapterConfig } from './opencode/adapter';
+export {
+  agentName as opencodeAgentName,
+  auditAgent as auditOpencodeAgent,
+  planAgent as planOpencodeAgent,
+  translateAgentFrontmatter,
+} from './opencode/agents';
+export type { AgentFrontmatterTranslation } from './opencode/agents';
+export {
+  applyContext as applyOpencodeContext,
+  auditContext as auditOpencodeContext,
+  planContext as planOpencodeContext,
+} from './opencode/context';
+export { parseFrontmatter, serializeFrontmatter } from './opencode/frontmatter';
+export type { ParsedFrontmatter } from './opencode/frontmatter';
+export {
+  applyGuardrail as applyOpencodeGuardrail,
+  auditGuardrail as auditOpencodeGuardrail,
+  loadCanonicalOpencodePermission,
+  MissingOpencodePermissionError,
+  planGuardrail as planOpencodeGuardrail,
+} from './opencode/guardrails';
+export {
+  applyMcp as applyOpencodeMcp,
+  applyRemoveMcp as applyRemoveOpencodeMcp,
+  auditMcp as auditOpencodeMcp,
+  planMcp as planOpencodeMcp,
+  planRemoveMcp as planRemoveOpencodeMcp,
+} from './opencode/mcp';
+export {
+  applyOpencodeKey,
+  InvalidOpencodeJsonError,
+  readOpencodeJson,
+} from './opencode/opencode-json-io';
+export {
+  auditPlugin as auditOpencodePlugin,
+  planPlugin as planOpencodePlugin,
+  planRemovePlugin as planRemoveOpencodePlugin,
+  pluginName as opencodePluginName,
+} from './opencode/plugins';
+export {
+  applySkill as applyOpencodeSkill,
+  auditSkill as auditOpencodeSkill,
+  planSkill as planOpencodeSkill,
+  skillName as opencodeSkillName,
+  SkillScanBlockedError as OpencodeSkillScanBlockedError,
+} from './opencode/skills';

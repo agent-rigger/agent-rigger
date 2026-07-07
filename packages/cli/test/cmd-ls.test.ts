@@ -425,6 +425,151 @@ describe('runLs — manifest with installed entries', () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// renderCatalogList — installedAssistants (E6)
+// ---------------------------------------------------------------------------
+
+describe('renderCatalogList — installedAssistants suffix', () => {
+  it('shows the assistant suffix on an installed row when provided', () => {
+    const entries: CatalogEntry[] = [makeArtifact('guardrail:main', 'guardrail')];
+    const result = renderCatalogList(entries, {
+      installedIds: new Set(['guardrail:main']),
+      installedAssistants: new Map([['guardrail:main', ['opencode']]]),
+    });
+    expect(result).toContain('(opencode)');
+  });
+
+  it('shows both assistants when installed for claude and opencode', () => {
+    const entries: CatalogEntry[] = [makeArtifact('guardrail:main', 'guardrail')];
+    const result = renderCatalogList(entries, {
+      installedIds: new Set(['guardrail:main']),
+      installedAssistants: new Map([['guardrail:main', ['claude', 'opencode']]]),
+    });
+    expect(result).toContain('(claude, opencode)');
+  });
+
+  it('renders no suffix when installedAssistants is absent (back-compat)', () => {
+    const entries: CatalogEntry[] = [makeArtifact('guardrail:main', 'guardrail')];
+    const result = renderCatalogList(entries, { installedIds: new Set(['guardrail:main']) });
+    expect(result).not.toContain('(claude');
+    expect(result).not.toContain('(opencode');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// runLs — two-assistant manifest (E6)
+// ---------------------------------------------------------------------------
+
+describe('runLs — two-assistant manifest', () => {
+  let tmp: { dir: string; cleanup: () => Promise<void> };
+
+  async function writeManifestFixture(): Promise<void> {
+    const configDir = path.join(tmp.dir, '.config', 'agent-rigger');
+    await fs.mkdir(configDir, { recursive: true });
+    await fs.writeFile(
+      path.join(configDir, 'state.json'),
+      JSON.stringify({
+        version: 1,
+        artifacts: [
+          {
+            id: 'guardrails-claude',
+            nature: 'guardrail',
+            scope: 'user',
+            files: [],
+            installedAt: new Date().toISOString(),
+            // legacy entry, no `assistant` field → defaults to 'claude'
+          },
+          {
+            id: 'context-claude',
+            nature: 'context',
+            scope: 'user',
+            files: [],
+            installedAt: new Date().toISOString(),
+            assistant: 'opencode',
+          },
+          {
+            id: 'skill:spec-workflow',
+            nature: 'skill',
+            scope: 'user',
+            files: [],
+            installedAt: new Date().toISOString(),
+            assistant: 'claude',
+          },
+          {
+            id: 'skill:spec-workflow',
+            nature: 'skill',
+            scope: 'user',
+            files: [],
+            installedAt: new Date().toISOString(),
+            assistant: 'opencode',
+          },
+        ],
+      }),
+    );
+  }
+
+  beforeEach(async () => {
+    tmp = await makeTmpHome();
+    await writeManifestFixture();
+  });
+
+  afterEach(async () => {
+    await tmp.cleanup();
+  });
+
+  it('without --assistant: shows every id installed for ANY assistant, with per-row suffix', async () => {
+    const result = await runLs({
+      catalog: FIXTURE_CATALOG,
+      env: { RIGGER_HOME: tmp.dir },
+      scope: 'user',
+    });
+
+    const guardrailLine = result.output.split('\n').find((l) => l.includes('guardrails-claude'));
+    expect(guardrailLine).toContain('[installed]');
+    expect(guardrailLine).toContain('(claude)');
+
+    const contextLine = result.output.split('\n').find((l) => l.includes('context-claude'));
+    expect(contextLine).toContain('[installed]');
+    expect(contextLine).toContain('(opencode)');
+
+    const skillLine = result.output.split('\n').find((l) => l.includes('skill:spec-workflow'));
+    expect(skillLine).toContain('[installed]');
+    expect(skillLine).toContain('(claude, opencode)');
+  });
+
+  it('--assistant=opencode: only opencode-installed ids are [installed]', async () => {
+    const result = await runLs({
+      catalog: FIXTURE_CATALOG,
+      env: { RIGGER_HOME: tmp.dir },
+      scope: 'user',
+      assistant: 'opencode',
+    });
+
+    // guardrails-claude is claude-only (legacy, defaults to claude) — not installed for opencode.
+    const guardrailLine = result.output.split('\n').find((l) => l.includes('guardrails-claude'));
+    expect(guardrailLine).toContain('[available]');
+
+    // context-claude is opencode-only — installed for opencode.
+    const contextLine = result.output.split('\n').find((l) => l.includes('context-claude'));
+    expect(contextLine).toContain('[installed]');
+  });
+
+  it('--assistant=claude: the opencode-only entry is not [installed]', async () => {
+    const result = await runLs({
+      catalog: FIXTURE_CATALOG,
+      env: { RIGGER_HOME: tmp.dir },
+      scope: 'user',
+      assistant: 'claude',
+    });
+
+    const contextLine = result.output.split('\n').find((l) => l.includes('context-claude'));
+    expect(contextLine).toContain('[available]');
+
+    const guardrailLine = result.output.split('\n').find((l) => l.includes('guardrails-claude'));
+    expect(guardrailLine).toContain('[installed]');
+  });
+});
+
 describe('runLs — resourceFilter', () => {
   let tmp: { dir: string; cleanup: () => Promise<void> };
 

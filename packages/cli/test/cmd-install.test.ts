@@ -23,12 +23,12 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
-import { resolveUserTargets } from '@agent-rigger/core/paths';
+import { resolveOpencodeUserTargets, resolveUserTargets } from '@agent-rigger/core/paths';
 import type { Env } from '@agent-rigger/core/paths';
 import type { Scanner } from '@agent-rigger/core/scan';
-import type { Scope, Verdict } from '@agent-rigger/core/types';
+import type { OpencodePermission, Scope, Verdict } from '@agent-rigger/core/types';
 
-import { createClaudeAdapter } from '@agent-rigger/adapters';
+import { createClaudeAdapter, createOpencodeAdapter } from '@agent-rigger/adapters';
 
 import type { CatalogEntry } from '@agent-rigger/catalog';
 import type { CommandRunner } from '@agent-rigger/catalog/tool-check';
@@ -734,5 +734,161 @@ describe('runInstall — scan blocking (optional)', () => {
       });
 
     await expect(fn).toThrow(/scan blocked/i);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// E-targets: assistant-based routing (R1.5/R9.2) — never silent
+// ---------------------------------------------------------------------------
+
+describe('runInstall — E-targets (assistant-based filtering)', () => {
+  it('opencode selection skips claude-only entries, with a visible [skipped] line', async () => {
+    const adapter = createOpencodeAdapter({ agentsContent: AGENTS_CONTENT });
+
+    const catalog: CatalogEntry[] = [
+      {
+        kind: 'artifact',
+        id: 'context:main',
+        nature: 'context',
+        targets: ['claude', 'opencode'],
+        scopes: ['user'],
+      },
+      {
+        kind: 'artifact',
+        id: 'guardrail:claude-only',
+        nature: 'guardrail',
+        targets: ['claude'],
+        scopes: ['user'],
+      },
+    ];
+
+    const result = await runInstall({
+      catalog,
+      adapter,
+      scope: SCOPE,
+      env,
+      manifestPath,
+      selectedIds: ['context:main', 'guardrail:claude-only'],
+      confirm: true,
+    });
+
+    expect(result.skipped).toEqual([{ id: 'guardrail:claude-only', targets: ['claude'] }]);
+    expect(result.output).toContain(
+      '[skipped] guardrail:claude-only — targets [claude], not opencode',
+    );
+    // The opencode-targeted entry still installs — skipping one entry never blocks the rest.
+    expect(result.applied).toBe(true);
+  });
+
+  it('claude selection installs all matching entries — skipped stays empty, no [skipped] line', async () => {
+    const adapter = createClaudeAdapter({ denyRef: REF_DENY, agentsContent: AGENTS_CONTENT });
+
+    const result = await runInstall({
+      catalog: MINI_CATALOG,
+      adapter,
+      scope: SCOPE,
+      env,
+      manifestPath,
+      selectedIds: ['guardrails-claude', 'context-claude'],
+      confirm: true,
+    });
+
+    expect(result.skipped).toEqual([]);
+    expect(result.output).not.toContain('[skipped]');
+    expect(result.applied).toBe(true);
+  });
+
+  it('skips every entry (all claude-only) under opencode → nothing applied, all listed', async () => {
+    const adapter = createOpencodeAdapter({});
+
+    const result = await runInstall({
+      catalog: MINI_CATALOG,
+      adapter,
+      scope: SCOPE,
+      env,
+      manifestPath,
+      selectedIds: ['guardrails-claude', 'context-claude'],
+      confirm: true,
+    });
+
+    expect(result.skipped).toEqual([
+      { id: 'guardrails-claude', targets: ['claude'] },
+      { id: 'context-claude', targets: ['claude'] },
+    ]);
+    expect(result.applied).toBe(false);
+    expect(result.output).toContain('[skipped] guardrails-claude — targets [claude], not opencode');
+    expect(result.output).toContain('[skipped] context-claude — targets [claude], not opencode');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// E-warn (HIGH-2): guardrail warnings are surfaced visibly, not silent.
+//
+// Native opencode descriptors carry no translation warnings (ADR-0020 "Option
+// A"). The remaining visible-warning path is the M7 conflict warning: a managed
+// leaf that the additive merge must DROP because the user's config already
+// claims it with a different value. That warning MUST still reach the user.
+// ---------------------------------------------------------------------------
+
+describe('runInstall — guardrail conflict warnings are visible (E-warn / HIGH-2)', () => {
+  const OPENCODE_GUARDRAIL: CatalogEntry = {
+    kind: 'artifact',
+    id: 'guardrails-opencode',
+    nature: 'guardrail',
+    targets: ['opencode'],
+    scopes: ['user', 'project'],
+  };
+
+  // A native descriptor whose nested "rm -rf *": "deny" leaf conflicts with a
+  // pre-existing flat "bash": "allow" user setting.
+  const CONFLICTING_DESCRIPTOR: OpencodePermission = { bash: { 'rm -rf *': 'deny' } };
+
+  it('surfaces guardrail conflict warnings in result.warnings and output', async () => {
+    // Seed a user opencode.json whose flat "bash": "allow" blocks the descriptor's
+    // nested deny leaf → the merge drops it and MUST surface a visible warning
+    // (never silent — R10.4/R5.3, HIGH-2).
+    const opencodeJson = resolveOpencodeUserTargets(env).opencodeJson;
+    await fs.mkdir(path.dirname(opencodeJson), { recursive: true });
+    await Bun.write(opencodeJson, JSON.stringify({ permission: { bash: 'allow' } }));
+
+    const adapter = createOpencodeAdapter({ permission: CONFLICTING_DESCRIPTOR });
+
+    const result = await runInstall({
+      catalog: [OPENCODE_GUARDRAIL],
+      adapter,
+      scope: SCOPE,
+      env,
+      manifestPath,
+      selectedIds: ['guardrails-opencode'],
+      confirm: true,
+    });
+
+    expect(result.warnings.length).toBeGreaterThan(0);
+    expect(result.output).toContain('--- Warnings ---');
+    expect(result.output).toContain('was not applied');
+  });
+
+  it('emits no Warnings section for a lossless install', async () => {
+    const adapter = createOpencodeAdapter({ agentsContent: AGENTS_CONTENT });
+    const opencodeContext: CatalogEntry = {
+      kind: 'artifact',
+      id: 'context-opencode',
+      nature: 'context',
+      targets: ['opencode'],
+      scopes: ['user', 'project'],
+    };
+
+    const result = await runInstall({
+      catalog: [opencodeContext],
+      adapter,
+      scope: SCOPE,
+      env,
+      manifestPath,
+      selectedIds: ['context-opencode'],
+      confirm: true,
+    });
+
+    expect(result.warnings).toEqual([]);
+    expect(result.output).not.toContain('--- Warnings ---');
   });
 });

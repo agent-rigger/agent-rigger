@@ -22,6 +22,54 @@ export type Nature =
 /** Installation scope: user-level (~/) or project-level (cwd). */
 export type Scope = 'user' | 'project';
 
+/**
+ * Target assistant for an installed artefact.
+ *
+ * The full set of assistants the domain recognises — aligned with `Adapter.id`
+ * and the catalog `targets` enum. `copilot` is reserved (M4): it is a valid
+ * domain value but has no adapter yet, so assistant selection and adapter
+ * dispatch reject it at runtime with an actionable error.
+ */
+export type Assistant = 'claude' | 'opencode' | 'copilot';
+
+// ---------------------------------------------------------------------------
+// opencode value types (types-only — shared engine↔adapter vocabulary)
+// ---------------------------------------------------------------------------
+
+/** A single opencode permission decision. */
+export type OpencodePermissionState = 'allow' | 'ask' | 'deny';
+
+/**
+ * The opencode `permission` object (subset agent-rigger manages).
+ * A tool key maps either to a flat state (`edit: "ask"`) or to a nested
+ * pattern→state map (`bash: { "rm -rf *": "deny" }`).
+ */
+export interface OpencodePermission {
+  [tool: string]: OpencodePermissionState | Record<string, OpencodePermissionState>;
+}
+
+/** A local (spawned) MCP server declared in opencode.json. */
+export interface OpencodeMcpLocal {
+  type: 'local';
+  command: string[];
+  environment?: Record<string, string>;
+  enabled?: boolean;
+  cwd?: string;
+  timeout?: number;
+}
+
+/** A remote (HTTP) MCP server declared in opencode.json. */
+export interface OpencodeMcpRemote {
+  type: 'remote';
+  url: string;
+  headers?: Record<string, string>;
+  enabled?: boolean;
+  timeout?: number;
+}
+
+/** Discriminated union of MCP server declarations. */
+export type OpencodeMcpServer = OpencodeMcpLocal | OpencodeMcpRemote;
+
 // ---------------------------------------------------------------------------
 // Artefact
 // ---------------------------------------------------------------------------
@@ -84,12 +132,41 @@ export interface AppliedLink {
 }
 
 /**
+ * Payload recorded when an opencode guardrail is installed.
+ * Captures the exact permission fragment merged into opencode.json so `remove`
+ * can subtract precisely what was added (ADR-0016), offline.
+ */
+export interface AppliedOpencodePermission {
+  kind: 'opencode-permission';
+  /** The permission fragment (tool→state / bash patterns) that was merged. */
+  permission: OpencodePermission;
+}
+
+/**
+ * Payload recorded when an opencode MCP server is installed.
+ * Captures the server id + merged config (secrets are env-refs, never literals — ADR-0019).
+ */
+export interface AppliedOpencodeMcp {
+  kind: 'opencode-mcp';
+  /** The MCP server id (key under the `mcp` object). */
+  server: string;
+  /** The server config that was merged. */
+  config: OpencodeMcpServer;
+}
+
+/**
  * Discriminated union of per-nature applied payloads.
  *
  * Present on ManifestEntry.applied after B-iii.
  * Absent on legacy entries installed before B-iii → remove/check degrade gracefully.
  */
-export type AppliedPayload = AppliedGuardrail | AppliedContext | AppliedHook | AppliedLink;
+export type AppliedPayload =
+  | AppliedGuardrail
+  | AppliedContext
+  | AppliedHook
+  | AppliedLink
+  | AppliedOpencodePermission
+  | AppliedOpencodeMcp;
 
 // ---------------------------------------------------------------------------
 // Manifest
@@ -116,6 +193,11 @@ export interface ManifestEntry {
   files: string[];
   /** Structured payload of the mutations applied at install time. Added in B-iii. */
   applied?: AppliedPayload;
+  /**
+   * Target assistant this entry was installed for (M3).
+   * Optional for backward-compat: absent on legacy entries → treated as 'claude'.
+   */
+  assistant?: Assistant;
 }
 
 /**
@@ -154,6 +236,12 @@ export interface WriteOpWriteText {
   /** UTF-8 content to write verbatim to the file. */
   content: string;
   description: string;
+  /**
+   * Translation warnings surfaced to the user before confirm (R6.3 / HIGH-2):
+   * used by the opencode agent handler when frontmatter fields cannot be
+   * translated. Absent for plain writes (e.g. context AGENTS.md).
+   */
+  warnings?: string[];
 }
 
 /**
@@ -245,6 +333,41 @@ export interface WriteOpMergeHooks {
   scriptStore?: string;
 }
 
+/**
+ * Merge a permission fragment into the `permission` key of opencode.json.
+ * Only the permission key is touched; all other keys (mcp, agent, instructions,
+ * user config) are preserved. Idempotent: re-merging the same fragment is a no-op.
+ */
+export interface WriteOpMergePermission {
+  kind: 'merge-permission';
+  /** Absolute path to opencode.json. */
+  path: string;
+  /** Permission fragment to merge (already translated from the canonical guardrail). */
+  permission: OpencodePermission;
+  description: string;
+  /**
+   * Translation warnings surfaced to the user before confirm (R5.3 / HIGH-2):
+   * canonical rules that could not be translated faithfully to opencode. Empty
+   * or absent when the translation was lossless.
+   */
+  warnings?: string[];
+}
+
+/**
+ * Merge an MCP server declaration into the `mcp` key of opencode.json.
+ * Only the mcp key is touched; other keys are preserved. Idempotent.
+ */
+export interface WriteOpMergeMcp {
+  kind: 'merge-mcp';
+  /** Absolute path to opencode.json. */
+  path: string;
+  /** MCP server id (key under `mcp`). */
+  server: string;
+  /** Server config to write. */
+  config: OpencodeMcpServer;
+  description: string;
+}
+
 export type WriteOp =
   | WriteOpWriteJson
   | WriteOpWriteText
@@ -253,7 +376,9 @@ export type WriteOp =
   | WriteOpEnsureImport
   | WriteOpLink
   | WriteOpPluginInstall
-  | WriteOpMergeHooks;
+  | WriteOpMergeHooks
+  | WriteOpMergePermission
+  | WriteOpMergeMcp;
 
 // ---------------------------------------------------------------------------
 // RemovalOp — planned removal operations (for diff display and apply)
@@ -342,6 +467,31 @@ export interface RemovalOpRemoveHooks {
   command: string;
 }
 
+/**
+ * Remove a managed permission fragment from opencode.json.
+ * Only the exact keys/patterns in `permission` are removed; other permission
+ * entries (and other opencode.json keys) are preserved. No-op if absent.
+ */
+export interface RemovalOpRemovePermission {
+  kind: 'remove-permission';
+  /** Absolute path to opencode.json. */
+  path: string;
+  /** The managed permission fragment to remove (from the applied payload). */
+  permission: OpencodePermission;
+}
+
+/**
+ * Remove a managed MCP server from opencode.json.
+ * Only the named server is removed; other servers and keys are preserved. No-op if absent.
+ */
+export interface RemovalOpRemoveMcp {
+  kind: 'remove-mcp';
+  /** Absolute path to opencode.json. */
+  path: string;
+  /** MCP server id to remove. */
+  server: string;
+}
+
 export type RemovalOp =
   | RemovalOpRemoveDeny
   | RemovalOpRemoveAllow
@@ -349,7 +499,9 @@ export type RemovalOp =
   | RemovalOpDeleteFile
   | RemovalOpUnlink
   | RemovalOpPluginUninstall
-  | RemovalOpRemoveHooks;
+  | RemovalOpRemoveHooks
+  | RemovalOpRemovePermission
+  | RemovalOpRemoveMcp;
 
 // ---------------------------------------------------------------------------
 // Scanner / Verdict

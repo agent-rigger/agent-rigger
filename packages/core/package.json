@@ -16,6 +16,7 @@
     "./linker": "./src/linker.ts",
     "./managed-import": "./src/managed-import.ts",
     "./manifest": "./src/manifest.ts",
+    "./opencode-json": "./src/opencode-json.ts",
     "./paths": "./src/paths.ts",
     "./scan": "./src/scan.ts",
     "./types": "./src/types.ts"

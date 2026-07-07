@@ -8,6 +8,7 @@ export * from './hooks';
 export * from './linker';
 export * from './managed-import';
 export * from './manifest';
+export * from './opencode-json';
 export * from './paths';
 export * from './scan';
 export * from './scanners/composite';

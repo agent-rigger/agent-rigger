@@ -26,7 +26,7 @@ import {
 } from '@clack/prompts';
 
 import type { CatalogEntry } from '@agent-rigger/catalog';
-import type { RemovalOp, Report, Scope, WriteOp } from '@agent-rigger/core';
+import type { Assistant, RemovalOp, Report, Scope, WriteOp } from '@agent-rigger/core';
 
 // ---------------------------------------------------------------------------
 // Path abbreviation helpers
@@ -864,6 +864,12 @@ export async function selectScope(): Promise<Scope> {
 export interface RenderCatalogListOpts {
   /** Set of ids considered installed (from manifest). All available when absent. */
   installedIds?: Set<string>;
+  /**
+   * Assistant(s) each installed id is present for (M3, E6) — e.g. an id
+   * installed for both claude and opencode maps to `['claude', 'opencode']`.
+   * Rendered as a parenthesised suffix on installed rows. Absent id → no suffix.
+   */
+  installedAssistants?: Map<string, Assistant[]>;
   /** Human label for filtered listing, e.g. "Skills". When absent: "Catalog". */
   label?: string;
   /**
@@ -878,7 +884,7 @@ export interface RenderCatalogListOpts {
  * Render a human-readable catalog listing.
  *
  * For each entry, one aligned line:
- *   <status-tag>  <id>  <nature|pack>  <hint>
+ *   <status-tag>  <id>  <nature|pack>  <hint>  <assistants>
  *
  * Status tags are padded to equal width:
  *   [installed]  — id present in installedIds.
@@ -889,13 +895,16 @@ export interface RenderCatalogListOpts {
  *   - artifact without level → empty string.
  *   - pack                 → "(N members)".
  *
+ * Assistants (installed rows only, when installedAssistants is provided):
+ *   "(claude)" / "(claude, opencode)" — which assistant(s) this id is installed for.
+ *
  * Header: "Catalog (N entries):" or "<label> (N):" when label is provided.
  */
 export function renderCatalogList(
   entries: CatalogEntry[],
   opts: RenderCatalogListOpts = {},
 ): string {
-  const { installedIds, label } = opts;
+  const { installedIds, installedAssistants, label } = opts;
   const colorOn = shouldColor(opts.color);
 
   const n = entries.length;
@@ -916,13 +925,19 @@ export function renderCatalogList(
     return paint(raw, installed ? ANSI.green : ANSI.dim, colorOn);
   };
 
+  const assistantsSuffixFor = (id: string): string => {
+    const assistants = installedAssistants?.get(id);
+    return assistants === undefined || assistants.length === 0 ? '' : `(${assistants.join(', ')})`;
+  };
+
   // Build rows first, then pad the id and nature columns to their max width so
   // every column lines up regardless of id/nature length.
   const rows = entries.map((entry) => {
     const nature = entry.kind === 'pack' ? 'pack' : entry.nature;
-    const hint = entry.kind === 'pack'
+    const baseHint = entry.kind === 'pack'
       ? `(${entry.members.length} members)`
       : (entry.level ?? '');
+    const hint = [baseHint, assistantsSuffixFor(entry.id)].filter((s) => s !== '').join('  ');
     return { tag: tagFor(entry.id), id: entry.id, nature, hint };
   });
 

@@ -398,3 +398,111 @@ describe('runInit — env forwarding', () => {
     expect(receivedEnvs[0]).toMatchObject({ MY_TOKEN: 'secret' });
   });
 });
+
+// ---------------------------------------------------------------------------
+// Scenario 6 — E7: target assistant(s) prompt + on-disk detection fallback
+// ---------------------------------------------------------------------------
+
+describe('runInit — E7: askAssistants / detection fallback', () => {
+  it('persists the assistants returned by askAssistants (TTY / injected)', async () => {
+    const configPath = path.join(tmpDir, 'rigger.jsonc');
+
+    const result = await runInit({
+      configPath,
+      askUrl: () => Promise.resolve('https://github.com/org/catalog.git'),
+      askMethod: askNeverCalled(),
+      run: runAmbientOk,
+      askAssistants: () => Promise.resolve(['opencode']),
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.config.assistants).toEqual(['opencode']);
+
+    const saved = await loadConfigFile(configPath);
+    expect(saved.assistants).toEqual(['opencode']);
+  });
+
+  it('drops invalid/reserved values from askAssistants (e.g. "copilot")', async () => {
+    const configPath = path.join(tmpDir, 'rigger.jsonc');
+
+    const result = await runInit({
+      configPath,
+      askUrl: () => Promise.resolve('https://github.com/org/catalog.git'),
+      askMethod: askNeverCalled(),
+      run: runAmbientOk,
+      askAssistants: () => Promise.resolve(['claude', 'copilot']),
+    });
+
+    expect(result.config.assistants).toEqual(['claude']);
+  });
+
+  it('falls back to on-disk detection when askAssistants is absent (non-TTY)', async () => {
+    const configPath = path.join(tmpDir, 'rigger.jsonc');
+    const homeDir = path.join(tmpDir, 'home');
+    await fs.mkdir(path.join(homeDir, '.claude'), { recursive: true });
+
+    const result = await runInit({
+      configPath,
+      askUrl: () => Promise.resolve('https://github.com/org/catalog.git'),
+      askMethod: askNeverCalled(),
+      run: runAmbientOk,
+      env: { RIGGER_HOME: homeDir },
+    });
+
+    expect(result.config.assistants).toEqual(['claude']);
+  });
+
+  it('leaves assistants undefined when nothing is detected and no prompt is injected', async () => {
+    const configPath = path.join(tmpDir, 'rigger.jsonc');
+    const homeDir = path.join(tmpDir, 'home-empty');
+    await fs.mkdir(homeDir, { recursive: true });
+
+    const result = await runInit({
+      configPath,
+      askUrl: () => Promise.resolve('https://github.com/org/catalog.git'),
+      askMethod: askNeverCalled(),
+      run: runAmbientOk,
+      env: { RIGGER_HOME: homeDir },
+    });
+
+    expect(result.config.assistants).toBeUndefined();
+  });
+
+  it('idempotence: a second init without askAssistants preserves the previously persisted assistants', async () => {
+    const configPath = path.join(tmpDir, 'rigger.jsonc');
+    const homeDir = path.join(tmpDir, 'home-empty2');
+    await fs.mkdir(homeDir, { recursive: true });
+
+    await runInit({
+      configPath,
+      askUrl: () => Promise.resolve('https://github.com/org/catalog.git'),
+      askMethod: askNeverCalled(),
+      run: runAmbientOk,
+      askAssistants: () => Promise.resolve(['opencode']),
+    });
+
+    const second = await runInit({
+      configPath,
+      askUrl: () => Promise.resolve('https://github.com/org/catalog.git'),
+      askMethod: askNeverCalled(),
+      run: runAmbientOk,
+      env: { RIGGER_HOME: homeDir },
+    });
+
+    expect(second.config.assistants).toEqual(['opencode']);
+  });
+
+  it('output mentions the configured assistant(s)', async () => {
+    const configPath = path.join(tmpDir, 'rigger.jsonc');
+
+    const result = await runInit({
+      configPath,
+      askUrl: () => Promise.resolve('https://github.com/org/catalog.git'),
+      askMethod: askNeverCalled(),
+      run: runAmbientOk,
+      askAssistants: () => Promise.resolve(['claude', 'opencode']),
+    });
+
+    expect(result.output).toContain('claude, opencode');
+  });
+});

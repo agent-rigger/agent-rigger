@@ -16,6 +16,9 @@ import path from 'node:path';
 
 import type { CatalogEntry, TmpDirFactory } from '@agent-rigger/catalog';
 import type { CommandRunner } from '@agent-rigger/catalog/tool-check';
+import { readJson } from '@agent-rigger/core/fs-json';
+import { findEntry, readManifest } from '@agent-rigger/core/manifest';
+import { resolveOpencodeUserTargets } from '@agent-rigger/core/paths';
 
 import pkg from '../package.json';
 import { parseArgs, runCli } from '../src/cli';
@@ -1130,6 +1133,133 @@ describe('runCli — top-level remove <id...>', () => {
       env: { RIGGER_HOME: tmp.dir },
     });
     expect(code).toBe(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// runCli — install --assistant=opencode (wiring slice A, R1)
+// ---------------------------------------------------------------------------
+
+describe('runCli — install --assistant=opencode', () => {
+  let tmp: { dir: string; cleanup: () => Promise<void> };
+
+  const GUARDRAIL_FIXTURE_BOTH: CatalogEntry = {
+    kind: 'artifact',
+    id: 'guardrail:main',
+    nature: 'guardrail',
+    targets: ['claude', 'opencode'],
+    scopes: ['user'],
+  };
+
+  /**
+   * Custom checkout writer (not the shared makeFakeTmpFactory): the opencode
+   * guardrail is a NATIVE `permission.json` descriptor (ADR-0020 "Option A").
+   * makeFakeTmpFactory only writes Claude deny/allow rules, so the opencode
+   * builder would fail with MissingOpencodePermissionError; here we ship the
+   * native descriptor (plus deny/allow, harmless, for parity with the claude side).
+   */
+  function makeTranslatableGuardrailTmpFactory(dir: string): TmpDirFactory {
+    return async () => {
+      await Bun.write(
+        path.join(dir, 'catalog.json'),
+        JSON.stringify({ meta: { name: 'cli-test-catalog' }, entries: [GUARDRAIL_FIXTURE_BOTH] }),
+      );
+      const guardrailDir = path.join(dir, 'guardrails', 'main');
+      await fs.mkdir(guardrailDir, { recursive: true });
+      await Bun.write(
+        path.join(guardrailDir, 'deny.json'),
+        JSON.stringify({ deny: ['Bash(rm -rf *)'] }),
+      );
+      await Bun.write(path.join(guardrailDir, 'allow.json'), JSON.stringify({ allow: [] }));
+      await Bun.write(
+        path.join(guardrailDir, 'permission.json'),
+        JSON.stringify({
+          $schema: 'https://opencode.ai/config.json',
+          permission: { bash: { 'rm -rf *': 'deny' } },
+        }),
+      );
+      return { path: dir, cleanup: async () => {} };
+    };
+  }
+
+  beforeEach(async () => {
+    tmp = await makeTmpHome('rigger-install-assistant-');
+    const configDir = path.join(tmp.dir, '.config', 'agent-rigger');
+    await fs.mkdir(configDir, { recursive: true });
+    await Bun.write(
+      path.join(configDir, 'config.json'),
+      JSON.stringify({ catalogs: [{ name: 'principal', url: 'https://example.com/catalog.git' }] }),
+    );
+  });
+
+  afterEach(async () => {
+    await tmp.cleanup();
+  });
+
+  it('installs into opencode.json (permission key) and stamps the manifest with assistant:"opencode"', async () => {
+    const cDir = await fs.mkdtemp(path.join(os.tmpdir(), 'rigger-install-oc-'));
+    try {
+      const code = await runCli(
+        ['install', 'principal/guardrail:main', '--yes', '--assistant=opencode'],
+        {
+          print: makeCapture().print,
+          env: { RIGGER_HOME: tmp.dir },
+          remote: {
+            run: makeSuccessRunner(),
+            tmpFactory: makeTranslatableGuardrailTmpFactory(cDir),
+          },
+        },
+      );
+      expect(code).toBe(0);
+
+      const opencodeJson = await readJson(
+        resolveOpencodeUserTargets({ RIGGER_HOME: tmp.dir }).opencodeJson,
+      );
+      expect(opencodeJson['permission']).toBeDefined();
+
+      const manifest = await readManifest(
+        path.join(tmp.dir, '.config', 'agent-rigger', 'state.json'),
+      );
+      expect(findEntry(manifest, 'principal/guardrail:main', 'user', 'opencode')).toBeDefined();
+    } finally {
+      await fs.rm(cDir, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects an invalid --assistant value with an actionable message', async () => {
+    const cap = makeCapture();
+    const code = await runCli(
+      ['install', 'principal/guardrail:main', '--yes', '--assistant=bogus'],
+      {
+        print: cap.print,
+        env: { RIGGER_HOME: tmp.dir },
+      },
+    );
+    expect(code).not.toBe(0);
+    const out = cap.lines.join('\n');
+    expect(out).toMatch(/bogus/);
+  });
+
+  it('defaults to claude (back-compat) when --assistant is omitted', async () => {
+    const cDir = await fs.mkdtemp(path.join(os.tmpdir(), 'rigger-install-claude-default-'));
+    try {
+      const code = await runCli(['install', 'principal/guardrail:main', '--yes'], {
+        print: makeCapture().print,
+        env: { RIGGER_HOME: tmp.dir },
+        remote: {
+          run: makeSuccessRunner(),
+          tmpFactory: makeFakeTmpFactory(cDir, [GUARDRAIL_FIXTURE_BOTH]),
+        },
+      });
+      expect(code).toBe(0);
+
+      const manifest = await readManifest(
+        path.join(tmp.dir, '.config', 'agent-rigger', 'state.json'),
+      );
+      expect(findEntry(manifest, 'principal/guardrail:main', 'user', 'claude')).toBeDefined();
+    } finally {
+      await fs.rm(cDir, { recursive: true, force: true });
+    }
   });
 });
 

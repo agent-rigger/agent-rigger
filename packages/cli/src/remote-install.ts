@@ -10,12 +10,14 @@
  *   guarantee cleanup in finally.
  * - Inside the callback: readCatalogDir → frontier guard (path traversal) →
  *   security scan (external entries only) → mergeCatalogs → resolve ids →
- *   buildClaudeAdapter({externalIds, externalBaseDir, catalogUrl, pluginRunner}) →
- *   versionFor → runInstall.
+ *   buildAdapter(assistant, env, {externalIds, externalBaseDir, catalogUrl, pluginRunner}) →
+ *   versionFor → runInstall. `assistant` defaults to 'claude' when omitted
+ *   (back-compat — the CLI always resolves and passes one explicitly, slice A).
  *
  * Security policy (ADR-0014):
  * - All fetched content is scanned uniformly: skills and agents by their checkout path,
- *   hooks by the entire hooks/ directory (guards + shared libs).
+ *   hooks by the entire hooks/ directory (guards + shared libs), opencode plugins by
+ *   the entire plugins/ directory (native JS modules — ADR-0020 §4, H13).
  * - Scan occurs BEFORE plan/apply — no files are written if scan blocks.
  * - Without --force: a blocking verdict throws ScanBlockedError (fail-closed).
  * - With --force: a blocking verdict emits a warning and install proceeds.
@@ -30,6 +32,7 @@
 import path from 'node:path';
 
 import type { PluginRunner } from '@agent-rigger/adapters';
+import type { Assistant } from '@agent-rigger/core';
 import { createCompositeScanner } from '@agent-rigger/core';
 import { assertSafeArtifactName } from '@agent-rigger/core/artifact-name';
 import type { Env } from '@agent-rigger/core/paths';
@@ -48,7 +51,7 @@ import {
 import { resolve } from '@agent-rigger/catalog/resolver';
 import type { CommandRunner } from '@agent-rigger/catalog/tool-check';
 
-import { buildClaudeAdapter } from './adapter-builder';
+import { buildAdapter } from './adapter-dispatch';
 import type { InstallResult } from './cmd-install';
 import { runInstall } from './cmd-install';
 
@@ -113,6 +116,15 @@ export function scanPathFor(entry: ArtifactEntry, baseDir: string): string | nul
     // libs (e.g. _shared/hook-lib.ts) are covered by the composite scanner.
     return path.join(baseDir, 'hooks');
   }
+  if (entry.nature === 'plugin' && entry.targets.includes('opencode')) {
+    // An opencode plugin is a native JS/TS module shipped in the checkout's
+    // plugins/ directory and copied verbatim into pluginDir (ADR-0020 §4,
+    // R8.2) — executable code loaded by opencode at runtime, scanned like
+    // hooks (whole directory, so sibling modules are covered too — H13).
+    // Claude-only plugins are delegate-installed via `claude plugin install`
+    // from the marketplace URL (ADR-0003): no module in the checkout → null.
+    return path.join(baseDir, 'plugins');
+  }
   return null;
 }
 
@@ -123,7 +135,8 @@ export function scanPathFor(entry: ArtifactEntry, baseDir: string): string | nul
 /**
  * Scan all entries that have a resolvable checkout path in the given directory.
  *
- * - Resolves each entry to a scan path (skills/agents only; others skipped naturally).
+ * - Resolves each entry to a scan path (skills/agents/hooks/opencode plugins;
+ *   others skipped naturally).
  * - Runs scanner.scan() in parallel via Promise.all.
  * - If any verdict is degraded (no scanner tool installed) → actionable warning + proceeds.
  *   force is NOT needed for this case (ADR-0018).
@@ -216,7 +229,7 @@ export async function scanEntries(opts: {
  * 2. withRemoteCheckout(url, ref, runner, {tmpFactory}, async (dir) => {
  *      readCatalogDir(dir) → frontier guard → scanExternalEntries (external only) →
  *      mergeCatalogs → resolve →
- *      buildClaudeAdapter({externalIds, externalBaseDir, catalogUrl, pluginRunner}) →
+ *      buildAdapter(assistant, env, {externalIds, externalBaseDir, catalogUrl, pluginRunner}) →
  *      versionFor → runInstall
  *    })
  * 3. Returns InstallResult from runInstall.
@@ -224,9 +237,11 @@ export async function scanEntries(opts: {
  * cleanup is guaranteed by withRemoteCheckout (finally).
  * Path-traversal ids are rejected before any file operation (UnsafeArtifactNameError).
  *
- * @param opts.scanner - Optional scanner override. Defaults to createCompositeScanner().
- * @param opts.force   - When true, a blocking scan emits a warning but install proceeds.
- *                       When false/absent, a blocking scan throws ScanBlockedError.
+ * @param opts.scanner   - Optional scanner override. Defaults to createCompositeScanner().
+ * @param opts.force     - When true, a blocking scan emits a warning but install proceeds.
+ *                         When false/absent, a blocking scan throws ScanBlockedError.
+ * @param opts.assistant - Target assistant (resolved upstream by assistant-select.ts).
+ *                         Defaults to 'claude' when omitted (back-compat).
  */
 export async function runRemoteInstall(opts: {
   ids: string[];
@@ -239,6 +254,7 @@ export async function runRemoteInstall(opts: {
   confirm: boolean | ((planText: string) => Promise<boolean>);
   scanner?: Scanner;
   force?: boolean;
+  assistant?: Assistant;
   /**
    * When provided, raw catalog ids are qualified as `<sourceName>/<id>` so that
    * the manifest stores fully-qualified ids (ADR-0017). The caller is responsible
@@ -257,6 +273,8 @@ export async function runRemoteInstall(opts: {
     tmpFactory,
     confirm,
   } = opts;
+
+  const assistant: Assistant = opts.assistant ?? 'claude';
 
   const force = opts.force === true;
   const scanner = opts.scanner ?? createCompositeScanner();
@@ -323,9 +341,10 @@ export async function runRemoteInstall(opts: {
         : qualifyEntries(sourceName, rawEffective);
 
       // All entries from the remote catalog are sourced from the checkout.
-      // - Skills / agents: have a checkout path (scanPathFor != null).
-      // - Guardrails / contexts / hooks: no scan path but also come from checkout.
-      // - Plugins: from the remote catalog's marketplace URL.
+      // - Skills / agents / hooks / opencode plugins: have a checkout path
+      //   (scanPathFor != null).
+      // - Guardrails / contexts: no scan path but also come from checkout.
+      // - Claude plugins: from the remote catalog's marketplace URL.
       // remoteIds tells buildClaudeAdapter which entries to resolve from externalBaseDir.
       // Use qualified ids here to match the (potentially qualified) resolved entries.
       const qualifiedRemoteEntryIds = new Set(remoteEntries.map((e) => qualify(e.id)));
@@ -336,7 +355,7 @@ export async function runRemoteInstall(opts: {
       );
 
       // Security scan — all entries that have a checkout path (uniform scan, ADR-0014).
-      // Entries without a scanPath (e.g. guardrails, hooks) are naturally skipped.
+      // Entries without a scanPath (e.g. guardrails, contexts) are naturally skipped.
       // scanPathFor uses localId() internally to strip the qualifier before path derivation.
       const { warnings } = await scanEntries({
         entries: resolved,
@@ -348,7 +367,7 @@ export async function runRemoteInstall(opts: {
       // Build effectiveEntries map for hookSpec resolution (qualified ids).
       const effectiveEntries = new Map(effective.map((e) => [e.id, e]));
 
-      const adapter = await buildClaudeAdapter(env, {
+      const adapter = await buildAdapter(assistant, env, {
         externalIds: remoteIds,
         externalBaseDir: dir,
         catalogUrl,

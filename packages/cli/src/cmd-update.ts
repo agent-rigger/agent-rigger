@@ -11,7 +11,7 @@
  *   - already at latest ref                        → upToDate
  * - For stale entries: transactional checkout-first pipeline:
  *   1. resolveVersion (once).
- *   2. withRemoteCheckout → readCatalogDir → resolve → buildClaudeAdapter.
+ *   2. withRemoteCheckout → readCatalogDir → resolve → buildAdapter(assistant, …).
  *   3. Confirm BEFORE any destructive operation.
  *   4. If confirmed: remove (unlink old) then apply (link fresh content).
  *
@@ -19,6 +19,11 @@
  *   - A network failure, CatalogParseError, or resolve error aborts BEFORE the remove.
  *   - confirm=false → nothing is removed or written; artifact stays at old version.
  *   - resolveVersion is called exactly once.
+ *
+ * Assistant (E6, R1): `assistant` (defaults to 'claude') scopes every manifest
+ * read — candidate ids, classification, and the confirm preview all key by
+ * (id, scope, assistant), so an identical id installed for the OTHER assistant
+ * is never a candidate, never previewed, never touched.
  *
  * Constraints:
  * - No while loops.
@@ -36,6 +41,7 @@ import {
 } from '@agent-rigger/catalog';
 import { resolve } from '@agent-rigger/catalog/resolver';
 import type { CommandRunner } from '@agent-rigger/catalog/tool-check';
+import type { Assistant } from '@agent-rigger/core';
 import { createCompositeScanner } from '@agent-rigger/core';
 import { assertSafeArtifactName } from '@agent-rigger/core/artifact-name';
 import { apply, remove } from '@agent-rigger/core/engine';
@@ -60,7 +66,7 @@ function localId(id: string): string {
   return slashIdx === -1 ? id : id.slice(slashIdx + 1);
 }
 
-import { buildClaudeAdapter } from './cli';
+import { buildAdapter } from './adapter-dispatch';
 import { scanEntries } from './remote-install';
 import { ANSI, paint, shouldColor } from './ui';
 
@@ -95,6 +101,13 @@ export interface RunUpdateOptions {
    * (see {@link shouldColor}). Pass false in tests for deterministic output.
    */
   color?: boolean;
+  /**
+   * Target assistant (R1, one-assistant-per-transaction). Defaults to 'claude'
+   * (back-compat). Only manifest entries installed for this assistant are
+   * candidates — an identical id installed for the OTHER assistant is left
+   * untouched, never updated as a side effect.
+   */
+  assistant?: Assistant;
 }
 
 export interface UpdateResult {
@@ -120,7 +133,7 @@ export interface UpdateResult {
  * 2. Classify candidates → staleIds / upToDateIds / skippedIds.
  * 3. withRemoteCheckout(catalogUrl, remote.ref, runner, {tmpFactory}, async (dir) => {
  *      readCatalogDir(dir) → frontier guard → mergeCatalogs → resolve →
- *      buildClaudeAdapter({externalIds, externalBaseDir: dir}) →
+ *      buildAdapter(assistant, env, {externalIds, externalBaseDir: dir}) →
  *      confirm (planText summarising the update) BEFORE any write →
  *      remove(adapter, staleEntries, scope, env, manifestPath) →
  *      apply(adapter, staleEntries, scope, env, manifestPath, versionFor)
@@ -144,6 +157,7 @@ export async function runUpdate(opts: RunUpdateOptions): Promise<UpdateResult> {
 
   const force = opts.force === true;
   const scanner: Scanner = opts.scanner ?? createCompositeScanner();
+  const assistant: Assistant = opts.assistant ?? 'claude';
 
   // Outcome line renderer — one artifact per line, aligned tag column, mirrors
   // renderReport()'s `[ ok  ] id` aesthetic. Colour is a no-op when colorOn=false.
@@ -157,14 +171,16 @@ export async function runUpdate(opts: RunUpdateOptions): Promise<UpdateResult> {
   const manifest = await readManifest(manifestPath);
 
   // Determine the candidate id set.
-  // When ids is empty: all installed artifacts for the given scope are candidates.
+  // When ids is empty: all installed artifacts for the given scope AND assistant
+  // are candidates (R1) — an identical id installed for the other assistant is
+  // simply not a candidate here, never touched as a side effect.
   // Classification below filters out those without a remote version.
   //
   // When ids is non-empty: exact manifest match only (ADR-0017 §5 — qualified ids end-to-end).
   // Callers must pass qualified ids; unqualified ids result in a "not installed" skip.
   const candidateIds: string[] = ids.length === 0
     ? manifest.artifacts
-      .filter((e) => e.scope === scope)
+      .filter((e) => e.scope === scope && (e.assistant ?? 'claude') === assistant)
       .map((e) => e.id)
     : ids;
 
@@ -187,7 +203,9 @@ export async function runUpdate(opts: RunUpdateOptions): Promise<UpdateResult> {
   const skipReasons: Map<string, string> = new Map();
 
   for (const id of candidateIds) {
-    const entry = manifest.artifacts.find((e) => e.id === id && e.scope === scope);
+    const entry = manifest.artifacts.find(
+      (e) => e.id === id && e.scope === scope && (e.assistant ?? 'claude') === assistant,
+    );
 
     if (entry === undefined) {
       skippedIds.push(id);
@@ -278,7 +296,7 @@ export async function runUpdate(opts: RunUpdateOptions): Promise<UpdateResult> {
         });
 
         // 3e. Build adapter with remote resolver seam (externalBaseDir = checkout dir).
-        const adapter = await buildClaudeAdapter(env, {
+        const adapter = await buildAdapter(assistant, env, {
           externalIds: remoteIds,
           externalBaseDir: dir,
           effectiveEntries,
@@ -302,7 +320,9 @@ export async function runUpdate(opts: RunUpdateOptions): Promise<UpdateResult> {
         // 3g. Confirm BEFORE remove — abort with zero writes if user declines.
         const installedRefs = staleIds
           .map((id) => {
-            const m = manifest.artifacts.find((e) => e.id === id && e.scope === scope);
+            const m = manifest.artifacts.find(
+              (e) => e.id === id && e.scope === scope && (e.assistant ?? 'claude') === assistant,
+            );
             return m === undefined
               ? `  ${id}  → ${remote.ref}`
               : `  ${id}  ${m.ref} → ${remote.ref}`;

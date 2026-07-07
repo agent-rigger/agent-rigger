@@ -45,6 +45,8 @@ import type { PlanGroup } from './ui';
  * - written       Absolute paths of files written to disk.
  * - backedUp      Absolute paths of .bak-* files created before writes.
  * - toolWarnings  Advisory: ids of required/recommended tools absent from the host.
+ * - skipped       Entries excluded because their `targets` doesn't include the
+ *                  adapter's assistant (R1.5/R9.2 — never silent).
  * - output        Human-readable summary ready to print.
  */
 export interface InstallResult {
@@ -55,6 +57,9 @@ export interface InstallResult {
     required: string[];
     recommended: string[];
   };
+  skipped: { id: string; targets: string[] }[];
+  /** Translation warnings collected from planned ops (guardrail/agent), shown to the user. */
+  warnings: string[];
   output: string;
 }
 
@@ -157,6 +162,11 @@ async function buildProjectScopeNote(targetCwd: string): Promise<string> {
  * Step 1 — Resolution: resolve(selectedIds, catalog) → ArtifactEntry[].
  *   UnknownEntryError / DependencyCycleError propagate as-is.
  *
+ * Step 1b — Target routing (E-targets, R1.5/R9.2): entries whose `targets`
+ *   doesn't include the adapter's assistant (adapter.id) are excluded from
+ *   installation and reported in `skipped` + a visible `[skipped]` line in
+ *   `output` — never silently dropped.
+ *
  * Step 2 — Advisory tool checks: checkTools(entries) → toolWarnings.
  *   Missing tools are reported but never block installation.
  *
@@ -181,7 +191,21 @@ export async function runInstall(opts: RunInstallOptions): Promise<InstallResult
   // Step 1: Resolve selected ids → concrete artifact entries
   // -------------------------------------------------------------------------
 
-  const entries: ArtifactEntry[] = resolve(selectedIds, catalog);
+  const resolved: ArtifactEntry[] = resolve(selectedIds, catalog);
+
+  // -------------------------------------------------------------------------
+  // Step 1b: Target routing — split by assistant compatibility (E-targets)
+  // -------------------------------------------------------------------------
+
+  const entries: ArtifactEntry[] = [];
+  const skipped: { id: string; targets: string[] }[] = [];
+  for (const e of resolved) {
+    if (e.targets.includes(adapter.id)) {
+      entries.push(e);
+    } else {
+      skipped.push({ id: e.id, targets: e.targets });
+    }
+  }
 
   // -------------------------------------------------------------------------
   // Step 2: Advisory tool checks
@@ -218,9 +242,10 @@ export async function runInstall(opts: RunInstallOptions): Promise<InstallResult
   for (const entry of adapterEntries) {
     const ops = await adapter.plan(entry, scope, env);
     if (ops.length > 0) {
-      const action: 'install' | 'update' = findEntry(manifest, entry.id, scope) === undefined
-        ? 'install'
-        : 'update';
+      const action: 'install' | 'update' =
+        findEntry(manifest, entry.id, scope, adapter.id) === undefined
+          ? 'install'
+          : 'update';
       groups.push({ id: entry.id, nature: entry.nature, action, ops });
     }
   }
@@ -244,7 +269,21 @@ export async function runInstall(opts: RunInstallOptions): Promise<InstallResult
     ? await buildProjectScopeNote(effectiveCwd)
     : '';
 
-  const planText = projectNote + renderedPlan;
+  // Collect translation warnings from planned ops (guardrail/agent → opencode).
+  // Rendered in planText so they are visible in the confirm prompt AND the final
+  // output — a non-translatable rule is never silently dropped (R5.3/R6.3, HIGH-2).
+  const warnings = [
+    ...new Set(
+      groups
+        .flatMap((g) => g.ops)
+        .flatMap((op) => ('warnings' in op && Array.isArray(op.warnings) ? op.warnings : [])),
+    ),
+  ];
+  const warningsBlock = warnings.length > 0
+    ? '\n--- Warnings ---\n' + warnings.map((w) => `  [warning] ${w}`).join('\n') + '\n'
+    : '';
+
+  const planText = projectNote + renderedPlan + warningsBlock;
 
   // -------------------------------------------------------------------------
   // Empty plan → already up to date, skip confirm + apply
@@ -255,6 +294,8 @@ export async function runInstall(opts: RunInstallOptions): Promise<InstallResult
       planText,
       reason: 'up-to-date',
       toolWarnings,
+      skipped,
+      assistantId: adapter.id,
       written: [],
       backedUp: [],
     });
@@ -264,6 +305,8 @@ export async function runInstall(opts: RunInstallOptions): Promise<InstallResult
       written: [],
       backedUp: [],
       toolWarnings,
+      skipped,
+      warnings,
       output,
     };
   }
@@ -279,6 +322,8 @@ export async function runInstall(opts: RunInstallOptions): Promise<InstallResult
       planText,
       reason: 'aborted',
       toolWarnings,
+      skipped,
+      assistantId: adapter.id,
       written: [],
       backedUp: [],
     });
@@ -288,6 +333,8 @@ export async function runInstall(opts: RunInstallOptions): Promise<InstallResult
       written: [],
       backedUp: [],
       toolWarnings,
+      skipped,
+      warnings,
       output,
     };
   }
@@ -308,6 +355,8 @@ export async function runInstall(opts: RunInstallOptions): Promise<InstallResult
     planText,
     reason: 'applied',
     toolWarnings,
+    skipped,
+    assistantId: adapter.id,
     written: applyResult.written,
     backedUp: applyResult.backedUp,
   });
@@ -317,6 +366,8 @@ export async function runInstall(opts: RunInstallOptions): Promise<InstallResult
     written: applyResult.written,
     backedUp: applyResult.backedUp,
     toolWarnings,
+    skipped,
+    warnings,
     output,
   };
 }
@@ -329,6 +380,10 @@ interface BuildOutputOpts {
   planText: string;
   reason: 'applied' | 'aborted' | 'up-to-date';
   toolWarnings: { required: string[]; recommended: string[] };
+  /** Entries excluded from this transaction because of a `targets` mismatch (E-targets). */
+  skipped: { id: string; targets: string[] }[];
+  /** adapter.id — the assistant this transaction targeted, shown in the skipped line. */
+  assistantId: string;
   written: string[];
   backedUp: string[];
 }
@@ -340,6 +395,9 @@ interface BuildOutputOpts {
  *   --- Plan ---
  *   <renderPlan output>
  *
+ *   --- Skipped (assistant mismatch) ---   (omitted when empty — R1.5/R9.2)
+ *   <one [skipped] line per excluded entry>
+ *
  *   --- Result ---
  *   <status line>
  *   <written files>
@@ -350,13 +408,23 @@ interface BuildOutputOpts {
  *   <missing recommended tools>
  */
 function buildOutput(opts: BuildOutputOpts): string {
-  const { planText, reason, toolWarnings, written, backedUp } = opts;
+  const { planText, reason, toolWarnings, skipped, assistantId, written, backedUp } = opts;
   const parts: string[] = [];
 
   // Plan section
   parts.push('--- Plan ---');
   parts.push(planText);
   parts.push('');
+
+  // Skipped section — never silent (R1.5/R9.2): an entry excluded by target
+  // routing must be visible, even though it never reaches the plan above.
+  if (skipped.length > 0) {
+    parts.push('--- Skipped (assistant mismatch) ---');
+    for (const s of skipped) {
+      parts.push(`  [skipped] ${s.id} — targets [${s.targets.join(', ')}], not ${assistantId}`);
+    }
+    parts.push('');
+  }
 
   // Result section
   parts.push('--- Result ---');

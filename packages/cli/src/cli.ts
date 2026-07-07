@@ -21,9 +21,11 @@ import path from 'node:path';
 
 import {
   EmptyDenyArtifactError,
+  InvalidOpencodeJsonError,
   PluginInstallError,
   SkillScanBlockedError,
 } from '@agent-rigger/adapters';
+import type { Assistant } from '@agent-rigger/core';
 import type { AdapterEntry } from '@agent-rigger/core/adapter';
 import { UnsafeArtifactNameError } from '@agent-rigger/core/artifact-name';
 import { InvalidJsonError } from '@agent-rigger/core/fs-json';
@@ -42,9 +44,10 @@ import {
 } from '@agent-rigger/catalog';
 import { DependencyCycleError, UnknownEntryError } from '@agent-rigger/catalog/resolver';
 import { type CommandRunner, defaultRunner } from '@agent-rigger/catalog/tool-check';
-import { buildClaudeAdapter } from './adapter-builder';
 export { buildClaudeAdapter } from './adapter-builder';
 export type { BuildClaudeAdapterOpts } from './adapter-builder';
+import { buildAdapter } from './adapter-dispatch';
+import { detectAssistants, resolveAssistant } from './assistant-select';
 import { runCatalog } from './cmd-catalog';
 import { runCheck } from './cmd-check';
 import { runDoctor } from './cmd-doctor';
@@ -426,6 +429,15 @@ export interface CliPrompts {
    * When absent and NOT in a TTY, `runInit` receives no `proposeInstall` (config-only).
    */
   proposeInstall?: (catalog: CatalogProposal) => Promise<string[]>;
+  /**
+   * Optional target-assistant(s) picker (injectable for tests, R1/E7).
+   *
+   * When set, `runCli` provides this to `runInit` as `askAssistants` regardless
+   * of TTY (test injection always wins). When absent and in a real TTY, `runCli`
+   * builds a real clack multiselect. When absent and NOT in a TTY, `runInit`
+   * receives no `askAssistants` and falls back to on-disk detection.
+   */
+  askAssistants?: () => Promise<Assistant[]>;
 }
 
 /** All injectable dependencies for runCli. */
@@ -484,6 +496,156 @@ async function loadCliConfig(env: Env): Promise<Awaited<ReturnType<typeof loadCo
     projectConfigPath,
     env: env as Record<string, string | undefined>,
   });
+}
+
+// ---------------------------------------------------------------------------
+// resolveCliAssistant — flag > config.assistants > detected > TTY prompt
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolve the target assistant for a command (R1): install, check, remove,
+ * update. Each command resolves exactly ONE assistant per transaction.
+ *
+ * `--assistant` (raw, unvalidated) takes priority; config.assistants[] and
+ * on-disk detection follow (assistant-select.ts). `fallback: 'claude'` keeps
+ * the pre-M3 behaviour when nothing is resolvable and the terminal isn't
+ * interactive (existing scripts/CI with neither `~/.claude` nor
+ * `~/.config/opencode` present keep operating as claude, unchanged).
+ *
+ * A legacy config (catalogUrl without catalogs[]) makes loadCliConfig throw
+ * LegacyConfigError — that migration message is the caller's responsibility
+ * (resolveEffectiveCatalogFull etc.) to surface, not this resolver's; degrade
+ * to "no configAssistants" here rather than letting the whole command fail.
+ */
+async function resolveCliAssistant(
+  flags: Record<string, string | boolean>,
+  env: Env,
+): Promise<Assistant> {
+  const rawFlag = flags['assistant'];
+  const flag = rawFlag === undefined ? undefined : String(rawFlag);
+
+  let configAssistants: Assistant[] | undefined;
+  try {
+    configAssistants = (await loadCliConfig(env)).assistants;
+  } catch (err) {
+    if (!(err instanceof LegacyConfigError)) throw err;
+  }
+
+  return resolveAssistant({
+    ...(flag === undefined ? {} : { flag }),
+    ...(configAssistants === undefined ? {} : { configAssistants }),
+    env,
+    isTTY: process.stdout.isTTY === true,
+    fallback: 'claude',
+  });
+}
+
+// ---------------------------------------------------------------------------
+// resolveProposalAssistants — assistant(s) for post-init / catalog-add installs
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolve the assistant(s) targeted by a post-init / post-`catalog add`
+ * install proposal (H9).
+ *
+ * config.assistants — persisted by the init wizard BEFORE the proposal step
+ * (cmd-init.ts step 4 vs step 6) — wins: every configured assistant receives
+ * the proposed install, so a user who picked opencode (or both) never
+ * silently falls back to claude. Without configured assistants, a single
+ * detected assistant wins; otherwise 'claude' (pre-M3 back-compat).
+ *
+ * Never prompts: this runs inside picker flows (`init`, `init --yes`,
+ * `catalog add`) where the wizard already asked — an extra assistant prompt
+ * would be redundant in TTY and would hang a `--yes` run.
+ */
+async function resolveProposalAssistants(env: Env): Promise<Assistant[]> {
+  let configAssistants: Assistant[] | undefined;
+  try {
+    configAssistants = (await loadCliConfig(env)).assistants;
+  } catch (err) {
+    if (!(err instanceof LegacyConfigError)) throw err;
+  }
+
+  if (configAssistants !== undefined && configAssistants.length > 0) {
+    return configAssistants;
+  }
+
+  const detected = await detectAssistants(env);
+  return detected.length === 1 ? detected : ['claude'];
+}
+
+// ---------------------------------------------------------------------------
+// resolveManifestAssistant — manifest-first routing for check/remove/update (M18)
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolve the target assistant for manifest-routed commands (check/remove/
+ * update). ADR-0020 §1 / R1.6: the assistant is persisted per manifest entry,
+ * so these commands route the adapter from the manifest WITHOUT re-prompting.
+ *
+ * Priority:
+ * 1. `--assistant` flag: explicit override, delegated to resolveCliAssistant
+ *    (same validation and error behaviour).
+ * 2. Manifest: when every relevant entry (matching `scope`, and `ids` when
+ *    given) belongs to exactly ONE assistant → that assistant. No prompt, no
+ *    config/detection lookup — the manifest already knows.
+ * 3. Fallback: resolveCliAssistant (config > detection > TTY prompt >
+ *    'claude') — only when the manifest genuinely has no answer (no matching
+ *    entries, or entries spread across several assistants).
+ */
+async function resolveManifestAssistant(opts: {
+  flags: Record<string, string | boolean>;
+  env: Env;
+  scope: 'user' | 'project';
+  /** When provided and non-empty, only manifest entries with these ids count. */
+  ids?: string[];
+}): Promise<Assistant> {
+  const { flags, env, scope, ids } = opts;
+
+  if (flags['assistant'] !== undefined) {
+    return resolveCliAssistant(flags, env);
+  }
+
+  const { readManifest } = await import('@agent-rigger/core/manifest');
+  const manifest = await readManifest(resolveManifestPath(env));
+  const idFilter = ids === undefined || ids.length === 0 ? undefined : new Set(ids);
+
+  const distinct = new Set<Assistant>();
+  for (const entry of manifest.artifacts) {
+    if (entry.scope !== scope) continue;
+    if (idFilter !== undefined && !idFilter.has(entry.id)) continue;
+    distinct.add(entry.assistant ?? 'claude');
+  }
+
+  const [only] = distinct;
+  if (distinct.size === 1 && only !== undefined) {
+    return only;
+  }
+
+  return resolveCliAssistant(flags, env);
+}
+
+// ---------------------------------------------------------------------------
+// parseAssistantFilterFlag — optional --assistant filter (read-only commands)
+// ---------------------------------------------------------------------------
+
+/**
+ * Parse an optional `--assistant` filter flag for read-only commands (ls, info)
+ * that never write, never prompt, and never fall back — absent means "every
+ * assistant", not "claude" (unlike resolveCliAssistant's install/check/remove/
+ * update semantics, R1).
+ *
+ * Returns `undefined` when the flag is absent (no filtering), the validated
+ * Assistant when the value is 'claude' or 'opencode', or `'invalid'` when the
+ * value is anything else — callers print an actionable error and exit 2.
+ */
+function parseAssistantFilterFlag(
+  flags: Record<string, string | boolean>,
+): Assistant | undefined | 'invalid' {
+  const raw = flags['assistant'];
+  if (raw === undefined) return undefined;
+  const value = String(raw);
+  return value === 'claude' || value === 'opencode' ? value : 'invalid';
 }
 
 // ---------------------------------------------------------------------------
@@ -612,7 +774,9 @@ async function resolveEffectiveCatalog(
  * Classify each effective catalog entry as install / update / current for the
  * given scope.
  *
- * - Reads the manifest to find installed ids (+ their ref) for `scope`.
+ * - Reads the manifest to find installed ids (+ their ref) for `scope`, keyed
+ *   to `assistant` — an id installed for the OTHER assistant is not "current"
+ *   here, it falls through to 'install' (one-assistant-per-transaction, R1).
  * - Resolves the remote version (top semver tag) per configured catalog so an
  *   installed entry at an older ref is flagged 'update'. A catalog whose version
  *   cannot be resolved degrades gracefully (its installed entries → 'current').
@@ -623,6 +787,7 @@ async function computeArtifactStatuses(
   scope: 'user' | 'project',
   env: Env,
   deps: CliDeps,
+  assistant: Assistant,
 ): Promise<StatusedEntry[]> {
   const runner: CommandRunner = deps.remote?.run ?? defaultRunner;
   const manifestPath = resolveManifestPath(env);
@@ -631,7 +796,9 @@ async function computeArtifactStatuses(
 
   const installedRefById = new Map<string, string>();
   for (const a of manifest.artifacts) {
-    if (a.scope === scope) installedRefById.set(a.id, a.ref);
+    if (a.scope === scope && (a.assistant ?? 'claude') === assistant) {
+      installedRefById.set(a.id, a.ref);
+    }
   }
 
   // Resolve remote version per catalog (keyed by source name = id prefix).
@@ -678,6 +845,10 @@ async function computeArtifactStatuses(
  * proposal). The caller is responsible for building the CatalogProposal
  * (qualified entries + meta) and for resolving the install source (url/name).
  *
+ * The install targets the assistant(s) resolved by resolveProposalAssistants
+ * (H9): one runRemoteInstall per configured assistant, so a user who picked
+ * opencode in the init wizard never gets a silent claude install.
+ *
  * Returns the list of installed ids (empty if the user cancelled).
  */
 async function runInteractiveProposeInstall(
@@ -715,22 +886,29 @@ async function runInteractiveProposeInstall(
 
   const manifestPath = resolveManifestPath(env);
 
-  const result = await runRemoteInstall({
-    ids: selectedIds,
-    catalogUrl: installSource.catalogUrl,
-    sourceName: installSource.sourceName,
-    scope,
-    env,
-    manifestPath,
-    runner,
-    tmpFactory,
-    confirm: true,
-    ...(scanner === undefined ? {} : { scanner }),
-  });
+  // H9: target the assistant(s) the user configured (persisted before the
+  // proposal step) — one install per assistant, never a silent claude default.
+  const assistants = await resolveProposalAssistants(env);
 
-  // Surface the plan + result recap + scan/tool warnings. Without this the
-  // install happens silently after the picker (no feedback to the user).
-  print(result.output);
+  for (const assistant of assistants) {
+    const result = await runRemoteInstall({
+      ids: selectedIds,
+      catalogUrl: installSource.catalogUrl,
+      sourceName: installSource.sourceName,
+      scope,
+      env,
+      manifestPath,
+      runner,
+      tmpFactory,
+      confirm: true,
+      assistant,
+      ...(scanner === undefined ? {} : { scanner }),
+    });
+
+    // Surface the plan + result recap + scan/tool warnings. Without this the
+    // install happens silently after the picker (no feedback to the user).
+    print(result.output);
+  }
 
   return selectedIds;
 }
@@ -778,11 +956,27 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
   try {
     // ----- ls (top-level) -----
     if (command === 'ls') {
+      // Optional --assistant filter (read-only: absent = show every assistant).
+      const assistantFilter = parseAssistantFilterFlag(flags);
+      if (assistantFilter === 'invalid') {
+        print(
+          `[error] Invalid --assistant value: "${
+            flags['assistant']
+          }". Must be "claude" or "opencode".`,
+        );
+        return 2;
+      }
+
       const effective = await resolveEffectiveCatalog(env, print, deps.remote);
       if (effective.length === 0) {
         return 0;
       }
-      const result = await runLs({ catalog: effective, env, scope });
+      const result = await runLs({
+        catalog: effective,
+        env,
+        scope,
+        ...(assistantFilter === undefined ? {} : { assistant: assistantFilter }),
+      });
       print(result.output);
       return 0;
     }
@@ -803,6 +997,10 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
 
     // ----- check -----
     if (command === 'check') {
+      // Resolve the target assistant once (R1/M18): flag > manifest routing
+      // (entry.assistant, ADR-0020 §1 — no re-prompt) > config/detection.
+      const assistant = await resolveManifestAssistant({ flags, env, scope });
+
       const { entries: effective, metaBySource } = await resolveEffectiveCatalogFull(
         env,
         print,
@@ -813,7 +1011,7 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
       // Computed from the manifest + configured catalogs, independent of whether
       // the catalog listing could be fetched — so an unreachable catalog still
       // surfaces here. Never throws: check exit code is unaffected.
-      const remoteSections = await resolveCheckRemoteSections(env, scope, deps.remote);
+      const remoteSections = await resolveCheckRemoteSections(env, scope, deps.remote, assistant);
 
       if (effective.length === 0) {
         printRemoteSections(print, remoteSections);
@@ -824,14 +1022,19 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
 
       // Which guardrail/context to audit: a catalog entry is an offer, not an
       // obligation. Audit only the DECLARED governance baseline (required ∪
-      // recommended, packs expanded) plus whatever is already installed (so
-      // drift is still caught). This keeps `check` green when an extra catalog
+      // recommended, packs expanded) plus whatever is already installed FOR
+      // THIS ASSISTANT (so drift is still caught, without confusing the other
+      // assistant's entries as this one's baseline — one-assistant-per-
+      // transaction, R1). This keeps `check` green when an extra catalog
       // merely OFFERS guardrails/context the user never opted into.
       const { readManifest } = await import('@agent-rigger/core/manifest');
       const manifestForCheck = await readManifest(manifestPath);
       const installedGovernanceIds = manifestForCheck.artifacts
         .filter(
-          (a) => a.scope === scope && (a.nature === 'guardrail' || a.nature === 'context'),
+          (a) =>
+            a.scope === scope
+            && (a.nature === 'guardrail' || a.nature === 'context')
+            && (a.assistant ?? 'claude') === assistant,
         )
         .map((a) => a.id);
       const auditable = auditableGovernanceIds(effective, metaBySource, installedGovernanceIds);
@@ -855,7 +1058,7 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
         return 0;
       }
 
-      const adapter = await buildClaudeAdapter(env);
+      const adapter = await buildAdapter(assistant, env);
 
       const result = await runCheck({
         adapter,
@@ -980,18 +1183,27 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
           }
 
           const manifestPath = resolveManifestPath(env);
-          await runRemoteInstall({
-            ids: defaultIds,
-            catalogUrl: initPrimary.url,
-            sourceName,
-            scope,
-            env,
-            manifestPath,
-            runner,
-            tmpFactory,
-            confirm: true,
-            ...(deps.remote?.scanner === undefined ? {} : { scanner: deps.remote.scanner }),
-          });
+
+          // H9: install the defaults for every assistant the wizard persisted
+          // (config.assistants is saved BEFORE this proposal step) — never a
+          // silent claude default when the user picked opencode.
+          const proposalAssistants = await resolveProposalAssistants(env);
+
+          for (const assistant of proposalAssistants) {
+            await runRemoteInstall({
+              ids: defaultIds,
+              catalogUrl: initPrimary.url,
+              sourceName,
+              scope,
+              env,
+              manifestPath,
+              runner,
+              tmpFactory,
+              confirm: true,
+              assistant,
+              ...(deps.remote?.scanner === undefined ? {} : { scanner: deps.remote.scanner }),
+            });
+          }
 
           return defaultIds;
         };
@@ -1021,6 +1233,36 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
         };
       }
       // else: non-TTY without --yes → proposeInstallFn stays undefined → runInit skips proposal step.
+
+      // askAssistants: target-assistant(s) picker (E7, R1).
+      // Gate: use injected prompts.askAssistants when provided (test injection,
+      //       always honoured regardless of TTY); skip the prompt under --yes
+      //       (same "accept defaults, no prompt" rule as proposeInstallFn —
+      //       runInit falls back to on-disk detection); build the real clack
+      //       multiselect only in a real interactive TTY; otherwise leave
+      //       undefined — runInit falls back to on-disk detection (no network).
+      let askAssistantsFn: (() => Promise<Assistant[]>) | undefined;
+
+      if (prompts.askAssistants !== undefined) {
+        askAssistantsFn = prompts.askAssistants;
+      } else if (flags['yes'] !== true && process.stdout.isTTY) {
+        askAssistantsFn = async (): Promise<Assistant[]> => {
+          const { multiselect, isCancel, cancel } = await import('@clack/prompts');
+          const result = await multiselect<Assistant>({
+            message: 'Which assistant(s) do you want to configure?',
+            options: [
+              { value: 'claude', label: 'claude' },
+              { value: 'opencode', label: 'opencode' },
+            ],
+            required: false,
+          });
+          if (isCancel(result)) {
+            cancel('Operation cancelled.');
+            return [];
+          }
+          return result;
+        };
+      }
 
       // fetchCatalogFn: resolves remote version then fetches catalog.json.
       // Only provided when proposeInstallFn is set — runInit skips both when either is absent.
@@ -1072,8 +1314,10 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
         // Forward the runner so preflightAuth uses the injected runner in tests
         // (production: defaultRunner; tests: deps.remote?.run).
         run: initRunner,
+        env,
         ...(fetchCatalogFn === undefined ? {} : { fetchCatalogFn }),
         ...(proposeInstallFn === undefined ? {} : { proposeInstall: proposeInstallFn }),
+        ...(askAssistantsFn === undefined ? {} : { askAssistants: askAssistantsFn }),
       });
 
       print(result.output);
@@ -1199,15 +1443,33 @@ async function handleResourceCommand(opts: ResourceCommandOpts): Promise<number>
 
   // ----- <resource> ls -----
   if (verb === 'ls' || verb === undefined) {
+    // Optional --assistant filter (read-only: absent = show every assistant).
+    const assistantFilter = parseAssistantFilterFlag(flags);
+    if (assistantFilter === 'invalid') {
+      print(
+        `[error] Invalid --assistant value: "${
+          flags['assistant']
+        }". Must be "claude" or "opencode".`,
+      );
+      return 2;
+    }
+
     const effectiveCatalog = await resolveEffectiveCatalog(env, print, deps.remote);
     if (effectiveCatalog.length === 0) {
       return 0;
     }
+    const assistantOpts = assistantFilter === undefined ? {} : { assistant: assistantFilter };
     let result: RunLsResult;
     if (natureMapped === 'catalog') {
-      result = await runLs({ catalog: effectiveCatalog, env, scope });
+      result = await runLs({ catalog: effectiveCatalog, env, scope, ...assistantOpts });
     } else {
-      result = await runLs({ catalog: effectiveCatalog, env, scope, resourceFilter: natureMapped });
+      result = await runLs({
+        catalog: effectiveCatalog,
+        env,
+        scope,
+        resourceFilter: natureMapped,
+        ...assistantOpts,
+      });
     }
     print(result.output);
     return 0;
@@ -1268,6 +1530,17 @@ async function handleResourceCommand(opts: ResourceCommandOpts): Promise<number>
       return 2;
     }
 
+    // Optional --assistant filter (read-only: absent = "installed for any assistant").
+    const assistantFilter = parseAssistantFilterFlag(flags);
+    if (assistantFilter === 'invalid') {
+      print(
+        `[error] Invalid --assistant value: "${
+          flags['assistant']
+        }". Must be "claude" or "opencode".`,
+      );
+      return 2;
+    }
+
     const effectiveCatalog = await resolveEffectiveCatalog(env, print, deps.remote);
     const entry = effectiveCatalog.find((e) => e.id === id);
     if (entry === undefined) {
@@ -1275,14 +1548,21 @@ async function handleResourceCommand(opts: ResourceCommandOpts): Promise<number>
       return 2;
     }
 
-    // Read manifest to determine installed status (exact qualified id match)
+    // Read manifest to determine installed status (exact qualified id match).
+    // Without --assistant: "installed" if present for ANY assistant (R1) —
+    // with --assistant: only that assistant's identical-id entry counts.
     const canonicalId = entry.id;
     const targets = resolveUserTargets(env);
     let installed = false;
     try {
       const { readManifest } = await import('@agent-rigger/core/manifest');
       const manifest = await readManifest(targets.stateJson);
-      installed = manifest.artifacts.some((a) => a.id === canonicalId && a.scope === scope);
+      installed = manifest.artifacts.some(
+        (a) =>
+          a.id === canonicalId
+          && a.scope === scope
+          && (assistantFilter === undefined || (a.assistant ?? 'claude') === assistantFilter),
+      );
     } catch {
       installed = false;
     }
@@ -1324,8 +1604,18 @@ async function handleResourceCommand(opts: ResourceCommandOpts): Promise<number>
       return 0;
     }
 
+    // Manifest-first assistant routing (M18/ADR-0020 §1), same as top-level
+    // check: when every matching manifest entry belongs to one assistant, use
+    // it — never the silent non-TTY 'claude' fallback while the installed
+    // entries are opencode's. Scoped to the ids being audited (this nature).
+    const assistant = await resolveManifestAssistant({
+      flags,
+      env,
+      scope,
+      ids: filteredEntries.map((e) => e.id),
+    });
     const manifestPath = resolveManifestPath(env);
-    const adapter = await buildClaudeAdapter(env);
+    const adapter = await buildAdapter(assistant, env);
     const result = await runCheck({
       adapter,
       entries: filteredEntries,
@@ -1338,7 +1628,7 @@ async function handleResourceCommand(opts: ResourceCommandOpts): Promise<number>
     print(result.output);
 
     // Best-effort catalog status + update-available annotation (same as top-level check).
-    const remoteSections = await resolveCheckRemoteSections(env, scope, deps.remote);
+    const remoteSections = await resolveCheckRemoteSections(env, scope, deps.remote, assistant);
     printRemoteSections(print, remoteSections);
 
     return result.exitCode;
@@ -1466,13 +1756,17 @@ async function handleInstall(opts: HandleInstallOpts): Promise<number> {
   const yes = flags['yes'] === true;
   const force = flags['force'] === true;
 
+  // Resolve the target assistant once (R1): flag > config.assistants > detected
+  // > TTY prompt > 'claude' fallback (back-compat, see resolveCliAssistant).
+  const assistant = await resolveCliAssistant(flags, env);
+
   // Non-interactive: ids provided on the command line
   if (ids.length > 0) {
     // Ad-hoc install: single URL or local path — routed before the qualified-id checks.
     // We only support one ad-hoc target per invocation (unambiguous, scannable, qualifiable).
     const firstId = ids[0] as string;
     if (ids.length === 1 && isAdHocTarget(firstId)) {
-      return handleAdHocInstall({ source: firstId, flags, scope, env, print, deps });
+      return handleAdHocInstall({ source: firstId, flags, scope, env, print, deps, assistant });
     }
 
     // Reject unqualified ids immediately with an actionable error (ADR-0017 §5).
@@ -1554,6 +1848,7 @@ async function handleInstall(opts: HandleInstallOpts): Promise<number> {
         runner,
         tmpFactory,
         confirm,
+        assistant,
         ...(force ? { force } : {}),
         ...(deps.remote?.scanner === undefined ? {} : { scanner: deps.remote.scanner }),
       };
@@ -1591,7 +1886,13 @@ async function handleInstall(opts: HandleInstallOpts): Promise<number> {
     // against the manifest + remote version, short-circuit when nothing is
     // actionable, then render the grouped install/update picker.
     interactiveScope = await prompts.selectScope();
-    const statuses = await computeArtifactStatuses(effective, interactiveScope, env, deps);
+    const statuses = await computeArtifactStatuses(
+      effective,
+      interactiveScope,
+      env,
+      deps,
+      assistant,
+    );
     const actionable = statuses.filter((s) => s.status !== 'current');
     if (actionable.length === 0) {
       print(
@@ -1651,6 +1952,7 @@ async function handleInstall(opts: HandleInstallOpts): Promise<number> {
       runner: interactiveRunner,
       tmpFactory: interactiveTmpFactory,
       confirm: (planText: string) => prompts.confirmApply(planText),
+      assistant,
       ...(force ? { force } : {}),
       ...(deps.remote?.scanner === undefined ? {} : { scanner: deps.remote.scanner }),
     };
@@ -1673,6 +1975,8 @@ interface HandleAdHocInstallOpts {
   env: Env;
   print: (msg: string) => void;
   deps: CliDeps;
+  /** Target assistant, already resolved by resolveCliAssistant (R1). */
+  assistant: Assistant;
 }
 
 /**
@@ -1696,7 +2000,7 @@ interface HandleAdHocInstallOpts {
  *    runRemoteInstall performs the real checkout, scan, and install.
  */
 async function handleAdHocInstall(opts: HandleAdHocInstallOpts): Promise<number> {
-  const { source, flags, scope, env, print, deps } = opts;
+  const { source, flags, scope, env, print, deps, assistant } = opts;
 
   const yes = flags['yes'] === true;
   const force = flags['force'] === true;
@@ -1755,6 +2059,7 @@ async function handleAdHocInstall(opts: HandleAdHocInstallOpts): Promise<number>
     runner,
     tmpFactory,
     confirm,
+    assistant,
     ...(force ? { force } : {}),
     ...(deps.remote?.scanner === undefined ? {} : { scanner: deps.remote.scanner }),
   };
@@ -1798,7 +2103,11 @@ async function handleRemove(opts: HandleRemoveOpts): Promise<number> {
   }
 
   const yes = flags['yes'] === true;
-  const adapter = await buildClaudeAdapter(env);
+  // Resolve the target assistant once (R1/M18): flag > manifest routing
+  // (entry.assistant of the requested ids, ADR-0020 §1 — no re-prompt) >
+  // config/detection fallback when the manifest has no answer.
+  const assistant = await resolveManifestAssistant({ flags, env, scope, ids });
+  const adapter = await buildAdapter(assistant, env);
   const manifestPath = resolveManifestPath(env);
 
   // Build effective catalog for remove (entries in manifest)
@@ -1871,6 +2180,11 @@ async function handleUpdate(opts: HandleUpdateOpts): Promise<number> {
   const runner: CommandRunner = deps.remote?.run ?? defaultRunner;
   const tmpFactory: TmpDirFactory = deps.remote?.tmpFactory ?? defaultTmpFactory;
 
+  // Resolve the target assistant once (R1/M18): flag > manifest routing
+  // (entry.assistant of the requested ids — or all installed entries when ids
+  // is empty, ADR-0020 §1 — no re-prompt) > config/detection fallback.
+  const assistant = await resolveManifestAssistant({ flags, env, scope, ids });
+
   let confirm: boolean | ((planText: string) => Promise<boolean>);
   if (yes) {
     confirm = true;
@@ -1894,13 +2208,19 @@ async function handleUpdate(opts: HandleUpdateOpts): Promise<number> {
     for (const catalog of config.catalogs) {
       const prefix = catalog.name + '/';
       const catalogIds = manifest.artifacts
-        .filter((e) => e.scope === scope && e.id.startsWith(prefix))
+        .filter(
+          (e) =>
+            e.scope === scope
+            && e.id.startsWith(prefix)
+            && (e.assistant ?? 'claude') === assistant,
+        )
         .map((e) => e.id);
 
-      // Nothing installed from this catalog → skip it. Passing empty ids to
-      // runUpdate would trigger its "all installed" semantics, reclassifying
-      // OTHER catalogs' entries against THIS catalog's url/version and failing
-      // resolution (UnknownEntryError). The loop always drives explicit ids.
+      // Nothing installed from this catalog (for this assistant) → skip it.
+      // Passing empty ids to runUpdate would trigger its "all installed"
+      // semantics, reclassifying OTHER catalogs' entries against THIS
+      // catalog's url/version and failing resolution (UnknownEntryError).
+      // The loop always drives explicit ids.
       if (catalogIds.length === 0) continue;
 
       const updateOpts = {
@@ -1912,6 +2232,7 @@ async function handleUpdate(opts: HandleUpdateOpts): Promise<number> {
         runner,
         tmpFactory,
         confirm,
+        assistant,
         ...(force ? { force } : {}),
         ...scannerOpts,
       };
@@ -1959,6 +2280,7 @@ async function handleUpdate(opts: HandleUpdateOpts): Promise<number> {
       runner,
       tmpFactory,
       confirm,
+      assistant,
       ...(force ? { force } : {}),
       ...scannerOpts,
     };
@@ -2013,12 +2335,14 @@ function catalogStatusLine(
  * Resolve, per configured catalog, whether installed artifacts are up-to-date and
  * which ones are stale. Best-effort: any top-level error → empty sections (never
  * throws); a single unreachable catalog degrades to an "[unreachable]" line.
+ * Only counts artifacts installed for `assistant` (one-assistant-per-transaction, R1).
  * Zero writes.
  */
 async function resolveCheckRemoteSections(
   env: Env,
   scope: 'user' | 'project',
   remote: CliDeps['remote'],
+  assistant: Assistant,
 ): Promise<CheckRemoteSections> {
   const empty: CheckRemoteSections = { catalogLines: [], updateLines: [] };
   try {
@@ -2036,7 +2360,11 @@ async function resolveCheckRemoteSections(
     for (const catalog of config.catalogs) {
       const prefix = catalog.name + '/';
       const installed = manifest.artifacts.filter(
-        (e) => e.scope === scope && e.ref !== 'v0.0.0' && e.id.startsWith(prefix),
+        (e) =>
+          e.scope === scope
+          && e.ref !== 'v0.0.0'
+          && e.id.startsWith(prefix)
+          && (e.assistant ?? 'claude') === assistant,
       );
 
       let remoteVersion: Awaited<ReturnType<typeof resolveVersion>>;
@@ -2107,6 +2435,11 @@ function handleError(err: unknown, print: (msg: string) => void): number {
     if (err.cause instanceof Error) {
       print(`  Detail: ${err.cause.message}`);
     }
+    return 2;
+  }
+
+  if (err instanceof InvalidOpencodeJsonError) {
+    print(`[error] ${err.message}`);
     return 2;
   }
 

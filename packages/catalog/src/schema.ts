@@ -124,6 +124,9 @@ export type HookEvent = (typeof HOOK_EVENTS)[number];
  *
  * Hook-specific optional fields:
  *  - timeout  Max execution time in seconds (positive integer).
+ *
+ * Mcp-specific optional fields:
+ *  - config   Raw MCP server configuration, passed through verbatim.
  */
 export const ArtifactEntrySchema = CommonFieldsSchema.extend({
   /** Discriminator — always 'artifact' for this variant. */
@@ -179,6 +182,14 @@ export const ArtifactEntrySchema = CommonFieldsSchema.extend({
    * Meaningful when nature === 'hook'.
    */
   timeout: z.number().int().positive().optional(),
+
+  /**
+   * Raw MCP server configuration. Meaningful when nature === 'mcp'.
+   * Passed through verbatim by the opencode adapter builder — env-refs (e.g.
+   * "${GITHUB_TOKEN}") stay literal strings; secret substitution is deferred
+   * (tracked as E-secrets in tasks.md, ADR-0019), not validated here.
+   */
+  config: z.record(z.string(), z.unknown()).optional(),
 }).superRefine((data, ctx) => {
   if (data.nature !== 'hook') return;
   if (data.event === undefined) {

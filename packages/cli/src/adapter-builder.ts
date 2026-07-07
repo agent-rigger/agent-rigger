@@ -242,6 +242,12 @@ export async function buildClaudeAdapter(
     denyRef,
     allowRef,
     agentsContent,
+    // The REAL security scan runs at the pre-apply gate (remote-install.ts
+    // scanEntries) on the checkout paths — skills, agents, and hooks are all
+    // covered there before any write (claude plugins are delegate-installed by
+    // the `claude` binary, ADR-0003). The adapter-level scanner re-scans each
+    // link-op source at apply time, so it stays a stub to avoid double-scanning
+    // the same checkout content.
     scanner: stubScanner,
     hookSpec,
     skillSource: (entry) => {

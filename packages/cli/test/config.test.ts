@@ -655,3 +655,78 @@ describe('persistConfig — catalogs round-trip', () => {
     expect(reloaded.catalogs).toEqual([]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// E1 — assistants[] (M3, additive)
+// ---------------------------------------------------------------------------
+
+describe('DEFAULT_CONFIG — assistants', () => {
+  it('has no assistants by default', () => {
+    expect(DEFAULT_CONFIG.assistants).toBeUndefined();
+  });
+});
+
+describe('loadConfigFile — assistants', () => {
+  it('maps a valid assistants array from a config file', async () => {
+    const filePath = path.join(tmpDir, 'config.jsonc');
+    const content = JSON.stringify({ assistants: ['claude', 'opencode'] });
+    await fs.writeFile(filePath, content, 'utf-8');
+
+    const result = await loadConfigFile(filePath);
+    expect(result.assistants).toEqual(['claude', 'opencode']);
+  });
+
+  it('drops unknown assistant values, keeping the valid ones', async () => {
+    const filePath = path.join(tmpDir, 'config.jsonc');
+    const content = JSON.stringify({ assistants: ['claude', 'copilot', 'bogus'] });
+    await fs.writeFile(filePath, content, 'utf-8');
+
+    const result = await loadConfigFile(filePath);
+    expect(result.assistants).toEqual(['claude']);
+  });
+
+  it('ignores assistants key if value is not an array', async () => {
+    const filePath = path.join(tmpDir, 'config.jsonc');
+    const content = JSON.stringify({ assistants: 'claude' });
+    await fs.writeFile(filePath, content, 'utf-8');
+
+    const result = await loadConfigFile(filePath);
+    expect(result.assistants).toBeUndefined();
+  });
+
+  it('is absent from the result when not provided', async () => {
+    const filePath = path.join(tmpDir, 'config.jsonc');
+    await fs.writeFile(filePath, JSON.stringify({ defaultScope: 'user' }), 'utf-8');
+
+    const result = await loadConfigFile(filePath);
+    expect(result.assistants).toBeUndefined();
+  });
+});
+
+describe('resolveConfig — assistants precedence', () => {
+  it('flags override user for assistants', () => {
+    const config = resolveConfig({
+      user: { assistants: ['claude'] },
+      flags: { assistants: ['opencode'] },
+    });
+    expect(config.assistants).toEqual(['opencode']);
+  });
+
+  it('user assistants preserved when project does not define assistants', () => {
+    const config = resolveConfig({
+      user: { assistants: ['opencode'] },
+      project: { defaultScope: 'project' },
+    });
+    expect(config.assistants).toEqual(['opencode']);
+  });
+});
+
+describe('persistConfig — assistants round-trip', () => {
+  it('persists and reloads assistants array identically', async () => {
+    const filePath = path.join(tmpDir, 'config.jsonc');
+    await persistConfig(filePath, { assistants: ['claude', 'opencode'] });
+
+    const reloaded = await loadConfigFile(filePath);
+    expect(reloaded.assistants).toEqual(['claude', 'opencode']);
+  });
+});
