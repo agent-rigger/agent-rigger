@@ -18,7 +18,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
-import { link, linkOrCopy, syncToStore } from './linker';
+import { link, linkOrCopy, SymlinkInContentError, syncToStore } from './linker';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -244,6 +244,104 @@ describe('syncToStore — non-regression: default mode ignores any runtime files
     const entries = await fs.readdir(store);
     expect(entries).not.toContain('guard-2026-06-23.log');
     expect(entries).toContain('script.sh');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// syncToStore — R3: rejects symlinks in cloned content (fail-closed)
+//
+// Threat model: content cloned from an untrusted remote catalog can carry a
+// symlink (e.g. `secret -> ~/.ssh/id_rsa`). Scanners like gitleaks/trivy do
+// not follow symlinks, so such a link passes the scan gate empty-handed; if
+// syncToStore then copied it verbatim, the install symlink would re-expose
+// the linked host file. The guard must reject before any byte is written to
+// the store.
+// ---------------------------------------------------------------------------
+
+describe('syncToStore — R3: rejects symlinks in cloned content (fail-closed)', () => {
+  it('rejects an absolute symlink to a host secret, and leaves the store untouched', async () => {
+    const src = path.join(tmp.dir, 'src');
+    const store = path.join(tmp.dir, 'store');
+    const hostSecret = path.join(tmp.dir, 'host-home', '.ssh', 'id_rsa');
+    await fs.mkdir(path.dirname(hostSecret), { recursive: true });
+    await fs.writeFile(hostSecret, 'PRIVATE KEY MATERIAL');
+    await fs.mkdir(src);
+    await fs.writeFile(path.join(src, 'skill.md'), '# ok');
+    await fs.symlink(hostSecret, path.join(src, 'secret'));
+
+    await expect(syncToStore(src, store)).rejects.toThrow(SymlinkInContentError);
+    await expect(syncToStore(src, store)).rejects.toThrow(/secret/);
+
+    const storeExists = await fs.stat(store).then(() => true).catch(() => false);
+    expect(storeExists).toBe(false);
+  });
+
+  it('rejects a relative symlink escaping the checkout', async () => {
+    const src = path.join(tmp.dir, 'src');
+    const store = path.join(tmp.dir, 'store');
+    await fs.mkdir(src);
+    await fs.symlink('../../../../etc/passwd', path.join(src, 'x'));
+
+    await expect(syncToStore(src, store)).rejects.toThrow(SymlinkInContentError);
+  });
+
+  it('rejects a symlink pointing to a directory', async () => {
+    const src = path.join(tmp.dir, 'src');
+    const store = path.join(tmp.dir, 'store');
+    const otherDir = path.join(tmp.dir, 'other-dir');
+    await fs.mkdir(src);
+    await fs.mkdir(otherDir);
+    await fs.symlink(otherDir, path.join(src, 'linked-dir'));
+
+    await expect(syncToStore(src, store)).rejects.toThrow(SymlinkInContentError);
+  });
+
+  it('rejects a dangling symlink (target does not exist)', async () => {
+    const src = path.join(tmp.dir, 'src');
+    const store = path.join(tmp.dir, 'store');
+    await fs.mkdir(src);
+    await fs.symlink(path.join(tmp.dir, 'nonexistent-target'), path.join(src, 'broken'));
+
+    await expect(syncToStore(src, store)).rejects.toThrow(SymlinkInContentError);
+  });
+
+  it('rejects a symlink nested deep in a subdirectory (full-depth walk)', async () => {
+    const src = path.join(tmp.dir, 'src');
+    const store = path.join(tmp.dir, 'store');
+    const hostSecret = path.join(tmp.dir, 'host-secret-2');
+    await fs.writeFile(hostSecret, 'secret content');
+    await fs.mkdir(path.join(src, 'sub', 'inner'), { recursive: true });
+    await fs.writeFile(path.join(src, 'sub', 'ok.md'), 'ok');
+    await fs.symlink(hostSecret, path.join(src, 'sub', 'inner', 'secret'));
+
+    await expect(syncToStore(src, store)).rejects.toThrow(SymlinkInContentError);
+    await expect(syncToStore(src, store)).rejects.toThrow(/sub[/\\]inner[/\\]secret/);
+  });
+
+  it('rejects when the mono-file source itself is a symlink', async () => {
+    const realFile = path.join(tmp.dir, 'real-agent.md');
+    await fs.writeFile(realFile, '# agent');
+    await fs.mkdir(path.join(tmp.dir, 'agents'));
+    const src = path.join(tmp.dir, 'agents', 'evil.md');
+    await fs.symlink(realFile, src);
+    const store = path.join(tmp.dir, 'store.md');
+
+    await expect(syncToStore(src, store)).rejects.toThrow(SymlinkInContentError);
+  });
+
+  it('non-regression: succeeds for clean content (regular files and subdirectories)', async () => {
+    const src = path.join(tmp.dir, 'src');
+    const store = path.join(tmp.dir, 'store');
+    await fs.mkdir(path.join(src, 'sub'), { recursive: true });
+    await fs.writeFile(path.join(src, 'top.md'), 'top');
+    await fs.writeFile(path.join(src, 'sub', 'nested.md'), 'nested');
+
+    await syncToStore(src, store);
+
+    const topContent = await fs.readFile(path.join(store, 'top.md'), 'utf8');
+    const nestedContent = await fs.readFile(path.join(store, 'sub', 'nested.md'), 'utf8');
+    expect(topContent).toBe('top');
+    expect(nestedContent).toBe('nested');
   });
 });
 
