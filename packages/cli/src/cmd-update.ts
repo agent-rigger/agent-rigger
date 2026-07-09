@@ -336,6 +336,28 @@ export async function runUpdate(opts: RunUpdateOptions): Promise<UpdateResult> {
           return { ref: 'v0.0.0', sha: '' };
         };
 
+        // 3f. Collect plan-level warnings (e.g. a remote guardrail widening
+        // permissions.allow — T5, post-ADR-0015) via adapter.plan(), BEFORE
+        // confirm — mirrors cmd-install's op.warnings collection so the same
+        // signal is visible on update, not just on install. This is a PLAN
+        // warning (attached by planGuardrail), not a scan finding: it is
+        // always emitted, independent of scanEntries/the scanner above.
+        // adapter.plan() is read-only, so calling it again inside apply() is
+        // a safe, side-effect-free duplicate (same pattern as cmd-install).
+        const plannedOpsByEntry = await Promise.all(
+          adapterEntries.map((entry) => adapter.plan(entry, scope, env)),
+        );
+        const opWarnings = [
+          ...new Set(
+            plannedOpsByEntry
+              .flat()
+              .flatMap((op) => ('warnings' in op && Array.isArray(op.warnings) ? op.warnings : [])),
+          ),
+        ];
+        const warningsBlock = opWarnings.length > 0
+          ? '\n--- Warnings ---\n' + opWarnings.map((w) => `  [warning] ${w}`).join('\n') + '\n'
+          : '';
+
         // 3g. Confirm BEFORE remove — abort with zero writes if user declines.
         const installedRefs = staleIds
           .map((id) => {
@@ -347,12 +369,12 @@ export async function runUpdate(opts: RunUpdateOptions): Promise<UpdateResult> {
               : `  ${id}  ${m.ref} → ${remote.ref}`;
           })
           .join('\n');
-        const planText = `Update ${staleIds.length} artifact(s):\n${installedRefs}`;
+        const planText = `Update ${staleIds.length} artifact(s):\n${installedRefs}${warningsBlock}`;
 
         const confirmed = typeof confirm === 'boolean' ? confirm : await confirm(planText);
 
         if (!confirmed) {
-          return { aborted: true as const, scanWarnings };
+          return { aborted: true as const, scanWarnings, opWarnings };
         }
 
         // 3h. Remove old (targets absent → plan will produce link ops in apply).
@@ -361,7 +383,7 @@ export async function runUpdate(opts: RunUpdateOptions): Promise<UpdateResult> {
         // 3i. Apply fresh content from checkout dir + upsert manifest with ref/sha.
         await apply(adapter, adapterEntries, scope, env, manifestPath, versionFor);
 
-        return { aborted: false as const, scanWarnings };
+        return { aborted: false as const, scanWarnings, opWarnings };
       },
     );
 
@@ -371,6 +393,12 @@ export async function runUpdate(opts: RunUpdateOptions): Promise<UpdateResult> {
       updatedIds = staleIds;
       if (checkoutResult.scanWarnings.length > 0) {
         outputParts.push(...checkoutResult.scanWarnings);
+      }
+      if (checkoutResult.opWarnings.length > 0) {
+        outputParts.push('--- Warnings ---');
+        for (const w of checkoutResult.opWarnings) {
+          outputParts.push(`  [warning] ${w}`);
+        }
       }
       outputParts.push('--- Update ---');
       for (const id of staleIds) {

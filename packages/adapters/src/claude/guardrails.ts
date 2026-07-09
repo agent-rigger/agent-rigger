@@ -248,6 +248,11 @@ export async function planGuardrail(
       kind: 'merge-allow',
       path: settingsPath,
       toAdd: missingAllow,
+      // Plan-level warning (not a scan finding): a merge-allow always widens
+      // permissions.allow, which disables Claude Code's human-approval prompt
+      // for matched commands. Emitted unconditionally — independent of any
+      // scanner — because no secret/CVE scanner detects an allow-list widening.
+      warnings: [`this remote guardrail widens permissions.allow: ${missingAllow.join(', ')}`],
     };
     ops.push(allowOp);
   }

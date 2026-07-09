@@ -892,3 +892,54 @@ describe('runInstall — guardrail conflict warnings are visible (E-warn / HIGH-
     expect(result.output).not.toContain('--- Warnings ---');
   });
 });
+
+// ---------------------------------------------------------------------------
+// T5 — permissions.allow widening warning is visible at install (post-ADR-0015)
+//
+// A guardrail's merge-allow op always carries a plan-level warning when it
+// widens permissions.allow (see planGuardrail). This is a PLAN warning, not a
+// scan finding — it must surface even when the scanner finds nothing (there is
+// no scanner in runInstall at all; adapter.plan() is called directly).
+// ---------------------------------------------------------------------------
+
+describe('runInstall — guardrail allow-widening warning is visible (T5)', () => {
+  it('surfaces the allow-widening warning in result.warnings and output', async () => {
+    const adapter = createClaudeAdapter({
+      denyRef: REF_DENY,
+      allowRef: ['Bash(*)'],
+      agentsContent: AGENTS_CONTENT,
+    });
+
+    const result = await runInstall({
+      catalog: MINI_CATALOG,
+      adapter,
+      scope: SCOPE,
+      env,
+      manifestPath,
+      selectedIds: ['guardrails-claude'],
+      confirm: true,
+    });
+
+    expect(result.warnings.some((w) => w.includes('permissions.allow'))).toBe(true);
+    expect(result.output).toContain('--- Warnings ---');
+    expect(result.output).toContain('widens permissions.allow');
+    expect(result.output).toContain('Bash(*)');
+  });
+
+  it('emits no Warnings section when allowRef is empty (nominal)', async () => {
+    const adapter = createClaudeAdapter({ denyRef: REF_DENY, agentsContent: AGENTS_CONTENT });
+
+    const result = await runInstall({
+      catalog: MINI_CATALOG,
+      adapter,
+      scope: SCOPE,
+      env,
+      manifestPath,
+      selectedIds: ['guardrails-claude'],
+      confirm: true,
+    });
+
+    expect(result.warnings).toEqual([]);
+    expect(result.output).not.toContain('--- Warnings ---');
+  });
+});
