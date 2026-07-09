@@ -1066,7 +1066,6 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
         scope,
         env,
         manifestPath,
-        toolEntries: effective,
       });
 
       print(result.output);
@@ -1622,7 +1621,6 @@ async function handleResourceCommand(opts: ResourceCommandOpts): Promise<number>
       scope,
       env,
       manifestPath,
-      toolEntries: effectiveCatalog,
     });
 
     print(result.output);
