@@ -23,8 +23,10 @@
  *
  * H13-2  scanEntries:
  *        - blocking scanner + opencode plugin entry → ScanBlockedError.
- *        - two opencode plugin entries → scanner called once (deduplication).
- *        - claude-only plugin entry → zero scanner calls (nothing in checkout).
+ *        - two opencode plugin entries → scanner called for catalog.json (always)
+ *          + plugins/ once (deduplication).
+ *        - claude-only plugin entry → only catalog.json is scanned (nothing else
+ *          in checkout for that entry).
  *
  * H13-3  runRemoteInstall + blocking scanner, no --force
  *        → ScanBlockedError, no module in pluginDir, no store file, no manifest.
@@ -265,7 +267,7 @@ describe('H13-2 — scanEntries: plugin entries', () => {
     ).rejects.toBeInstanceOf(ScanBlockedError);
   });
 
-  it('calls scanner exactly once for plugins/ when 2 opencode plugin entries are present', async () => {
+  it('calls scanner exactly once for plugins/ when 2 opencode plugin entries are present (plus catalog.json)', async () => {
     const { scanner, calls } = spyScanner();
     const baseDir = '/tmp/checkout';
 
@@ -276,10 +278,10 @@ describe('H13-2 — scanEntries: plugin entries', () => {
       force: false,
     });
 
-    expect(calls).toEqual([path.join(baseDir, 'plugins')]);
+    expect(calls).toEqual([path.join(baseDir, 'catalog.json'), path.join(baseDir, 'plugins')]);
   });
 
-  it('does not call the scanner for a claude-only plugin entry', async () => {
+  it('only scans catalog.json for a claude-only plugin entry (no module in checkout)', async () => {
     const { scanner, calls } = spyScanner();
 
     await scanEntries({
@@ -289,7 +291,7 @@ describe('H13-2 — scanEntries: plugin entries', () => {
       force: false,
     });
 
-    expect(calls).toHaveLength(0);
+    expect(calls).toEqual([path.join('/tmp/checkout', 'catalog.json')]);
   });
 });
 

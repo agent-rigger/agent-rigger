@@ -273,8 +273,8 @@ export async function runUpdate(opts: RunUpdateOptions): Promise<UpdateResult> {
         }));
 
         // All stale entries sourced from the remote checkout.
-        // Skills / agents have a scanPath; guardrails / contexts / hooks do not
-        // but still come from externalBaseDir. All are remote.
+        // Skills / agents / guardrails / contexts / hooks all have a scanPath;
+        // all are remote regardless.
         // remoteIds uses qualified ids; buildClaudeAdapter and versionFor key by them.
         const remoteIds = new Set(resolved.map((e) => e.id));
 
@@ -284,8 +284,9 @@ export async function runUpdate(opts: RunUpdateOptions): Promise<UpdateResult> {
           rawResolved.map((e) => [localToQualified.get(e.id) ?? e.id, e]),
         );
 
-        // 3c. Security scan — all entries that have a checkout path (uniform scan, ADR-0014).
-        //     Entries without a scanPath (e.g. guardrails, hooks) are naturally skipped.
+        // 3c. Security scan — catalog.json unconditionally, plus every entry that
+        //     has a checkout path (uniform scan, ADR-0014). Shares scanEntries
+        //     with runRemoteInstall — same coverage, no duplicated policy.
         //     Must be BEFORE remove so a blocked scan leaves the artifact intact.
         //     scanEntries uses localId() internally for path derivation.
         const { warnings: scanWarnings } = await scanEntries({

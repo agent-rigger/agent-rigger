@@ -9,15 +9,17 @@
  * - Shallow-clone the content repo (withRemoteCheckout), run the callback,
  *   guarantee cleanup in finally.
  * - Inside the callback: readCatalogDir → frontier guard (path traversal) →
- *   security scan (external entries only) → mergeCatalogs → resolve ids →
+ *   security scan (scanEntries: catalog.json + every scannable entry) → mergeCatalogs → resolve ids →
  *   buildAdapter(assistant, env, {externalIds, externalBaseDir, catalogUrl, pluginRunner}) →
  *   versionFor → runInstall. `assistant` defaults to 'claude' when omitted
  *   (back-compat — the CLI always resolves and passes one explicitly, slice A).
  *
  * Security policy (ADR-0014):
  * - All fetched content is scanned uniformly: skills and agents by their checkout path,
- *   hooks by the entire hooks/ directory (guards + shared libs), opencode plugins by
- *   the entire plugins/ directory (native JS modules — ADR-0020 §4, H13).
+ *   guardrails and contexts by their checkout dir/file, hooks by the entire hooks/
+ *   directory (guards + shared libs), opencode plugins by the entire plugins/
+ *   directory (native JS modules — ADR-0020 §4, H13), and catalog.json itself
+ *   (mcp secrets, check/install command strings) unconditionally on every run.
  * - Scan occurs BEFORE plan/apply — no files are written if scan blocks.
  * - Without --force: a blocking verdict throws ScanBlockedError (fail-closed).
  * - With --force: a blocking verdict emits a warning and install proceeds.
@@ -35,6 +37,7 @@ import type { PluginRunner } from '@agent-rigger/adapters';
 import type { Assistant } from '@agent-rigger/core';
 import { createCompositeScanner } from '@agent-rigger/core';
 import { assertSafeArtifactName } from '@agent-rigger/core/artifact-name';
+import { assertNever } from '@agent-rigger/core/assert-never';
 import type { Env } from '@agent-rigger/core/paths';
 import type { Scanner } from '@agent-rigger/core/scan';
 import type { Scope } from '@agent-rigger/core/types';
@@ -60,8 +63,8 @@ import { runInstall } from './cmd-install';
 // ---------------------------------------------------------------------------
 
 /**
- * Thrown by scanExternalEntries (and therefore runRemoteInstall / runUpdate)
- * when the composite scanner rejects one or more external entries and --force
+ * Thrown by scanEntries (and therefore runRemoteInstall / runUpdate)
+ * when the composite scanner rejects one or more scanned paths and --force
  * is not set.
  *
  * No files are written before this error is raised.
@@ -101,42 +104,78 @@ function localId(id: string): string {
 // scanPathFor — derive the filesystem path to scan inside the checkout dir
 // ---------------------------------------------------------------------------
 
+/**
+ * Exhaustive over Nature (8 members, packages/core/src/types.ts): the `default`
+ * branch calls assertNever so that a 9th nature materialising checkout content
+ * fails the BUILD instead of silently returning null (which would exempt it
+ * from every scan except the unconditional catalog.json one).
+ */
 export function scanPathFor(entry: ArtifactEntry, baseDir: string): string | null {
   const local = localId(entry.id);
-  if (entry.nature === 'skill') {
-    const name = local.replace(/^skill:/, '');
-    return path.join(baseDir, 'skills', name);
+  switch (entry.nature) {
+    case 'skill': {
+      const name = local.replace(/^skill:/, '');
+      return path.join(baseDir, 'skills', name);
+    }
+    case 'agent': {
+      const name = local.replace(/^agent:/, '');
+      return path.join(baseDir, 'agents', name + '.md');
+    }
+    case 'guardrail': {
+      // The whole guardrail dir is scanned: deny.json/allow.json (claude) or
+      // permission.json (opencode) all live under guardrails/<name>/.
+      const name = local.replace(/^guardrail:/, '');
+      return path.join(baseDir, 'guardrails', name);
+    }
+    case 'context': {
+      // A context artifact is a single AGENTS.md file fetched from the checkout
+      // and injected verbatim into the assistant's system content — same risk
+      // class as a skill/agent file, so it is scanned like one.
+      const name = local.replace(/^context:/, '');
+      return path.join(baseDir, 'contexts', name, 'AGENTS.md');
+    }
+    case 'hook':
+      // The entire hooks/ directory is scanned so that guard scripts AND shared
+      // libs (e.g. _shared/hook-lib.ts) are covered by the composite scanner.
+      return path.join(baseDir, 'hooks');
+    case 'plugin':
+      // An opencode plugin is a native JS/TS module shipped in the checkout's
+      // plugins/ directory and copied verbatim into pluginDir (ADR-0020 §4,
+      // R8.2) — executable code loaded by opencode at runtime, scanned like
+      // hooks (whole directory, so sibling modules are covered too — H13).
+      // Claude-only plugins are delegate-installed via `claude plugin install`
+      // from the marketplace URL (ADR-0003): no module in the checkout → null.
+      return entry.targets.includes('opencode') ? path.join(baseDir, 'plugins') : null;
+    case 'mcp':
+      // Inline server config in catalog.json (secrets can live in config.env) —
+      // not a checkout of its own. Covered by the unconditional catalog.json
+      // scan in scanEntries instead.
+      return null;
+    case 'tool':
+      // Advisory check/install command strings live in catalog.json — not a
+      // checkout of their own. Covered by the unconditional catalog.json scan
+      // in scanEntries instead.
+      return null;
+    default:
+      return assertNever(entry.nature);
   }
-  if (entry.nature === 'agent') {
-    const name = local.replace(/^agent:/, '');
-    return path.join(baseDir, 'agents', name + '.md');
-  }
-  if (entry.nature === 'hook') {
-    // The entire hooks/ directory is scanned so that guard scripts AND shared
-    // libs (e.g. _shared/hook-lib.ts) are covered by the composite scanner.
-    return path.join(baseDir, 'hooks');
-  }
-  if (entry.nature === 'plugin' && entry.targets.includes('opencode')) {
-    // An opencode plugin is a native JS/TS module shipped in the checkout's
-    // plugins/ directory and copied verbatim into pluginDir (ADR-0020 §4,
-    // R8.2) — executable code loaded by opencode at runtime, scanned like
-    // hooks (whole directory, so sibling modules are covered too — H13).
-    // Claude-only plugins are delegate-installed via `claude plugin install`
-    // from the marketplace URL (ADR-0003): no module in the checkout → null.
-    return path.join(baseDir, 'plugins');
-  }
-  return null;
 }
 
 // ---------------------------------------------------------------------------
-// scanExternalEntries — reusable scan gate
+// scanEntries — reusable scan gate
 // ---------------------------------------------------------------------------
 
 /**
- * Scan all entries that have a resolvable checkout path in the given directory.
+ * Scan catalog.json (always) plus every entry that has a resolvable checkout
+ * path in the given directory.
  *
- * - Resolves each entry to a scan path (skills/agents/hooks/opencode plugins;
- *   others skipped naturally).
+ * - catalog.json is scanned unconditionally, once per call, regardless of what
+ *   was selected: it carries inline `mcp` server config (secrets can live in
+ *   config.env) and the `check`/`install` command strings for every nature —
+ *   none of which has a checkout path of its own (ADR-0014/0015 §3: uniform
+ *   scan of all fetched content).
+ * - Resolves each remaining entry to a scan path (skills/agents/guardrails/
+ *   contexts/hooks/opencode plugins; others skipped naturally).
  * - Runs scanner.scan() in parallel via Promise.all.
  * - If any verdict is degraded (no scanner tool installed) → actionable warning + proceeds.
  *   force is NOT needed for this case (ADR-0018).
@@ -146,7 +185,15 @@ export function scanPathFor(entry: ArtifactEntry, baseDir: string): string | nul
  *
  * Callers prepend the warnings to their output.
  *
- * @param opts.entries  ArtifactEntry list to scan (entries without a checkout path are skipped).
+ * This function always runs at least one scan (catalog.json) whenever it is
+ * called — callers only call it from inside an active checkout (withRemoteCheckout),
+ * so there is always a real catalog.json to point the scanner at. It therefore
+ * always verifies scanner presence too: a selection with no scannable natures
+ * (e.g. guardrail-only before this change, or mcp-only) still surfaces the
+ * degraded warning instead of silently skipping the check.
+ *
+ * @param opts.entries  ArtifactEntry list to scan (entries without a checkout path
+ *                      contribute nothing beyond the unconditional catalog.json scan).
  * @param opts.baseDir  Root of the remote checkout directory.
  * @param opts.scanner  Scanner instance to use.
  * @param opts.force    When true, a blocking scan (real findings) warns instead of throwing.
@@ -159,22 +206,19 @@ export async function scanEntries(opts: {
 }): Promise<{ warnings: string[] }> {
   const { entries, baseDir, scanner, force } = opts;
 
-  if (entries.length === 0) {
-    return { warnings: [] };
-  }
-
   const rawTargets = entries
     .map((entry) => ({ entry, scanPath: scanPathFor(entry, baseDir) }))
     .filter((t): t is { entry: ArtifactEntry; scanPath: string } => t.scanPath !== null);
 
-  if (rawTargets.length === 0) {
-    return { warnings: [] };
-  }
-
   // Deduplicate scan paths: multiple hook entries share the same hooks/ directory;
   // scanning it once is sufficient and avoids redundant scanner invocations.
+  // catalog.json is always first and always present — it is not gated by any
+  // selection or nature.
   const seenPaths = new Set<string>();
   const uniquePaths: string[] = [];
+  const catalogJsonPath = path.join(baseDir, 'catalog.json');
+  seenPaths.add(catalogJsonPath);
+  uniquePaths.push(catalogJsonPath);
   for (const { scanPath } of rawTargets) {
     if (!seenPaths.has(scanPath)) {
       seenPaths.add(scanPath);
@@ -227,7 +271,7 @@ export async function scanEntries(opts: {
  * Pipeline:
  * 1. resolveVersion(catalogUrl, runner) → ResolvedVersion.
  * 2. withRemoteCheckout(url, ref, runner, {tmpFactory}, async (dir) => {
- *      readCatalogDir(dir) → frontier guard → scanExternalEntries (external only) →
+ *      readCatalogDir(dir) → frontier guard → scanEntries (catalog.json + every scannable entry) →
  *      mergeCatalogs → resolve →
  *      buildAdapter(assistant, env, {externalIds, externalBaseDir, catalogUrl, pluginRunner}) →
  *      versionFor → runInstall
@@ -341,9 +385,10 @@ export async function runRemoteInstall(opts: {
         : qualifyEntries(sourceName, rawEffective);
 
       // All entries from the remote catalog are sourced from the checkout.
-      // - Skills / agents / hooks / opencode plugins: have a checkout path
-      //   (scanPathFor != null).
-      // - Guardrails / contexts: no scan path but also come from checkout.
+      // - Skills / agents / guardrails / contexts / hooks / opencode plugins:
+      //   have a checkout path (scanPathFor != null).
+      // - mcp: no checkout path of its own — covered via the unconditional
+      //   catalog.json scan in scanEntries (inline config, not a checkout).
       // - Claude plugins: from the remote catalog's marketplace URL.
       // remoteIds tells buildClaudeAdapter which entries to resolve from externalBaseDir.
       // Use qualified ids here to match the (potentially qualified) resolved entries.
@@ -354,9 +399,9 @@ export async function runRemoteInstall(opts: {
           .map((e) => e.id),
       );
 
-      // Security scan — all entries that have a checkout path (uniform scan, ADR-0014).
-      // Entries without a scanPath (e.g. guardrails, contexts) are naturally skipped.
-      // scanPathFor uses localId() internally to strip the qualifier before path derivation.
+      // Security scan — catalog.json unconditionally, plus every entry that has
+      // a checkout path (uniform scan, ADR-0014). scanPathFor uses localId()
+      // internally to strip the qualifier before path derivation.
       const { warnings } = await scanEntries({
         entries: resolved,
         baseDir: dir,

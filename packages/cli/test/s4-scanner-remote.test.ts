@@ -11,7 +11,9 @@
  * 1. External skill + scanner { ok: false } without --force → ScanBlockedError, nothing written.
  * 2. External skill + scanner { ok: false } with --force   → installed, warning in output.
  * 3. External skill + scanner { ok: true }                 → installed normally.
- * 4. Internal-only install via runRemoteInstall            → scanner never called.
+ * 4. Guardrail-only install via runRemoteInstall            → scanner covers
+ *    catalog.json (always) and guardrails/<name> (T3: guardrail nature now
+ *    has a scan path).
  * 5. parseArgs recognizes --force flag.
  */
 
@@ -359,14 +361,15 @@ describe('S4 — external skill + clean scanner', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Scenario 4: internal-only install → scanner never called
+// Scenario 4: guardrail-only install → scanner covers catalog.json AND the
+// guardrail checkout dir (T3: guardrail nature now has a scan path, and
+// catalog.json is scanned unconditionally regardless of selection).
 // ---------------------------------------------------------------------------
 
-describe('S4 — guardrail install (no checkout path), scanner never called', () => {
-  it('does not call the scanner for guardrail entries (no scan path)', async () => {
+describe('S4 — guardrail-only install: scanner covers catalog.json and guardrails/<name>', () => {
+  it('calls the scanner for catalog.json and the guardrail directory', async () => {
     const { scanner, calls } = spyScanner();
 
-    // guardrail:main has no checkout scan path (skills/agents only) — scanner should skip it
     await runRemoteInstall({
       ids: ['guardrail:main'],
       catalogUrl: 'https://example.com/catalog.git',
@@ -379,7 +382,9 @@ describe('S4 — guardrail install (no checkout path), scanner never called', ()
       scanner,
     });
 
-    expect(calls).toHaveLength(0);
+    expect(calls).toContain(path.join(remoteEnv.contentDir, 'catalog.json'));
+    expect(calls).toContain(path.join(remoteEnv.contentDir, 'guardrails', 'main'));
+    expect(calls).toHaveLength(2);
   });
 });
 
