@@ -973,3 +973,34 @@ export async function confirmApply(summary: string): Promise<boolean> {
 
   return result;
 }
+
+// ---------------------------------------------------------------------------
+// confirmToolChecks — granular batch consent for tool presence-checks
+// ---------------------------------------------------------------------------
+
+/**
+ * Present a single batch yes/no confirmation for tool presence-check
+ * commands not yet recorded in the consent ledger (@agent-rigger/core/consent).
+ *
+ * Confirming the install plan is NOT consent to execute a tool's `check`
+ * command — that consent is separate and granular. This prompt lists every
+ * command awaiting approval (id → command) and asks for one global decision.
+ * Denial or cancellation both mean "no consent": the caller must run none of
+ * the listed commands and treat them as unverified.
+ */
+export async function confirmToolChecks(
+  commands: { id: string; command: string }[],
+): Promise<boolean> {
+  const list = commands.map((c) => `  ${c.id}  →  ${c.command}`).join('\n');
+  const result = await confirm({
+    message: `Run the following tool presence-checks?\n\n${list}`,
+    initialValue: false,
+  });
+
+  if (isCancel(result)) {
+    cancel('Operation cancelled.');
+    return false;
+  }
+
+  return result;
+}

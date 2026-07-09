@@ -18,6 +18,7 @@ import {
   abbreviatePath,
   buildStatusOptions,
   confirmApply,
+  confirmToolChecks,
   renderCatalogList,
   renderEntryInfo,
   renderPlan,
@@ -874,6 +875,10 @@ describe('interactive exports', () => {
 
   it('confirmApply is a function', () => {
     expect(typeof confirmApply).toBe('function');
+  });
+
+  it('confirmToolChecks is a function', () => {
+    expect(typeof confirmToolChecks).toBe('function');
   });
 });
 

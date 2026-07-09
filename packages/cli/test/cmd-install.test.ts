@@ -23,6 +23,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
+import { isConsented, recordConsent } from '@agent-rigger/core/consent';
 import { resolveOpencodeUserTargets, resolveUserTargets } from '@agent-rigger/core/paths';
 import type { Env } from '@agent-rigger/core/paths';
 import type { Scanner } from '@agent-rigger/core/scan';
@@ -1032,6 +1033,9 @@ describe('runInstall — T6: tool checks run strictly after confirmation', () =>
       manifestPath,
       selectedIds: ['context:innocent'],
       confirm: async (_planText) => true,
+      // Plan confirmation and tool-check consent are separate gates (T7):
+      // approving the plan does not itself approve running tool:x's check.
+      confirmToolChecks: async (_commands) => true,
     });
 
     expect(result.applied).toBe(true);
@@ -1199,4 +1203,358 @@ describe('runInstall — T6: tool checks run strictly after confirmation', () =>
     expect(result.applied).toBe(false);
     expect(result.toolWarnings).toEqual({ required: [], recommended: [] });
   });
+});
+
+// ---------------------------------------------------------------------------
+// T7: granular tool-check consent + ledger memoization
+//
+// Confirming the install plan (Step 5) is a SEPARATE decision from consenting
+// to run a tool's `check` command (Step 5b). Consent is granular (per
+// command), memoized in a ledger keyed by (id, sha256(command)) so an
+// unchanged command is never re-prompted, and re-invalidated the moment the
+// command itself changes — even under an unchanged catalog id.
+// ---------------------------------------------------------------------------
+
+describe('runInstall — T7: granular tool-check consent', () => {
+  it(
+    'first consent (interactive): confirmToolChecks is called once and the approval is persisted with id + hash + date',
+    async () => {
+      const toolX: CatalogEntry = {
+        kind: 'artifact',
+        id: 'tool:x',
+        nature: 'tool',
+        targets: ['claude'],
+        scopes: ['user'],
+        check: 'echo tool-x-check',
+      };
+      const catalog: CatalogEntry[] = [...MINI_CATALOG, toolX];
+      const adapter = createClaudeAdapter({ denyRef: REF_DENY, agentsContent: AGENTS_CONTENT });
+
+      const confirmCalls: { id: string; command: string }[][] = [];
+
+      const result = await runInstall({
+        catalog,
+        adapter,
+        scope: SCOPE,
+        env,
+        manifestPath,
+        selectedIds: ['guardrails-claude', 'context-claude', 'tool:x'],
+        confirm: async (_planText) => true,
+        confirmToolChecks: async (commands) => {
+          confirmCalls.push(commands);
+          return true;
+        },
+      });
+
+      expect(result.applied).toBe(true);
+      expect(confirmCalls).toHaveLength(1);
+      expect(confirmCalls[0]).toEqual([{ id: 'tool:x', command: 'echo tool-x-check' }]);
+
+      const consented = await isConsented(env, { id: 'tool:x', command: 'echo tool-x-check' });
+      expect(consented).toBe(true);
+
+      // The ledger is a plain, readable JSON document.
+      const raw = JSON.parse(
+        await fs.readFile(path.join(tmp.dir, '.config', 'agent-rigger', 'consent.json'), 'utf-8'),
+      ) as { version: number; entries: { id: string; commandHash: string; approvedAt: string }[] };
+      expect(typeof raw.version).toBe('number');
+      const entry = raw.entries.find((e) => e.id === 'tool:x');
+      expect(entry).toBeDefined();
+      expect(entry?.commandHash).toMatch(/^[0-9a-f]{64}$/);
+      expect(Number.isNaN(new Date(entry?.approvedAt ?? '').getTime())).toBe(false);
+    },
+  );
+
+  it('a consented command is not re-prompted, but the check still runs', async () => {
+    const sentinelPath = path.join(tmp.dir, 'sentinel-consented.txt');
+    const checkCmd = `touch "${sentinelPath}"`;
+    const toolX: CatalogEntry = {
+      kind: 'artifact',
+      id: 'tool:x',
+      nature: 'tool',
+      targets: ['claude'],
+      scopes: ['user'],
+      check: checkCmd,
+    };
+    const catalog: CatalogEntry[] = [...MINI_CATALOG, toolX];
+    const adapter = createClaudeAdapter({ denyRef: REF_DENY, agentsContent: AGENTS_CONTENT });
+
+    // Pre-seed the ledger as if a prior install already approved this EXACT command.
+    await recordConsent(env, { id: 'tool:x', command: checkCmd });
+
+    let confirmToolChecksCalls = 0;
+    const result = await runInstall({
+      catalog,
+      adapter,
+      scope: SCOPE,
+      env,
+      manifestPath,
+      selectedIds: ['guardrails-claude', 'context-claude', 'tool:x'],
+      confirm: async (_planText) => true,
+      confirmToolChecks: async (_commands) => {
+        confirmToolChecksCalls++;
+        return true;
+      },
+    });
+
+    expect(result.applied).toBe(true);
+    expect(confirmToolChecksCalls).toBe(0);
+
+    const exists = await fs.stat(sentinelPath).then(() => true, () => false);
+    expect(exists).toBe(true);
+  });
+
+  it('a changed check command re-prompts even when a prior consent exists for the same id', async () => {
+    const sentinelPath = path.join(tmp.dir, 'sentinel-changed.txt');
+    const newCheckCmd = `touch "${sentinelPath}"`;
+    const toolX: CatalogEntry = {
+      kind: 'artifact',
+      id: 'tool:x',
+      nature: 'tool',
+      targets: ['claude'],
+      scopes: ['user'],
+      check: newCheckCmd,
+    };
+    const catalog: CatalogEntry[] = [...MINI_CATALOG, toolX];
+    const adapter = createClaudeAdapter({ denyRef: REF_DENY, agentsContent: AGENTS_CONTENT });
+
+    // Prior consent recorded for the SAME id but a DIFFERENT (older) command.
+    await recordConsent(env, { id: 'tool:x', command: 'echo old-check-version' });
+
+    let confirmToolChecksCalls = 0;
+    const result = await runInstall({
+      catalog,
+      adapter,
+      scope: SCOPE,
+      env,
+      manifestPath,
+      selectedIds: ['guardrails-claude', 'context-claude', 'tool:x'],
+      confirm: async (_planText) => true,
+      confirmToolChecks: async (commands) => {
+        confirmToolChecksCalls++;
+        expect(commands).toEqual([{ id: 'tool:x', command: newCheckCmd }]);
+        return true;
+      },
+    });
+
+    expect(confirmToolChecksCalls).toBe(1);
+    expect(result.applied).toBe(true);
+
+    const exists = await fs.stat(sentinelPath).then(() => true, () => false);
+    expect(exists).toBe(true);
+  });
+
+  it('refusal: no ledger entry, install still applies, tool reported unverified, zero shell executed', async () => {
+    const sentinelPath = path.join(tmp.dir, 'sentinel-refused.txt');
+    const checkCmd = `touch "${sentinelPath}"`;
+    const toolX: CatalogEntry = {
+      kind: 'artifact',
+      id: 'tool:x',
+      nature: 'tool',
+      targets: ['claude'],
+      scopes: ['user'],
+      level: 'required',
+      check: checkCmd,
+    };
+    const catalog: CatalogEntry[] = [...MINI_CATALOG, toolX];
+    const adapter = createClaudeAdapter({ denyRef: REF_DENY, agentsContent: AGENTS_CONTENT });
+
+    const result = await runInstall({
+      catalog,
+      adapter,
+      scope: SCOPE,
+      env,
+      manifestPath,
+      selectedIds: ['guardrails-claude', 'context-claude', 'tool:x'],
+      confirm: async (_planText) => true,
+      confirmToolChecks: async (_commands) => false,
+    });
+
+    expect(result.applied).toBe(true);
+    expect(result.output).toContain('not verified');
+    expect(result.output).toContain('tool:x');
+    // A refused (unverified) check is never reported as "missing" — it's unknown, not absent.
+    expect(result.toolWarnings.required).not.toContain('tool:x');
+
+    const exists = await fs.stat(sentinelPath).then(() => true, () => false);
+    expect(exists).toBe(false);
+
+    const consented = await isConsented(env, { id: 'tool:x', command: checkCmd });
+    expect(consented).toBe(false);
+  });
+
+  it('--yes (confirm: true) grants implicit consent: the check runs, an entry is recorded, no prompt', async () => {
+    const sentinelPath = path.join(tmp.dir, 'sentinel-yes.txt');
+    const checkCmd = `touch "${sentinelPath}"`;
+    const toolX: CatalogEntry = {
+      kind: 'artifact',
+      id: 'tool:x',
+      nature: 'tool',
+      targets: ['claude'],
+      scopes: ['user'],
+      check: checkCmd,
+    };
+    const catalog: CatalogEntry[] = [...MINI_CATALOG, toolX];
+    const adapter = createClaudeAdapter({ denyRef: REF_DENY, agentsContent: AGENTS_CONTENT });
+
+    let confirmToolChecksCalls = 0;
+    const result = await runInstall({
+      catalog,
+      adapter,
+      scope: SCOPE,
+      env,
+      manifestPath,
+      selectedIds: ['guardrails-claude', 'context-claude', 'tool:x'],
+      confirm: true,
+      confirmToolChecks: async (_commands) => {
+        confirmToolChecksCalls++;
+        return true;
+      },
+    });
+
+    expect(result.applied).toBe(true);
+    expect(confirmToolChecksCalls).toBe(0);
+
+    const exists = await fs.stat(sentinelPath).then(() => true, () => false);
+    expect(exists).toBe(true);
+
+    const consented = await isConsented(env, { id: 'tool:x', command: checkCmd });
+    expect(consented).toBe(true);
+  });
+
+  // -------------------------------------------------------------------------
+  // Mixed selection: some tool entries already consented, some not.
+  // -------------------------------------------------------------------------
+
+  it(
+    'mixed selection (accept): confirmToolChecks receives only the not-yet-consented subset, and both already-consented and newly-consented tools run',
+    async () => {
+      const sentinelAlready = path.join(tmp.dir, 'sentinel-mixed-already.txt');
+      const sentinelNeeds = path.join(tmp.dir, 'sentinel-mixed-needs.txt');
+      const checkAlready = `touch "${sentinelAlready}"`;
+      const checkNeeds = `touch "${sentinelNeeds}"`;
+
+      const toolAlready: CatalogEntry = {
+        kind: 'artifact',
+        id: 'tool:already',
+        nature: 'tool',
+        targets: ['claude'],
+        scopes: ['user'],
+        check: checkAlready,
+      };
+      const toolNeeds: CatalogEntry = {
+        kind: 'artifact',
+        id: 'tool:needs',
+        nature: 'tool',
+        targets: ['claude'],
+        scopes: ['user'],
+        check: checkNeeds,
+      };
+      const catalog: CatalogEntry[] = [...MINI_CATALOG, toolAlready, toolNeeds];
+      const adapter = createClaudeAdapter({ denyRef: REF_DENY, agentsContent: AGENTS_CONTENT });
+
+      // Pre-seed the ledger for tool:already only — tool:needs stays unconsented.
+      await recordConsent(env, { id: 'tool:already', command: checkAlready });
+
+      const confirmCalls: { id: string; command: string }[][] = [];
+
+      const result = await runInstall({
+        catalog,
+        adapter,
+        scope: SCOPE,
+        env,
+        manifestPath,
+        selectedIds: ['guardrails-claude', 'context-claude', 'tool:already', 'tool:needs'],
+        confirm: async (_planText) => true,
+        confirmToolChecks: async (commands) => {
+          confirmCalls.push(commands);
+          return true;
+        },
+      });
+
+      expect(result.applied).toBe(true);
+
+      // Only the not-yet-consented subset is prompted — tool:already is excluded.
+      expect(confirmCalls).toHaveLength(1);
+      expect(confirmCalls[0]).toEqual([{ id: 'tool:needs', command: checkNeeds }]);
+
+      // Both tools actually ran their check.
+      const alreadyRan = await fs.stat(sentinelAlready).then(() => true, () => false);
+      const needsRan = await fs.stat(sentinelNeeds).then(() => true, () => false);
+      expect(alreadyRan).toBe(true);
+      expect(needsRan).toBe(true);
+
+      // tool:needs is now recorded too.
+      const nowConsented = await isConsented(env, { id: 'tool:needs', command: checkNeeds });
+      expect(nowConsented).toBe(true);
+    },
+  );
+
+  it(
+    'mixed selection (refuse): already-consented tools still run, but refused not-yet-consented tools stay unverified with zero shell',
+    async () => {
+      const sentinelAlready = path.join(tmp.dir, 'sentinel-mixed-refuse-already.txt');
+      const sentinelNeeds = path.join(tmp.dir, 'sentinel-mixed-refuse-needs.txt');
+      const checkAlready = `touch "${sentinelAlready}"`;
+      const checkNeeds = `touch "${sentinelNeeds}"`;
+
+      const toolAlready: CatalogEntry = {
+        kind: 'artifact',
+        id: 'tool:already',
+        nature: 'tool',
+        targets: ['claude'],
+        scopes: ['user'],
+        level: 'required',
+        check: checkAlready,
+      };
+      const toolNeeds: CatalogEntry = {
+        kind: 'artifact',
+        id: 'tool:needs',
+        nature: 'tool',
+        targets: ['claude'],
+        scopes: ['user'],
+        level: 'required',
+        check: checkNeeds,
+      };
+      const catalog: CatalogEntry[] = [...MINI_CATALOG, toolAlready, toolNeeds];
+      const adapter = createClaudeAdapter({ denyRef: REF_DENY, agentsContent: AGENTS_CONTENT });
+
+      // Pre-seed the ledger for tool:already only — tool:needs stays unconsented.
+      await recordConsent(env, { id: 'tool:already', command: checkAlready });
+
+      const result = await runInstall({
+        catalog,
+        adapter,
+        scope: SCOPE,
+        env,
+        manifestPath,
+        selectedIds: ['guardrails-claude', 'context-claude', 'tool:already', 'tool:needs'],
+        confirm: async (_planText) => true,
+        // User refuses the batch prompt for the not-yet-consented subset.
+        confirmToolChecks: async (_commands) => false,
+      });
+
+      expect(result.applied).toBe(true);
+
+      // Already-consented tool ran regardless of the refusal (the prompt only
+      // ever concerned the not-yet-consented subset).
+      const alreadyRan = await fs.stat(sentinelAlready).then(() => true, () => false);
+      expect(alreadyRan).toBe(true);
+
+      // Refused tool never ran any shell.
+      const needsRan = await fs.stat(sentinelNeeds).then(() => true, () => false);
+      expect(needsRan).toBe(false);
+
+      // Refused tool is reported unverified, never as missing.
+      expect(result.output).toContain('[not verified]');
+      expect(result.output).toContain('tool:needs');
+      expect(result.toolWarnings.required).not.toContain('tool:needs');
+      // Already-consented (and verified-present) tool is not reported as missing either.
+      expect(result.toolWarnings.required).not.toContain('tool:already');
+
+      // No ledger entry was ever recorded for the refused tool.
+      const needsConsented = await isConsented(env, { id: 'tool:needs', command: checkNeeds });
+      expect(needsConsented).toBe(false);
+    },
+  );
 });
