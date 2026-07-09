@@ -3,17 +3,21 @@
  *
  * Responsibilities:
  * - Resolve selected artifact ids (including packs) via the catalog resolver.
- * - Check required/recommended tools (advisory; never blocks installation).
  * - Build the full plan (WriteOp[]) via adapter.plan() for each resolved entry.
- * - Render the plan diff and confirm with the user (injectable for tests).
- * - If confirmed and plan is non-empty: apply (backup → write → manifest).
+ * - Render the plan diff — including the raw `check` command of any selected
+ *   tool entry, for visibility — and confirm with the user (injectable for tests).
+ * - Only AFTER confirmation: check required/recommended tools (advisory; never
+ *   blocks installation) for the resolved selection, then apply (backup → write
+ *   → manifest). A `check` command is arbitrary shell content sourced from the
+ *   catalog — it must never run before the user has seen and confirmed the plan.
  * - Return a typed InstallResult (applied, written, backedUp, toolWarnings, output).
  *
  * Constraints:
  * - No process.exit — the CLI bin (F5) decides what to do after cancellation.
  * - No while loops — for...of / map / Promise.all only.
  * - No import of process directly — all paths are injectable.
- * - Human-in-the-loop: nothing is written without confirmation.
+ * - Human-in-the-loop: nothing is written without confirmation, and no tool
+ *   `check` command is executed without confirmation either.
  */
 
 import fs from 'node:fs/promises';
@@ -167,16 +171,20 @@ async function buildProjectScopeNote(targetCwd: string): Promise<string> {
  *   installation and reported in `skipped` + a visible `[skipped]` line in
  *   `output` — never silently dropped.
  *
- * Step 2 — Advisory tool checks: checkTools(entries) → toolWarnings.
- *   Missing tools are reported but never block installation.
+ * Step 2 — Tool presence-checks (selection-scoped, NOT executed): compute
+ *   toolEntries from the resolved selection. Their raw `check` command is
+ *   rendered in the plan for visibility, but nothing runs yet.
  *
  * Step 3 — Plan: adapter.plan(entry, scope, env) for each resolved entry.
  *   Aggregated WriteOp[]. Empty plan → "already up to date", no confirm needed.
  *
- * Step 4 — Diff: renderPlan(ops) included in output.
+ * Step 4 — Diff: renderPlan(ops) included in output, plus the tool-checks block.
  *
  * Step 5 — Confirm: resolve the `confirm` option.
- *   false → "aborted", no writes.
+ *   false → "aborted", no writes, no tool checks executed.
+ *
+ * Step 5b — Advisory tool checks: only once confirmed, checkTools(toolEntries)
+ *   → toolWarnings. Missing tools are reported but never block installation.
  *
  * Step 6 — Apply: apply(adapter, entries, scope, env, manifestPath).
  *   The engine handles backup → write → manifest update.
@@ -208,17 +216,18 @@ export async function runInstall(opts: RunInstallOptions): Promise<InstallResult
   }
 
   // -------------------------------------------------------------------------
-  // Step 2: Advisory tool checks
+  // Step 2: Tool presence-checks — SELECTION-scoped, NOT executed yet.
+  //
+  // `check` is an arbitrary shell command sourced from catalog content. It is
+  // only ever executed after the user has confirmed the plan (Step 5b) — never
+  // before. Here we only compute which entries are eligible (tool-nature,
+  // selection-scoped, with a check command) so the raw command can be shown in
+  // the plan for visibility ahead of confirmation.
   // -------------------------------------------------------------------------
 
-  const toolResults = await checkTools(entries, toolRunner);
-  const requiredMissing = missingRequired(toolResults);
-  const recommendedMissing = missingRecommended(toolResults);
-
-  const toolWarnings = {
-    required: requiredMissing.map((r) => r.id),
-    recommended: recommendedMissing.map((r) => r.id),
-  };
+  const toolEntries: ArtifactEntry[] = entries.filter(
+    (e): e is ArtifactEntry & { check: string } => e.nature === 'tool' && Boolean(e.check),
+  );
 
   // -------------------------------------------------------------------------
   // Step 3: Plan — aggregate WriteOps from all entries
@@ -283,17 +292,30 @@ export async function runInstall(opts: RunInstallOptions): Promise<InstallResult
     ? '\n--- Warnings ---\n' + warnings.map((w) => `  [warning] ${w}`).join('\n') + '\n'
     : '';
 
-  const planText = projectNote + renderedPlan + warningsBlock;
+  // Render the raw `check` command of every selection-scoped tool entry so it
+  // is visible BEFORE confirmation — a malicious catalog command must be
+  // readable by the user, not silently executed.
+  const toolChecksBlock = toolEntries.length > 0
+    ? '\n--- Tool presence-checks (run after you confirm) ---\n'
+      + toolEntries.map((e) => `  ${e.id}  →  ${e.check}`).join('\n') + '\n'
+    : '';
+
+  const planText = projectNote + renderedPlan + warningsBlock + toolChecksBlock;
 
   // -------------------------------------------------------------------------
   // Empty plan → already up to date, skip confirm + apply
   // -------------------------------------------------------------------------
 
+  // No-execution tool warnings — used whenever the run ends WITHOUT the user
+  // confirming (up-to-date short-circuit, or explicit abort below). A `check`
+  // command never runs unless the user has confirmed the plan.
+  const noExecToolWarnings = { required: [] as string[], recommended: [] as string[] };
+
   if (groups.length === 0) {
     const output = buildOutput({
       planText,
       reason: 'up-to-date',
-      toolWarnings,
+      toolWarnings: noExecToolWarnings,
       skipped,
       assistantId: adapter.id,
       written: [],
@@ -304,7 +326,7 @@ export async function runInstall(opts: RunInstallOptions): Promise<InstallResult
       applied: false,
       written: [],
       backedUp: [],
-      toolWarnings,
+      toolWarnings: noExecToolWarnings,
       skipped,
       warnings,
       output,
@@ -321,7 +343,7 @@ export async function runInstall(opts: RunInstallOptions): Promise<InstallResult
     const output = buildOutput({
       planText,
       reason: 'aborted',
-      toolWarnings,
+      toolWarnings: noExecToolWarnings,
       skipped,
       assistantId: adapter.id,
       written: [],
@@ -332,12 +354,26 @@ export async function runInstall(opts: RunInstallOptions): Promise<InstallResult
       applied: false,
       written: [],
       backedUp: [],
-      toolWarnings,
+      toolWarnings: noExecToolWarnings,
       skipped,
       warnings,
       output,
     };
   }
+
+  // -------------------------------------------------------------------------
+  // Step 5b: Post-confirmation tool presence-checks (advisory).
+  //
+  // The `check` command only runs once the user has confirmed the plan, and
+  // only for the resolved selection (toolEntries) — never the full catalog.
+  // A missing tool is reported but never blocks the install (exit 0).
+  // -------------------------------------------------------------------------
+
+  const toolResults = await checkTools(toolEntries, toolRunner);
+  const toolWarnings = {
+    required: missingRequired(toolResults).map((r) => r.id),
+    recommended: missingRecommended(toolResults).map((r) => r.id),
+  };
 
   // -------------------------------------------------------------------------
   // Step 6: Apply (backup → write → manifest)
