@@ -8,6 +8,8 @@
  * milestone.
  */
 
+import path from 'node:path';
+
 import type { Verdict } from './types';
 
 /**
@@ -28,3 +30,36 @@ export const stubScanner: Scanner = {
     return Promise.resolve({ ok: true });
   },
 };
+
+/**
+ * Wraps `inner` with a per-process, per-resolved-path cache of its Verdict.
+ *
+ * Two independent security-scan call sites exist for the same fetched content:
+ * the pre-apply gate (scanEntries, over the whole selection) and the adapter's
+ * apply-time re-check (one scan per link write-op, defense in depth). Both
+ * resolve to the SAME checkout path for a given artifact. Without memoization,
+ * sharing one Scanner instance across both call sites would spawn the
+ * underlying tool (gitleaks/trivy) twice per artifact. `memoizeScanner` makes
+ * that safe: `inner.scan` runs at most once per distinct resolved path: the
+ * gate's scan populates the cache, and the apply-time re-check hits it.
+ *
+ * Cache key is `path.resolve(source)` so that equivalent-but-differently-
+ * spelled paths (relative segments, `..`, trailing separators) collapse to the
+ * same entry. Not bounded/evicted — scoped to a single CLI invocation.
+ */
+export function memoizeScanner(inner: Scanner): Scanner {
+  const cache = new Map<string, Promise<Verdict>>();
+
+  return {
+    scan(source: string): Promise<Verdict> {
+      const key = path.resolve(source);
+      const cached = cache.get(key);
+      if (cached !== undefined) {
+        return cached;
+      }
+      const pending = inner.scan(source);
+      cache.set(key, pending);
+      return pending;
+    },
+  };
+}

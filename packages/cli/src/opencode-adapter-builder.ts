@@ -29,6 +29,7 @@ import type { Adapter, AdapterEntry } from '@agent-rigger/core/adapter';
 import { assertSafeArtifactName } from '@agent-rigger/core/artifact-name';
 import { readText } from '@agent-rigger/core/fs-json';
 import type { Env } from '@agent-rigger/core/paths';
+import type { Scanner } from '@agent-rigger/core/scan';
 import { stubScanner } from '@agent-rigger/core/scan';
 import type { OpencodeMcpServer, OpencodePermission } from '@agent-rigger/core/types';
 
@@ -63,11 +64,18 @@ function localId(id: string): string {
  *                         guardrails/<n>/permission.json, contexts/<n>/AGENTS.md.
  * @param effectiveEntries Lookup map (id → CatalogEntry) for the resolved effective
  *                         catalog. Used by mcpSource to resolve the raw `config` field.
+ * @param scanner          Security scanner invoked at apply time (defense in depth) for each
+ *                         skill link write-op. Callers that already ran the pre-apply gate
+ *                         (scanEntries) should pass the SAME (memoized) instance so the apply-time
+ *                         re-check hits the cache instead of re-spawning gitleaks/trivy. Omitted →
+ *                         falls back to stubScanner (check/remove paths never write content, so a
+ *                         stub there is inert).
  */
 export interface BuildOpencodeAdapterOpts {
   externalIds?: Set<string>;
   externalBaseDir?: string;
   effectiveEntries?: Map<string, CatalogEntry>;
+  scanner?: Scanner;
 }
 
 // ---------------------------------------------------------------------------
@@ -189,9 +197,12 @@ export async function buildOpencodeAdapter(
     // The REAL security scan runs at the pre-apply gate (remote-install.ts
     // scanEntries) on the checkout paths — skills, agents, and opencode plugin
     // modules (H13) are all covered there before any write. The adapter-level
-    // scanner re-scans each link-op source at apply time, so it stays a stub
-    // to avoid double-scanning the same checkout content.
-    scanner: stubScanner,
+    // scanner re-scans each link-op source at apply time (defense in depth):
+    // callers that already ran the gate pass the SAME memoized scanner
+    // instance (opts.scanner) so this re-check hits the cache instead of
+    // re-spawning gitleaks/trivy. Callers with nothing to write (check/remove)
+    // never pass one → stub.
+    scanner: opts?.scanner ?? stubScanner,
     skillSource: (entry) => {
       const name = localId(entry.id).replace(/^skill:/, '');
       assertSafeArtifactName(name, entry.id);

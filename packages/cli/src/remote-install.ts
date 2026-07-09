@@ -39,6 +39,7 @@ import { createCompositeScanner } from '@agent-rigger/core';
 import { assertSafeArtifactName } from '@agent-rigger/core/artifact-name';
 import { assertNever } from '@agent-rigger/core/assert-never';
 import type { Env } from '@agent-rigger/core/paths';
+import { memoizeScanner } from '@agent-rigger/core/scan';
 import type { Scanner } from '@agent-rigger/core/scan';
 import type { Scope } from '@agent-rigger/core/types';
 
@@ -321,7 +322,12 @@ export async function runRemoteInstall(opts: {
   const assistant: Assistant = opts.assistant ?? 'claude';
 
   const force = opts.force === true;
-  const scanner = opts.scanner ?? createCompositeScanner();
+  // Shared, memoized scanner instance: the pre-apply gate (scanEntries below)
+  // and the adapter's apply-time re-check (buildAdapter → applySkill) both
+  // resolve to the same checkout path per artifact. Memoizing means the gate
+  // populates the cache and the apply-time check hits it — the underlying
+  // tool (gitleaks/trivy) runs at most once per artifact, not twice.
+  const scanner = memoizeScanner(opts.scanner ?? createCompositeScanner());
   const sourceName = opts.sourceName;
 
   // Normalise: strip any existing qualifier prefix from user-provided ids so that
@@ -412,12 +418,28 @@ export async function runRemoteInstall(opts: {
       // Build effectiveEntries map for hookSpec resolution (qualified ids).
       const effectiveEntries = new Map(effective.map((e) => [e.id, e]));
 
+      // Thread the memoized scanner to the adapter's apply-time re-check only
+      // on the non-force path. When !force, scanEntries above has ALREADY
+      // thrown ScanBlockedError on any blocking verdict — so by the time we
+      // reach here, the cache holds only ok:true verdicts for every scanned
+      // path, and the apply-time re-check is a pure cache-hit no-op (real
+      // defense in depth for anything scanEntries doesn't cover, at zero extra
+      // tool spawns). When force=true, a blocking verdict was deliberately
+      // overridden by the operator at the gate; Scanner/applySkill have no
+      // notion of --force, so re-running the SAME verdict at apply time would
+      // re-block a run the operator explicitly forced through (D5/ADR-0018:
+      // --force policy is unchanged, not narrowed to "gate only").
       const adapter = await buildAdapter(assistant, env, {
         externalIds: remoteIds,
         externalBaseDir: dir,
         catalogUrl,
         pluginRunner,
         effectiveEntries,
+        // Share the memoized scanner for the apply-time re-check under !force
+        // only: under --force the gate warns-and-proceeds, so a cached blocking
+        // verdict would wrongly re-throw at apply. Defense-in-depth, redundant
+        // while applied skills stay a subset of the gate's scanned set.
+        ...(force ? {} : { scanner }),
       });
 
       const versionFor = (

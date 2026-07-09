@@ -47,6 +47,7 @@ import { assertSafeArtifactName } from '@agent-rigger/core/artifact-name';
 import { apply, remove } from '@agent-rigger/core/engine';
 import { readManifest } from '@agent-rigger/core/manifest';
 import type { Env } from '@agent-rigger/core/paths';
+import { memoizeScanner } from '@agent-rigger/core/scan';
 import type { Scanner } from '@agent-rigger/core/scan';
 import type { Scope } from '@agent-rigger/core/types';
 
@@ -156,7 +157,12 @@ export async function runUpdate(opts: RunUpdateOptions): Promise<UpdateResult> {
   } = opts;
 
   const force = opts.force === true;
-  const scanner: Scanner = opts.scanner ?? createCompositeScanner();
+  // Shared, memoized scanner instance: the pre-apply gate (scanEntries below)
+  // and the adapter's apply-time re-check (buildAdapter → applySkill) both
+  // resolve to the same checkout path per artifact. Memoizing means the gate
+  // populates the cache and the apply-time check hits it — the underlying
+  // tool (gitleaks/trivy) runs at most once per artifact, not twice.
+  const scanner: Scanner = memoizeScanner(opts.scanner ?? createCompositeScanner());
   const assistant: Assistant = opts.assistant ?? 'claude';
 
   // Outcome line renderer — one artifact per line, aligned tag column, mirrors
@@ -297,10 +303,22 @@ export async function runUpdate(opts: RunUpdateOptions): Promise<UpdateResult> {
         });
 
         // 3e. Build adapter with remote resolver seam (externalBaseDir = checkout dir).
+        // Thread the memoized scanner to the apply-time re-check only on the
+        // non-force path — see runRemoteInstall (remote-install.ts) for the
+        // full rationale: when !force, scanEntries above already threw on any
+        // blocking verdict, so this is a safe cache-hit no-op; when force=true,
+        // a blocking verdict was deliberately overridden at the gate and
+        // Scanner/applySkill have no notion of --force, so re-threading it
+        // here would re-block a run the operator explicitly forced through.
         const adapter = await buildAdapter(assistant, env, {
           externalIds: remoteIds,
           externalBaseDir: dir,
           effectiveEntries,
+          // Share the memoized scanner for the apply-time re-check under !force
+          // only: under --force the gate warns-and-proceeds, so a cached blocking
+          // verdict would wrongly re-throw at apply. Defense-in-depth, redundant
+          // while applied skills stay a subset of the gate's scanned set.
+          ...(force ? {} : { scanner }),
         });
 
         // AdapterEntries for remove+apply (exclude tool-nature entries).
