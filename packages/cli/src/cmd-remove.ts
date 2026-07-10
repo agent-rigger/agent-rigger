@@ -21,6 +21,7 @@
 import path from 'node:path';
 
 import { isStoreReferenced, storeReferenceCandidates } from '@agent-rigger/adapters';
+import { localId } from '@agent-rigger/catalog';
 import type { Adapter, AdapterEntry } from '@agent-rigger/core/adapter';
 import { enrichWithApplied, remove } from '@agent-rigger/core/engine';
 import { findEntry, readManifest } from '@agent-rigger/core/manifest';
@@ -86,9 +87,7 @@ export interface RunRemoveOptions {
 
 /** True when the id's local part (after the catalog qualifier) is a pack id. */
 function isPackId(id: string): boolean {
-  const slashIdx = id.indexOf('/');
-  const localPart = slashIdx === -1 ? id : id.slice(slashIdx + 1);
-  return localPart.startsWith('pack:');
+  return localId(id).startsWith('pack:');
 }
 
 function buildNotInstalledMessage(id: string, installedIds: string[]): string {

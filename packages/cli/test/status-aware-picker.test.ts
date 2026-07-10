@@ -33,6 +33,15 @@ import type { StatusedEntry } from '../src/ui';
 // ---------------------------------------------------------------------------
 
 const SHA = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+/**
+ * A distinct sha for an artifact installed at an older ref (R2, lot 6, D2):
+ * isUpdateAvailable now compares sha, so an "installed at an older tag"
+ * fixture must actually carry a DIFFERENT commit than the remote's SHA —
+ * reusing SHA for both would (correctly) read as "current" under the new
+ * sha-aware comparison, since identical content under any ref name is never
+ * an update.
+ */
+const OLD_SHA = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
 const REMOTE_TAG = 'v1.0.0';
 
 const ENTRY_A: CatalogEntry = {
@@ -62,7 +71,9 @@ interface Iso {
   targets: ReturnType<typeof resolveUserTargets>;
   makeRunner: () => CommandRunner;
   makeTmpFactory: () => TmpDirFactory;
-  seedManifest: (artifacts: Array<{ id: string; ref: string; scope?: string }>) => Promise<void>;
+  seedManifest: (
+    artifacts: Array<{ id: string; ref: string; scope?: string; sha?: string }>,
+  ) => Promise<void>;
   cleanup: () => Promise<void>;
 }
 
@@ -131,7 +142,7 @@ async function makeIso(): Promise<Iso> {
           id: a.id,
           nature: 'skill',
           ref: a.ref,
-          sha: SHA,
+          sha: a.sha ?? SHA,
           scope: a.scope ?? 'user',
         })),
       }),
@@ -205,7 +216,9 @@ describe('status-aware picker — classification', () => {
   });
 
   it('flags installed-at-older-ref as update with installed/remote refs', async () => {
-    await iso.seedManifest([{ id: 'principal/skill:remote-demo', ref: 'v0.9.0' }]);
+    await iso.seedManifest([
+      { id: 'principal/skill:remote-demo', ref: 'v0.9.0', sha: OLD_SHA },
+    ]);
     const order: string[] = [];
     const captured = { value: null as StatusedEntry[] | null, called: false };
 

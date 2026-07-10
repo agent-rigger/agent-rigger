@@ -31,15 +31,17 @@
  * - exactOptionalPropertyTypes: never assign undefined to optional fields.
  */
 
+import type { PluginRunner } from '@agent-rigger/adapters';
 import {
   isUpdateAvailable,
+  localId,
   mergeCatalogs,
   readCatalogDir,
   resolveVersion,
   type TmpDirFactory,
   withRemoteCheckout,
 } from '@agent-rigger/catalog';
-import { resolve } from '@agent-rigger/catalog/resolver';
+import { catalogPrefixOf, resolve } from '@agent-rigger/catalog/resolver';
 import type { CommandRunner } from '@agent-rigger/catalog/tool-check';
 import type { Assistant } from '@agent-rigger/core';
 import { createCompositeScanner } from '@agent-rigger/core';
@@ -52,24 +54,8 @@ import { memoizeScanner } from '@agent-rigger/core/scan';
 import type { Scanner } from '@agent-rigger/core/scan';
 import type { Scope } from '@agent-rigger/core/types';
 
-// ---------------------------------------------------------------------------
-// localId — strip source-qualifier prefix (ADR-0017 consumer helper)
-// ---------------------------------------------------------------------------
-
-/**
- * Return the local (unqualified) part of a catalog entry id.
- *
- * Examples:
- *   'skill:foo'            → 'skill:foo'
- *   'principal/skill:foo'  → 'skill:foo'
- */
-function localId(id: string): string {
-  const slashIdx = id.indexOf('/');
-  return slashIdx === -1 ? id : id.slice(slashIdx + 1);
-}
-
 import { buildAdapter } from './adapter-dispatch';
-import { scanEntries } from './remote-install';
+import { partitionForeignRequires, scanEntries } from './remote-install';
 import { ANSI, paint, shouldColor } from './ui';
 
 // ---------------------------------------------------------------------------
@@ -166,6 +152,17 @@ export async function runUpdate(opts: RunUpdateOptions): Promise<UpdateResult> {
   const scanner: Scanner = memoizeScanner(opts.scanner ?? createCompositeScanner());
   const assistant: Assistant = opts.assistant ?? 'claude';
 
+  // Adapt CommandRunner → PluginRunner (mirrors remote-install.ts's runRemoteInstall)
+  // so buildAdapter's claude-native delegation (`claude mcp add-json`/`remove`,
+  // `claude plugin install`/`uninstall`) goes through the SAME runner as the
+  // checkout's git operations, instead of silently falling back to its own
+  // Bun.spawn-backed default — required for update to be testable/injectable
+  // for claude-targeted natures, and for parity with install.
+  const pluginRunner: PluginRunner = (command, args) =>
+    runner(command, args).then(
+      (r) => ({ exitCode: r.exitCode, stdout: r.stdout ?? '', stderr: r.stderr ?? '' }),
+    );
+
   // Outcome line renderer — one artifact per line, aligned tag column, mirrors
   // renderReport()'s `[ ok  ] id` aesthetic. Colour is a no-op when colorOn=false.
   const colorOn = shouldColor(opts.color);
@@ -228,7 +225,9 @@ export async function runUpdate(opts: RunUpdateOptions): Promise<UpdateResult> {
       continue;
     }
 
-    if (isUpdateAvailable(entry.ref, remote)) {
+    // `?? ''` defends against a legacy on-disk entry written before sha
+    // tracking existed (R2, isUpdateAvailable degrades gracefully).
+    if (isUpdateAvailable(entry.ref, entry.sha ?? '', remote)) {
       staleIds.push(id);
       staleManifestNatures.set(entry.id, entry.nature);
     } else {
@@ -246,7 +245,10 @@ export async function runUpdate(opts: RunUpdateOptions): Promise<UpdateResult> {
       remote.ref,
       remote.isTag,
       runner,
-      { tmpFactory },
+      // R1 (lot 6, D1): same provenance check as install — abort before any
+      // remove/apply when the checkout's HEAD doesn't match the sha
+      // resolveVersion just resolved (homonymous branch/tag, TOCTOU re-push).
+      { tmpFactory, expectedSha: remote.sha },
       async (dir) => {
         // 3a. Read + validate remote catalog (CatalogParseError → abort before remove).
         const { entries: remoteEntries } = await readCatalogDir(dir);
@@ -269,7 +271,27 @@ export async function runUpdate(opts: RunUpdateOptions): Promise<UpdateResult> {
         // Strip qualifiers for resolution, then restore them in the resolved entries.
         const { entries: effective } = mergeCatalogs([], remoteEntries);
         const rawStaleIds = staleIds.map(localId);
-        const rawResolved = resolve(rawStaleIds, effective);
+
+        // R3 pre-pass (lot 6, D3): parity with runRemoteInstall — partition every
+        // cross-catalogue require reachable from the stale set by manifest
+        // presence BEFORE resolve() runs. sourceName is derived from the stale
+        // ids themselves: every id in one runUpdate call already shares the same
+        // catalogue prefix (the CLI groups update targets by catalog before
+        // calling runUpdate), so the first qualified id names it. A poisoned
+        // release (a new require that isn't installed) fails THIS source's
+        // transaction only — a caller iterating multiple sources catches this
+        // and moves on to the next; nothing here blocks that.
+        const sourceName = catalogPrefixOf(staleIds[0] ?? '');
+        const externallySatisfied = partitionForeignRequires(
+          rawStaleIds,
+          effective,
+          sourceName,
+          manifest,
+          scope,
+          assistant,
+        );
+
+        const rawResolved = resolve(rawStaleIds, effective, externallySatisfied);
 
         // Restore qualification: map raw resolved entries back to their manifest-qualified ids.
         // Build a lookup from local-id → qualified id for the stale set.
@@ -303,6 +325,30 @@ export async function runUpdate(opts: RunUpdateOptions): Promise<UpdateResult> {
           force,
         });
 
+        // R5 (lot 6, D5): replay every stale mcp entry's previously-resolved
+        // secretRefs from the manifest, so the re-render (mcpSource) reuses
+        // the SAME ref→VAR overrides without asking again — no --secret-env,
+        // no TTY prompt, no re-collection (ADR-0020 §1). Merged across the
+        // stale set (distinct mcp entries normally use distinct ref names).
+        // Both mcp applied payload kinds carry secretRefs (types.ts) — gating
+        // on 'opencode-mcp' alone silently skipped every 'claude-mcp' entry,
+        // defaulting its ref back to its own name and either throwing
+        // MissingRequiredSecretError or drifting the rendered config away
+        // from what was actually installed (R8's "mêmes garanties que R5").
+        const secretOverrides: Record<string, string> = {};
+        for (const id of staleIds) {
+          const staleEntry = manifest.artifacts.find(
+            (e) => e.id === id && e.scope === scope && (e.assistant ?? 'claude') === assistant,
+          );
+          const applied = staleEntry?.applied;
+          if (
+            (applied?.kind === 'opencode-mcp' || applied?.kind === 'claude-mcp')
+            && applied.secretRefs
+          ) {
+            Object.assign(secretOverrides, applied.secretRefs);
+          }
+        }
+
         // 3e. Build adapter with remote resolver seam (externalBaseDir = checkout dir).
         // Thread the memoized scanner to the apply-time re-check only on the
         // non-force path — see runRemoteInstall (remote-install.ts) for the
@@ -315,11 +361,15 @@ export async function runUpdate(opts: RunUpdateOptions): Promise<UpdateResult> {
           externalIds: remoteIds,
           externalBaseDir: dir,
           effectiveEntries,
+          // Claude-native delegation (mcp/plugin natures) goes through the same
+          // runner as the checkout's git operations — see pluginRunner above.
+          pluginRunner,
           // Share the memoized scanner for the apply-time re-check under !force
           // only: under --force the gate warns-and-proceeds, so a cached blocking
           // verdict would wrongly re-throw at apply. Defense-in-depth, redundant
           // while applied skills stay a subset of the gate's scanned set.
           ...(force ? {} : { scanner }),
+          ...(Object.keys(secretOverrides).length === 0 ? {} : { secretOverrides }),
         });
 
         // AdapterEntries for remove+apply (exclude tool-nature entries).

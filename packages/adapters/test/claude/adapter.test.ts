@@ -156,10 +156,11 @@ describe('ClaudeAdapter — unsupported nature', () => {
   it('throws UnsupportedNatureError for an unregistered nature during audit', async () => {
     const adapter = createClaudeAdapter({ denyRef: REF_DENY });
 
-    // 'mcp' and 'tool' are not yet implemented (M0 scope)
+    // 'tool' is advisory-only — never installed by the adapter (no handler).
+    // ('mcp' is now registered, R8/lot 6.)
     const entry: AdapterEntry = {
-      id: 'mcp-foo',
-      nature: 'mcp',
+      id: 'tool-foo',
+      nature: 'tool',
       scope: 'user',
     };
 
@@ -177,8 +178,8 @@ describe('ClaudeAdapter — unsupported nature', () => {
     const adapter = createClaudeAdapter({ denyRef: REF_DENY });
 
     const entry: AdapterEntry = {
-      id: 'mcp-foo',
-      nature: 'mcp',
+      id: 'tool-foo',
+      nature: 'tool',
       scope: 'user',
     };
 
@@ -190,16 +191,16 @@ describe('ClaudeAdapter — unsupported nature', () => {
     }
 
     expect(caught).toBeInstanceOf(UnsupportedNatureError);
-    expect((caught as UnsupportedNatureError).nature).toBe('mcp');
-    expect((caught as Error).message).toContain('mcp');
+    expect((caught as UnsupportedNatureError).nature).toBe('tool');
+    expect((caught as Error).message).toContain('tool');
   });
 
   it('throws UnsupportedNatureError for an unregistered nature during plan', async () => {
     const adapter = createClaudeAdapter({ denyRef: REF_DENY });
 
     const entry: AdapterEntry = {
-      id: 'mcp-foo',
-      nature: 'mcp',
+      id: 'tool-foo',
+      nature: 'tool',
       scope: 'user',
     };
 

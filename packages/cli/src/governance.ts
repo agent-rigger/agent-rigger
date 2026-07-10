@@ -18,16 +18,12 @@
  */
 
 import type { CatalogEntry } from '@agent-rigger/catalog';
+import { qualifyRef } from '@agent-rigger/catalog';
 
 /** The governance-relevant slice of a catalog's `meta` block. */
 export interface CatalogGovernanceMeta {
   required?: string[];
   recommended?: string[];
-}
-
-/** Qualify a (possibly bare) id with its source name, ADR-0017 style. */
-function qualify(source: string, id: string): string {
-  return id.includes('/') ? id : `${source}/${id}`;
 }
 
 /**
@@ -74,7 +70,7 @@ export function auditableGovernanceIds(
       }
     };
     for (const seed of [...(meta.required ?? []), ...(meta.recommended ?? [])]) {
-      visit(qualify(source, seed));
+      visit(qualifyRef(source, seed));
     }
   }
 

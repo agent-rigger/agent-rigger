@@ -815,13 +815,13 @@ export interface StatusOption {
  *
  * The version annotation is embedded in the `label` — NOT in clack's `hint`.
  * `groupMultiselect` only renders `hint` for the focused or selected row, so a
- * version placed there vanishes on unchecked rows (the "À jour" group is
+ * version placed there vanishes on unchecked rows (the "Up to date" group is
  * unchecked by default). Putting it in the label keeps it visible in every
  * state. Groups are only emitted when non-empty.
  *
- *   - "À installer"                  → not installed; label `id (→ target)`.
- *   - "À mettre à jour"              → newer available; label `id (old → new)`.
- *   - "À jour (cocher = réinstaller)" → current; label `id (✓ ref)`.
+ *   - "To install"                     → not installed; label `id (→ target)`.
+ *   - "To update"                      → newer available; label `id (old → new)`.
+ *   - "Up to date (check to reinstall)" → current; label `id (✓ ref)`.
  */
 export function buildStatusOptions(entries: StatusedEntry[]): Record<string, StatusOption[]> {
   const install = entries.filter((e) => e.status === 'install');
@@ -830,19 +830,19 @@ export function buildStatusOptions(entries: StatusedEntry[]): Record<string, Sta
 
   const options: Record<string, StatusOption[]> = {};
   if (install.length > 0) {
-    options['À installer'] = install.map((e) => ({
+    options['To install'] = install.map((e) => ({
       value: e.id,
       label: e.remoteRef === undefined ? e.id : `${e.id} (→ ${e.remoteRef})`,
     }));
   }
   if (update.length > 0) {
-    options['À mettre à jour'] = update.map((e) => ({
+    options['To update'] = update.map((e) => ({
       value: e.id,
       label: `${e.id} (${e.installedRef} → ${e.remoteRef})`,
     }));
   }
   if (current.length > 0) {
-    options['À jour (cocher = réinstaller)'] = current.map((e) => ({
+    options['Up to date (check to reinstall)'] = current.map((e) => ({
       value: e.id,
       label: `${e.id} (✓ ${e.installedRef})`,
     }));
@@ -870,7 +870,7 @@ export async function selectArtifactsByStatus(entries: StatusedEntry[]): Promise
     options,
     initialValues,
     required: false,
-    // Group headers are selectable: Space on "À installer" / "À mettre à jour"
+    // Group headers are selectable: Space on "To install" / "To update"
     // toggles every item in that group at once (select-all / deselect-all).
     selectableGroups: true,
     groupSpacing: 1,

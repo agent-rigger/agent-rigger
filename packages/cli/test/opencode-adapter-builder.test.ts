@@ -10,7 +10,11 @@
  * 3. guardrail native permission.json loaded verbatim from checkout (ADR-0020
  *    "Option A" — no translation); a missing descriptor is a hard error.
  * 4. context agentsContent loaded from checkout, posed as write-text (no bridge, R3.1).
- * 5. mcp: server + config resolved from effectiveEntries, config passed verbatim.
+ * 5. mcp: server + config resolved from effectiveEntries; every field passes
+ *    through verbatim EXCEPT environment/headers, whose "${REF}" secret refs
+ *    are rendered to opencode's native `{env:VAR}` form (R5, lot 6, D5 — see
+ *    lot6-r5-secrets-render.test.ts for the full declared-secret/fail-closed
+ *    coverage; this file only proves the base resolution + rendering shape).
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
@@ -313,11 +317,11 @@ describe('buildOpencodeAdapter — external guardrail/context from checkout', ()
 });
 
 // ---------------------------------------------------------------------------
-// mcp — resolved from effectiveEntries, config passed through verbatim
+// mcp — resolved from effectiveEntries; environment/headers refs rendered (R5)
 // ---------------------------------------------------------------------------
 
 describe('buildOpencodeAdapter — mcp source resolution from effectiveEntries', () => {
-  it('resolves server (id, "mcp:" stripped) and config verbatim from the catalog entry', async () => {
+  it('resolves server (id, "mcp:" stripped) and renders the env-ref to opencode native form', async () => {
     const effectiveEntries: Map<string, CatalogEntry> = new Map([
       [
         'mcp:my-server',
@@ -346,11 +350,12 @@ describe('buildOpencodeAdapter — mcp source resolution from effectiveEntries',
       | undefined;
     expect(mcpOp).toBeDefined();
     expect(mcpOp!.server).toBe('my-server');
-    // Verbatim passthrough — env-ref kept as a literal string (secrets deferred, E-secrets).
+    // command/type pass through verbatim; the env-ref is rendered to opencode's
+    // native `{env:VAR}` form (T0: opencode does not expand bash-style "${VAR}").
     expect(mcpOp!.config).toEqual({
       type: 'local',
       command: ['bunx', 'my-mcp-server'],
-      environment: { TOKEN: '${MY_TOKEN}' },
+      environment: { TOKEN: '{env:MY_TOKEN}' },
     });
   });
 

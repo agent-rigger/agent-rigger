@@ -20,6 +20,19 @@ export {
 export { applyHook, auditHook, planHook } from './claude/hooks';
 export type { ResolvedHook } from './claude/hooks';
 export {
+  adoptMcp as adoptClaudeMcp,
+  applyMcp as applyClaudeMcp,
+  applyRemoveMcp as applyRemoveClaudeMcp,
+  auditMcp as auditClaudeMcp,
+  defaultMcpRunner,
+  McpAddError,
+  McpRemoveError,
+  mcpServerName as claudeMcpServerName,
+  planMcp as planClaudeMcp,
+  planRemoveMcp as planRemoveClaudeMcp,
+} from './claude/mcp';
+export type { McpRunner } from './claude/mcp';
+export {
   applyPlugin,
   auditPlugin,
   defaultPluginRunner,

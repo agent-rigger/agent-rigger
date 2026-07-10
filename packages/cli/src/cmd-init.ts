@@ -67,9 +67,16 @@ export interface CatalogProposal {
   /**
    * Name of the catalog source (e.g. 'principal').
    * Used by the caller to qualify meta.required/recommended ids so that
-   * they match the qualified entries (ADR-0017).
+   * they match the qualified entries (ADR-0017), via the single qualification
+   * seam (`qualifyRef`, lot 6 R4/D4).
+   *
+   * REQUIRED (lot 6 R4/D4): both real `fetchCatalogFn` implementations
+   * (init, catalog add) always set it, so the divergent fallbacks that used
+   * to cover its absence (`?? ''`, `?? 'principal'`, `?? ids[0] ?? ''`) are
+   * dead code and have been removed — callers now use `catalog.sourceName`
+   * directly.
    */
-  sourceName?: string;
+  sourceName: string;
 }
 
 /** Options for runInit. All I/O is injectable for testability. */

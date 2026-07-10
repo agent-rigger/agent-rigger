@@ -70,6 +70,19 @@ export interface OpencodeMcpRemote {
 /** Discriminated union of MCP server declarations. */
 export type OpencodeMcpServer = OpencodeMcpLocal | OpencodeMcpRemote;
 
+/**
+ * A Claude Code MCP server descriptor (R8, lot 6).
+ *
+ * Unlike OpencodeMcpServer this is intentionally a permissive record: the claude
+ * mcp nature delegates to `claude mcp add-json`, which accepts a full JSON
+ * descriptor verbatim (stdio or remote), so agent-rigger passes the (rendered)
+ * catalog `config` through unchanged rather than re-typing claude's own schema.
+ * Secrets are env-refs rendered VERBATIM (`${VAR}`) — Claude Code expands them
+ * itself at server spawn (T0), so the descriptor stored here never carries a
+ * literal value.
+ */
+export type ClaudeMcpServer = Record<string, unknown>;
+
 // ---------------------------------------------------------------------------
 // Artefact
 // ---------------------------------------------------------------------------
@@ -161,8 +174,15 @@ export interface AppliedOpencodeMcp {
   kind: 'opencode-mcp';
   /** The MCP server id (key under the `mcp` object). */
   server: string;
-  /** The server config that was merged. */
+  /** The server config that was merged (already RENDERED — env-refs, never a literal value). */
   config: OpencodeMcpServer;
+  /**
+   * ref→VAR mapping for every secret this mcp entry declares (R5, D5 point 4).
+   * Names only — NEVER a secret value. Lets `update` re-render the config from
+   * the SAME overrides without re-prompting (ADR-0020 §1). Absent when the
+   * entry declares no secrets.
+   */
+  secretRefs?: Record<string, string>;
 }
 
 /**
@@ -171,13 +191,38 @@ export interface AppliedOpencodeMcp {
  * Present on ManifestEntry.applied after B-iii.
  * Absent on legacy entries installed before B-iii → remove/check degrade gracefully.
  */
+/**
+ * Payload recorded when a Claude Code MCP server is installed (R8, lot 6).
+ * Captures the server id, the RENDERED config (env-refs, never a literal value),
+ * and the claude scope it was registered under, so `remove` can issue the exact
+ * `claude mcp remove <server> -s <scope>` and `check`/adoption can deep-compare
+ * against the on-disk descriptor.
+ */
+export interface AppliedClaudeMcp {
+  kind: 'claude-mcp';
+  /** The MCP server id (key under the `mcpServers` object / `claude mcp` name). */
+  server: string;
+  /** The rendered server descriptor that was registered (env-refs, never a value). */
+  config: ClaudeMcpServer;
+  /** The claude scope the server was registered under ('user' → ~/.claude.json, 'project' → .mcp.json). */
+  scope: Scope;
+  /**
+   * ref→VAR mapping for every secret this mcp entry declares (R5, D5 point 4).
+   * Names only — NEVER a secret value. Lets `update` re-render the config from
+   * the SAME overrides without re-prompting (ADR-0020 §1). Absent when the
+   * entry declares no secrets.
+   */
+  secretRefs?: Record<string, string>;
+}
+
 export type AppliedPayload =
   | AppliedGuardrail
   | AppliedContext
   | AppliedHook
   | AppliedLink
   | AppliedOpencodePermission
-  | AppliedOpencodeMcp;
+  | AppliedOpencodeMcp
+  | AppliedClaudeMcp;
 
 // ---------------------------------------------------------------------------
 // Manifest
@@ -402,6 +447,36 @@ export interface WriteOpMergeMcp {
   /** Server config to write. */
   config: OpencodeMcpServer;
   description: string;
+  /**
+   * ref→VAR mapping for every secret this mcp entry declares (R5, D5 point 4),
+   * carried from plan through to the manifest's AppliedOpencodeMcp.secretRefs.
+   * Names only — never a secret value. Absent when the entry declares no secrets.
+   */
+  secretRefs?: Record<string, string>;
+}
+
+/**
+ * Register a Claude Code MCP server by delegating to `claude mcp add-json`
+ * (R8, lot 6, branch A). No file is written directly by agent-rigger: the
+ * adapter runs the native CLI and remounts any native error verbatim. Neither
+ * `path` nor `target` are present — the engine skips backup and written-path
+ * tracking for this kind (like plugin-install), and compensates a failed run
+ * by delegating `claude mcp remove`.
+ */
+export interface WriteOpMcpAdd {
+  kind: 'mcp-add';
+  /** MCP server id (the `<name>` passed to `claude mcp add-json`). */
+  server: string;
+  /** Rendered server descriptor passed verbatim as the add-json payload (env-refs, never a value). */
+  config: ClaudeMcpServer;
+  /** The claude scope to register under ('user' | 'project'). */
+  scope: Scope;
+  /**
+   * ref→VAR mapping for every secret this mcp entry declares (R5, D5 point 4),
+   * carried from plan through to the manifest's AppliedClaudeMcp.secretRefs.
+   * Names only — never a secret value. Absent when the entry declares no secrets.
+   */
+  secretRefs?: Record<string, string>;
 }
 
 export type WriteOp =
@@ -415,6 +490,7 @@ export type WriteOp =
   | WriteOpMergeHooks
   | WriteOpMergePermission
   | WriteOpMergeMcp
+  | WriteOpMcpAdd
   // Traced hook migration (R1/D8): when the canonical hook spec changed since
   // install (matcher or command), the install plan retires the OLD registration
   // with a remove-hooks op alongside the merge-hooks op adding the new one —
@@ -576,6 +652,20 @@ export interface RemovalOpLeaveAlone {
   warnings: string[];
 }
 
+/**
+ * Unregister a Claude Code MCP server by delegating to `claude mcp remove`
+ * (R8, lot 6, branch A). Targets exactly one server by name+scope, so a
+ * personal server the user added by hand is never touched. Carries no `path`
+ * or `target` — the engine skips backup for it (like plugin-uninstall).
+ */
+export interface RemovalOpMcpRemove {
+  kind: 'mcp-remove';
+  /** MCP server id to remove (the `<name>` passed to `claude mcp remove`). */
+  server: string;
+  /** The claude scope to remove from ('user' | 'project'). */
+  scope: Scope;
+}
+
 export type RemovalOp =
   | RemovalOpRemoveDeny
   | RemovalOpRemoveAllow
@@ -587,6 +677,7 @@ export type RemovalOp =
   | RemovalOpRemoveHooks
   | RemovalOpRemovePermission
   | RemovalOpRemoveMcp
+  | RemovalOpMcpRemove
   | RemovalOpLeaveAlone;
 
 // ---------------------------------------------------------------------------

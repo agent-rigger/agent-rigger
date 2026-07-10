@@ -48,6 +48,51 @@ export class RemoteFetchError extends Error {
 }
 
 // ---------------------------------------------------------------------------
+// RefShaMismatchError — provenance check (R1 / lot 6, D1)
+// ---------------------------------------------------------------------------
+
+/**
+ * Raised when the commit sha actually on disk after a clone/checkout differs
+ * from the sha that was resolved (via `ls-remote`) before the clone.
+ *
+ * Two real vectors close on this:
+ *  - A branch homonymous with a tag: `git clone --branch <name>` prefers
+ *    `refs/heads` over `refs/tags` — reproduced empirically — so the branch's
+ *    content gets installed under the tag's ref/sha.
+ *  - TOCTOU: the tag is re-pushed to a different commit between the
+ *    `ls-remote` resolution and the clone.
+ *
+ * Extends `RemoteFetchError` so every existing `instanceof RemoteFetchError`
+ * call site keeps catching it unchanged; `instanceof RefShaMismatchError`
+ * narrows to this specific provenance failure when the ref/expected/found
+ * detail is needed (e.g. CLI messaging, exit-code mapping).
+ *
+ * This check is never bypassed by `--force` — provenance is not a scan
+ * policy (ADR-0018 draws that line for content scanning; a mismatched sha is
+ * not "unscanned content", it is content that is not what the manifest is
+ * about to claim it is).
+ */
+export class RefShaMismatchError extends RemoteFetchError {
+  /** The ref that was resolved (tag name, or the sha itself on the HEAD-fallback path). */
+  readonly ref: string;
+  /** The sha resolved by `ls-remote` before the clone (peeled, for annotated tags). */
+  readonly expectedSha: string;
+  /** The sha actually found via `git rev-parse HEAD` on the checkout. */
+  readonly foundSha: string;
+
+  constructor(url: string, ref: string, expectedSha: string, foundSha: string) {
+    super(
+      url,
+      `Invalid provenance for ref "${ref}": expected sha ${expectedSha}, found sha ${foundSha} on the checkout. Installation refused — this check cannot be bypassed with --force.`,
+    );
+    this.name = 'RefShaMismatchError';
+    this.ref = ref;
+    this.expectedSha = expectedSha;
+    this.foundSha = foundSha;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Input validation — allowlist guards against argument injection
 // ---------------------------------------------------------------------------
 
@@ -62,7 +107,7 @@ export class InvalidRemoteUrlError extends Error {
 
   constructor(url: string) {
     super(
-      `URL distante non autorisée: "${url}". Formes acceptées: https://, http://, ssh://, git@host:owner/repo, /chemin/absolu.`,
+      `Untrusted remote URL: "${url}". Accepted forms: https://, http://, ssh://, git@host:owner/repo, /absolute/path.`,
     );
     this.name = 'InvalidRemoteUrlError';
     this.url = url;
@@ -79,7 +124,7 @@ export class InvalidRemoteRefError extends Error {
 
   constructor(ref: string) {
     super(
-      `Référence git non autorisée: "${ref}". La ref ne peut pas être vide ni commencer par '-'.`,
+      `Untrusted git ref: "${ref}". The ref cannot be empty or start with '-'.`,
     );
     this.name = 'InvalidRemoteRefError';
     this.ref = ref;
@@ -342,7 +387,7 @@ export async function resolveVersion(url: string, run: CommandRunner): Promise<R
   if (sha === '') {
     throw new RemoteFetchError(
       url,
-      'HEAD introuvable : ls-remote HEAD a renvoyé une sortie vide',
+      'HEAD not found: ls-remote HEAD returned empty output',
     );
   }
 
@@ -400,8 +445,19 @@ export class CatalogParseError extends Error {
  *  - cleanup runs in `finally`, covering success, clone failure, fetch/checkout
  *    failure, and `fn` throw.
  *
+ * `opts.expectedSha` (R1 / lot 6, D1, optional — back-compat): when provided,
+ * a `git -C <path> rev-parse HEAD` runs right after clone/checkout (both the
+ * isTag and sha paths — one branch to reason about, no bypass via --force)
+ * and is compared to `expectedSha`. A mismatch throws `RefShaMismatchError`
+ * BEFORE `fn` runs, so nothing is installed and nothing is written; `finally`
+ * still runs cleanup. Callers should pass the *peeled* sha (what
+ * `resolveVersion`/`listRemoteTags` already resolve for annotated tags) so
+ * there is no false positive. Omitting `expectedSha` skips the check
+ * entirely — existing callers are unaffected.
+ *
  * Returns the value returned by `fn`.
  * Throws RemoteFetchError when any git command exits non-zero.
+ * Throws RefShaMismatchError (a RemoteFetchError subtype) on a provenance mismatch.
  * Throws InvalidRemoteUrlError / InvalidRemoteRefError for unsafe inputs.
  */
 export async function withRemoteCheckout<T>(
@@ -409,7 +465,7 @@ export async function withRemoteCheckout<T>(
   ref: string,
   isTag: boolean,
   run: CommandRunner,
-  opts: { tmpFactory: TmpDirFactory },
+  opts: { tmpFactory: TmpDirFactory; expectedSha?: string },
   fn: (checkoutDir: string) => Promise<T>,
 ): Promise<T> {
   assertSafeRemoteUrl(url);
@@ -451,6 +507,22 @@ export async function withRemoteCheckout<T>(
       }
     }
 
+    // R1 (lot 6, D1): the manifest must record the commit that is actually on
+    // disk, not merely the sha ls-remote resolved before the clone started.
+    // Systematic — applies on both the isTag and sha paths (redundant on the
+    // sha path by construction, but a single branch to reason about) — and
+    // never bypassed by --force (provenance is not a scan policy).
+    if (opts.expectedSha !== undefined) {
+      const provenanceResult = await run('git', ['-C', path, 'rev-parse', 'HEAD']);
+      if (provenanceResult.exitCode !== 0) {
+        throw new RemoteFetchError(url, provenanceResult.stderr ?? '');
+      }
+      const foundSha = (provenanceResult.stdout ?? '').trim();
+      if (foundSha !== opts.expectedSha) {
+        throw new RefShaMismatchError(url, ref, opts.expectedSha, foundSha);
+      }
+    }
+
     return await fn(path);
   } finally {
     await cleanup();
@@ -483,8 +555,8 @@ export async function readCatalogDir(
   const catalogFile = Bun.file(catalogPath);
   const fileExists = await catalogFile.exists();
   if (!fileExists) {
-    throw new CatalogParseError('catalog.json introuvable dans le content repo', [
-      'catalog.json introuvable',
+    throw new CatalogParseError('catalog.json not found in the content repo', [
+      'catalog.json not found',
     ]);
   }
 
@@ -501,16 +573,16 @@ export async function readCatalogDir(
   // Step 3 — reject bare array (legacy format).
   if (Array.isArray(raw)) {
     throw new CatalogParseError(
-      'catalog.json doit être un objet wrappé {meta,entries}, pas un tableau nu',
-      ['catalog.json doit être un objet wrappé {meta,entries}, pas un tableau nu'],
+      'catalog.json must be a wrapped object {meta,entries}, not a bare array',
+      ['catalog.json must be a wrapped object {meta,entries}, not a bare array'],
     );
   }
 
   // Step 4 — must be an object with a valid meta block.
   if (raw === null || typeof raw !== 'object') {
     throw new CatalogParseError(
-      'catalog.json doit être un objet wrappé {meta,entries}',
-      ['catalog.json doit être un objet wrappé {meta,entries}'],
+      'catalog.json must be a wrapped object {meta,entries}',
+      ['catalog.json must be a wrapped object {meta,entries}'],
     );
   }
 
@@ -523,7 +595,7 @@ export async function readCatalogDir(
       (issue) => `meta.${issue.path.join('.')}: ${issue.message}`,
     );
     throw new CatalogParseError(
-      `catalog.json: bloc meta invalide — meta.name est requis et doit être non vide`,
+      `catalog.json: invalid meta block — meta.name is required and must not be empty`,
       metaIssues,
     );
   }
@@ -533,8 +605,8 @@ export async function readCatalogDir(
   const rawEntries = obj['entries'];
   if (!Array.isArray(rawEntries)) {
     throw new CatalogParseError(
-      'catalog.json: le champ entries doit être un tableau',
-      ['catalog.json: le champ entries doit être un tableau'],
+      'catalog.json: the entries field must be an array',
+      ['catalog.json: the entries field must be an array'],
     );
   }
 
@@ -556,7 +628,7 @@ export async function readCatalogDir(
 
   if (issues.length > 0) {
     throw new CatalogParseError(
-      `catalog.json contient des entrées invalides: ${issues.join('; ')}`,
+      `catalog.json contains invalid entries: ${issues.join('; ')}`,
       issues,
     );
   }
@@ -575,7 +647,13 @@ export async function readCatalogDir(
  * Delegates clone lifecycle to `withRemoteCheckout` (cleanup guaranteed).
  * Delegates catalog reading to `readCatalogDir`.
  *
+ * `opts.expectedSha` (R1 / lot 6, optional — back-compat) is forwarded
+ * verbatim to `withRemoteCheckout` — see its docstring. The provenance check
+ * runs before catalog.json is even read: a mismatch throws
+ * RefShaMismatchError, not CatalogParseError.
+ *
  * Throws RemoteFetchError when any git command exits non-zero.
+ * Throws RefShaMismatchError (a RemoteFetchError subtype) on a provenance mismatch.
  * Throws CatalogParseError when catalog.json is absent, malformed, or invalid.
  * Throws InvalidRemoteUrlError / InvalidRemoteRefError for unsafe inputs.
  */
@@ -584,7 +662,7 @@ export async function fetchCatalog(
   ref: string,
   isTag: boolean,
   run: CommandRunner,
-  opts: { tmpFactory: TmpDirFactory },
+  opts: { tmpFactory: TmpDirFactory; expectedSha?: string },
 ): Promise<FetchedCatalog> {
   return withRemoteCheckout(url, ref, isTag, run, opts, async (dir) => {
     const { meta, entries } = await readCatalogDir(dir);
@@ -605,15 +683,41 @@ export async function fetchCatalog(
 // ---------------------------------------------------------------------------
 
 /**
- * Returns true when the remote version is newer than the installed version.
+ * Returns true when the remote version represents an update over what is
+ * currently installed.
  *
- * When `remote.isTag` is true AND `installedRef` is a valid semver tag,
- * uses `compareSemver` for a precise version comparison.
+ * R2 (lot 6, D2): `installedSha`, when known (non-empty), is authoritative —
+ * it primes over the ref/semver comparison below, in BOTH directions:
+ *   - differs from `remote.sha` → stale, even under an unchanged ref name
+ *     (a tag re-pushed to a new commit is a real update that a ref-only
+ *     comparison can never see: `compareSemver` reads 0 for an identical
+ *     name).
+ *   - equals `remote.sha`       → NOT stale, even under a changed ref name
+ *     (the remote lost its tags and fell back to HEAD, which happens to be
+ *     the exact commit already installed — nothing actually changed; the
+ *     symmetric case, a renamed ref over identical content, is not an
+ *     update either).
  *
- * Falls back to ref/sha string equality in all other cases (sha-to-sha,
- * sha-to-tag, or non-semver ref).
+ * `installedSha === ''` marks a legacy manifest entry recorded before sha
+ * tracking existed (`ManifestEntry.sha`, core/types.ts:203, mandatory only
+ * going forward — `readManifest` stays entry-shape-tolerant, so an on-disk
+ * entry written by a pre-lot6 build can still lack it at runtime). The sha
+ * comparison is skipped entirely and this degrades to the pre-R2 ref/semver
+ * comparison: when `remote.isTag` is true AND `installedRef` is a valid
+ * semver tag, `compareSemver` gives a precise version comparison; otherwise
+ * falls back to ref/sha string equality (sha-to-sha, sha-to-tag, or
+ * non-semver ref). Documented, not "fixed": a same-name re-push stays
+ * invisible for these entries, exactly as before R2.
  */
-export function isUpdateAvailable(installedRef: string, remote: ResolvedVersion): boolean {
+export function isUpdateAvailable(
+  installedRef: string,
+  installedSha: string,
+  remote: ResolvedVersion,
+): boolean {
+  if (installedSha !== '') {
+    return installedSha !== remote.sha;
+  }
+
   if (remote.isTag) {
     const remoteParsed = parseSemver(remote.ref);
     const installedParsed = parseSemver(installedRef);

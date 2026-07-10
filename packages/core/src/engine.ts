@@ -33,6 +33,7 @@ import { acquireRunLock, type RunLock } from './run-lock';
 import type {
   AppliedPayload,
   Assistant,
+  ClaudeMcpServer,
   Manifest,
   ManifestEntry,
   Nature,
@@ -529,6 +530,10 @@ async function applyInner(
             compensations.push({ kind: 'unlink', target: op.target, store: op.store });
           } else if (op.kind === 'plugin-install') {
             compensations.push({ kind: 'plugin-uninstall', plugin: op.plugin });
+          } else if (op.kind === 'mcp-add') {
+            // Delegated claude mcp install (R8): compensate a failed run by
+            // delegating the exact `claude mcp remove <server> -s <scope>`.
+            compensations.push({ kind: 'mcp-remove', server: op.server, scope: op.scope });
           }
         }
       }
@@ -1145,10 +1150,38 @@ function extractApplied(ops: WriteOp[], targets: string[]): AppliedPayload | und
       server: string;
       config: OpencodeMcpServer;
       description: string;
+      secretRefs?: Record<string, string>;
     }
     | undefined;
   if (mcpOp !== undefined) {
-    return { kind: 'opencode-mcp', server: mcpOp.server, config: mcpOp.config };
+    return {
+      kind: 'opencode-mcp',
+      server: mcpOp.server,
+      config: mcpOp.config,
+      ...(mcpOp.secretRefs === undefined ? {} : { secretRefs: mcpOp.secretRefs }),
+    };
+  }
+
+  // claude mcp (R8, lot 6): a delegated mcp-add op → AppliedClaudeMcp. Records
+  // the rendered config + scope so remove can issue the exact
+  // `claude mcp remove <server> -s <scope>` and check/adopt can deep-compare.
+  const claudeMcpOp = ops.find((op) => op.kind === 'mcp-add') as
+    | {
+      kind: 'mcp-add';
+      server: string;
+      config: ClaudeMcpServer;
+      scope: Scope;
+      secretRefs?: Record<string, string>;
+    }
+    | undefined;
+  if (claudeMcpOp !== undefined) {
+    return {
+      kind: 'claude-mcp',
+      server: claudeMcpOp.server,
+      config: claudeMcpOp.config,
+      scope: claudeMcpOp.scope,
+      ...(claudeMcpOp.secretRefs === undefined ? {} : { secretRefs: claudeMcpOp.secretRefs }),
+    };
   }
 
   const writeTextOp = ops.find((op) => op.kind === 'write-text') as

@@ -11,20 +11,44 @@
  *
  * La fonction est pure et immutable : l'input n'est jamais muté.
  * Elle est idempotente : appliquer deux fois produit le même résultat qu'une fois.
+ *
+ * Couture unique (ADR-0017 §1, lot 6 R4/D4) : `qualifyRef` (préfixage) et
+ * `localId` (dépréfixage, son inverse) sont les DEUX seules fonctions que
+ * tout consommateur (CLI, governance, remote-install…) SHALL utiliser —
+ * aucun site ne réimplémente l'heuristique `includes('/') ? … : prefix`
+ * inline. Les deux transitent par `export * from './qualify'` (index.ts).
  */
 
 import type { CatalogEntry } from './schema';
 
 // ---------------------------------------------------------------------------
-// Helpers
+// Public seam — forward (qualifyRef) / inverse (localId)
 // ---------------------------------------------------------------------------
 
 /**
  * Préfixe `ref` par `<name>/` si elle n'est pas déjà qualifiée.
  * Une ref est considérée qualifiée si elle contient un `/`.
  */
-function qualifyRef(name: string, ref: string): string {
+export function qualifyRef(name: string, ref: string): string {
   return ref.includes('/') ? ref : `${name}/${ref}`;
+}
+
+/**
+ * Retourne la partie locale (non qualifiée) de `id` — inverse de `qualifyRef`.
+ *
+ * Un id est "qualifié" s'il contient un `/` ; la partie locale est tout ce
+ * qui suit le PREMIER `/`. Un id sans `/` est déjà local et est retourné
+ * inchangé.
+ *
+ * Exemples :
+ *   localId('skill:foo')       → 'skill:foo'   (déjà local, inchangé)
+ *   localId('mycat/skill:foo') → 'skill:foo'   (préfixe retiré)
+ *
+ * Pure : ne mute pas `id`.
+ */
+export function localId(id: string): string {
+  const slashIdx = id.indexOf('/');
+  return slashIdx === -1 ? id : id.slice(slashIdx + 1);
 }
 
 /**

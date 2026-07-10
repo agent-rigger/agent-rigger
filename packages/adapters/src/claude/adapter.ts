@@ -18,6 +18,7 @@ import type { Env } from '@agent-rigger/core/paths';
 import type { Scanner } from '@agent-rigger/core/scan';
 import { stubScanner } from '@agent-rigger/core/scan';
 import type {
+  ClaudeMcpServer,
   Nature,
   NatureReport,
   RemovalOp,
@@ -52,6 +53,16 @@ import {
   planRemoveHook,
 } from './hooks';
 import type { ResolvedHook } from './hooks';
+import {
+  adoptMcp,
+  applyMcp,
+  applyRemoveMcp,
+  auditMcp,
+  defaultMcpRunner,
+  planMcp,
+  planRemoveMcp,
+} from './mcp';
+import type { McpRunner } from './mcp';
 import {
   adoptPlugin,
   applyPlugin,
@@ -173,6 +184,24 @@ export interface ClaudeAdapterConfig {
    * In H3 callers inject an arbitrary function (e.g. a constant).
    */
   hookSpec?: (entry: AdapterEntry) => ResolvedHook;
+  /**
+   * Resolve the MCP server id + RENDERED descriptor for an entry (R8, lot 6,
+   * ADR-0019). `config` is already fully rendered — env-refs kept VERBATIM
+   * (`${VAR}`) since Claude Code expands them at spawn (T0). `secretRefs`
+   * (ref→VAR, names only) is threaded to the manifest's AppliedClaudeMcp so a
+   * later `update` re-renders without re-prompting. Required when any entry
+   * with nature 'mcp' is planned or applied (unless `entry.applied` already
+   * carries a 'claude-mcp' payload — offline check/remove).
+   */
+  mcpSource?: (
+    entry: AdapterEntry,
+  ) => { server: string; config: ClaudeMcpServer; secretRefs?: Record<string, string> };
+  /**
+   * Injectable runner for `claude mcp` CLI commands. Defaults to
+   * defaultMcpRunner (Bun.spawn-backed). Replace with a fake runner in tests to
+   * avoid real `claude` invocations.
+   */
+  mcpRunner?: McpRunner;
 }
 
 // ---------------------------------------------------------------------------
@@ -251,6 +280,23 @@ export function createClaudeAdapter(config: ClaudeAdapterConfig): Adapter {
   }
 
   const pluginRunner = config.pluginRunner ?? defaultPluginRunner;
+  const mcpRunner = config.mcpRunner ?? defaultMcpRunner;
+
+  /**
+   * Resolve the mcp server + rendered descriptor for an entry, or raise a clear
+   * error when mcpSource is not configured and an mcp operation is attempted.
+   */
+  function resolveMcpSource(
+    entry: AdapterEntry,
+  ): { server: string; config: ClaudeMcpServer; secretRefs?: Record<string, string> } {
+    if (config.mcpSource === undefined) {
+      throw new Error(
+        `ClaudeAdapter: mcpSource is required to install mcp server "${entry.id}". `
+          + 'Pass an mcpSource resolver in ClaudeAdapterConfig.',
+      );
+    }
+    return config.mcpSource(entry);
+  }
 
   // Nature → { audit, plan, planRemove } — E2-E5 add entries here
   const natureHandlers = new Map<Nature, NatureHandler>([
@@ -361,6 +407,42 @@ export function createClaudeAdapter(config: ClaudeAdapterConfig): Adapter {
       },
     ],
     [
+      'mcp',
+      {
+        // async: resolveMcpSource can throw synchronously (missing mcpSource
+        // config) — declaring these async converts that into a rejected Promise,
+        // the contract every caller of audit/plan/planRemove/adopt relies on.
+        async audit(entry, scope, env): Promise<NatureReport> {
+          const cwd = entry.scope === 'project' ? process.cwd() : undefined;
+          // Prefer applied payload from manifest when available (offline remove/check).
+          const server = entry.applied?.kind === 'claude-mcp'
+            ? entry.applied.server
+            : resolveMcpSource(entry).server;
+          return auditMcp(scope, env, server, cwd);
+        },
+        async plan(entry, scope, env): Promise<WriteOp[]> {
+          const cwd = entry.scope === 'project' ? process.cwd() : undefined;
+          const { server, config: mcpConfig, secretRefs } = resolveMcpSource(entry);
+          return planMcp(scope, env, server, mcpConfig, cwd, secretRefs);
+        },
+        async planRemove(entry, scope, env): Promise<RemovalOp[]> {
+          const cwd = entry.scope === 'project' ? process.cwd() : undefined;
+          const server = entry.applied?.kind === 'claude-mcp'
+            ? entry.applied.server
+            : resolveMcpSource(entry).server;
+          return planRemoveMcp(scope, env, server, cwd);
+        },
+        async adopt(entry, scope, env): Promise<AdoptionResult | undefined> {
+          const cwd = entry.scope === 'project' ? process.cwd() : undefined;
+          // Adoption runs only when no manifest record exists — resolve the
+          // canonical server + RENDERED config, then deep-compare against disk
+          // (FM5, R5: comparing the rendered form avoids a false drift).
+          const { server, config: mcpConfig, secretRefs } = resolveMcpSource(entry);
+          return adoptMcp(scope, env, server, mcpConfig, cwd, secretRefs);
+        },
+      },
+    ],
+    [
       'agent',
       {
         audit(entry, scope, env): Promise<NatureReport> {
@@ -465,6 +547,7 @@ export function createClaudeAdapter(config: ClaudeAdapterConfig): Adapter {
     ['ensure-import', (ops, env) => applyContext(ops, env)],
     ['link', (ops, env) => applySkill(ops, env, scanner)],
     ['plugin-install', (ops, env) => applyPlugin(ops, env, pluginApplyOpts)],
+    ['mcp-add', (ops, env) => applyMcp(ops, env, { run: mcpRunner })],
     ['merge-hooks', (ops, env) => applyHook(ops, env)],
     // Traced hook migration (R1/D8): an install plan may carry remove-hooks
     // ops retiring the previously installed spec. Same executor as the remove
@@ -494,6 +577,7 @@ export function createClaudeAdapter(config: ClaudeAdapterConfig): Adapter {
     // (process.cwd(), resolved inside applyRemoveSkill).
     ['unlink', (ops, env, manifestFiles) => applyRemoveSkill(ops, env, undefined, manifestFiles)],
     ['plugin-uninstall', (ops, env) => applyRemovePlugin(ops, env, { run: pluginRunner })],
+    ['mcp-remove', (ops, env) => applyRemoveMcp(ops, env, { run: mcpRunner })],
     ['remove-hooks', (ops, env) => applyRemoveHook(ops, env)],
   ]);
 

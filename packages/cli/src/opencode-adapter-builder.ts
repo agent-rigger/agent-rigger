@@ -33,22 +33,9 @@ import type { Scanner } from '@agent-rigger/core/scan';
 import { stubScanner } from '@agent-rigger/core/scan';
 import type { OpencodeMcpServer, OpencodePermission } from '@agent-rigger/core/types';
 
-import type { CatalogEntry } from '@agent-rigger/catalog';
+import { type CatalogEntry, localId } from '@agent-rigger/catalog';
 
-// ---------------------------------------------------------------------------
-// localId — strip the source-qualifier prefix from a (potentially qualified) id
-// ---------------------------------------------------------------------------
-
-/**
- * Return the local (unqualified) part of a catalog entry id.
- * Duplicated from adapter-builder.ts (each CLI builder mirrors its adapter
- * package rather than sharing — design.md §1) to keep the two builders
- * independently evolvable.
- */
-function localId(id: string): string {
-  const slashIdx = id.indexOf('/');
-  return slashIdx === -1 ? id : id.slice(slashIdx + 1);
-}
+import { renderMcpConfig } from './mcp-source';
 
 // ---------------------------------------------------------------------------
 // BuildOpencodeAdapterOpts
@@ -70,12 +57,17 @@ function localId(id: string): string {
  *                         re-check hits the cache instead of re-spawning gitleaks/trivy. Omitted →
  *                         falls back to stubScanner (check/remove paths never write content, so a
  *                         stub there is inert).
+ * @param secretOverrides  ref→VAR overrides for mcp secrets (R5, lot 6, D5): from
+ *                         --secret-env flags on install, or replayed from a manifest's
+ *                         secretRefs on update (no re-prompt, ADR-0020 §1). A ref absent
+ *                         from this map defaults to its own name (mcpSource, T6 render).
  */
 export interface BuildOpencodeAdapterOpts {
   externalIds?: Set<string>;
   externalBaseDir?: string;
   effectiveEntries?: Map<string, CatalogEntry>;
   scanner?: Scanner;
+  secretOverrides?: Record<string, string>;
 }
 
 // ---------------------------------------------------------------------------
@@ -121,18 +113,19 @@ function resolveOpencodePluginPath(pluginsDir: string, name: string, id: string)
  * - skillSource      : resolves id → <externalBaseDir>/skills/<id>
  * - agentSource      : resolves id → <externalBaseDir>/agents/<agentId>.md
  * - pluginSource     : resolves id → <externalBaseDir>/plugins/<id>.<ext> (basename lookup)
- * - mcpSource        : resolves { server, config } from effectiveEntries' raw `config` field
+ * - mcpSource        : resolves { server, config, secretRefs? } — config is RENDERED
+ *                       from effectiveEntries' raw `config` field (R5, see mcpSource below)
  *
  * Without an external guardrail: permission is left unset, agentsContent='' (graceful
  * degradation — audit/planRemove fall back to entry.applied for legacy entries).
  *
- * @param _env  Injectable environment — kept for signature parity with buildClaudeAdapter
- *              so adapter-dispatch.ts can call either builder uniformly. Unused today:
- *              no opencode nature needs HOME-relative paths at build time.
+ * @param env   Injectable environment. Used by mcpSource's secret render (R5)
+ *              to check presence of the resolved env var — the SAME seam that
+ *              carries HOME-relative path overrides in tests.
  * @param opts  Optional seam for remote installs, check, and remove.
  */
 export async function buildOpencodeAdapter(
-  _env: Env,
+  env: Env,
   opts?: BuildOpencodeAdapterOpts,
 ): Promise<Adapter> {
   // ---------------------------------------------------------------------------
@@ -237,33 +230,23 @@ export async function buildOpencodeAdapter(
           + 'All plugins must come from the remote checkout (externalBaseDir).',
       );
     },
-    mcpSource: (entry: AdapterEntry): { server: string; config: OpencodeMcpServer } => {
-      const catalogEntry = opts?.effectiveEntries?.get(entry.id);
-
-      if (
-        catalogEntry === undefined
-        || catalogEntry.kind !== 'artifact'
-        || catalogEntry.nature !== 'mcp'
-      ) {
-        throw new Error(
-          `mcpSource: cannot resolve mcp server "${entry.id}" — entry not found in effective `
-            + 'catalog. Pass effectiveEntries with the mcp entry when calling buildOpencodeAdapter.',
-        );
-      }
-
-      // TODO(E-secrets): config is passed through verbatim — env-refs (e.g.
-      // "${GITHUB_TOKEN}") stay literal strings; secret substitution/prompting
-      // is deferred to a later phase (tasks.md E-secrets, ADR-0019).
-      const config = catalogEntry.config;
-      if (config === undefined) {
-        throw new Error(
-          `mcpSource: mcp entry "${entry.id}" has no "config" field in the catalog. `
-            + 'An mcp artifact must declare its server configuration.',
-        );
-      }
-
-      const server = localId(entry.id).replace(/^mcp:/, '');
-      return { server, config: config as unknown as OpencodeMcpServer };
+    mcpSource: (
+      entry: AdapterEntry,
+    ): { server: string; config: OpencodeMcpServer; secretRefs?: Record<string, string> } => {
+      // Shared resolver + secret render (mcp-source.ts); opencode's host-native
+      // form is `{env:VAR}` (T0: opencode does not expand bash-style "${VAR}").
+      const { server, config, secretRefs } = renderMcpConfig(entry, {
+        env,
+        ...(opts?.effectiveEntries === undefined
+          ? {}
+          : { effectiveEntries: opts.effectiveEntries }),
+        ...(opts?.secretOverrides === undefined ? {} : { secretOverrides: opts.secretOverrides }),
+        renderVar: (envVar) => `{env:${envVar}}`,
+      });
+      const opencodeConfig = config as unknown as OpencodeMcpServer;
+      return secretRefs === undefined
+        ? { server, config: opencodeConfig }
+        : { server, config: opencodeConfig, secretRefs };
     },
   };
 

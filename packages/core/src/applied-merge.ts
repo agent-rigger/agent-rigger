@@ -85,8 +85,8 @@ export function mergeApplied(
     };
   }
 
-  // hook / link / opencode-mcp: the plan carries the complete payload by
-  // construction → the last run replaces the previous trace.
+  // hook / link / opencode-mcp / claude-mcp: the plan carries the complete
+  // payload by construction → the last run replaces the previous trace.
   return next;
 }
 

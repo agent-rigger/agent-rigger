@@ -93,7 +93,11 @@ const ENTRIES: CatalogEntry[] = [
 /** Fake fetchCatalogFn that returns the fixture catalog. */
 const fakeFetchCatalog = async (
   _url: string,
-): Promise<{ meta: CatalogMeta; entries: CatalogEntry[] }> => ({ meta: META, entries: ENTRIES });
+): Promise<{ meta: CatalogMeta; entries: CatalogEntry[]; sourceName: string }> => ({
+  meta: META,
+  entries: ENTRIES,
+  sourceName: 'test-catalog',
+});
 
 // ---------------------------------------------------------------------------
 // E1-1 — TTY mode: both injectables provided → proposeInstall called with catalog
@@ -132,7 +136,7 @@ describe('E1-1 — TTY mode: proposeInstall called after successful config persi
       run: runOk,
       fetchCatalogFn: async (url) => {
         receivedUrl = url;
-        return { meta: META, entries: ENTRIES };
+        return { meta: META, entries: ENTRIES, sourceName: 'test-catalog' };
       },
       proposeInstall: async () => [],
     });
@@ -393,7 +397,7 @@ describe('E1-6 — proposeInstall not called when auth fails', () => {
       run: runFail,
       fetchCatalogFn: async () => {
         fetchWasCalled = true;
-        return { meta: META, entries: ENTRIES };
+        return { meta: META, entries: ENTRIES, sourceName: 'test-catalog' };
       },
       proposeInstall: async () => {
         proposeWasCalled = true;

@@ -40,7 +40,10 @@ import {
   fetchCatalog,
   foldCatalogs,
   isUpdateAvailable,
+  localId,
   qualifyEntries,
+  qualifyRef,
+  RefShaMismatchError,
   resolveVersion,
   type TmpDirFactory,
 } from '@agent-rigger/catalog';
@@ -63,7 +66,16 @@ import { LegacyConfigError, loadConfig } from './config';
 import { auditableGovernanceIds, type CatalogGovernanceMeta } from './governance';
 import { PreflightAuthError } from './preflight-auth';
 import { defaultTmpFactory, fetchRemoteCatalog } from './remote';
-import { runRemoteInstall, ScanBlockedError } from './remote-install';
+import {
+  ForeignRequireUnsatisfiedError,
+  runRemoteInstall,
+  ScanBlockedError,
+} from './remote-install';
+import {
+  InvalidSecretEnvFlagError,
+  MissingRequiredSecretError,
+  parseSecretEnvFlags,
+} from './secret-collect';
 import { ANSI, paint, renderEntryInfo, shouldColor, type StatusedEntry } from './ui';
 
 import pkg from '../package.json';
@@ -239,6 +251,13 @@ export interface ParsedArgs {
    */
   resourceIds: string[];
   flags: Record<string, string | boolean>;
+  /**
+   * Every `--secret-env=<ref>=<VAR>` occurrence, in argv order (R5, lot 6).
+   * Kept separate from `flags` (which holds one scalar per key) because this
+   * flag is repeatable — `flags['secret-env']` still gets the LAST raw value
+   * for parity with every other flag, but only this array preserves all of them.
+   */
+  secretEnvFlags: string[];
 }
 
 /**
@@ -262,6 +281,7 @@ export interface ParsedArgs {
 export function parseArgs(argv: string[]): ParsedArgs {
   const resourceIds: string[] = [];
   const flags: Record<string, string | boolean> = {};
+  const secretEnvFlags: string[] = [];
 
   // Collect flags and positional tokens in order.
   const positionals: string[] = [];
@@ -273,7 +293,12 @@ export function parseArgs(argv: string[]): ParsedArgs {
       if (eqIdx === -1) {
         flags[rest] = true;
       } else {
-        flags[rest.slice(0, eqIdx)] = rest.slice(eqIdx + 1);
+        const key = rest.slice(0, eqIdx);
+        const value = rest.slice(eqIdx + 1);
+        if (key === 'secret-env') {
+          secretEnvFlags.push(value);
+        }
+        flags[key] = value;
       }
     } else {
       positionals.push(arg);
@@ -281,7 +306,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
   }
 
   if (positionals.length === 0) {
-    return { command: undefined, resourceVerb: undefined, resourceIds, flags };
+    return { command: undefined, resourceVerb: undefined, resourceIds, flags, secretEnvFlags };
   }
 
   // positionals.length > 0 is established above; positionals[0] is defined.
@@ -291,29 +316,29 @@ export function parseArgs(argv: string[]): ParsedArgs {
   if (KNOWN_RESOURCES.has(command)) {
     const resourceVerb = positionals[1];
     resourceIds.push(...positionals.slice(2));
-    return { command, resourceVerb, resourceIds, flags };
+    return { command, resourceVerb, resourceIds, flags, secretEnvFlags };
   }
 
   // Top-level install with optional ids: install [<id...>]
   if (command === 'install') {
     resourceIds.push(...positionals.slice(1));
-    return { command, resourceVerb: undefined, resourceIds, flags };
+    return { command, resourceVerb: undefined, resourceIds, flags, secretEnvFlags };
   }
 
   // Top-level remove with required ids: remove <id...>
   if (command === 'remove') {
     resourceIds.push(...positionals.slice(1));
-    return { command, resourceVerb: undefined, resourceIds, flags };
+    return { command, resourceVerb: undefined, resourceIds, flags, secretEnvFlags };
   }
 
   // Top-level update with optional ids: update [<id...>]
   if (command === 'update') {
     resourceIds.push(...positionals.slice(1));
-    return { command, resourceVerb: undefined, resourceIds, flags };
+    return { command, resourceVerb: undefined, resourceIds, flags, secretEnvFlags };
   }
 
   // All other commands (check, init, ls, --help, --version, unknown)
-  return { command, resourceVerb: undefined, resourceIds, flags };
+  return { command, resourceVerb: undefined, resourceIds, flags, secretEnvFlags };
 }
 
 // ---------------------------------------------------------------------------
@@ -385,6 +410,8 @@ Resources:
 Options:
   --scope=<user|project>  Installation scope (default: user).
   --yes                   Skip confirmation prompt (non-interactive install only).
+  --secret-env=<ref>=<VAR>
+                          Override which env var resolves an mcp secret ref (repeatable).
   --help                  Show this help message.
   --version               Show CLI version.
 
@@ -776,12 +803,16 @@ async function resolveEffectiveCatalog(
  * Classify each effective catalog entry as install / update / current for the
  * given scope.
  *
- * - Reads the manifest to find installed ids (+ their ref) for `scope`, keyed
- *   to `assistant` — an id installed for the OTHER assistant is not "current"
- *   here, it falls through to 'install' (one-assistant-per-transaction, R1).
+ * - Reads the manifest to find installed ids (+ their ref/sha) for `scope`,
+ *   keyed to `assistant` — an id installed for the OTHER assistant is not
+ *   "current" here, it falls through to 'install' (one-assistant-per-
+ *   transaction, R1).
  * - Resolves the remote version (top semver tag) per configured catalog so an
- *   installed entry at an older ref is flagged 'update'. A catalog whose version
- *   cannot be resolved degrades gracefully (its installed entries → 'current').
+ *   installed entry at an older ref/sha is flagged 'update' — sha-aware (R2,
+ *   lot 6, D2): a same-name tag re-pushed to a new commit is still flagged,
+ *   and a HEAD-fallback landing back on the already-installed commit is not.
+ *   A catalog whose version cannot be resolved degrades gracefully (its
+ *   installed entries → 'current').
  * - Packs and any non-manifest-tracked entry fall through to 'install'.
  */
 async function computeArtifactStatuses(
@@ -796,10 +827,13 @@ async function computeArtifactStatuses(
   const { readManifest } = await import('@agent-rigger/core/manifest');
   const manifest = await readManifest(manifestPath);
 
-  const installedRefById = new Map<string, string>();
+  const installedById = new Map<string, { ref: string; sha: string }>();
   for (const a of manifest.artifacts) {
     if (a.scope === scope && (a.assistant ?? 'claude') === assistant) {
-      installedRefById.set(a.id, a.ref);
+      // `?? ''` defends against a legacy on-disk entry written before sha
+      // tracking existed — readManifest stays entry-shape-tolerant (R2,
+      // isUpdateAvailable degrades gracefully on an empty sha).
+      installedById.set(a.id, { ref: a.ref, sha: a.sha ?? '' });
     }
   }
 
@@ -821,17 +855,22 @@ async function computeArtifactStatuses(
     const slash = e.id.indexOf('/');
     const prefix = slash === -1 ? '' : e.id.slice(0, slash);
     const remote = remoteByName.get(prefix) ?? null;
-    const installedRef = installedRefById.get(e.id);
-    if (installedRef === undefined) {
+    const installed = installedById.get(e.id);
+    if (installed === undefined) {
       // Surface the to-be-installed version when the remote resolved.
       return remote === null
         ? { id: e.id, status: 'install' as const }
         : { id: e.id, status: 'install' as const, remoteRef: remote.ref };
     }
-    if (remote !== null && isUpdateAvailable(installedRef, remote)) {
-      return { id: e.id, status: 'update' as const, installedRef, remoteRef: remote.ref };
+    if (remote !== null && isUpdateAvailable(installed.ref, installed.sha, remote)) {
+      return {
+        id: e.id,
+        status: 'update' as const,
+        installedRef: installed.ref,
+        remoteRef: remote.ref,
+      };
     }
-    return { id: e.id, status: 'current' as const, installedRef };
+    return { id: e.id, status: 'current' as const, installedRef: installed.ref };
   });
 }
 
@@ -870,9 +909,8 @@ async function runInteractiveProposeInstall(
 
   // Qualify meta.required/recommended with the source name so that they
   // match the qualified entries in the picker (ADR-0017).
-  const sourceName = catalog.sourceName ?? '';
-  const qualify = (id: string): string =>
-    sourceName !== '' && !id.includes('/') ? `${sourceName}/${id}` : id;
+  const sourceName = catalog.sourceName;
+  const qualify = (id: string): string => qualifyRef(sourceName, id);
   const required = new Set((catalog.meta.required ?? []).map(qualify));
   const recommended = new Set((catalog.meta.recommended ?? []).map(qualify));
 
@@ -933,7 +971,7 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
   const print = deps.print ?? ((msg: string) => process.stdout.write(msg + '\n'));
   const env: Env = deps.env ?? Bun.env;
 
-  const { command, resourceVerb, resourceIds, flags } = parseArgs(argv);
+  const { command, resourceVerb, resourceIds, flags, secretEnvFlags } = parseArgs(argv);
 
   // --version (check before --help so `--version` alone works)
   if (flags['version'] === true) {
@@ -994,6 +1032,7 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
         env,
         print,
         deps,
+        secretEnvFlags,
       });
     }
 
@@ -1092,6 +1131,7 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
         env,
         print,
         deps,
+        secretEnvFlags,
       });
     }
 
@@ -1142,9 +1182,8 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
         // `--yes` universally means "accept defaults, show no prompt" — it takes priority
         // over the interactive TTY picker.
         proposeInstallFn = async (catalog: CatalogProposal): Promise<string[]> => {
-          const sourceName = catalog.sourceName ?? 'principal';
-          const qualify = (id: string): string =>
-            sourceName !== '' && !id.includes('/') ? `${sourceName}/${id}` : id;
+          const sourceName = catalog.sourceName;
+          const qualify = (id: string): string => qualifyRef(sourceName, id);
 
           const required = (catalog.meta.required ?? []).map(qualify);
           const recommended = (catalog.meta.recommended ?? []).map(qualify);
@@ -1346,10 +1385,12 @@ interface ResourceCommandOpts {
   env: Env;
   print: (msg: string) => void;
   deps: CliDeps;
+  /** Every --secret-env=<ref>=<VAR> occurrence (R5, lot 6) — forwarded to `<resource> add`. */
+  secretEnvFlags: string[];
 }
 
 async function handleResourceCommand(opts: ResourceCommandOpts): Promise<number> {
-  const { resource, verb, ids, flags, scope, env, print, deps } = opts;
+  const { resource, verb, ids, flags, scope, env, print, deps, secretEnvFlags } = opts;
 
   const natureMapped = RESOURCE_NATURE_MAP[resource] ?? 'catalog';
 
@@ -1384,7 +1425,7 @@ async function handleResourceCommand(opts: ResourceCommandOpts): Promise<number>
       // they are the just-added source, passed through catalog.sourceName and
       // injected as the explicit catalogUrl by fetchCatalogFn below.
       proposeInstallFn = async (catalog: CatalogProposal): Promise<string[]> => {
-        const addedName = catalog.sourceName ?? ids[0] ?? '';
+        const addedName = catalog.sourceName;
         // catalogUrl: the newly-added source's url is in ids[1] (args: [name, url]).
         // It was passed to fetchCatalogFn and is now canonically stored in the config.
         // Load it from config to ensure consistency (same pattern as init).
@@ -1512,7 +1553,7 @@ async function handleResourceCommand(opts: ResourceCommandOpts): Promise<number>
       return 2;
     }
 
-    return await handleInstall({ ids, flags, scope, env, print, deps });
+    return await handleInstall({ ids, flags, scope, env, print, deps, secretEnvFlags });
   }
 
   // ----- <resource> info <id> -----
@@ -1673,8 +1714,7 @@ async function handleResourceCommand(opts: ResourceCommandOpts): Promise<number>
         'pack:': 'pack',
       };
       // Strip qualifier to get local part for prefix inference.
-      const slashIdx = id.indexOf('/');
-      const localPart = slashIdx === -1 ? id : id.slice(slashIdx + 1);
+      const localPart = localId(id);
       for (const [prefix, nature] of Object.entries(PREFIX_TO_NATURE)) {
         if (localPart.startsWith(prefix)) {
           return nature !== natureMapped;
@@ -1750,13 +1790,23 @@ interface HandleInstallOpts {
   env: Env;
   print: (msg: string) => void;
   deps: CliDeps;
+  /** Every --secret-env=<ref>=<VAR> occurrence, in argv order (R5, lot 6). */
+  secretEnvFlags: string[];
 }
 
 async function handleInstall(opts: HandleInstallOpts): Promise<number> {
-  const { ids, flags, scope, env, print, deps } = opts;
+  const { ids, flags, scope, env, print, deps, secretEnvFlags } = opts;
 
   const yes = flags['yes'] === true;
   const force = flags['force'] === true;
+
+  // R5 (lot 6, D5): collect --secret-env overrides BEFORE any checkout or
+  // run-lock. An invalid "<ref>=<VAR>" value is an actionable error
+  // (InvalidSecretEnvFlagError, mapped to exit 2 by handleError) — fails fast,
+  // before catalogs are even resolved. The resulting ref→VAR map is threaded
+  // through, unconsumed here: the render (env-presence check, substitution)
+  // is T6 — this is plumbing only.
+  const secretOverrides = parseSecretEnvFlags(secretEnvFlags);
 
   // Resolve the target assistant once (R1): flag > config.assistants > detected
   // > TTY prompt > 'claude' fallback (back-compat, see resolveCliAssistant).
@@ -1768,7 +1818,16 @@ async function handleInstall(opts: HandleInstallOpts): Promise<number> {
     // We only support one ad-hoc target per invocation (unambiguous, scannable, qualifiable).
     const firstId = ids[0] as string;
     if (ids.length === 1 && isAdHocTarget(firstId)) {
-      return handleAdHocInstall({ source: firstId, flags, scope, env, print, deps, assistant });
+      return handleAdHocInstall({
+        source: firstId,
+        flags,
+        scope,
+        env,
+        print,
+        deps,
+        assistant,
+        secretOverrides,
+      });
     }
 
     // Reject unqualified ids immediately with an actionable error (ADR-0017 §5).
@@ -1853,6 +1912,7 @@ async function handleInstall(opts: HandleInstallOpts): Promise<number> {
         assistant,
         ...(force ? { force } : {}),
         ...(deps.remote?.scanner === undefined ? {} : { scanner: deps.remote.scanner }),
+        ...(Object.keys(secretOverrides).length === 0 ? {} : { secretOverrides }),
       };
 
       const result = await runRemoteInstall(remoteOpts);
@@ -1957,6 +2017,7 @@ async function handleInstall(opts: HandleInstallOpts): Promise<number> {
       assistant,
       ...(force ? { force } : {}),
       ...(deps.remote?.scanner === undefined ? {} : { scanner: deps.remote.scanner }),
+      ...(Object.keys(secretOverrides).length === 0 ? {} : { secretOverrides }),
     };
 
     const remoteResult = await runRemoteInstall(interactiveOpts);
@@ -1979,6 +2040,8 @@ interface HandleAdHocInstallOpts {
   deps: CliDeps;
   /** Target assistant, already resolved by resolveCliAssistant (R1). */
   assistant: Assistant;
+  /** ref→VAR overrides already parsed from --secret-env by the caller (R5, lot 6). */
+  secretOverrides: Record<string, string>;
 }
 
 /**
@@ -2002,7 +2065,7 @@ interface HandleAdHocInstallOpts {
  *    runRemoteInstall performs the real checkout, scan, and install.
  */
 async function handleAdHocInstall(opts: HandleAdHocInstallOpts): Promise<number> {
-  const { source, flags, scope, env, print, deps, assistant } = opts;
+  const { source, flags, scope, env, print, deps, assistant, secretOverrides } = opts;
 
   const yes = flags['yes'] === true;
   const force = flags['force'] === true;
@@ -2064,6 +2127,7 @@ async function handleAdHocInstall(opts: HandleAdHocInstallOpts): Promise<number>
     assistant,
     ...(force ? { force } : {}),
     ...(deps.remote?.scanner === undefined ? {} : { scanner: deps.remote.scanner }),
+    ...(Object.keys(secretOverrides).length === 0 ? {} : { secretOverrides }),
   };
 
   const result = await runRemoteInstall(remoteOpts);
@@ -2376,7 +2440,9 @@ async function resolveCheckRemoteSections(
         continue;
       }
 
-      const stale = installed.filter((e) => isUpdateAvailable(e.ref, remoteVersion));
+      // `?? ''` defends against a legacy on-disk entry written before sha
+      // tracking existed (R2, isUpdateAvailable degrades gracefully).
+      const stale = installed.filter((e) => isUpdateAvailable(e.ref, e.sha ?? '', remoteVersion));
       if (installed.length === 0) {
         catalogLines.push(
           catalogStatusLine('available', catalog.name, remoteVersion.ref, 0, colorOn),
@@ -2486,9 +2552,39 @@ function handleError(err: unknown, print: (msg: string) => void): number {
     return 2;
   }
 
+  if (err instanceof ForeignRequireUnsatisfiedError) {
+    // R3 (lot 6, D3): a cross-catalogue require is not installed for this
+    // scope/assistant. Actionable — names the requirer, the chain, and the
+    // exact command to run first. Nothing was resolved/scanned/written.
+    print(`[error] ${err.message}`);
+    return 2;
+  }
+
+  if (err instanceof RefShaMismatchError) {
+    // R1 (lot 6, D1): provenance mismatch (branch/tag homonym or TOCTOU) —
+    // install/update refused before anything is written. Never bypassed by
+    // --force (provenance is not a scan policy).
+    print(`[error] ${err.message}`);
+    return 2;
+  }
+
   if (err instanceof ScanBlockedError) {
     print(`[error] ${err.message}`);
     return 1;
+  }
+
+  if (err instanceof InvalidSecretEnvFlagError) {
+    // R5 (lot 6, D5): a malformed --secret-env value is an operator typo —
+    // fails fast, before any catalog is resolved or checked out.
+    print(`[error] ${err.message}`);
+    return 2;
+  }
+
+  if (err instanceof MissingRequiredSecretError) {
+    // R5 (lot 6, D5): a required mcp secret has no --secret-env override and
+    // no prompt is possible (non-TTY) — fail-closed before any write.
+    print(`[error] ${err.message}`);
+    return 2;
   }
 
   if (err instanceof SkillScanBlockedError) {

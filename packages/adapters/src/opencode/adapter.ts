@@ -140,13 +140,19 @@ export interface OpencodeAdapterConfig {
    */
   agentSource?: (entry: AdapterEntry) => string;
   /**
-   * Resolve the MCP server id + config for an entry (design.md §7, ADR-0019).
-   * `config` already carries `${VAR}` env-refs, never literal secret values —
-   * the adapter treats it verbatim, substitution happens upstream of this call.
-   * Required when any entry with nature 'mcp' is planned or applied (unless
-   * `entry.applied` already carries an 'opencode-mcp' payload — offline check/remove).
+   * Resolve the MCP server id + RENDERED config for an entry (design.md §7,
+   * ADR-0019, R5). `config` is already fully rendered — env-refs substituted
+   * to the host's native form — by the caller (mcpSource, e.g.
+   * opencode-adapter-builder.ts); the adapter treats it verbatim and never
+   * substitutes secrets itself. `secretRefs` (ref→VAR, names only, R5/D5)
+   * is threaded through to the manifest's AppliedOpencodeMcp.secretRefs so a
+   * later `update` can re-render without re-prompting. Required when any
+   * entry with nature 'mcp' is planned or applied (unless `entry.applied`
+   * already carries an 'opencode-mcp' payload — offline check/remove).
    */
-  mcpSource?: (entry: AdapterEntry) => { server: string; config: OpencodeMcpServer };
+  mcpSource?: (
+    entry: AdapterEntry,
+  ) => { server: string; config: OpencodeMcpServer; secretRefs?: Record<string, string> };
   /**
    * Resolve the source `.ts`/`.js` module file of an opencode plugin from its
    * AdapterEntry. Required when any entry with nature 'plugin' is planned or
@@ -207,7 +213,9 @@ export function createOpencodeAdapter(config: OpencodeAdapterConfig): Adapter {
    * Resolve the mcp server + config for an entry, or raise a clear error when
    * mcpSource is not configured and an mcp operation is attempted.
    */
-  function resolveMcpSource(entry: AdapterEntry): { server: string; config: OpencodeMcpServer } {
+  function resolveMcpSource(
+    entry: AdapterEntry,
+  ): { server: string; config: OpencodeMcpServer; secretRefs?: Record<string, string> } {
     if (config.mcpSource === undefined) {
       throw new Error(
         `OpencodeAdapter: mcpSource is required to install mcp server "${entry.id}". `
@@ -353,8 +361,8 @@ export function createOpencodeAdapter(config: OpencodeAdapterConfig): Adapter {
         },
         async plan(entry, scope, env): Promise<WriteOp[]> {
           const cwd = entry.scope === 'project' ? process.cwd() : undefined;
-          const { server, config: mcpConfig } = resolveMcpSource(entry);
-          return planMcp(scope, env, server, mcpConfig, cwd);
+          const { server, config: mcpConfig, secretRefs } = resolveMcpSource(entry);
+          return planMcp(scope, env, server, mcpConfig, cwd, secretRefs);
         },
         async planRemove(entry, scope, env): Promise<RemovalOp[]> {
           const cwd = entry.scope === 'project' ? process.cwd() : undefined;
@@ -368,10 +376,11 @@ export function createOpencodeAdapter(config: OpencodeAdapterConfig): Adapter {
         async adopt(entry, scope, env): Promise<AdoptionResult | undefined> {
           const cwd = entry.scope === 'project' ? process.cwd() : undefined;
           // Adoption runs only when no manifest record exists, so there is no
-          // `applied` to prefer — resolve the canonical server + config, then
-          // deep-compare it against disk (FM5).
-          const { server, config: mcpConfig } = resolveMcpSource(entry);
-          return adoptMcp(scope, env, server, mcpConfig, cwd);
+          // `applied` to prefer — resolve the canonical server + RENDERED
+          // config, then deep-compare it against disk (FM5, R5: comparing the
+          // rendered form avoids a false drift against a pre-E-secrets install).
+          const { server, config: mcpConfig, secretRefs } = resolveMcpSource(entry);
+          return adoptMcp(scope, env, server, mcpConfig, cwd, secretRefs);
         },
       },
     ],

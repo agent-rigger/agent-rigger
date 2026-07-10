@@ -31,26 +31,9 @@ import { resolveUserTargets } from '@agent-rigger/core/paths';
 import type { Scanner } from '@agent-rigger/core/scan';
 import { stubScanner } from '@agent-rigger/core/scan';
 
-import type { CatalogEntry } from '@agent-rigger/catalog';
+import { type CatalogEntry, localId } from '@agent-rigger/catalog';
 
-// ---------------------------------------------------------------------------
-// localId — strip the source-qualifier prefix from a (potentially qualified) id
-// ---------------------------------------------------------------------------
-
-/**
- * Return the local (unqualified) part of a catalog entry id.
- *
- * Examples:
- *   'guardrail:main'          → 'guardrail:main'
- *   'principal/guardrail:main' → 'guardrail:main'
- *
- * Used to derive filesystem paths from potentially-qualified catalog ids
- * (ADR-0017: ids carry `<source>/<local-id>` after multi-catalog qualification).
- */
-function localId(id: string): string {
-  const slashIdx = id.indexOf('/');
-  return slashIdx === -1 ? id : id.slice(slashIdx + 1);
-}
+import { renderMcpConfig } from './mcp-source';
 
 // ---------------------------------------------------------------------------
 // hookScriptStorePath
@@ -100,6 +83,10 @@ export function hookScriptStorePath(env: Env): string {
  *                         re-check hits the cache instead of re-spawning gitleaks/trivy. Omitted →
  *                         falls back to stubScanner (check/remove paths never write content, so a
  *                         stub there is inert).
+ * @param secretOverrides  ref→VAR overrides collected by the CLI (--secret-env / TTY prompt,
+ *                         R5, lot 6, D5). Consumed by the claude mcpSource render (R8/T7):
+ *                         env-refs are kept verbatim (`${VAR}`) and the presence check
+ *                         fails closed on a missing `required` secret before any write.
  */
 export interface BuildClaudeAdapterOpts {
   externalIds?: Set<string>;
@@ -108,6 +95,7 @@ export interface BuildClaudeAdapterOpts {
   pluginRunner?: PluginRunner;
   effectiveEntries?: Map<string, CatalogEntry>;
   scanner?: Scanner;
+  secretOverrides?: Record<string, string>;
 }
 
 // ---------------------------------------------------------------------------
@@ -318,10 +306,28 @@ export async function buildClaudeAdapter(
         marketplace: path.join(process.cwd(), '.claude-plugin', 'marketplace.json'),
       };
     },
+    // R5/R8 (lot 6, D5/D6): resolve the mcp server + RENDERED descriptor via the
+    // shared seam. Claude's host-native form keeps env-refs VERBATIM (`${VAR}`)
+    // — Claude Code expands them at server spawn (T0). Secrets fail closed here
+    // (renderMcpConfig → renderSecretRefs) BEFORE any `claude mcp add-json`.
+    mcpSource: (entry) => {
+      const { server, config, secretRefs } = renderMcpConfig(entry, {
+        env,
+        ...(opts?.effectiveEntries === undefined
+          ? {}
+          : { effectiveEntries: opts.effectiveEntries }),
+        ...(opts?.secretOverrides === undefined ? {} : { secretOverrides: opts.secretOverrides }),
+        renderVar: (envVar) => `\${${envVar}}`,
+      });
+      return secretRefs === undefined ? { server, config } : { server, config, secretRefs };
+    },
   };
 
   if (opts?.pluginRunner !== undefined) {
     createOpts.pluginRunner = opts.pluginRunner;
+    // The mcp nature drives the same `claude` binary — reuse the injected runner
+    // so remote-install's CommandRunner adapter (and test fakes) cover both.
+    createOpts.mcpRunner = opts.pluginRunner;
   }
 
   return createClaudeAdapter(createOpts);

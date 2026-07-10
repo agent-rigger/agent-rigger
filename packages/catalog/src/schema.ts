@@ -107,6 +107,88 @@ export const HOOK_EVENTS = [
 export type HookEvent = (typeof HOOK_EVENTS)[number];
 
 // ---------------------------------------------------------------------------
+// SecretDeclSchema — mcp secret declarations (R5, ADR-0019 §2)
+// ---------------------------------------------------------------------------
+
+/**
+ * A single secret an mcp entry needs resolved before it can be rendered.
+ *
+ * `ref` names the env-var reference used in `config.environment`/`config.headers`
+ * (e.g. "GITHUB_TOKEN" for a value written as "${GITHUB_TOKEN}"). `prompt` is
+ * the human-readable label shown when the CLI asks which env var actually
+ * holds it (--secret-env or an interactive prompt, packages/cli). `required`
+ * gates fail-closed behaviour when unresolved; `example`/`help` are advisory
+ * text only, never a real value.
+ */
+export const SecretDeclSchema = z.object({
+  /** Env-var ref name used in config.environment/config.headers (e.g. "GITHUB_TOKEN"). */
+  ref: z.string().min(1),
+  /** Human-readable prompt shown when asking which env var holds this secret. */
+  prompt: z.string().min(1),
+  /** When true, install SHALL fail-closed if this secret is never resolved. */
+  required: z.boolean().optional(),
+  /** Advisory example value format (never a real secret). */
+  example: z.string().optional(),
+  /** Advisory help text or URL (e.g. where to generate the token). */
+  help: z.string().optional(),
+});
+
+/** Inferred type for a single mcp secret declaration. */
+export type SecretDecl = z.infer<typeof SecretDeclSchema>;
+
+// ---------------------------------------------------------------------------
+// Strict mcp secret form (R6, residual ADR-0018)
+// ---------------------------------------------------------------------------
+
+/**
+ * Exact-match "${VAR_NAME}" ref form. Deliberately NOT a "contains a ref"
+ * match (e.g. "Bearer ${TOKEN}" is rejected): the ratified gate decision
+ * (2026-07-10) is strict — env/headers values are refs only, no embedded
+ * interpolation, no plain-list escape hatch.
+ */
+const SECRET_REF_PATTERN = /^\$\{[A-Za-z_][A-Za-z0-9_]*\}$/;
+
+/**
+ * The mcp config sub-fields whose values may carry a secret (ADR-0019 §2).
+ * `environment`/`headers` are opencode's canonical fields; `env` is Claude
+ * Code's native stdio field (R8) — the render step (mcp-source.ts) expands
+ * secret refs in all three, so the parse-time gate SHALL cover all three too,
+ * or a literal written to `env` for a claude-targeted entry parses clean and
+ * reopens the exact three-copies leak R6/ADR-0018 closed for
+ * `environment`/`headers`.
+ */
+const MCP_SECRET_FIELDS = ['environment', 'headers', 'env'] as const;
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Refuse any `config.environment`/`config.headers` value that is not an
+ * exact "${VAR_NAME}" ref — scanner-independent, parse-time only (R6). Adds
+ * one issue per offending key, naming both the entry id and the field path.
+ */
+function checkMcpSecretRefsStrict(
+  entryId: string,
+  config: Record<string, unknown>,
+  ctx: z.RefinementCtx,
+): void {
+  for (const field of MCP_SECRET_FIELDS) {
+    const sub = config[field];
+    if (!isPlainRecord(sub)) continue;
+    for (const [key, value] of Object.entries(sub)) {
+      if (typeof value === 'string' && SECRET_REF_PATTERN.test(value)) continue;
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['config', field, key],
+        message: `mcp entry "${entryId}" has a non-ref value at config.${field}.${key} — `
+          + 'use a "${VAR_NAME}" reference instead of a literal value',
+      });
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // ArtifactEntrySchema — kind:'artifact'
 // ---------------------------------------------------------------------------
 
@@ -185,26 +267,41 @@ export const ArtifactEntrySchema = CommonFieldsSchema.extend({
 
   /**
    * Raw MCP server configuration. Meaningful when nature === 'mcp'.
-   * Passed through verbatim by the opencode adapter builder — env-refs (e.g.
-   * "${GITHUB_TOKEN}") stay literal strings; secret substitution is deferred
-   * (tracked as E-secrets in tasks.md, ADR-0019), not validated here.
+   * `environment`/`headers`/`env` values SHALL be "${VAR_NAME}" refs — a
+   * literal value is rejected at parse time (R6, superRefine below), for
+   * every field the render step expands (MCP_SECRET_FIELDS), independently
+   * of any scanner. Substitution of the ref (env-var lookup + fail-closed on
+   * a missing `required` secret) happens at render time (mcpSource, ADR-0019
+   * §3), not here.
    */
   config: z.record(z.string(), z.unknown()).optional(),
+
+  /**
+   * Secrets this mcp entry needs resolved before it can be rendered.
+   * Meaningful when nature === 'mcp'. Declarative only — no value ever lives
+   * here or anywhere in the catalog (ADR-0019 §2).
+   */
+  secrets: z.array(SecretDeclSchema).optional(),
 }).superRefine((data, ctx) => {
-  if (data.nature !== 'hook') return;
-  if (data.event === undefined) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ['event'],
-      message: "hook entries require 'event'",
-    });
+  if (data.nature === 'hook') {
+    if (data.event === undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['event'],
+        message: "hook entries require 'event'",
+      });
+    }
+    if (data.matcher === undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['matcher'],
+        message: "hook entries require 'matcher'",
+      });
+    }
   }
-  if (data.matcher === undefined) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ['matcher'],
-      message: "hook entries require 'matcher'",
-    });
+
+  if (data.nature === 'mcp' && data.config !== undefined) {
+    checkMcpSecretRefsStrict(data.id, data.config, ctx);
   }
 });
 

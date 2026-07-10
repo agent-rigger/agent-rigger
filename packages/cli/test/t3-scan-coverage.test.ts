@@ -76,7 +76,15 @@ const CATALOG_URL = 'https://example.com/content-repo.git';
 // Catalog fixtures
 // ---------------------------------------------------------------------------
 
-/** Secret-shaped mcp config — the leaked value lives in config.env, inline in catalog.json. */
+/**
+ * Secret-shaped mcp config, inline in catalog.json. `environment.TOKEN` is a
+ * ref (lot 6, R6: a literal here is now a hard parse-time error, closed
+ * BEFORE any scanner runs — see lot6-r6-mcp-form.test.ts, packages/catalog).
+ * The fake scanners in this file don't inspect content — findings are
+ * hardcoded by each test — so this fixture only needs to stay schema-valid;
+ * it still exercises "does catalog.json get scanned at all" (T3-2/3-4/3-6/3-7),
+ * the actual behaviour under test here.
+ */
 const MCP_LEAKY_ENTRY: CatalogEntry = {
   kind: 'artifact',
   id: 'mcp:leaky',
@@ -86,7 +94,7 @@ const MCP_LEAKY_ENTRY: CatalogEntry = {
   config: {
     type: 'local',
     command: ['bunx', 'leaky-mcp-server'],
-    environment: { TOKEN: `ghp_${'a'.repeat(36)}` },
+    environment: { TOKEN: '${TOKEN}' },
   },
 };
 

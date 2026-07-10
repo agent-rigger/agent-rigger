@@ -110,15 +110,19 @@ export async function auditMcp(
  *
  * Returns [] when the server is already declared (idempotent — a pre-existing
  * server of the same id is preserved, matching `mergeMcp`'s semantics). Returns
- * [{ kind: 'merge-mcp', path, server, config, description }] otherwise.
+ * [{ kind: 'merge-mcp', path, server, config, description, secretRefs? }] otherwise.
  *
  * Read-only: no filesystem writes.
  *
- * @param scope   Installation scope.
- * @param env     Injectable env for HOME resolution.
- * @param server  The MCP server id to install.
- * @param config  The (already resolved) server config — env-refs only, never literal secrets.
- * @param cwd     Working directory (only used when scope is 'project').
+ * @param scope       Installation scope.
+ * @param env         Injectable env for HOME resolution.
+ * @param server      The MCP server id to install.
+ * @param config      The (already resolved/RENDERED) server config — env-refs
+ *                     only, never literal secrets.
+ * @param cwd         Working directory (only used when scope is 'project').
+ * @param secretRefs  ref→VAR mapping (names only, R5/D5) carried through to the
+ *                     manifest's AppliedOpencodeMcp.secretRefs. Omitted when the
+ *                     entry declares no secrets.
  */
 export async function planMcp(
   scope: Scope,
@@ -126,6 +130,7 @@ export async function planMcp(
   server: string,
   config: OpencodeMcpServer,
   cwd?: string,
+  secretRefs?: Record<string, string>,
 ): Promise<WriteOp[]> {
   const report = await auditMcp(scope, env, server, cwd);
   if (report.state === 'present') {
@@ -139,6 +144,7 @@ export async function planMcp(
     server,
     config,
     description: `Merge opencode MCP server "${server}"`,
+    ...(secretRefs === undefined ? {} : { secretRefs }),
   };
   return [op];
 }
@@ -194,11 +200,15 @@ export async function planRemoveMcp(
  *
  * Read-only: no filesystem writes.
  *
- * @param scope   Installation scope.
- * @param env     Injectable env for HOME resolution.
- * @param server  The canonical MCP server id.
- * @param config  The canonical server config to deep-compare against disk.
- * @param cwd     Working directory (only used when scope is 'project').
+ * @param scope       Installation scope.
+ * @param env         Injectable env for HOME resolution.
+ * @param server      The canonical MCP server id.
+ * @param config      The canonical (already RENDERED) server config to
+ *                     deep-compare against disk — comparing the rendered form
+ *                     avoids a false drift against a pre-E-secrets install (R5).
+ * @param cwd         Working directory (only used when scope is 'project').
+ * @param secretRefs  ref→VAR mapping (names only, R5/D5) recorded onto the
+ *                     adopted entry's applied payload, if the entry declares secrets.
  */
 export async function adoptMcp(
   scope: Scope,
@@ -206,6 +216,7 @@ export async function adoptMcp(
   server: string,
   config: OpencodeMcpServer,
   cwd?: string,
+  secretRefs?: Record<string, string>,
 ): Promise<AdoptionResult | undefined> {
   const opencodeJsonPath = resolveOpencodeJsonPath(scope, env, cwd);
   const settings = await readOpencodeJson(opencodeJsonPath);
@@ -217,7 +228,12 @@ export async function adoptMcp(
   }
 
   return {
-    applied: { kind: 'opencode-mcp', server, config },
+    applied: {
+      kind: 'opencode-mcp',
+      server,
+      config,
+      ...(secretRefs === undefined ? {} : { secretRefs }),
+    },
     files: [opencodeJsonPath],
   };
 }

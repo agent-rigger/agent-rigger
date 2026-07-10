@@ -671,7 +671,7 @@ describe('fetchCatalog — absent catalog.json triggers CatalogParseError', () =
     ).rejects.toBeInstanceOf(CatalogParseError);
   });
 
-  it('error message mentions catalog.json being introuvable', async () => {
+  it('error message mentions catalog.json being not found', async () => {
     const { factory } = await makeTmpFactory(undefined);
     try {
       await fetchCatalog('https://example.com/catalog.git', 'v1.0.0', true, makeCloneRunner(), {
@@ -680,7 +680,7 @@ describe('fetchCatalog — absent catalog.json triggers CatalogParseError', () =
       expect(true).toBe(false);
     } catch (e) {
       expect(e).toBeInstanceOf(CatalogParseError);
-      expect((e as CatalogParseError).message).toMatch(/introuvable/i);
+      expect((e as CatalogParseError).message).toMatch(/not found/i);
     }
   });
 });
@@ -919,7 +919,7 @@ describe('resolveVersion — empty HEAD sha triggers RemoteFetchError', () => {
       expect(true).toBe(false);
     } catch (e) {
       expect(e).toBeInstanceOf(RemoteFetchError);
-      expect((e as RemoteFetchError).message).toMatch(/vide/i);
+      expect((e as RemoteFetchError).message).toMatch(/empty/i);
     }
   });
 });
@@ -1533,11 +1533,11 @@ describe('readCatalogDir — absent catalog.json throws CatalogParseError', () =
     }
   });
 
-  it('error message mentions introuvable', async () => {
+  it('error message mentions not found', async () => {
     const { dir, cleanup } = await makeReadCatalogDir(undefined);
     try {
       await expect(readCatalogDir(dir)).rejects.toMatchObject({
-        message: expect.stringMatching(/introuvable/i),
+        message: expect.stringMatching(/not found/i),
       });
     } finally {
       await cleanup();
@@ -1731,39 +1731,44 @@ describe('compareSemver — SemVer §11 strict prerelease ordering', () => {
 // isUpdateAvailable
 // ---------------------------------------------------------------------------
 
-describe('isUpdateAvailable — tag vs tag', () => {
+// `installedSha` is passed as '' throughout this section: these tests target
+// the ref/semver comparison in isolation, which R2 (lot 6, D2) only reaches
+// when the installed sha is unknown (the legacy path — see
+// lot6-r2-update-sha.test.ts for the sha-aware comparison that now primes
+// when `installedSha` is known).
+describe('isUpdateAvailable — tag vs tag (installedSha unknown, legacy path)', () => {
   it('returns true when remote tag is newer (v1.0.0 installed, v1.1.0 remote)', () => {
     const remote = { ref: 'v1.1.0', sha: SHA_B, isTag: true };
-    expect(isUpdateAvailable('v1.0.0', remote)).toBe(true);
+    expect(isUpdateAvailable('v1.0.0', '', remote)).toBe(true);
   });
 
   it('returns false when remote tag equals installed (v1.2.0 == v1.2.0)', () => {
     const remote = { ref: 'v1.2.0', sha: SHA_B, isTag: true };
-    expect(isUpdateAvailable('v1.2.0', remote)).toBe(false);
+    expect(isUpdateAvailable('v1.2.0', '', remote)).toBe(false);
   });
 
   it('returns false when installed is newer than remote (v2.0.0 installed, v1.0.0 remote)', () => {
     const remote = { ref: 'v1.0.0', sha: SHA_A, isTag: true };
-    expect(isUpdateAvailable('v2.0.0', remote)).toBe(false);
+    expect(isUpdateAvailable('v2.0.0', '', remote)).toBe(false);
   });
 });
 
-describe('isUpdateAvailable — sha fallback path', () => {
+describe('isUpdateAvailable — sha fallback path (installedSha unknown, legacy path)', () => {
   it('returns true when shas differ (installed sha A, remote sha B)', () => {
     const remote = { ref: SHA_B, sha: SHA_B, isTag: false };
-    expect(isUpdateAvailable(SHA_A, remote)).toBe(true);
+    expect(isUpdateAvailable(SHA_A, '', remote)).toBe(true);
   });
 
   it('returns false when shas are identical', () => {
     const remote = { ref: SHA_A, sha: SHA_A, isTag: false };
-    expect(isUpdateAvailable(SHA_A, remote)).toBe(false);
+    expect(isUpdateAvailable(SHA_A, '', remote)).toBe(false);
   });
 });
 
-describe('isUpdateAvailable — non-semver installed ref', () => {
+describe('isUpdateAvailable — non-semver installed ref (installedSha unknown, legacy path)', () => {
   it('returns true when installed is a sha but remote is a semver tag', () => {
     // installed is a raw sha (non-semver) — falls back to ref/sha comparison
     const remote = { ref: 'v1.0.0', sha: SHA_B, isTag: true };
-    expect(isUpdateAvailable(SHA_A, remote)).toBe(true);
+    expect(isUpdateAvailable(SHA_A, '', remote)).toBe(true);
   });
 });

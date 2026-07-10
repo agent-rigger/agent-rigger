@@ -1269,12 +1269,12 @@ describe('renderRemovalPlan — color', () => {
 // ---------------------------------------------------------------------------
 
 describe('buildStatusOptions', () => {
-  it('embeds the installed version in the "À jour" label, not a hint', () => {
+  it('embeds the installed version in the "Up to date" label, not a hint', () => {
     const entries: StatusedEntry[] = [
       { id: 'jr/hook:guard-command', status: 'current', installedRef: 'v0.2.1' },
     ];
     const opts = buildStatusOptions(entries);
-    const current = opts['À jour (cocher = réinstaller)'];
+    const current = opts['Up to date (check to reinstall)'];
     expect(current).toEqual([
       { value: 'jr/hook:guard-command', label: 'jr/hook:guard-command (✓ v0.2.1)' },
     ]);
@@ -1282,36 +1282,36 @@ describe('buildStatusOptions', () => {
     expect(current?.[0]).not.toHaveProperty('hint');
   });
 
-  it('embeds old → new in the "À mettre à jour" label', () => {
+  it('embeds old → new in the "To update" label', () => {
     const entries: StatusedEntry[] = [
       { id: 'jr/agent:pm', status: 'update', installedRef: 'v0.1.0', remoteRef: 'v0.2.1' },
     ];
     const opts = buildStatusOptions(entries);
-    expect(opts['À mettre à jour']).toEqual([
+    expect(opts['To update']).toEqual([
       { value: 'jr/agent:pm', label: 'jr/agent:pm (v0.1.0 → v0.2.1)' },
     ]);
   });
 
-  it('shows the target version on "À installer" rows when remoteRef is known', () => {
+  it('shows the target version on "To install" rows when remoteRef is known', () => {
     const entries: StatusedEntry[] = [
       { id: 'jr/skill:react-testing', status: 'install', remoteRef: 'v0.2.1' },
     ];
     const opts = buildStatusOptions(entries);
-    expect(opts['À installer']).toEqual([
+    expect(opts['To install']).toEqual([
       { value: 'jr/skill:react-testing', label: 'jr/skill:react-testing (→ v0.2.1)' },
     ]);
   });
 
-  it('falls back to the bare id on "À installer" when remoteRef is unavailable', () => {
+  it('falls back to the bare id on "To install" when remoteRef is unavailable', () => {
     const entries: StatusedEntry[] = [{ id: 'jr/skill:react-testing', status: 'install' }];
     const opts = buildStatusOptions(entries);
-    expect(opts['À installer']).toEqual([
+    expect(opts['To install']).toEqual([
       { value: 'jr/skill:react-testing', label: 'jr/skill:react-testing' },
     ]);
   });
 
   it('omits empty groups', () => {
     const opts = buildStatusOptions([{ id: 'a', status: 'install', remoteRef: 'v1' }]);
-    expect(Object.keys(opts)).toEqual(['À installer']);
+    expect(Object.keys(opts)).toEqual(['To install']);
   });
 });

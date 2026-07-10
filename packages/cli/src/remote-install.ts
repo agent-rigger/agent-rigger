@@ -38,26 +38,32 @@ import type { Assistant } from '@agent-rigger/core';
 import { createCompositeScanner } from '@agent-rigger/core';
 import { assertSafeArtifactName } from '@agent-rigger/core/artifact-name';
 import { assertNever } from '@agent-rigger/core/assert-never';
+import { findEntry, readManifest } from '@agent-rigger/core/manifest';
 import type { Env } from '@agent-rigger/core/paths';
 import { memoizeScanner } from '@agent-rigger/core/scan';
 import type { Scanner } from '@agent-rigger/core/scan';
-import type { Scope } from '@agent-rigger/core/types';
+import type { Manifest, Scope } from '@agent-rigger/core/types';
 
 import {
   type ArtifactEntry,
+  type CatalogEntry,
+  localId,
   mergeCatalogs,
   qualifyEntries,
+  qualifyRef,
   readCatalogDir,
   resolveVersion,
+  type SecretDecl,
   type TmpDirFactory,
   withRemoteCheckout,
 } from '@agent-rigger/catalog';
-import { resolve } from '@agent-rigger/catalog/resolver';
+import { collectForeignRequires, resolve } from '@agent-rigger/catalog/resolver';
 import type { CommandRunner } from '@agent-rigger/catalog/tool-check';
 
 import { buildAdapter } from './adapter-dispatch';
 import type { InstallResult } from './cmd-install';
 import { runInstall } from './cmd-install';
+import { resolveSecretOverrides } from './secret-collect';
 
 // ---------------------------------------------------------------------------
 // ScanBlockedError
@@ -84,21 +90,101 @@ export class ScanBlockedError extends Error {
 }
 
 // ---------------------------------------------------------------------------
-// localId — strip the source-qualifier prefix from a (potentially qualified) id
+// ForeignRequireUnsatisfiedError — R3/D3 (lot 6)
 // ---------------------------------------------------------------------------
 
 /**
- * Return the local (unqualified) part of a catalog entry id.
+ * Thrown by `partitionForeignRequires` (the R3 pre-pass, D3) when a
+ * cross-catalogue `requires` ref, reachable from the current selection, is
+ * NOT already installed for this scope/assistant.
  *
- * Examples:
- *   'skill:foo'          → 'skill:foo'   (no prefix → unchanged)
- *   'principal/skill:foo' → 'skill:foo'  (prefix stripped)
- *
- * This is the inverse of the qualification applied by qualifyEntries.
+ * Actionable: names the ref, the full requirer chain, and the exact command
+ * to run first. Thrown BEFORE `resolve()` ever runs — no partial checkout
+ * state, nothing scanned, nothing written (fail-closed of the whole group,
+ * same guarantee as any other pre-resolution error).
  */
-function localId(id: string): string {
-  const slashIdx = id.indexOf('/');
-  return slashIdx === -1 ? id : id.slice(slashIdx + 1);
+export class ForeignRequireUnsatisfiedError extends Error {
+  /** The qualified foreign ref that is not installed. */
+  readonly ref: string;
+  /** Qualified DFS chain — the last element is the direct requirer. */
+  readonly chain: string[];
+
+  constructor(ref: string, chain: string[]) {
+    const requirer = chain.at(-1) ?? ref;
+    const chainText = [...chain, ref].join(' -> ');
+    super(
+      `${requirer} requires "${ref}", which is not installed for this scope/assistant `
+        + `(chain: ${chainText}). Install it first: agent-rigger install ${ref}`,
+    );
+    this.name = 'ForeignRequireUnsatisfiedError';
+    this.ref = ref;
+    this.chain = chain;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// partitionForeignRequires — R3 pre-pass (D3)
+// ---------------------------------------------------------------------------
+
+/**
+ * Partition every cross-catalogue require reachable from `rawIds` (raw,
+ * unqualified ids — the same space as `rawEffective`) by manifest presence,
+ * BEFORE `resolve()` ever runs.
+ *
+ *  - Present in the manifest for (scope, assistant) → added to the returned
+ *    Set so `resolve()` skips it (`externallySatisfied`) instead of throwing
+ *    `UnknownEntryError` on a ref it can never find in a single-catalogue index.
+ *  - Absent → throws `ForeignRequireUnsatisfiedError` immediately — fail-closed,
+ *    group-wide (nothing has been resolved, scanned, or written yet).
+ *
+ * No-op (returns an empty Set) when `sourceName` is `undefined`: without a
+ * catalogue name nothing can be qualified, so the cross-catalogue distinction
+ * doesn't exist (back-compat with callers that never qualify).
+ */
+export function partitionForeignRequires(
+  rawIds: string[],
+  rawEffective: CatalogEntry[],
+  sourceName: string | undefined,
+  manifest: Manifest,
+  scope: Scope,
+  assistant: Assistant,
+): Set<string> {
+  const externallySatisfied = new Set<string>();
+  if (sourceName === undefined) {
+    return externallySatisfied;
+  }
+
+  const foreign = collectForeignRequires(rawIds, rawEffective, sourceName);
+  for (const fr of foreign) {
+    if (findEntry(manifest, fr.ref, scope, assistant) !== undefined) {
+      externallySatisfied.add(fr.ref);
+      continue;
+    }
+    const chain = fr.requiredBy.map((id) => qualifyRef(sourceName, id));
+    throw new ForeignRequireUnsatisfiedError(fr.ref, chain);
+  }
+
+  return externallySatisfied;
+}
+
+/**
+ * Remove any `requires[]` entry that is in `externallySatisfied` from every
+ * catalog entry. Applied to the QUALIFIED effective catalog handed to
+ * `runInstall`, whose own internal `resolve()` call has no knowledge of the
+ * Set threaded through the FIRST `resolve()` call above — pruning the ref out
+ * of the graph entirely keeps the second pass from re-discovering (and
+ * throwing on) the exact same already-satisfied foreign require.
+ */
+function pruneSatisfiedRequires(
+  entries: CatalogEntry[],
+  externallySatisfied: Set<string>,
+): CatalogEntry[] {
+  if (externallySatisfied.size === 0) return entries;
+  return entries.map((entry) => {
+    if (entry.requires === undefined) return entry;
+    const pruned = entry.requires.filter((r) => !externallySatisfied.has(r));
+    return pruned.length === entry.requires.length ? entry : { ...entry, requires: pruned };
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -307,6 +393,26 @@ export async function runRemoteInstall(opts: {
    * for passing pre-qualified ids — `localId()` normalises them either way.
    */
   sourceName?: string;
+  /**
+   * ref→VAR overrides collected from --secret-env, already parsed by the
+   * caller BEFORE this checkout begins (secret-collect.ts's
+   * parseSecretEnvFlags). A ref declared by an mcp entry actually being
+   * installed but absent here still gets resolved below — via a TTY prompt
+   * or the non-TTY ladder (decideSecretOverride) — before the adapter is
+   * built, so this map is a lower bound, not the final one.
+   */
+  secretOverrides?: Record<string, string>;
+  /**
+   * Whether the current process is an interactive TTY (R5: flag > TTY prompt
+   * > non-TTY actionable error/default). Defaults to `process.stdout.isTTY
+   * === true`; override in tests for a deterministic branch.
+   */
+  isTTY?: boolean;
+  /**
+   * Injectable picker for a declared secret with no --secret-env override,
+   * invoked only in a TTY. Defaults to secret-collect.ts's clack prompt.
+   */
+  secretPicker?: (secret: SecretDecl) => Promise<string>;
 }): Promise<InstallResult> {
   const {
     ids,
@@ -350,7 +456,11 @@ export async function runRemoteInstall(opts: {
     version.ref,
     version.isTag,
     runner,
-    { tmpFactory },
+    // R1 (lot 6, D1): the checkout's HEAD must match the sha ls-remote just
+    // resolved — fail-closed (RefShaMismatchError) before anything is read
+    // or written when a homonymous branch/tag or a TOCTOU re-push landed a
+    // different commit than the one the manifest is about to describe.
+    { tmpFactory, expectedSha: version.sha },
     async (dir) => {
       const { entries: remoteEntries } = await readCatalogDir(dir);
 
@@ -371,13 +481,29 @@ export async function runRemoteInstall(opts: {
 
       // Resolve against raw (unqualified) catalog first.
       const { entries: rawEffective } = mergeCatalogs([], remoteEntries);
-      const rawResolved = resolve(rawIds, rawEffective);
+
+      // R3 pre-pass (lot 6, D3): partition every cross-catalogue require
+      // reachable from rawIds by manifest presence BEFORE resolve() runs —
+      // satisfied ones are pruned via externallySatisfied; an absent one
+      // throws ForeignRequireUnsatisfiedError here, fail-closed, before any
+      // checkout content is read further, scanned, or written.
+      const manifest = await readManifest(manifestPath);
+      const externallySatisfied = partitionForeignRequires(
+        rawIds,
+        rawEffective,
+        sourceName,
+        manifest,
+        scope,
+        assistant,
+      );
+
+      const rawResolved = resolve(rawIds, rawEffective, externallySatisfied);
 
       // When a sourceName is provided, qualify all resolved entries so that the
       // manifest stores fully-qualified ids (e.g. 'principal/guardrail:main').
       // The adapter and version lookup still key by qualified id.
       const qualify = (id: string): string =>
-        sourceName !== undefined && !id.includes('/') ? `${sourceName}/${id}` : id;
+        sourceName === undefined ? id : qualifyRef(sourceName, id);
 
       const resolved: ArtifactEntry[] = sourceName === undefined
         ? rawResolved
@@ -386,9 +512,14 @@ export async function runRemoteInstall(opts: {
       // Qualify the effective catalog using qualifyEntries so that pack members,
       // requires, and ids are ALL qualified (not just the top-level id field).
       // This prevents UnknownEntryError when resolve() tries to look up pack members.
-      const effective = sourceName === undefined
-        ? rawEffective
-        : qualifyEntries(sourceName, rawEffective);
+      // pruneSatisfiedRequires (R3/D3) then strips any already-satisfied foreign
+      // require from entries.requires[] — runInstall calls resolve() a SECOND
+      // time (selectedIds, catalog) with no knowledge of externallySatisfied, so
+      // the ref must be gone from the graph, not merely skippable.
+      const effective = pruneSatisfiedRequires(
+        sourceName === undefined ? rawEffective : qualifyEntries(sourceName, rawEffective),
+        externallySatisfied,
+      );
 
       // All entries from the remote catalog are sourced from the checkout.
       // - Skills / agents / guardrails / contexts / hooks / opencode plugins:
@@ -418,6 +549,28 @@ export async function runRemoteInstall(opts: {
       // Build effectiveEntries map for hookSpec resolution (qualified ids).
       const effectiveEntries = new Map(effective.map((e) => [e.id, e]));
 
+      // R5 (lot 6, D5 gap-fix): resolve the ref→VAR mapping for every secret
+      // declared by an mcp entry actually being installed. A --secret-env
+      // override always wins; otherwise, in a TTY, the mandated interactive
+      // prompt runs HERE (secrets are only known once the catalog is
+      // resolved, hence after checkout, not before it) — resolveSecretOverrides
+      // was previously built and unit-tested but never called from an install
+      // path, so a TTY install with an unresolved required secret hard-failed
+      // instead of asking. Non-TTY behaviour is unchanged: renderMcpConfig
+      // (mcp-source.ts) still fails closed on an unresolved `required` secret
+      // right below, with the same actionable error.
+      const declaredSecrets = resolved
+        .filter((e) => e.nature === 'mcp')
+        .flatMap((e) => e.secrets ?? []);
+      const secretOverrides = declaredSecrets.length === 0
+        ? opts.secretOverrides
+        : await resolveSecretOverrides({
+          secrets: declaredSecrets,
+          overrides: opts.secretOverrides ?? {},
+          isTTY: opts.isTTY ?? process.stdout.isTTY === true,
+          ...(opts.secretPicker === undefined ? {} : { picker: opts.secretPicker }),
+        });
+
       // Thread the memoized scanner to the adapter's apply-time re-check only
       // on the non-force path. When !force, scanEntries above has ALREADY
       // thrown ScanBlockedError on any blocking verdict — so by the time we
@@ -440,6 +593,13 @@ export async function runRemoteInstall(opts: {
         // verdict would wrongly re-throw at apply. Defense-in-depth, redundant
         // while applied skills stay a subset of the gate's scanned set.
         ...(force ? {} : { scanner }),
+        // R5 (lot 6, D5): threaded through to the builder — mcpSource resolves
+        // secretRefs (override, TTY-prompted, or ref default — see above),
+        // checks env presence, and fails closed on an unresolved `required`
+        // secret (render step, mcpSource).
+        ...(secretOverrides === undefined || Object.keys(secretOverrides).length === 0
+          ? {}
+          : { secretOverrides }),
       });
 
       const versionFor = (
