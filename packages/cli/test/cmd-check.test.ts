@@ -3,14 +3,20 @@
  *
  * Strategy:
  * - Real createClaudeAdapter + real filesystem (isolated RIGGER_HOME via tmp dir).
- * - Fake CommandRunner for tool checks (no real shell invocations).
  * - No process.exit, no while loops.
+ *
+ * `runCheck` is a read-only audit: it MUST NOT execute any shell command. It
+ * used to run the catalog's advisory `tool` `check` commands via
+ * `checkTools`/`toolRunner` — that plumbing has been removed structurally
+ * (no `toolEntries`/`toolRunner` option, no tool advisory output section) so
+ * `check` can never become an RCE vector. See cli.test.ts for the end-to-end
+ * proof that the effective catalog's tool entries never reach a shell.
  *
  * Scenarios:
  * 1. Complete config  → exitCode 0, output contains present indicators.
  * 2. Incomplete config (deny missing) → exitCode 3, output lists missing entries.
  * 3. Invalid JSON in settings.json → exitCode 2, output actionable (mentions file).
- * 4. Advisory tools (required absent) → exitCode unchanged by audit, output signals missing tool.
+ * 4. Output no longer contains a tool advisory section.
  * 5. Drift note: M0 audit = present/missing binary for guardrails; drift is not simulated here
  *    because the guardrail handler returns 'present'/'missing' (no sha drift in M0).
  *    The drift path in renderReport is exercised at the unit level in ui.test.ts.
@@ -28,9 +34,6 @@ import { resolveUserTargets } from '@agent-rigger/core/paths';
 import type { Env } from '@agent-rigger/core/paths';
 
 import { createClaudeAdapter } from '@agent-rigger/adapters';
-
-import type { CatalogEntry } from '@agent-rigger/catalog';
-import type { CommandRunner } from '@agent-rigger/catalog/tool-check';
 
 import { runCheck } from '../src/cmd-check';
 
@@ -99,50 +102,6 @@ const CONTEXT_ENTRY: AdapterEntry = {
 
 /** All entries for a complete config test. */
 const ALL_ENTRIES: AdapterEntry[] = [GUARDRAIL_ENTRY, CONTEXT_ENTRY];
-
-// ---------------------------------------------------------------------------
-// Shared fake CommandRunners (module-level to avoid recreating in every test)
-// ---------------------------------------------------------------------------
-
-/** Fake runner where all tools are absent (exit 1). */
-const allToolsAbsentRunner: CommandRunner = async () => ({ exitCode: 1 });
-
-/** Fake runner where all tools are present (exit 0). */
-const allToolsPresentRunner: CommandRunner = async () => ({ exitCode: 0 });
-
-/** Fake runner where 'which glab' fails but everything else passes. */
-const glabAbsentRunner: CommandRunner = async (command) => {
-  if (command === 'which glab') return { exitCode: 1 };
-  return { exitCode: 0 };
-};
-
-/** Fake runner where 'which glab' passes and everything else fails. */
-const glabPresentRunner: CommandRunner = async (command) => {
-  if (command === 'which glab') return { exitCode: 0 };
-  return { exitCode: 1 };
-};
-
-/** A fake tool catalog entry with a required level. */
-const REQUIRED_TOOL_ENTRY: CatalogEntry = {
-  kind: 'artifact',
-  id: 'tool:glab',
-  nature: 'tool',
-  targets: ['claude'],
-  scopes: ['user'],
-  level: 'required',
-  check: 'which glab',
-};
-
-/** A fake tool catalog entry with a recommended level. */
-const RECOMMENDED_TOOL_ENTRY: CatalogEntry = {
-  kind: 'artifact',
-  id: 'tool:gh',
-  nature: 'tool',
-  targets: ['claude'],
-  scopes: ['user'],
-  level: 'recommended',
-  check: 'which gh',
-};
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -331,12 +290,22 @@ describe('runCheck — invalid JSON', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Scenario 4: advisory tools — required absent → output signals it, exitCode unchanged
+// Scenario 4: no tool advisory section — runCheck cannot execute shell checks
 // ---------------------------------------------------------------------------
+//
+// `runCheck` used to accept `toolEntries`/`toolRunner` and render a
+// "--- Tools ---" advisory section (checkTools against the catalog's `tool`
+// entries). That plumbing has been removed structurally: `RunCheckOptions`
+// no longer has a `toolEntries`/`toolRunner` field, `CheckResult` no longer
+// has `toolResults`, and the output never renders a tools section — so a
+// read-only audit can no longer run any catalog-declared shell command. The
+// removed tests above (`runCheck — advisory tools`) exercised exactly that
+// dangerous toolEntries/toolRunner passthrough; see cli.test.ts for the
+// end-to-end proof that a dangerous `tool` entry in the effective catalog
+// never reaches a shell during `check` / `<resource> check`.
 
-describe('runCheck — advisory tools', () => {
-  it('signals a missing required tool in the output without affecting exitCode', async () => {
-    // Complete config so the audit passes with exitCode 0
+describe('runCheck — no tool advisory section', () => {
+  it('output never contains a Tools section, even for a complete config', async () => {
     await writeCompleteConfig(targets, REF_DENY, AGENTS_CONTENT);
 
     const adapter = createClaudeAdapter({
@@ -349,19 +318,14 @@ describe('runCheck — advisory tools', () => {
       entries: ALL_ENTRIES,
       scope: 'user',
       env,
-      toolEntries: [REQUIRED_TOOL_ENTRY],
-      // glab absent (exit 1), advisory should report it
-      toolRunner: glabAbsentRunner,
     });
 
-    // exitCode must still reflect the audit (0 = all present)
-    expect(result.exitCode).toBe(0);
-    // output must report the missing required tool
-    expect(result.output).toContain('tool:glab');
-    expect(result.output.toLowerCase()).toMatch(/missing|absent|required/);
+    expect(result.output).not.toContain('--- Tools ---');
+    expect(result.output.toLowerCase()).not.toContain('missing required');
+    expect(result.output.toLowerCase()).not.toContain('missing recommended');
   });
 
-  it('signals missing recommended tool separately from required', async () => {
+  it('CheckResult has no toolResults field', async () => {
     await writeCompleteConfig(targets, REF_DENY, AGENTS_CONTENT);
 
     const adapter = createClaudeAdapter({
@@ -374,80 +338,8 @@ describe('runCheck — advisory tools', () => {
       entries: ALL_ENTRIES,
       scope: 'user',
       env,
-      toolEntries: [REQUIRED_TOOL_ENTRY, RECOMMENDED_TOOL_ENTRY],
-      // Both tools absent
-      toolRunner: allToolsAbsentRunner,
     });
 
-    expect(result.exitCode).toBe(0);
-    expect(result.output).toContain('tool:glab');
-    expect(result.output).toContain('tool:gh');
-  });
-
-  it('outputs "all tools present" when all tool checks pass', async () => {
-    await writeCompleteConfig(targets, REF_DENY, AGENTS_CONTENT);
-
-    const adapter = createClaudeAdapter({
-      denyRef: REF_DENY,
-      agentsContent: AGENTS_CONTENT,
-    });
-
-    const result = await runCheck({
-      adapter,
-      entries: ALL_ENTRIES,
-      scope: 'user',
-      env,
-      toolEntries: [REQUIRED_TOOL_ENTRY, RECOMMENDED_TOOL_ENTRY],
-      // All tools present
-      toolRunner: allToolsPresentRunner,
-    });
-
-    expect(result.exitCode).toBe(0);
-    expect(result.output.toLowerCase()).toMatch(/all tools present|tools ok/);
-  });
-
-  it('advisory tools do not raise exitCode when audit already has missing entries', async () => {
-    // No settings.json → guardrail missing → audit exitCode 3
-    const adapter = createClaudeAdapter({
-      denyRef: REF_DENY,
-      agentsContent: AGENTS_CONTENT,
-    });
-
-    const result = await runCheck({
-      adapter,
-      entries: [GUARDRAIL_ENTRY],
-      scope: 'user',
-      env,
-      toolEntries: [REQUIRED_TOOL_ENTRY],
-      toolRunner: allToolsAbsentRunner,
-    });
-
-    // exitCode comes from audit (3), not from tool advisory
-    expect(result.exitCode).toBe(3);
-    // But tool warning is still present in output
-    expect(result.output).toContain('tool:glab');
-  });
-
-  it('toolResults is populated with check outcomes', async () => {
-    await fs.mkdir(path.dirname(targets.claudeSettings), { recursive: true });
-    await writeJson(targets.claudeSettings, {
-      permissions: { deny: REF_DENY },
-    });
-
-    const adapter = createClaudeAdapter({ denyRef: REF_DENY });
-
-    const result = await runCheck({
-      adapter,
-      entries: [GUARDRAIL_ENTRY],
-      scope: 'user',
-      env,
-      toolEntries: [REQUIRED_TOOL_ENTRY],
-      // glab is present (exit 0)
-      toolRunner: glabPresentRunner,
-    });
-
-    expect(result.toolResults).toHaveLength(1);
-    expect(result.toolResults[0]!.id).toBe('tool:glab');
-    expect(result.toolResults[0]!.present).toBe(true);
+    expect(result).not.toHaveProperty('toolResults');
   });
 });

@@ -465,6 +465,59 @@ describe('planGuardrail — allow support', () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// planGuardrail — allow-widening warning (T5, post-ADR-0015)
+//
+// permissions.allow disables Claude Code's human-approval prompt for matched
+// commands. A guardrail sourced from remote/untrusted content that merges new
+// allow rules is a privilege escalation vector — gitleaks/trivy never flag an
+// allow-list widening (it isn't a secret or a CVE). This warning is a PLAN-level
+// signal, always attached when a merge-allow op is produced, independent of any
+// scanner outcome.
+// ---------------------------------------------------------------------------
+
+describe('planGuardrail — allow-widening warning', () => {
+  it('attaches a warning to the merge-allow op naming the added rule', async () => {
+    const ops = await planGuardrail('user', env, REF_DENY, undefined, ['Bash(*)']);
+
+    const allowOp = ops.find((op) => op.kind === 'merge-allow');
+    expect(allowOp).toBeDefined();
+    const warnings = (allowOp as { warnings?: string[] }).warnings;
+    expect(warnings).toBeDefined();
+    expect(warnings).toHaveLength(1);
+    expect(warnings?.[0]).toContain('permissions.allow');
+    expect(warnings?.[0]).toContain('Bash(*)');
+  });
+
+  it('does not attach a warning to the merge-deny op', async () => {
+    const ops = await planGuardrail('user', env, REF_DENY, undefined, ['Bash(*)']);
+
+    const denyOp = ops.find((op) => op.kind === 'merge-deny');
+    expect(denyOp).toBeDefined();
+    expect((denyOp as { warnings?: string[] }).warnings).toBeUndefined();
+  });
+
+  it('produces no warning when allowRef is empty (nominal — no merge-allow op at all)', async () => {
+    const ops = await planGuardrail('user', env, REF_DENY, undefined, []);
+
+    expect(ops.some((op) => op.kind === 'merge-allow')).toBe(false);
+    const anyWarnings = ops.flatMap((op) => (op as { warnings?: string[] }).warnings ?? []);
+    expect(anyWarnings).toHaveLength(0);
+  });
+
+  it('produces no warning when allow rules are already present (idempotent, nothing to merge)', async () => {
+    const targets = resolveUserTargets(env);
+    await fs.mkdir(path.dirname(targets.claudeSettings), { recursive: true });
+    await writeJson(targets.claudeSettings, {
+      permissions: { deny: REF_DENY, allow: REF_ALLOW },
+    });
+
+    const ops = await planGuardrail('user', env, REF_DENY, undefined, REF_ALLOW);
+
+    expect(ops).toHaveLength(0);
+  });
+});
+
 describe('applyGuardrail — allow support', () => {
   it('writes allow rules to settings.json', async () => {
     const targets = resolveUserTargets(env);

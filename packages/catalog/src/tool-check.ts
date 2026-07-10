@@ -54,8 +54,16 @@ export type ToolCheckResult = {
   id: string;
   /** Importance level declared in the catalog entry. */
   level: 'required' | 'recommended' | undefined;
-  /** True when the check command exited 0 (tool is present). */
-  present: boolean;
+  /**
+   * 'present'    — the check command exited 0.
+   * 'absent'     — the check command exited non-zero.
+   * 'unverified' — the check command was never run (consent to execute it
+   *                was declined): presence is simply unknown, and this is
+   *                NOT the same as 'absent' — checkTool/checkTools never
+   *                produce this value themselves; callers that gate
+   *                execution behind consent assign it directly.
+   */
+  presence: 'present' | 'absent' | 'unverified';
 };
 
 // ---------------------------------------------------------------------------
@@ -95,7 +103,7 @@ export async function checkTool(
   return {
     id: entry.id,
     level: entry.level,
-    present: exitCode === 0,
+    presence: exitCode === 0 ? 'present' : 'absent',
   };
 }
 
@@ -133,16 +141,28 @@ export async function checkTools(
 
 /**
  * Returns results for required tools that are absent.
+ * An 'unverified' result (consent declined) is never "missing" — we simply
+ * don't know — so it is excluded here, same as 'present'.
  * Advisory only — does not throw or exit.
  */
 export function missingRequired(results: ToolCheckResult[]): ToolCheckResult[] {
-  return results.filter((r) => r.level === 'required' && !r.present);
+  return results.filter((r) => r.level === 'required' && r.presence === 'absent');
 }
 
 /**
  * Returns results for recommended tools that are absent.
+ * An 'unverified' result (consent declined) is never "missing" — we simply
+ * don't know — so it is excluded here, same as 'present'.
  * Advisory only — does not throw or exit.
  */
 export function missingRecommended(results: ToolCheckResult[]): ToolCheckResult[] {
-  return results.filter((r) => r.level === 'recommended' && !r.present);
+  return results.filter((r) => r.level === 'recommended' && r.presence === 'absent');
+}
+
+/**
+ * Returns results whose presence is 'unverified' — checks that were never
+ * run because consent to execute them was declined. Advisory only.
+ */
+export function unverifiedTools(results: ToolCheckResult[]): ToolCheckResult[] {
+  return results.filter((r) => r.presence === 'unverified');
 }

@@ -159,12 +159,86 @@ function matchesAnyGlob(basename: string, globs: string[]): boolean {
 }
 
 // ---------------------------------------------------------------------------
+// SymlinkInContentError / assertNoClonedSymlinks
+// ---------------------------------------------------------------------------
+
+/**
+ * Thrown when content cloned from an untrusted source (a catalog skill, agent,
+ * or hook fetched remotely) is, or contains, a symlink. Scanners such as
+ * gitleaks/trivy do not follow symlinks, so a malicious link passes a scan
+ * gate empty-handed; if it were then copied into the managed store, the
+ * install symlink would re-expose whatever host path it points at (e.g.
+ * `secret -> ~/.ssh/id_rsa`). This is a hard, fail-closed rejection raised
+ * before any file operation is performed on the offending content.
+ */
+export class SymlinkInContentError extends Error {
+  /** Path of the offending symlink, relative to the content root when known. */
+  readonly path: string;
+
+  constructor(offendingPath: string) {
+    super(`Symlink in cloned content (rejected before write): "${offendingPath}"`);
+    this.name = 'SymlinkInContentError';
+    this.path = offendingPath;
+  }
+}
+
+/**
+ * Reject `sourcePath` if it is, or contains anywhere in its tree, a symlink.
+ *
+ * Must be called on content cloned from an untrusted source before any of it
+ * is written to the managed store. Uses `lstat` throughout, so a dangling
+ * symlink is rejected on the link itself, independently of whether its
+ * target exists or is readable.
+ *
+ * - If `sourcePath` is itself a symlink (mono-file source), rejects immediately.
+ * - If `sourcePath` is a directory, walks every entry at every depth; the
+ *   first symlink found aborts the whole check.
+ * - Regular files and directories are otherwise left untouched.
+ */
+export async function assertNoClonedSymlinks(sourcePath: string): Promise<void> {
+  const srcStat = await lstat(sourcePath);
+
+  if (srcStat.isSymbolicLink()) {
+    throw new SymlinkInContentError(sourcePath);
+  }
+
+  if (srcStat.isDirectory()) {
+    await assertSubtreeHasNoSymlinks(sourcePath, sourcePath);
+  }
+}
+
+/**
+ * Recursively lstat every entry under `dirPath`, throwing SymlinkInContentError
+ * (path relative to `rootPath`) on the first symlink encountered, at any depth.
+ */
+async function assertSubtreeHasNoSymlinks(dirPath: string, rootPath: string): Promise<void> {
+  const entries = await readdir(dirPath);
+
+  for (const entry of entries) {
+    const entryPath = path.join(dirPath, entry);
+    const entryStat = await lstat(entryPath);
+
+    if (entryStat.isSymbolicLink()) {
+      throw new SymlinkInContentError(path.relative(rootPath, entryPath));
+    }
+
+    if (entryStat.isDirectory()) {
+      await assertSubtreeHasNoSymlinks(entryPath, rootPath);
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // syncToStore
 // ---------------------------------------------------------------------------
 
 /**
  * Copy `sourcePath` (file or directory) to `storePath`, overwriting whatever
  * was there before. Parent directories of `storePath` are created as needed.
+ *
+ * Before touching the filesystem, rejects `sourcePath` via
+ * assertNoClonedSymlinks if it is, or contains, a symlink — no byte is
+ * written to the store when that guard trips.
  *
  * **Default behaviour (no opts.preserveGlobs):** for directories the store is
  * replaced atomically — the old tree is removed before the new copy is written,
@@ -186,6 +260,8 @@ export async function syncToStore(
   storePath: string,
   opts?: SyncOptions,
 ): Promise<void> {
+  await assertNoClonedSymlinks(sourcePath);
+
   await mkdir(path.dirname(storePath), { recursive: true });
 
   const srcStat = await lstat(sourcePath);

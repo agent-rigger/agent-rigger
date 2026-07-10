@@ -28,6 +28,7 @@ import { assertSafeArtifactName } from '@agent-rigger/core/artifact-name';
 import { readText } from '@agent-rigger/core/fs-json';
 import type { Env } from '@agent-rigger/core/paths';
 import { resolveUserTargets } from '@agent-rigger/core/paths';
+import type { Scanner } from '@agent-rigger/core/scan';
 import { stubScanner } from '@agent-rigger/core/scan';
 
 import type { CatalogEntry } from '@agent-rigger/catalog';
@@ -76,6 +77,12 @@ function localId(id: string): string {
  *                         Used by hookSpec to resolve event/matcher/timeout for any hook entry.
  *                         Required when any hook entry needs to be installed — hookSpec will
  *                         throw an actionable error if the entry is not found in this map.
+ * @param scanner          Security scanner invoked at apply time (defense in depth) for each
+ *                         skill link write-op. Callers that already ran the pre-apply gate
+ *                         (scanEntries) should pass the SAME (memoized) instance so the apply-time
+ *                         re-check hits the cache instead of re-spawning gitleaks/trivy. Omitted →
+ *                         falls back to stubScanner (check/remove paths never write content, so a
+ *                         stub there is inert).
  */
 export interface BuildClaudeAdapterOpts {
   externalIds?: Set<string>;
@@ -83,6 +90,7 @@ export interface BuildClaudeAdapterOpts {
   catalogUrl?: string;
   pluginRunner?: PluginRunner;
   effectiveEntries?: Map<string, CatalogEntry>;
+  scanner?: Scanner;
 }
 
 // ---------------------------------------------------------------------------
@@ -246,9 +254,11 @@ export async function buildClaudeAdapter(
     // scanEntries) on the checkout paths — skills, agents, and hooks are all
     // covered there before any write (claude plugins are delegate-installed by
     // the `claude` binary, ADR-0003). The adapter-level scanner re-scans each
-    // link-op source at apply time, so it stays a stub to avoid double-scanning
-    // the same checkout content.
-    scanner: stubScanner,
+    // link-op source at apply time (defense in depth): callers that already
+    // ran the gate pass the SAME memoized scanner instance (opts.scanner) so
+    // this re-check hits the cache instead of re-spawning gitleaks/trivy.
+    // Callers with nothing to write (check/remove) never pass one → stub.
+    scanner: opts?.scanner ?? stubScanner,
     hookSpec,
     skillSource: (entry) => {
       const name = localId(entry.id).replace(/^skill:/, '');

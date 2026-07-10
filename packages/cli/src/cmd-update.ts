@@ -47,6 +47,7 @@ import { assertSafeArtifactName } from '@agent-rigger/core/artifact-name';
 import { apply, remove } from '@agent-rigger/core/engine';
 import { readManifest } from '@agent-rigger/core/manifest';
 import type { Env } from '@agent-rigger/core/paths';
+import { memoizeScanner } from '@agent-rigger/core/scan';
 import type { Scanner } from '@agent-rigger/core/scan';
 import type { Scope } from '@agent-rigger/core/types';
 
@@ -156,7 +157,12 @@ export async function runUpdate(opts: RunUpdateOptions): Promise<UpdateResult> {
   } = opts;
 
   const force = opts.force === true;
-  const scanner: Scanner = opts.scanner ?? createCompositeScanner();
+  // Shared, memoized scanner instance: the pre-apply gate (scanEntries below)
+  // and the adapter's apply-time re-check (buildAdapter → applySkill) both
+  // resolve to the same checkout path per artifact. Memoizing means the gate
+  // populates the cache and the apply-time check hits it — the underlying
+  // tool (gitleaks/trivy) runs at most once per artifact, not twice.
+  const scanner: Scanner = memoizeScanner(opts.scanner ?? createCompositeScanner());
   const assistant: Assistant = opts.assistant ?? 'claude';
 
   // Outcome line renderer — one artifact per line, aligned tag column, mirrors
@@ -273,8 +279,8 @@ export async function runUpdate(opts: RunUpdateOptions): Promise<UpdateResult> {
         }));
 
         // All stale entries sourced from the remote checkout.
-        // Skills / agents have a scanPath; guardrails / contexts / hooks do not
-        // but still come from externalBaseDir. All are remote.
+        // Skills / agents / guardrails / contexts / hooks all have a scanPath;
+        // all are remote regardless.
         // remoteIds uses qualified ids; buildClaudeAdapter and versionFor key by them.
         const remoteIds = new Set(resolved.map((e) => e.id));
 
@@ -284,8 +290,9 @@ export async function runUpdate(opts: RunUpdateOptions): Promise<UpdateResult> {
           rawResolved.map((e) => [localToQualified.get(e.id) ?? e.id, e]),
         );
 
-        // 3c. Security scan — all entries that have a checkout path (uniform scan, ADR-0014).
-        //     Entries without a scanPath (e.g. guardrails, hooks) are naturally skipped.
+        // 3c. Security scan — catalog.json unconditionally, plus every entry that
+        //     has a checkout path (uniform scan, ADR-0014). Shares scanEntries
+        //     with runRemoteInstall — same coverage, no duplicated policy.
         //     Must be BEFORE remove so a blocked scan leaves the artifact intact.
         //     scanEntries uses localId() internally for path derivation.
         const { warnings: scanWarnings } = await scanEntries({
@@ -296,10 +303,22 @@ export async function runUpdate(opts: RunUpdateOptions): Promise<UpdateResult> {
         });
 
         // 3e. Build adapter with remote resolver seam (externalBaseDir = checkout dir).
+        // Thread the memoized scanner to the apply-time re-check only on the
+        // non-force path — see runRemoteInstall (remote-install.ts) for the
+        // full rationale: when !force, scanEntries above already threw on any
+        // blocking verdict, so this is a safe cache-hit no-op; when force=true,
+        // a blocking verdict was deliberately overridden at the gate and
+        // Scanner/applySkill have no notion of --force, so re-threading it
+        // here would re-block a run the operator explicitly forced through.
         const adapter = await buildAdapter(assistant, env, {
           externalIds: remoteIds,
           externalBaseDir: dir,
           effectiveEntries,
+          // Share the memoized scanner for the apply-time re-check under !force
+          // only: under --force the gate warns-and-proceeds, so a cached blocking
+          // verdict would wrongly re-throw at apply. Defense-in-depth, redundant
+          // while applied skills stay a subset of the gate's scanned set.
+          ...(force ? {} : { scanner }),
         });
 
         // AdapterEntries for remove+apply (exclude tool-nature entries).
@@ -317,6 +336,28 @@ export async function runUpdate(opts: RunUpdateOptions): Promise<UpdateResult> {
           return { ref: 'v0.0.0', sha: '' };
         };
 
+        // 3f. Collect plan-level warnings (e.g. a remote guardrail widening
+        // permissions.allow — T5, post-ADR-0015) via adapter.plan(), BEFORE
+        // confirm — mirrors cmd-install's op.warnings collection so the same
+        // signal is visible on update, not just on install. This is a PLAN
+        // warning (attached by planGuardrail), not a scan finding: it is
+        // always emitted, independent of scanEntries/the scanner above.
+        // adapter.plan() is read-only, so calling it again inside apply() is
+        // a safe, side-effect-free duplicate (same pattern as cmd-install).
+        const plannedOpsByEntry = await Promise.all(
+          adapterEntries.map((entry) => adapter.plan(entry, scope, env)),
+        );
+        const opWarnings = [
+          ...new Set(
+            plannedOpsByEntry
+              .flat()
+              .flatMap((op) => ('warnings' in op && Array.isArray(op.warnings) ? op.warnings : [])),
+          ),
+        ];
+        const warningsBlock = opWarnings.length > 0
+          ? '\n--- Warnings ---\n' + opWarnings.map((w) => `  [warning] ${w}`).join('\n') + '\n'
+          : '';
+
         // 3g. Confirm BEFORE remove — abort with zero writes if user declines.
         const installedRefs = staleIds
           .map((id) => {
@@ -328,12 +369,12 @@ export async function runUpdate(opts: RunUpdateOptions): Promise<UpdateResult> {
               : `  ${id}  ${m.ref} → ${remote.ref}`;
           })
           .join('\n');
-        const planText = `Update ${staleIds.length} artifact(s):\n${installedRefs}`;
+        const planText = `Update ${staleIds.length} artifact(s):\n${installedRefs}${warningsBlock}`;
 
         const confirmed = typeof confirm === 'boolean' ? confirm : await confirm(planText);
 
         if (!confirmed) {
-          return { aborted: true as const, scanWarnings };
+          return { aborted: true as const, scanWarnings, opWarnings };
         }
 
         // 3h. Remove old (targets absent → plan will produce link ops in apply).
@@ -342,7 +383,7 @@ export async function runUpdate(opts: RunUpdateOptions): Promise<UpdateResult> {
         // 3i. Apply fresh content from checkout dir + upsert manifest with ref/sha.
         await apply(adapter, adapterEntries, scope, env, manifestPath, versionFor);
 
-        return { aborted: false as const, scanWarnings };
+        return { aborted: false as const, scanWarnings, opWarnings };
       },
     );
 
@@ -352,6 +393,12 @@ export async function runUpdate(opts: RunUpdateOptions): Promise<UpdateResult> {
       updatedIds = staleIds;
       if (checkoutResult.scanWarnings.length > 0) {
         outputParts.push(...checkoutResult.scanWarnings);
+      }
+      if (checkoutResult.opWarnings.length > 0) {
+        outputParts.push('--- Warnings ---');
+        for (const w of checkoutResult.opWarnings) {
+          outputParts.push(`  [warning] ${w}`);
+        }
       }
       outputParts.push('--- Update ---');
       for (const id of staleIds) {

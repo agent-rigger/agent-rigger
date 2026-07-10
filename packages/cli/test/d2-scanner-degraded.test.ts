@@ -13,7 +13,9 @@
  * 3. blocking scanner (real findings) + no force → ScanBlockedError thrown (unchanged).
  * 4. blocking scanner + force → proceeds, no ScanBlockedError.
  * 5. clean scanner (tool present, no findings) → no warning, no error.
- * 6. empty entries list → scanEntries is a no-op regardless of scanner state.
+ * 6. empty entries list → catalog.json is still scanned unconditionally (T3), so
+ *    scanEntries is no longer a no-op: degraded/blocking verdicts on catalog.json
+ *    still surface, a clean verdict still returns no warnings.
  */
 
 import { describe, expect, it } from 'bun:test';
@@ -213,15 +215,39 @@ describe('scanEntries — clean scanner (tool present, no findings)', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Scenario 6: empty entries → no-op
+// Scenario 6: empty entries — catalog.json is still scanned unconditionally
+// (T3): a selection with no scannable natures (e.g. guardrail-only before this
+// change, or mcp-only) must still verify scanner presence and surface findings.
 // ---------------------------------------------------------------------------
 
-describe('scanEntries — empty entries list', () => {
-  it('returns empty warnings regardless of scanner', async () => {
+describe('scanEntries — empty entries list (catalog.json still scanned)', () => {
+  it('still emits a degraded warning when entries is empty (catalog.json scan runs)', async () => {
     const result = await scanEntries({
       entries: [],
       baseDir: BASE_DIR,
       scanner: degradedScanner(),
+      force: false,
+    });
+
+    expect(result.warnings.length).toBeGreaterThan(0);
+  });
+
+  it('still throws ScanBlockedError when entries is empty and the scanner blocks catalog.json', async () => {
+    await expect(
+      scanEntries({
+        entries: [],
+        baseDir: BASE_DIR,
+        scanner: blockingScanner(['[gitleaks] aws-access-key: AWS key (catalog.json)']),
+        force: false,
+      }),
+    ).rejects.toBeInstanceOf(ScanBlockedError);
+  });
+
+  it('returns empty warnings when entries is empty and the scanner is clean', async () => {
+    const result = await scanEntries({
+      entries: [],
+      baseDir: BASE_DIR,
+      scanner: cleanScanner(),
       force: false,
     });
 

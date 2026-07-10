@@ -28,6 +28,7 @@ import {
   missingRecommended,
   missingRequired,
   type ToolCheckResult,
+  unverifiedTools,
 } from '../src/tool-check';
 
 // ---------------------------------------------------------------------------
@@ -162,9 +163,9 @@ const runnerMixed: CommandRunner = (cmd) =>
 // ---------------------------------------------------------------------------
 
 describe('checkTool — present when runner exits 0', () => {
-  it('returns present: true for tool:glab', async () => {
+  it("returns presence: 'present' for tool:glab", async () => {
     const result = await checkTool(glabEntry, runnerPresent);
-    expect(result.present).toBe(true);
+    expect(result.presence).toBe('present');
   });
 
   it('returns the correct id', async () => {
@@ -179,9 +180,9 @@ describe('checkTool — present when runner exits 0', () => {
 });
 
 describe('checkTool — absent when runner exits non-zero', () => {
-  it('returns present: false for tool:glab', async () => {
+  it("returns presence: 'absent' for tool:glab", async () => {
     const result = await checkTool(glabEntry, runnerAbsent);
-    expect(result.present).toBe(false);
+    expect(result.presence).toBe('absent');
   });
 });
 
@@ -277,10 +278,10 @@ describe('checkTools — parallel execution', () => {
     expect(ids).toEqual(['tool:alpha', 'tool:beta', 'tool:gamma']);
   });
 
-  it('all results have a present field (boolean)', async () => {
+  it("all results have a presence field of 'present' or 'absent'", async () => {
     const results = await checkTools(FIXTURE_CATALOG_WITH_TOOL, runnerPresent);
     for (const result of results) {
-      expect(typeof result.present).toBe('boolean');
+      expect(['present', 'absent']).toContain(result.presence);
     }
   });
 });
@@ -308,15 +309,22 @@ describe('missingRequired', () => {
 
   it('every item has level required', () => {
     const results: ToolCheckResult[] = [
-      { id: 'tool:a', level: 'required', present: false },
-      { id: 'tool:b', level: 'recommended', present: false },
-      { id: 'tool:c', level: 'required', present: true },
-      { id: 'tool:d', level: undefined, present: false },
+      { id: 'tool:a', level: 'required', presence: 'absent' },
+      { id: 'tool:b', level: 'recommended', presence: 'absent' },
+      { id: 'tool:c', level: 'required', presence: 'present' },
+      { id: 'tool:d', level: undefined, presence: 'absent' },
     ];
     const missing = missingRequired(results);
     for (const r of missing) {
       expect(r.level).toBe('required');
     }
+  });
+
+  it('does not treat unverified as missing', () => {
+    const results: ToolCheckResult[] = [
+      { id: 'tool:a', level: 'required', presence: 'unverified' },
+    ];
+    expect(missingRequired(results)).toHaveLength(0);
   });
 });
 
@@ -338,13 +346,46 @@ describe('missingRecommended', () => {
 
   it('every item has level recommended', () => {
     const results: ToolCheckResult[] = [
-      { id: 'tool:a', level: 'recommended', present: false },
-      { id: 'tool:b', level: 'required', present: false },
-      { id: 'tool:c', level: 'recommended', present: true },
+      { id: 'tool:a', level: 'recommended', presence: 'absent' },
+      { id: 'tool:b', level: 'required', presence: 'absent' },
+      { id: 'tool:c', level: 'recommended', presence: 'present' },
     ];
     const missing = missingRecommended(results);
     for (const r of missing) {
       expect(r.level).toBe('recommended');
     }
+  });
+
+  it('does not treat unverified as missing', () => {
+    const results: ToolCheckResult[] = [
+      { id: 'tool:a', level: 'recommended', presence: 'unverified' },
+    ];
+    expect(missingRecommended(results)).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// unverifiedTools — advisory helper for consent-refused checks
+// ---------------------------------------------------------------------------
+
+describe('unverifiedTools', () => {
+  it('returns only unverified results, regardless of level', () => {
+    const results: ToolCheckResult[] = [
+      { id: 'tool:a', level: 'required', presence: 'unverified' },
+      { id: 'tool:b', level: 'recommended', presence: 'unverified' },
+      { id: 'tool:c', level: 'required', presence: 'absent' },
+      { id: 'tool:d', level: 'required', presence: 'present' },
+    ];
+    const unverified = unverifiedTools(results);
+    const ids = unverified.map((r) => r.id);
+    expect(ids).toEqual(['tool:a', 'tool:b']);
+  });
+
+  it('returns an empty array when nothing is unverified', () => {
+    const results: ToolCheckResult[] = [
+      { id: 'tool:a', level: 'required', presence: 'present' },
+      { id: 'tool:b', level: 'required', presence: 'absent' },
+    ];
+    expect(unverifiedTools(results)).toHaveLength(0);
   });
 });

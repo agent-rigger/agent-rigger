@@ -27,3 +27,6 @@ Thumbs.db
 *.bak-*
 
 .serena/
+
+# graphify knowledge graph (generated; holds machine-specific abs paths, rebuild with `graphify update .`)
+graphify-out/

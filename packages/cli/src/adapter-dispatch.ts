@@ -25,8 +25,8 @@ import { buildOpencodeAdapter } from './opencode-adapter-builder';
  * Options accepted by buildAdapter.
  *
  * Reuses BuildClaudeAdapterOpts as the shared shape: `externalIds`,
- * `externalBaseDir` and `effectiveEntries` are understood by both builders;
- * `catalogUrl` and `pluginRunner` are Claude-only and simply ignored by
+ * `externalBaseDir`, `effectiveEntries` and `scanner` are understood by both
+ * builders; `catalogUrl` and `pluginRunner` are Claude-only and simply ignored by
  * buildOpencodeAdapter (structurally a subset of this type — extra fields on
  * a passed-through object never trigger excess-property errors).
  */

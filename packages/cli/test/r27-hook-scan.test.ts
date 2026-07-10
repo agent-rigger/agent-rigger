@@ -19,7 +19,8 @@
  *        Proves: --force respected for hooks.
  *
  * R27-3  Four hook: entries mapping to the same hooks/ dir + spy scanner
- *        → scanner is called exactly once for that directory (deduplication).
+ *        → scanner is called exactly once for that directory (deduplication),
+ *        plus once (always) for catalog.json.
  *        Proves: Set-based deduplication in scanEntries.
  *
  * R27-4  scanPathFor returns hooks/ directory for nature === 'hook'.
@@ -318,7 +319,7 @@ describe('R27-4 — scanPathFor: hook nature → hooks/ directory', () => {
 // ---------------------------------------------------------------------------
 
 describe('R27-3 — scanEntries: deduplicates hook paths', () => {
-  it('calls scanner exactly once for hooks/ when 4 hook entries are present', async () => {
+  it('calls scanner exactly once for hooks/ when 4 hook entries are present (plus catalog.json)', async () => {
     const { scanner, calls } = spyScanner();
     const baseDir = '/tmp/checkout';
 
@@ -329,11 +330,12 @@ describe('R27-3 — scanEntries: deduplicates hook paths', () => {
       force: false,
     });
 
+    expect(calls).toContain(path.join(baseDir, 'catalog.json'));
     const hooksDirPath = path.join(baseDir, 'hooks');
     const hookCalls = calls.filter((c) => c === hooksDirPath);
     expect(hookCalls).toHaveLength(1);
-    // Overall: exactly 1 scan call (all 4 hooks share the same directory)
-    expect(calls).toHaveLength(1);
+    // Overall: catalog.json (always) + hooks/ once (all 4 hooks share the same directory)
+    expect(calls).toHaveLength(2);
   });
 
   it('blocks on the hooks/ scan even when multiple hook entries share it', async () => {

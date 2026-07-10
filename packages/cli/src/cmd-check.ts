@@ -1,11 +1,19 @@
 /**
  * cmd-check — implementation of the `check` command.
  *
+ * `check` is a read-only audit. It MUST NOT have any shell side effect —
+ * it used to also run the catalog's advisory `tool` `check` commands
+ * (checkTools against untrusted catalog-declared shell strings), which made
+ * a read-only audit command execute arbitrary shell on every run. That
+ * plumbing has been removed structurally: this module has no dependency on
+ * checkTools/CommandRunner/CatalogEntry, and RunCheckOptions has no
+ * toolEntries/toolRunner field, so it is structurally incapable of running a
+ * shell command — not just "not currently passed one".
+ *
  * Responsibilities:
  * - Run the core audit (check/reportExitCode) against the provided adapter and entries.
  * - Catch InvalidJsonError and map it to exitCode 2 with an actionable message.
- * - Run advisory tool checks (checkTools) and render missing required/recommended tools.
- * - Compose the final output string from renderReport + tool advisory section.
+ * - Compose the final output string from renderReport.
  *
  * Constraints:
  * - No process.exit — the CLI bin (F5) calls process.exit(result.exitCode).
@@ -18,10 +26,6 @@ import { check, reportExitCode } from '@agent-rigger/core/engine';
 import { InvalidJsonError } from '@agent-rigger/core/fs-json';
 import type { Env } from '@agent-rigger/core/paths';
 import type { Report, Scope } from '@agent-rigger/core/types';
-
-import type { CatalogEntry } from '@agent-rigger/catalog';
-import { checkTools, missingRecommended, missingRequired } from '@agent-rigger/catalog/tool-check';
-import type { CommandRunner, ToolCheckResult } from '@agent-rigger/catalog/tool-check';
 
 import { renderReport } from './ui';
 
@@ -36,14 +40,11 @@ import { renderReport } from './ui';
  *             2 = invalid JSON encountered (no report entries)
  *             3 = one or more entries missing or drifted
  * - report    Aggregated audit report (entries = [] when exitCode is 2).
- * - toolResults  Individual tool check outcomes (advisory; never affects exitCode).
- * - output    Human-readable string ready to print. Includes both the audit
- *             report and the tool advisory section.
+ * - output    Human-readable string ready to print (renderReport(report)).
  */
 export interface CheckResult {
   exitCode: 0 | 2 | 3;
   report: Report;
-  toolResults: ToolCheckResult[];
   output: string;
 }
 
@@ -60,10 +61,6 @@ export interface RunCheckOptions {
   scope: Scope;
   /** Injectable env for HOME resolution. */
   env: Env;
-  /** Optional catalog entries for advisory tool checks. Defaults to []. */
-  toolEntries?: CatalogEntry[];
-  /** Optional CommandRunner for tool checks. Defaults to defaultRunner. */
-  toolRunner?: CommandRunner;
   /** Working directory (unused in M0; reserved for future project-scope checks). */
   cwd?: string;
   /**
@@ -86,16 +83,13 @@ export interface RunCheckOptions {
  *
  * Step 2 — Exit code: derive 0 or 3 from the report via reportExitCode().
  *
- * Step 3 — Advisory tools: run checkTools() against toolEntries.
- *   Missing tools are reported in the output but never affect exitCode.
+ * Step 3 — Compose output: renderReport(report).
  *
- * Step 4 — Compose output: renderReport(report) + tool advisory section.
- *
- * @param opts  Options controlling the adapter, entries, scope, env, and tools.
- * @returns     A CheckResult with exitCode, report, toolResults, and output.
+ * @param opts  Options controlling the adapter, entries, scope, and env.
+ * @returns     A CheckResult with exitCode, report, and output.
  */
 export async function runCheck(opts: RunCheckOptions): Promise<CheckResult> {
-  const { adapter, entries, scope, env, toolEntries = [], toolRunner, manifestPath } = opts;
+  const { adapter, entries, scope, env, manifestPath } = opts;
 
   // -------------------------------------------------------------------------
   // Step 1: Audit
@@ -110,24 +104,18 @@ export async function runCheck(opts: RunCheckOptions): Promise<CheckResult> {
   } catch (err) {
     if (err instanceof InvalidJsonError) {
       const output = buildInvalidJsonOutput(err);
-      return { exitCode: 2, report: { entries: [] }, toolResults: [], output };
+      return { exitCode: 2, report: { entries: [] }, output };
     }
     throw err;
   }
 
   // -------------------------------------------------------------------------
-  // Step 2: Advisory tool checks
+  // Step 2: Compose output
   // -------------------------------------------------------------------------
 
-  const toolResults = await checkTools(toolEntries, toolRunner);
+  const output = renderReport(report);
 
-  // -------------------------------------------------------------------------
-  // Step 3: Compose output
-  // -------------------------------------------------------------------------
-
-  const output = buildOutput(report, toolResults);
-
-  return { exitCode, report, toolResults, output };
+  return { exitCode, report, output };
 }
 
 // ---------------------------------------------------------------------------
@@ -147,61 +135,5 @@ function buildInvalidJsonOutput(err: InvalidJsonError): string {
   if (err.cause instanceof Error) {
     lines.push(`  Detail: ${err.cause.message}`);
   }
-  return lines.join('\n');
-}
-
-/**
- * Compose the full output string from the audit report and tool advisory.
- *
- * Structure:
- *   <renderReport output>
- *
- *   --- Tools ---
- *   <tool advisory section>
- */
-function buildOutput(report: Report, toolResults: ToolCheckResult[]): string {
-  const parts: string[] = [];
-
-  parts.push(renderReport(report));
-
-  const toolSection = buildToolSection(toolResults);
-  if (toolSection !== null) {
-    parts.push('');
-    parts.push('--- Tools ---');
-    parts.push(toolSection);
-  }
-
-  return parts.join('\n');
-}
-
-/**
- * Build the tool advisory section.
- *
- * Returns null when toolResults is empty (no tool entries were provided).
- * Returns an "all tools present" line when every checked tool is present.
- * Otherwise lists missing required tools then missing recommended tools.
- */
-function buildToolSection(toolResults: ToolCheckResult[]): string | null {
-  if (toolResults.length === 0) {
-    return null;
-  }
-
-  const required = missingRequired(toolResults);
-  const recommended = missingRecommended(toolResults);
-
-  if (required.length === 0 && recommended.length === 0) {
-    return '  [tools ok] All tools present.';
-  }
-
-  const lines: string[] = [];
-
-  for (const r of required) {
-    lines.push(`  [missing required]  ${r.id}`);
-  }
-
-  for (const r of recommended) {
-    lines.push(`  [missing recommended]  ${r.id}`);
-  }
-
   return lines.join('\n');
 }

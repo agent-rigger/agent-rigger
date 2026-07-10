@@ -3,23 +3,33 @@
  *
  * Responsibilities:
  * - Resolve selected artifact ids (including packs) via the catalog resolver.
- * - Check required/recommended tools (advisory; never blocks installation).
  * - Build the full plan (WriteOp[]) via adapter.plan() for each resolved entry.
- * - Render the plan diff and confirm with the user (injectable for tests).
- * - If confirmed and plan is non-empty: apply (backup → write → manifest).
+ * - Render the plan diff — including the raw `check` command of any selected
+ *   tool entry, for visibility — and confirm with the user (injectable for tests).
+ * - Only AFTER plan confirmation: resolve GRANULAR consent for each tool's
+ *   `check` command against the ledger (@agent-rigger/core/consent) — a
+ *   command already approved for the same (id, command) pair is never
+ *   re-prompted; a changed command always is. Only consented commands are
+ *   executed; a refused command is reported 'unverified', never 'absent',
+ *   and the install still proceeds (advisory; never blocks installation).
+ *   Then apply (backup → write → manifest). A `check` command is arbitrary
+ *   shell content sourced from the catalog — it must never run before both
+ *   the plan AND its own execution have been separately consented to.
  * - Return a typed InstallResult (applied, written, backedUp, toolWarnings, output).
  *
  * Constraints:
  * - No process.exit — the CLI bin (F5) decides what to do after cancellation.
  * - No while loops — for...of / map / Promise.all only.
  * - No import of process directly — all paths are injectable.
- * - Human-in-the-loop: nothing is written without confirmation.
+ * - Human-in-the-loop: nothing is written without confirmation, and no tool
+ *   `check` command is executed without its own separate, granular consent.
  */
 
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
 import type { Adapter, AdapterEntry } from '@agent-rigger/core/adapter';
+import { isConsented, recordConsent } from '@agent-rigger/core/consent';
 import { apply } from '@agent-rigger/core/engine';
 import { findEntry, readManifest } from '@agent-rigger/core/manifest';
 import type { Env } from '@agent-rigger/core/paths';
@@ -28,10 +38,15 @@ import type { Scope } from '@agent-rigger/core/types';
 
 import type { ArtifactEntry, CatalogEntry } from '@agent-rigger/catalog';
 import { resolve } from '@agent-rigger/catalog/resolver';
-import { checkTools, missingRecommended, missingRequired } from '@agent-rigger/catalog/tool-check';
-import type { CommandRunner } from '@agent-rigger/catalog/tool-check';
+import {
+  checkTools,
+  missingRecommended,
+  missingRequired,
+  unverifiedTools,
+} from '@agent-rigger/catalog/tool-check';
+import type { CommandRunner, ToolCheckResult } from '@agent-rigger/catalog/tool-check';
 
-import { renderPlan } from './ui';
+import { confirmToolChecks as promptConfirmToolChecks, renderPlan } from './ui';
 import type { PlanGroup } from './ui';
 
 // ---------------------------------------------------------------------------
@@ -97,6 +112,19 @@ export interface RunInstallOptions {
   confirm: boolean | ((planText: string) => Promise<boolean>);
   /** Optional CommandRunner for advisory tool checks. Defaults to defaultRunner. */
   toolRunner?: CommandRunner;
+  /**
+   * Optional batch consent prompt for tool presence-check commands not yet
+   * recorded in the consent ledger (@agent-rigger/core/consent).
+   *
+   * Confirming the plan (`confirm`) is a SEPARATE decision from consenting to
+   * run a tool's `check` command. This callback is only invoked when:
+   *  - `confirm` resolved interactively (a function, not a boolean), AND
+   *  - at least one selection-scoped tool entry is not already consented.
+   *
+   * Defaults to the real interactive ui.confirmToolChecks when omitted.
+   * Tests should always inject a fake here to avoid touching @clack/prompts.
+   */
+  confirmToolChecks?: (commands: { id: string; command: string }[]) => Promise<boolean>;
   /** Working directory (reserved; unused in M0). */
   cwd?: string;
   /**
@@ -167,16 +195,27 @@ async function buildProjectScopeNote(targetCwd: string): Promise<string> {
  *   installation and reported in `skipped` + a visible `[skipped]` line in
  *   `output` — never silently dropped.
  *
- * Step 2 — Advisory tool checks: checkTools(entries) → toolWarnings.
- *   Missing tools are reported but never block installation.
+ * Step 2 — Tool presence-checks (selection-scoped, NOT executed): compute
+ *   toolEntries from the resolved selection. Their raw `check` command is
+ *   rendered in the plan for visibility, but nothing runs yet.
  *
  * Step 3 — Plan: adapter.plan(entry, scope, env) for each resolved entry.
  *   Aggregated WriteOp[]. Empty plan → "already up to date", no confirm needed.
  *
- * Step 4 — Diff: renderPlan(ops) included in output.
+ * Step 4 — Diff: renderPlan(ops) included in output, plus the tool-checks block.
  *
  * Step 5 — Confirm: resolve the `confirm` option.
- *   false → "aborted", no writes.
+ *   false → "aborted", no writes, no tool checks executed.
+ *
+ * Step 5b — Granular consent + advisory tool checks: only once the plan is
+ *   confirmed, each toolEntry's `check` command is looked up in the consent
+ *   ledger (isConsented, keyed by id + sha256(command)). Not-yet-consented
+ *   commands are batch-prompted (confirmToolChecks) unless `confirm` was the
+ *   boolean `true` (--yes), in which case consent is implicit. Newly granted
+ *   consent is persisted (recordConsent) BEFORE running checkTools on the
+ *   consented subset. Refused commands never run any shell and are reported
+ *   'unverified' (never 'absent'). toolWarnings (missing required/recommended)
+ *   and unverifiedIds are both advisory — neither ever blocks installation.
  *
  * Step 6 — Apply: apply(adapter, entries, scope, env, manifestPath).
  *   The engine handles backup → write → manifest update.
@@ -208,17 +247,18 @@ export async function runInstall(opts: RunInstallOptions): Promise<InstallResult
   }
 
   // -------------------------------------------------------------------------
-  // Step 2: Advisory tool checks
+  // Step 2: Tool presence-checks — SELECTION-scoped, NOT executed yet.
+  //
+  // `check` is an arbitrary shell command sourced from catalog content. It is
+  // only ever executed after the user has confirmed the plan (Step 5b) — never
+  // before. Here we only compute which entries are eligible (tool-nature,
+  // selection-scoped, with a check command) so the raw command can be shown in
+  // the plan for visibility ahead of confirmation.
   // -------------------------------------------------------------------------
 
-  const toolResults = await checkTools(entries, toolRunner);
-  const requiredMissing = missingRequired(toolResults);
-  const recommendedMissing = missingRecommended(toolResults);
-
-  const toolWarnings = {
-    required: requiredMissing.map((r) => r.id),
-    recommended: recommendedMissing.map((r) => r.id),
-  };
+  const toolEntries: (ArtifactEntry & { check: string })[] = entries.filter(
+    (e): e is ArtifactEntry & { check: string } => e.nature === 'tool' && Boolean(e.check),
+  );
 
   // -------------------------------------------------------------------------
   // Step 3: Plan — aggregate WriteOps from all entries
@@ -283,17 +323,36 @@ export async function runInstall(opts: RunInstallOptions): Promise<InstallResult
     ? '\n--- Warnings ---\n' + warnings.map((w) => `  [warning] ${w}`).join('\n') + '\n'
     : '';
 
-  const planText = projectNote + renderedPlan + warningsBlock;
+  // Render the raw `check` command of every selection-scoped tool entry so it
+  // is visible BEFORE confirmation — a malicious catalog command must be
+  // readable by the user, not silently executed.
+  const toolChecksBlock = toolEntries.length > 0
+    ? '\n--- Tool presence-checks (run after you confirm) ---\n'
+      + toolEntries.map((e) => `  ${e.id}  →  ${e.check}`).join('\n') + '\n'
+    : '';
+
+  const planText = projectNote + renderedPlan + warningsBlock + toolChecksBlock;
 
   // -------------------------------------------------------------------------
   // Empty plan → already up to date, skip confirm + apply
   // -------------------------------------------------------------------------
 
+  // No-execution tool warnings — used whenever the run ends WITHOUT the user
+  // confirming (up-to-date short-circuit, or explicit abort below). A `check`
+  // command never runs unless the user has confirmed the plan.
+  const noExecToolWarnings = { required: [] as string[], recommended: [] as string[] };
+
+  // No-execution unverified list — mirrors noExecToolWarnings for the same
+  // early-return branches: consent is never evaluated unless the plan was
+  // confirmed, so nothing is ever "refused" on those paths either.
+  const noExecUnverified: string[] = [];
+
   if (groups.length === 0) {
     const output = buildOutput({
       planText,
       reason: 'up-to-date',
-      toolWarnings,
+      toolWarnings: noExecToolWarnings,
+      unverifiedIds: noExecUnverified,
       skipped,
       assistantId: adapter.id,
       written: [],
@@ -304,7 +363,7 @@ export async function runInstall(opts: RunInstallOptions): Promise<InstallResult
       applied: false,
       written: [],
       backedUp: [],
-      toolWarnings,
+      toolWarnings: noExecToolWarnings,
       skipped,
       warnings,
       output,
@@ -321,7 +380,8 @@ export async function runInstall(opts: RunInstallOptions): Promise<InstallResult
     const output = buildOutput({
       planText,
       reason: 'aborted',
-      toolWarnings,
+      toolWarnings: noExecToolWarnings,
+      unverifiedIds: noExecUnverified,
       skipped,
       assistantId: adapter.id,
       written: [],
@@ -332,12 +392,82 @@ export async function runInstall(opts: RunInstallOptions): Promise<InstallResult
       applied: false,
       written: [],
       backedUp: [],
-      toolWarnings,
+      toolWarnings: noExecToolWarnings,
       skipped,
       warnings,
       output,
     };
   }
+
+  // -------------------------------------------------------------------------
+  // Step 5b: Post-confirmation tool presence-checks (advisory), gated by a
+  // SEPARATE granular consent, memoized in a ledger keyed by (id, command
+  // hash).
+  //
+  // Confirming the plan above is not consent to run a tool's `check`
+  // command — that consent is per-command and requested (or looked up)
+  // here, only for the resolved selection (toolEntries), only after plan
+  // confirmation. A refused command never runs any shell: it is reported as
+  // 'unverified', never as 'absent' (presence is simply unknown). A missing
+  // (verified-absent) tool is reported but never blocks the install.
+  // -------------------------------------------------------------------------
+
+  const consentChecks = await Promise.all(
+    toolEntries.map(async (e) => ({
+      entry: e,
+      consented: await isConsented(env, { id: e.id, command: e.check }),
+    })),
+  );
+  const alreadyConsented = consentChecks.filter((c) => c.consented).map((c) => c.entry);
+  const needConsent = consentChecks.filter((c) => !c.consented).map((c) => c.entry);
+
+  let newlyConsented: (ArtifactEntry & { check: string })[] = [];
+  let refused: (ArtifactEntry & { check: string })[] = [];
+
+  if (needConsent.length > 0) {
+    // confirm === true (boolean, e.g. --yes): the plan — which already lists
+    // every one of these commands — was pre-accepted non-interactively, so
+    // consent is implicit. Otherwise, batch-prompt for the not-yet-consented
+    // subset only.
+    const consentGranted = typeof confirm === 'boolean'
+      ? true
+      : await (opts.confirmToolChecks ?? promptConfirmToolChecks)(
+        needConsent.map((e) => ({ id: e.id, command: e.check })),
+      );
+
+    if (consentGranted) {
+      newlyConsented = needConsent;
+    } else {
+      refused = needConsent;
+    }
+  }
+
+  // Persist newly granted consent — the ledger records the approval decision
+  // itself, independent of what the check's presence result turns out to be.
+  for (const e of newlyConsented) {
+    const rawSha = versionFor?.({ id: e.id, nature: e.nature, scope }).sha;
+    const sha = rawSha === undefined || rawSha === '' ? undefined : rawSha;
+    await recordConsent(env, {
+      id: e.id,
+      command: e.check,
+      ...(sha === undefined ? {} : { sha }),
+    });
+  }
+
+  const consentedEntries = [...alreadyConsented, ...newlyConsented];
+  const checkedResults = await checkTools(consentedEntries, toolRunner);
+  const unverifiedResults: ToolCheckResult[] = refused.map((e) => ({
+    id: e.id,
+    level: e.level,
+    presence: 'unverified',
+  }));
+  const allToolResults = [...checkedResults, ...unverifiedResults];
+
+  const toolWarnings = {
+    required: missingRequired(allToolResults).map((r) => r.id),
+    recommended: missingRecommended(allToolResults).map((r) => r.id),
+  };
+  const unverifiedIds = unverifiedTools(allToolResults).map((r) => r.id);
 
   // -------------------------------------------------------------------------
   // Step 6: Apply (backup → write → manifest)
@@ -355,6 +485,7 @@ export async function runInstall(opts: RunInstallOptions): Promise<InstallResult
     planText,
     reason: 'applied',
     toolWarnings,
+    unverifiedIds,
     skipped,
     assistantId: adapter.id,
     written: applyResult.written,
@@ -380,6 +511,12 @@ interface BuildOutputOpts {
   planText: string;
   reason: 'applied' | 'aborted' | 'up-to-date';
   toolWarnings: { required: string[]; recommended: string[] };
+  /**
+   * Ids of tool checks whose consent was declined — never executed, and
+   * distinct from `toolWarnings` (which only ever holds VERIFIED-absent
+   * tools). Rendered as "not verified", never conflated with "missing".
+   */
+  unverifiedIds: string[];
   /** Entries excluded from this transaction because of a `targets` mismatch (E-targets). */
   skipped: { id: string; targets: string[] }[];
   /** adapter.id — the assistant this transaction targeted, shown in the skipped line. */
@@ -406,9 +543,11 @@ interface BuildOutputOpts {
  *   --- Tool Warnings ---   (omitted when empty)
  *   <missing required tools>
  *   <missing recommended tools>
+ *   <not verified tools — consent declined, never executed>
  */
 function buildOutput(opts: BuildOutputOpts): string {
-  const { planText, reason, toolWarnings, skipped, assistantId, written, backedUp } = opts;
+  const { planText, reason, toolWarnings, unverifiedIds, skipped, assistantId, written, backedUp } =
+    opts;
   const parts: string[] = [];
 
   // Plan section
@@ -449,7 +588,8 @@ function buildOutput(opts: BuildOutputOpts): string {
   }
 
   // Tool warnings section
-  const hasToolWarnings = toolWarnings.required.length > 0 || toolWarnings.recommended.length > 0;
+  const hasToolWarnings = toolWarnings.required.length > 0 || toolWarnings.recommended.length > 0
+    || unverifiedIds.length > 0;
 
   if (hasToolWarnings) {
     parts.push('');
@@ -461,6 +601,10 @@ function buildOutput(opts: BuildOutputOpts): string {
 
     for (const id of toolWarnings.recommended) {
       parts.push(`  [missing recommended] ${id}`);
+    }
+
+    for (const id of unverifiedIds) {
+      parts.push(`  [not verified]        ${id}`);
     }
   }
 

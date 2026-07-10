@@ -264,6 +264,15 @@ export interface WriteOpMergeAllow {
   path: string;
   /** Allow rules that will be appended (after dedup). */
   toAdd: string[];
+  /**
+   * Plan-level warnings surfaced to the user before confirm and after apply
+   * (T5, post-ADR-0015): an allow rule disables Claude Code's human-approval
+   * prompt for matched commands, so a guardrail sourced from remote/untrusted
+   * content that widens permissions.allow is a privilege-escalation vector no
+   * secret/CVE scanner would catch. Always populated when toAdd is non-empty;
+   * absent when there is nothing to merge.
+   */
+  warnings?: string[];
 }
 
 /**

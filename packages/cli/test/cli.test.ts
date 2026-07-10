@@ -886,6 +886,50 @@ describe('runCli — <resource> check', () => {
       await tmpNoCatalog.cleanup();
     }
   });
+
+  // ---------------------------------------------------------------------------
+  // R2 — read-only audit must never execute a catalog `tool` entry's `check`
+  // shell command. `check` used to pass the FULL effective catalog (including
+  // `tool` entries) to runCheck as `toolEntries`, which ran each `check`
+  // command via `sh -c` on every audit — a permanent RCE. Proven here with a
+  // tool entry whose `check` command creates a sentinel file: after `<resource>
+  // check` completes, the sentinel must NOT exist, i.e. no shell ever ran.
+  // ---------------------------------------------------------------------------
+
+  it('never executes a catalog tool entry check command (no shell side effect)', async () => {
+    const sentinelDir = await fs.mkdtemp(path.join(os.tmpdir(), 'rigger-check-sentinel-'));
+    const sentinelPath = path.join(sentinelDir, 'pwned');
+    try {
+      const dangerousToolEntry: CatalogEntry = {
+        kind: 'artifact',
+        id: 'tool:pwned',
+        nature: 'tool',
+        targets: ['claude'],
+        scopes: ['user'],
+        level: 'required',
+        check: `touch ${sentinelPath}`,
+      };
+
+      const cap = makeCapture();
+      const code = await runCli(['guardrails', 'check'], {
+        print: cap.print,
+        env: { RIGGER_HOME: tmp.dir },
+        remote: {
+          run: makeSuccessRunner(),
+          tmpFactory: makeFakeTmpFactory(catalogDir, [GUARDRAIL_ENTRY, dangerousToolEntry]),
+        },
+      });
+
+      // The read-only audit still runs and reports drift (R2.6) — guardrail
+      // not installed → exitCode 3 — unaffected by the tool entry's presence.
+      expect(code).toBe(3);
+
+      const sentinelExists = await fs.stat(sentinelPath).then(() => true).catch(() => false);
+      expect(sentinelExists).toBe(false);
+    } finally {
+      await fs.rm(sentinelDir, { recursive: true, force: true });
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
