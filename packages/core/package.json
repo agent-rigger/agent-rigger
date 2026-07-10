@@ -20,6 +20,7 @@
     "./manifest": "./src/manifest.ts",
     "./opencode-json": "./src/opencode-json.ts",
     "./paths": "./src/paths.ts",
+    "./run-lock": "./src/run-lock.ts",
     "./scan": "./src/scan.ts",
     "./types": "./src/types.ts"
   }

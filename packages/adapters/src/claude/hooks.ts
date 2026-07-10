@@ -36,6 +36,7 @@ import type {
   WriteOp,
   WriteOpMergeHooks,
 } from '@agent-rigger/core';
+import type { AdoptionResult } from '@agent-rigger/core/adapter';
 import { syncToStore } from '@agent-rigger/core/linker';
 import type { SyncOptions } from '@agent-rigger/core/linker';
 
@@ -196,6 +197,54 @@ export async function planHook(
   }
 
   return [mergeOp];
+}
+
+// ---------------------------------------------------------------------------
+// adoptHook
+// ---------------------------------------------------------------------------
+
+/**
+ * Adopt gate for the hook nature (R5/D5).
+ *
+ * Adopts ONLY when the resolved spec is already registered in settings.json
+ * (hasHook — event/matcher/command all match) — the same condition under which
+ * planHook returns [] (empty plan, no migration). The recorded payload is the
+ * resolved spec itself.
+ *
+ * Returns `undefined` (refusal) when the hook is absent (or its command was
+ * hand-edited — hasHook is command-strict, so an edited hook reads as absent and
+ * is not adopted: it is the user's now).
+ *
+ * Read-only: no filesystem writes.
+ *
+ * @param scope  Installation scope.
+ * @param env    Injectable env for HOME resolution.
+ * @param spec   Resolved hook specification.
+ * @param cwd    Working directory (only used when scope is 'project').
+ */
+export async function adoptHook(
+  scope: Scope,
+  env: Env,
+  spec: ResolvedHook,
+  cwd?: string,
+): Promise<AdoptionResult | undefined> {
+  const settingsPath = resolveSettingsPath(scope, env, cwd);
+  const settings = await readJson(settingsPath);
+
+  if (!hasHook(settings, spec)) {
+    return undefined;
+  }
+
+  return {
+    applied: {
+      kind: 'hook',
+      event: spec.event,
+      matcher: spec.matcher,
+      command: spec.command,
+      ...(spec.timeout === undefined ? {} : { timeout: spec.timeout }),
+    },
+    files: [settingsPath],
+  };
 }
 
 // ---------------------------------------------------------------------------

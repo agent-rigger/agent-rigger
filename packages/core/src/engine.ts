@@ -29,6 +29,7 @@ import { backup, backupDir, removeDir, removeFile, restore } from './backup';
 import { findEntry, readManifest, upsertEntry, writeManifest } from './manifest';
 import { mergePermission } from './opencode-json';
 import type { Env } from './paths';
+import { acquireRunLock, type RunLock } from './run-lock';
 import type {
   AppliedPayload,
   Assistant,
@@ -75,13 +76,37 @@ export interface SharedNatureStore {
  * Result returned by remove().
  *
  * - removed:   Ids of entries that were removed (planRemove returned ops).
+ * - purged:    Ids of manifest entries dropped because their target vanished
+ *              from disk (R1/D1 — an empty plan while the entry was still
+ *              recorded). No disk mutation: a manifest-only convergence.
  * - backedUp:  Paths of .bak-* files created before removals.
+ * - warnings:  Non-fatal notices surfaced to the user (e.g. the generic hook
+ *              "edited or removed" notice emitted when a hook entry is purged).
  * - manifest:  The manifest as it was persisted after this remove run.
  */
 export interface RemoveResult {
   removed: string[];
+  purged: string[];
   backedUp: string[];
+  warnings: string[];
   manifest: Manifest;
+}
+
+/**
+ * Partial progress attached to an Error thrown mid-remove() (R2/D2).
+ *
+ * Mirror of apply()'s `err.rollbackFailures`: because remove() persists the
+ * manifest after EACH successful entry (per-entry writeManifest) and creates
+ * their .bak files as it goes, a failure on entry N has already carried out real
+ * work on entries 1..N-1. This rides on the thrown error under `removePartial`
+ * so the CLI can report the removed/purged ids and the backup paths instead of
+ * the throw swallowing them (Previously the single post-loop writeManifest never
+ * ran on failure and the RemoveResult — including the .bak paths — was lost).
+ */
+export interface RemovePartial {
+  removed: string[];
+  purged: string[];
+  backedUp: string[];
 }
 
 // ---------------------------------------------------------------------------
@@ -93,12 +118,61 @@ export interface RemoveResult {
  *
  * - written:   Paths of files written by adapter.apply() (from WriteOp.path).
  * - backedUp:  Paths of .bak-* files created before writes.
+ * - adopted:   Ids of entries RECORDED without any disk write because they were
+ *              already conforming on disk but absent from the manifest (R5/D5).
+ *              No file is in `written` for these — only state.json changed.
+ * - warnings:  Non-fatal notices surfaced to the user — currently the "stale
+ *              run lock broken" notice emitted when apply() self-acquires the
+ *              run lock and finds a crashed run's lockfile (R7/D7).
  * - manifest:  The manifest as it was persisted after this apply run.
  */
 export interface ApplyResult {
   written: string[];
   backedUp: string[];
+  adopted: string[];
+  warnings: string[];
   manifest: Manifest;
+}
+
+// ---------------------------------------------------------------------------
+// ManifestMutation — the re-read/merge replay log (R7/D7)
+// ---------------------------------------------------------------------------
+
+/**
+ * A single manifest mutation accumulated during an apply()/remove() run, so it
+ * can be REPLAYED onto a freshly-re-read state.json just before every
+ * writeManifest (R7/D7 second layer). This closes the L3 lost update: an entry a
+ * concurrent run committed in the read-modify-write window survives, because we
+ * merge our mutations onto disk-truth instead of overwriting it wholesale. Both
+ * primitives (upsertEntry, removeEntry) are pure, so the replay is mechanical.
+ * Conflict on the SAME identity is last-writer-wins (documented boundary).
+ */
+type ManifestMutation =
+  | { kind: 'upsert'; entry: ManifestEntry }
+  | { kind: 'remove'; id: string; scope: Scope; assistant: Assistant };
+
+/** Apply one accumulated mutation to a manifest (pure). */
+function applyMutation(manifest: Manifest, mutation: ManifestMutation): Manifest {
+  return mutation.kind === 'upsert'
+    ? upsertEntry(manifest, mutation.entry)
+    : removeEntry(manifest, mutation.id, mutation.scope, mutation.assistant);
+}
+
+/**
+ * Re-read state.json, replay THIS run's accumulated mutations onto the fresh
+ * copy, persist, and return the merged manifest (R7/D7). Called just before
+ * every writeManifest in apply()/remove(). Replaying the FULL accumulated list
+ * each time is safe (upsert replaces, removeEntry is idempotent) and keeps the
+ * persisted state faithful to our mutations regardless of concurrent writers.
+ */
+async function persistMerged(
+  manifestPath: string,
+  mutations: ManifestMutation[],
+): Promise<Manifest> {
+  const fresh = await readManifest(manifestPath);
+  const merged = mutations.reduce(applyMutation, fresh);
+  await writeManifest(manifestPath, merged);
+  return merged;
 }
 
 // ---------------------------------------------------------------------------
@@ -220,8 +294,43 @@ export function reportExitCode(report: Report): 0 | 3 {
  * @param manifestPath  Absolute path to state.json (e.g. from resolveUserTargets).
  * @param versionFor    Optional seam: maps an entry to its ref/sha for the
  *                      manifest. When omitted the defaults apply (ref:'v0.0.0', sha:'').
+ * @param lock          Optional held run lock (R7/D7). When supplied the engine
+ *                      runs under it without acquiring or releasing (cmd-update's
+ *                      single hold across remove+apply); when omitted apply
+ *                      self-acquires and releases it.
  */
 export async function apply(
+  adapter: Adapter,
+  entries: AdapterEntry[],
+  scope: Scope,
+  env: Env,
+  manifestPath: string,
+  versionFor?: (
+    entry: AdapterEntry,
+  ) => { ref: string; sha: string },
+  lock?: RunLock,
+): Promise<ApplyResult> {
+  // R7/D7 — serialise the read-modify-write window across processes. When a
+  // `lock` handle is supplied (cmd-update holds ONE across remove+apply) the
+  // engine neither acquires nor releases it — the caller owns the lifecycle.
+  // Otherwise self-acquire and release in finally, threading a stale-break
+  // notice onto the result. ConcurrentRunError from acquireRunLock propagates
+  // before the try (no lock to release). check() never reaches here (no lock).
+  const lockWarnings: string[] = [];
+  const ownLock = lock === undefined
+    ? await acquireRunLock(manifestPath, { warn: (m) => lockWarnings.push(m) })
+    : undefined;
+  try {
+    const result = await applyInner(adapter, entries, scope, env, manifestPath, versionFor);
+    return lockWarnings.length === 0
+      ? result
+      : { ...result, warnings: [...lockWarnings, ...result.warnings] };
+  } finally {
+    if (ownLock !== undefined) await ownLock.release();
+  }
+}
+
+async function applyInner(
   adapter: Adapter,
   entries: AdapterEntry[],
   scope: Scope,
@@ -236,12 +345,39 @@ export async function apply(
   // Snapshot the ids tracked BEFORE this run. Drives compensation eligibility
   // (fresh install vs re-install) independently of the manifest being mutated
   // by upsertEntry during the loop — robust even if an id appears twice.
+  // Filtered on the FULL manifest identity (id, scope, assistant), not scope
+  // alone (R4/D4): scope and assistant are constant for a run, so this is the
+  // set of ids already tracked for THIS assistant. A fresh cross-assistant
+  // install (id tracked only for another assistant) must count as fresh so its
+  // symlink is compensated on rollback — otherwise it orphans outside the
+  // manifest, inconvergeable since Lot 2 (check exit 3 / install no-op /
+  // remove exit 2). The `?? 'claude'` mirrors removeEntry / enrichWithApplied.
   const preExistingIds = new Set(
-    manifest.artifacts.filter((a) => a.scope === scope).map((a) => a.id),
+    manifest.artifacts
+      .filter((a) => a.scope === scope && (a.assistant ?? 'claude') === adapter.id)
+      .map((a) => a.id),
   );
+
+  // Files the manifest claims BEFORE this run — the reference candidates handed
+  // to rollback compensations (R4/D4). Captured now, before the loop mutates
+  // `manifest` via upsertEntry, so the store refcount can see symlinks
+  // discoverable ONLY through the manifest (a project-scope symlink installed
+  // from another cwd, ADR-0020 §3) and never delete a store still referenced by
+  // a live install.
+  const preRunManifestFiles = manifest.artifacts.flatMap((a) => a.files);
 
   const allWritten: string[] = [];
   const allBackedUp: string[] = [];
+  // Ids adopted this run (R5/D5): recorded from adapter.adopt with NO disk
+  // write beyond state.json. Surfaced on ApplyResult so the CLI can print the
+  // "adopted (already present on disk)" line.
+  const allAdopted: string[] = [];
+
+  // Replay log for the re-read/merge before writeManifest (R7/D7). Each upsert
+  // (adoption or install) is recorded so it can be re-applied onto a freshly
+  // re-read state.json, merging our records with anything a concurrent run
+  // committed in the window instead of clobbering it.
+  const mutations: ManifestMutation[] = [];
 
   // Rollback ledger (atomicity option A). Keyed by absolute target path; the
   // value is the backup path to restore from, or null when the file did not
@@ -287,9 +423,40 @@ export async function apply(
         (op) => !(op.kind === 'merge-permission' && Object.keys(op.permission).length === 0),
       );
 
-      // No (effective) ops → idempotent no-op; already installed or warning-only.
-      // Leave the manifest untouched for this entry (preserve existing record).
+      // No (effective) ops → the artifact is already conforming (or the plan was
+      // warning-only). Two sub-cases (R5/D5 adoption):
+      //   a. the manifest ALREADY records this (id, scope, assistant) → leave it
+      //      untouched (idempotent no-op — a re-install of a tracked entry).
+      //   b. NO record AND the adapter offers an `adopt` gate that returns an
+      //      AdoptionResult (strict: only when the audit is `present`) → record
+      //      a manifest entry from the returned payload + files, WITHOUT any disk
+      //      write beyond state.json. This is the sole convergence out of the M4
+      //      "present on disk, absent from manifest" trap (typically post-manifest
+      //      loss): otherwise check exits 3 and install stays a no-op forever.
+      // An adapter without `adopt`, or an `adopt` returning undefined (refusal —
+      // drift, divergent config), keeps the legacy no-op: the manifest never
+      // claims content rigger did not put there.
       if (ops.length === 0) {
+        if (
+          adapter.adopt !== undefined
+          && findEntry(manifest, entry.id, scope, adapter.id) === undefined
+        ) {
+          const adoption = await adapter.adopt(entry, scope, env);
+          if (adoption !== undefined) {
+            const adoptVersion = versionFor === undefined ? undefined : versionFor(entry);
+            const adoptedEntry = buildManifestEntry(
+              entry,
+              scope,
+              adoption.files,
+              adapter.id,
+              adoptVersion,
+              adoption.applied,
+            );
+            manifest = upsertEntry(manifest, adoptedEntry);
+            mutations.push({ kind: 'upsert', entry: adoptedEntry });
+            allAdopted.push(entry.id);
+          }
+        }
         continue;
       }
 
@@ -400,14 +567,17 @@ export async function apply(
       // (id, scope, assistant) — a claude and an opencode install of the same id
       // coexist instead of clobbering each other.
       const version = versionFor === undefined ? undefined : versionFor(entry);
-      manifest = upsertEntry(
-        manifest,
-        buildManifestEntry(entry, scope, files, adapter.id, version, applied),
-      );
+      const installedEntry = buildManifestEntry(entry, scope, files, adapter.id, version, applied);
+      manifest = upsertEntry(manifest, installedEntry);
+      mutations.push({ kind: 'upsert', entry: installedEntry });
     }
 
-    // Persist the manifest once after all entries have been processed
-    await writeManifest(manifestPath, manifest);
+    // Persist once after all entries. Re-read state.json and replay this run's
+    // upserts onto the fresh copy (R7/D7) so any entry a concurrent run
+    // committed in the window survives — the manifest-only lost update is closed
+    // even if a stale lock was broken by mistake. `manifest` becomes the merged,
+    // persisted truth so the returned ApplyResult reflects what is on disk.
+    manifest = await persistMerged(manifestPath, mutations);
   } catch (err) {
     // Roll back to the pre-apply state, then re-throw the ORIGINAL error. The
     // manifest is never persisted on this path (writeManifest is the last
@@ -420,7 +590,12 @@ export async function apply(
     // inconsistent disk state is observable rather than silent.
     const fileFailures = await rollbackApply(rollbackLedger);
     const dirFailures = await rollbackCreatedDirs(createdDirs);
-    const compFailures = await rollbackCompensations(adapter, compensations, env);
+    const compFailures = await rollbackCompensations(
+      adapter,
+      compensations,
+      env,
+      preRunManifestFiles,
+    );
     const rollbackFailures = [...fileFailures, ...dirFailures, ...compFailures];
     if (rollbackFailures.length > 0 && err instanceof Error) {
       (err as Error & { rollbackFailures?: RollbackFailure[] }).rollbackFailures = rollbackFailures;
@@ -428,7 +603,13 @@ export async function apply(
     throw err;
   }
 
-  return { written: allWritten, backedUp: allBackedUp, manifest };
+  return {
+    written: allWritten,
+    backedUp: allBackedUp,
+    adopted: allAdopted,
+    warnings: [],
+    manifest,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -509,14 +690,23 @@ async function rollbackCreatedDirs(dirs: Set<string>): Promise<RollbackFailure[]
  * order (later side effects undone first). Each op runs in isolation via
  * Promise.allSettled so one failure (e.g. an external `claude plugin uninstall`)
  * neither aborts the others nor masks the original error. Failures are returned.
+ *
+ * `manifestFiles` (R4/D4) is every path the pre-run manifest still claims — the
+ * store refcount candidates. Passing them keeps a compensating unlink from
+ * deleting a store still referenced by another install whose symlink is
+ * discoverable only through the manifest (a project-scope symlink from another
+ * cwd, ADR-0020 §3). Same plumbing as remove()'s applyRemove call.
  */
 async function rollbackCompensations(
   adapter: Adapter,
   compensations: RemovalOp[],
   env: Env,
+  manifestFiles: string[],
 ): Promise<RollbackFailure[]> {
   const reversed = compensations.toReversed();
-  const results = await Promise.allSettled(reversed.map((op) => adapter.applyRemove([op], env)));
+  const results = await Promise.allSettled(
+    reversed.map((op) => adapter.applyRemove([op], env, manifestFiles)),
+  );
 
   const failures: RollbackFailure[] = [];
   results.forEach((result, i) => {
@@ -579,8 +769,39 @@ async function rollbackCompensations(
  * @param sharedStores  Optional shared-store descriptors (R7): directories
  *                      shared by every artifact of one nature, deleted with
  *                      the last manifest entry of that nature.
+ * @param lock          Optional held run lock (R7/D7). When supplied the engine
+ *                      runs under it without acquiring or releasing (cmd-update's
+ *                      single hold across remove+apply); when omitted remove
+ *                      self-acquires and releases it.
  */
 export async function remove(
+  adapter: Adapter,
+  entries: AdapterEntry[],
+  scope: Scope,
+  env: Env,
+  manifestPath: string,
+  sharedStores?: SharedNatureStore[],
+  lock?: RunLock,
+): Promise<RemoveResult> {
+  // R7/D7 — same inter-process serialisation contract as apply(): run under a
+  // supplied handle (cmd-update's single hold) or self-acquire+release, folding
+  // a stale-break notice into the result warnings. ConcurrentRunError from
+  // acquireRunLock propagates before the try (no lock to release).
+  const lockWarnings: string[] = [];
+  const ownLock = lock === undefined
+    ? await acquireRunLock(manifestPath, { warn: (m) => lockWarnings.push(m) })
+    : undefined;
+  try {
+    const result = await removeInner(adapter, entries, scope, env, manifestPath, sharedStores);
+    return lockWarnings.length === 0
+      ? result
+      : { ...result, warnings: [...lockWarnings, ...result.warnings] };
+  } finally {
+    if (ownLock !== undefined) await ownLock.release();
+  }
+}
+
+async function removeInner(
   adapter: Adapter,
   entries: AdapterEntry[],
   scope: Scope,
@@ -591,7 +812,14 @@ export async function remove(
   let manifest = await readManifest(manifestPath);
 
   const allRemoved: string[] = [];
+  const allPurged: string[] = [];
   const allBackedUp: string[] = [];
+  const allWarnings: string[] = [];
+
+  // Replay log for the re-read/merge before each writeManifest (R7/D7). Every
+  // removal/purge is recorded so it can be re-applied onto a freshly re-read
+  // state.json, preserving anything a concurrent run committed in the window.
+  const mutations: ManifestMutation[] = [];
 
   // Paths already backed up this run — persists across entries so a file hit
   // by several entries' remove ops (e.g. settings.json hit by both a hook
@@ -603,96 +831,158 @@ export async function remove(
   // cleanup below (R7).
   const removedNatures = new Set<Nature>();
 
-  for (const entry of entries) {
-    const plannedOps = await adapter.planRemove(
-      enrichWithApplied(entry, manifest, adapter.id),
-      scope,
-      env,
-    );
+  try {
+    for (const entry of entries) {
+      const plannedOps = await adapter.planRemove(
+        enrichWithApplied(entry, manifest, adapter.id),
+        scope,
+        env,
+      );
 
-    // Drop warning-only ops before the empty-plan check — mirror of apply()'s
-    // warning-only merge-permission filter (review M7). A leave-alone op
-    // performs no removal: it only carries the R3 gate warnings ("present but
-    // not managed") into the plan preview. An entry whose plan contains ONLY
-    // leave-alone ops is treated exactly like an empty plan: no write, no
-    // backup, and the manifest entry is PRESERVED so `check` keeps reporting
-    // the divergence.
-    const ops = plannedOps.filter((op) => op.kind !== 'leave-alone');
+      // Two empty-plan shapes with OPPOSITE semantics (R1/D1) — the purge branch
+      // must key on the RAW plan, before the leave-alone filter below:
+      //
+      //  1. plannedOps.length === 0 → the target is ABSENT from disk (the planner
+      //     found nothing to plan). If the manifest still records this entry it is
+      //     a phantom (M1a: hook hand-removed/edited, or a skill whose symlink AND
+      //     store are both gone). Purge it — removeEntry + the `purged` channel —
+      //     a manifest-only convergence with NO disk mutation. A hook purge also
+      //     emits the generic "edited or removed" notice: hasHook is
+      //     (event,matcher,command)-strict, so a hand-removed and a hand-edited
+      //     hook both collapse to an empty plan (ratified 2026-07-10 — an edited
+      //     hook is the user's now). An entry ABSENT from the manifest purges
+      //     nothing (idempotent: the Lot 2 "not installed" no-op holds).
+      //
+      //  2. ops empty but plannedOps NON-empty → leave-alone (target present but
+      //     unmanaged). Conservation is the R3 Lot 2 contract: the entry is
+      //     PRESERVED so `check` keeps reporting the divergence. Never purged —
+      //     purging here would hide unmanaged content (requirements R1).
+      if (plannedOps.length === 0) {
+        const existing = findEntry(manifest, entry.id, scope, adapter.id);
+        if (existing !== undefined) {
+          allPurged.push(entry.id);
+          if (entry.nature === 'hook') {
+            allWarnings.push(
+              `"${entry.id}": managed hook no longer present (edited or removed) — `
+                + 'the current hook in settings.json is yours now',
+            );
+          }
+          // Per-entry persistence (R2/D2): commit this purge to disk immediately
+          // so a later failure or SIGKILL leaves state.json free of the phantom.
+          // Re-read/merge (R7/D7): replay our accumulated removals onto the fresh
+          // state.json so a concurrent run's records are preserved.
+          mutations.push({ kind: 'remove', id: entry.id, scope, assistant: adapter.id });
+          manifest = await persistMerged(manifestPath, mutations);
+        }
+        continue;
+      }
 
-    // No (effective) ops → not installed; leave the manifest untouched for
-    // this entry.
-    if (ops.length === 0) {
-      continue;
+      // Drop warning-only ops before the (post-filter) empty-plan check — mirror
+      // of apply()'s warning-only merge-permission filter (review M7). A
+      // leave-alone op performs no removal: it only carries the R3 gate warnings
+      // ("present but not managed") into the plan preview.
+      const ops = plannedOps.filter((op) => op.kind !== 'leave-alone');
+
+      // No (effective) ops → leave-alone conservation (case 2 above); leave the
+      // manifest untouched for this entry.
+      if (ops.length === 0) {
+        continue;
+      }
+
+      // Backup every op target that carries a `path` — parity with apply()
+      // (R8). Ops with `target` (unlink) delegate removal to the primitive;
+      // `plugin-uninstall` has neither path nor target — nothing to back up.
+      const backupTargets = ops
+        .filter((op) => 'path' in op)
+        .map((op) => (op as { path: string }).path)
+        .filter((p, i, arr) => arr.indexOf(p) === i && !backedUpPaths.has(p));
+
+      const bakResults = await Promise.all(backupTargets.map((p) => backup(p)));
+      backupTargets.forEach((p) => backedUpPaths.add(p));
+      const backedUp = bakResults.filter((b): b is string => b !== null);
+      allBackedUp.push(...backedUp);
+
+      // Backup the store of every unlink op before the primitive rm's it (R3,
+      // gate ratified 2026-07-10): edits made through the install symlink live
+      // in the store, so the whole store tree (or single-file agent store) is
+      // preserved as <store>.bak-<ISO>-<token>. Same dedup-per-run and same
+      // backedUp reporting channel as the config-file backups above.
+      const storeBackupTargets = ops
+        .filter((op): op is RemovalOpUnlink => op.kind === 'unlink')
+        .map((op) => op.store)
+        .filter((p, i, arr) => arr.indexOf(p) === i && !backedUpPaths.has(p));
+
+      const storeBakResults = await Promise.all(storeBackupTargets.map((p) => backupDir(p)));
+      storeBackupTargets.forEach((p) => backedUpPaths.add(p));
+      allBackedUp.push(...storeBakResults.filter((b): b is string => b !== null));
+
+      // R4: hand the adapter every path the manifest will STILL claim after this
+      // removal — the files of every other entry, PLUS the files of the removed
+      // entry that this run's ops do NOT touch. mergeFiles (R1) can fold several
+      // install targets into ONE entry (e.g. the same project-scope skill
+      // installed from two different cwds), so enumerating only the remaining
+      // entries would hide a sibling target that still references the shared
+      // store: the store would be deleted under a live symlink while the
+      // confirmed preview (cmd-remove) showed "kept — still referenced".
+      // Subtracting exactly the op paths/targets keeps apply aligned with that
+      // preview, and keeps the context shared-file gate intact (a path it must
+      // protect belongs to a REMAINING entry, never to the removed one's ops).
+      // Core stays assistant-agnostic — it only transports paths.
+      const nextManifest = removeEntry(manifest, entry.id, scope, adapter.id);
+      const removedEntry = findEntry(manifest, entry.id, scope, adapter.id);
+      const touchedPaths = new Set(
+        ops.flatMap((op) => {
+          if ('path' in op) return [path.resolve((op as { path: string }).path)];
+          if ('target' in op) return [path.resolve((op as { target: string }).target)];
+          return [];
+        }),
+      );
+      const survivingOwnFiles = (removedEntry?.files ?? []).filter(
+        (f) => !touchedPaths.has(path.resolve(f)),
+      );
+      const remainingFiles = [
+        ...nextManifest.artifacts.flatMap((a) => a.files),
+        ...survivingOwnFiles,
+      ];
+
+      // Delegate actual removals to the adapter
+      await adapter.applyRemove(ops, env, remainingFiles);
+
+      // Remove this entry from the manifest (keyed by assistant so we only drop
+      // the record for the assistant being operated on).
+      allRemoved.push(entry.id);
+      removedNatures.add(entry.nature);
+      // Per-entry persistence (R2/D2): commit this successful removal to disk
+      // before moving on, so a failure on a later entry can never leave this one
+      // destroyed on disk yet still recorded in the manifest — each such phantom
+      // would otherwise fall back into the M1a purge case. state.json is tiny
+      // and written tmp+rename, so the write is SIGKILL-safe between entries.
+      // Re-read/merge (R7/D7): replay our accumulated removals onto the fresh
+      // state.json so a concurrent run's records survive the write.
+      mutations.push({ kind: 'remove', id: entry.id, scope, assistant: adapter.id });
+      manifest = await persistMerged(manifestPath, mutations);
     }
 
-    // Backup every op target that carries a `path` — parity with apply()
-    // (R8). Ops with `target` (unlink) delegate removal to the primitive;
-    // `plugin-uninstall` has neither path nor target — nothing to back up.
-    const backupTargets = ops
-      .filter((op) => 'path' in op)
-      .map((op) => (op as { path: string }).path)
-      .filter((p, i, arr) => arr.indexOf(p) === i && !backedUpPaths.has(p));
-
-    const bakResults = await Promise.all(backupTargets.map((p) => backup(p)));
-    backupTargets.forEach((p) => backedUpPaths.add(p));
-    const backedUp = bakResults.filter((b): b is string => b !== null);
-    allBackedUp.push(...backedUp);
-
-    // Backup the store of every unlink op before the primitive rm's it (R3,
-    // gate ratified 2026-07-10): edits made through the install symlink live
-    // in the store, so the whole store tree (or single-file agent store) is
-    // preserved as <store>.bak-<ISO>-<token>. Same dedup-per-run and same
-    // backedUp reporting channel as the config-file backups above.
-    const storeBackupTargets = ops
-      .filter((op): op is RemovalOpUnlink => op.kind === 'unlink')
-      .map((op) => op.store)
-      .filter((p, i, arr) => arr.indexOf(p) === i && !backedUpPaths.has(p));
-
-    const storeBakResults = await Promise.all(storeBackupTargets.map((p) => backupDir(p)));
-    storeBackupTargets.forEach((p) => backedUpPaths.add(p));
-    allBackedUp.push(...storeBakResults.filter((b): b is string => b !== null));
-
-    // R4: hand the adapter every path the manifest will STILL claim after this
-    // removal — the files of every other entry, PLUS the files of the removed
-    // entry that this run's ops do NOT touch. mergeFiles (R1) can fold several
-    // install targets into ONE entry (e.g. the same project-scope skill
-    // installed from two different cwds), so enumerating only the remaining
-    // entries would hide a sibling target that still references the shared
-    // store: the store would be deleted under a live symlink while the
-    // confirmed preview (cmd-remove) showed "kept — still referenced".
-    // Subtracting exactly the op paths/targets keeps apply aligned with that
-    // preview, and keeps the context shared-file gate intact (a path it must
-    // protect belongs to a REMAINING entry, never to the removed one's ops).
-    // Core stays assistant-agnostic — it only transports paths.
-    const nextManifest = removeEntry(manifest, entry.id, scope, adapter.id);
-    const removedEntry = findEntry(manifest, entry.id, scope, adapter.id);
-    const touchedPaths = new Set(
-      ops.flatMap((op) => {
-        if ('path' in op) return [path.resolve((op as { path: string }).path)];
-        if ('target' in op) return [path.resolve((op as { target: string }).target)];
-        return [];
-      }),
-    );
-    const survivingOwnFiles = (removedEntry?.files ?? []).filter(
-      (f) => !touchedPaths.has(path.resolve(f)),
-    );
-    const remainingFiles = [
-      ...nextManifest.artifacts.flatMap((a) => a.files),
-      ...survivingOwnFiles,
-    ];
-
-    // Delegate actual removals to the adapter
-    await adapter.applyRemove(ops, env, remainingFiles);
-
-    // Remove this entry from the manifest (keyed by assistant so we only drop
-    // the record for the assistant being operated on).
-    manifest = nextManifest;
-    allRemoved.push(entry.id);
-    removedNatures.add(entry.nature);
+    // Final persist for a 100%-no-op run: nothing above mutated the manifest,
+    // but remove has always written state.json — that contract is preserved. On
+    // a run that DID mutate, this re-reads + replays the accumulated removals,
+    // idempotently re-writing the last merged state.
+    manifest = await persistMerged(manifestPath, mutations);
+  } catch (err) {
+    // A failure mid-loop has already persisted every successful removal/purge
+    // (per-entry writeManifest above) and created their .bak files. Attach that
+    // partial progress to the error so the removed ids and .bak paths are never
+    // swallowed by the throw (mirror of apply()'s err.rollbackFailures), then
+    // re-throw the ORIGINAL error unchanged.
+    if (err instanceof Error) {
+      (err as Error & { removePartial?: RemovePartial }).removePartial = {
+        removed: allRemoved,
+        purged: allPurged,
+        backedUp: allBackedUp,
+      };
+    }
+    throw err;
   }
-
-  // Persist the manifest once after all entries have been processed
-  await writeManifest(manifestPath, manifest);
 
   // R7: a shared nature store leaves the disk with the LAST manifest entry of
   // its nature — all scopes and assistants confounded (the manifest is one
@@ -712,14 +1002,33 @@ export async function remove(
     if (!removedNatures.has(store.nature) || natureRemains) {
       continue;
     }
-    const dirBak = await backupDir(store.dir);
-    if (dirBak !== null) {
-      allBackedUp.push(dirBak);
+    // Best-effort (R2/D2): the manifest is already persisted and the run is
+    // coherent, so a cleanup failure (removeDir EACCES, backupDir error) must
+    // NEVER throw and make a successful remove look failed — it is downgraded to
+    // a warning on the result instead. The store is left on disk; a later
+    // re-remove (or manual cleanup) reclaims it.
+    try {
+      const dirBak = await backupDir(store.dir);
+      if (dirBak !== null) {
+        allBackedUp.push(dirBak);
+      }
+      await removeDir(store.dir);
+    } catch (cleanupErr) {
+      const reason = cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr);
+      allWarnings.push(
+        `shared store cleanup failed for ${store.dir}: ${reason} — `
+          + 'remove it manually if it is no longer needed',
+      );
     }
-    await removeDir(store.dir);
   }
 
-  return { removed: allRemoved, backedUp: allBackedUp, manifest };
+  return {
+    removed: allRemoved,
+    purged: allPurged,
+    backedUp: allBackedUp,
+    warnings: allWarnings,
+    manifest,
+  };
 }
 
 // ---------------------------------------------------------------------------

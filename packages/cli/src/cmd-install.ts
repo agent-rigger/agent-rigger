@@ -34,7 +34,7 @@ import { apply, enrichWithApplied } from '@agent-rigger/core/engine';
 import { findEntry, readManifest } from '@agent-rigger/core/manifest';
 import type { Env } from '@agent-rigger/core/paths';
 import { resolveHome } from '@agent-rigger/core/paths';
-import type { Scope } from '@agent-rigger/core/types';
+import type { Manifest, Scope } from '@agent-rigger/core/types';
 
 import type { ArtifactEntry, CatalogEntry } from '@agent-rigger/catalog';
 import { resolve } from '@agent-rigger/catalog/resolver';
@@ -178,6 +178,47 @@ async function buildProjectScopeNote(targetCwd: string): Promise<string> {
 
   lines.push('');
   return lines.join('\n');
+}
+
+// ---------------------------------------------------------------------------
+// Adoption detection (R5/D5)
+// ---------------------------------------------------------------------------
+
+/**
+ * Whether any selected entry is due for adoption (R5/D5): an artifact whose plan
+ * is empty (caller only invokes this when every group is empty), with NO manifest
+ * record for (id, scope, adapter.id), whose adapter.adopt returns a result (strict
+ * per-nature gate: only when the audit is exactly `present`).
+ *
+ * Read-only: adapter.adopt performs no filesystem writes. The engine calls adopt
+ * AGAIN inside apply() to perform the actual record — this second read-only call
+ * is the pre-detection that decides whether apply() must be reached at all
+ * (otherwise the "up-to-date" short-circuit would skip it).
+ *
+ * Returns false immediately for an adapter without an `adopt` method (legacy
+ * fakes, or an assistant with no adoption support): the caller keeps the
+ * historical empty-plan no-op.
+ */
+async function isAdoptionDue(
+  adapter: Adapter,
+  entries: AdapterEntry[],
+  scope: Scope,
+  env: Env,
+  manifest: Manifest,
+): Promise<boolean> {
+  if (adapter.adopt === undefined) {
+    return false;
+  }
+  for (const entry of entries) {
+    if (findEntry(manifest, entry.id, scope, adapter.id) !== undefined) {
+      continue;
+    }
+    const adoption = await adapter.adopt(entry, scope, env);
+    if (adoption !== undefined) {
+      return true;
+    }
+  }
+  return false;
 }
 
 // ---------------------------------------------------------------------------
@@ -351,6 +392,48 @@ export async function runInstall(opts: RunInstallOptions): Promise<InstallResult
   const noExecUnverified: string[] = [];
 
   if (groups.length === 0) {
+    // R5/D5: an empty plan does NOT always mean "nothing to do". An artifact
+    // present on disk but ABSENT from the manifest (M4, typically after a
+    // manifest loss) must be ADOPTED — recorded in state.json with no config
+    // write. The engine does this in its own empty-plan branch, but only if
+    // apply() is reached; the historical "up-to-date" short-circuit below skips
+    // apply entirely. So detect whether any adoption is due (read-only) and, if
+    // so, reach apply — WITHOUT a confirmation prompt (only state.json changes).
+    const adoptionDue = await isAdoptionDue(adapter, adapterEntries, scope, env, manifest);
+
+    if (adoptionDue) {
+      const applyResult = versionFor === undefined
+        ? await apply(adapter, adapterEntries, scope, env, manifestPath)
+        : await apply(adapter, adapterEntries, scope, env, manifestPath, versionFor);
+
+      const output = buildOutput({
+        planText,
+        // Fall back to up-to-date if, against expectation, nothing was adopted
+        // (e.g. a TOCTOU change between detection and apply) — never claim a
+        // phantom adoption.
+        reason: applyResult.adopted.length > 0 ? 'adopted' : 'up-to-date',
+        toolWarnings: noExecToolWarnings,
+        unverifiedIds: noExecUnverified,
+        skipped,
+        assistantId: adapter.id,
+        written: applyResult.written,
+        backedUp: applyResult.backedUp,
+        adopted: applyResult.adopted,
+      });
+
+      return {
+        // No config file was written — only state.json changed — so `applied`
+        // (the "writes were performed" signal) stays false.
+        applied: false,
+        written: applyResult.written,
+        backedUp: applyResult.backedUp,
+        toolWarnings: noExecToolWarnings,
+        skipped,
+        warnings,
+        output,
+      };
+    }
+
     const output = buildOutput({
       planText,
       reason: 'up-to-date',
@@ -512,7 +595,7 @@ export async function runInstall(opts: RunInstallOptions): Promise<InstallResult
 
 interface BuildOutputOpts {
   planText: string;
-  reason: 'applied' | 'aborted' | 'up-to-date';
+  reason: 'applied' | 'aborted' | 'up-to-date' | 'adopted';
   toolWarnings: { required: string[]; recommended: string[] };
   /**
    * Ids of tool checks whose consent was declined — never executed, and
@@ -526,6 +609,12 @@ interface BuildOutputOpts {
   assistantId: string;
   written: string[];
   backedUp: string[];
+  /**
+   * Ids adopted this run (R5/D5): artifacts already present on disk but absent
+   * from the manifest, recorded WITHOUT any config write (only state.json).
+   * Rendered under the "adopted" result line. Absent on non-adoption runs.
+   */
+  adopted?: string[];
 }
 
 /**
@@ -551,6 +640,7 @@ interface BuildOutputOpts {
 function buildOutput(opts: BuildOutputOpts): string {
   const { planText, reason, toolWarnings, unverifiedIds, skipped, assistantId, written, backedUp } =
     opts;
+  const adopted = opts.adopted ?? [];
   const parts: string[] = [];
 
   // Plan section
@@ -573,6 +663,14 @@ function buildOutput(opts: BuildOutputOpts): string {
 
   if (reason === 'up-to-date') {
     parts.push('  [ok] Already up to date — nothing to install.');
+  } else if (reason === 'adopted') {
+    // R5/D5: the artifact was already conforming on disk; only state.json was
+    // updated (no config write, no confirmation). Never conflated with a real
+    // install (`applied`) nor with a plain up-to-date no-op.
+    parts.push('  [ok] adopted (already present on disk) — state.json updated, no files written.');
+    for (const id of adopted) {
+      parts.push(`    = ${id}`);
+    }
   } else if (reason === 'aborted') {
     parts.push('  [aborted] Installation cancelled by user.');
   } else {

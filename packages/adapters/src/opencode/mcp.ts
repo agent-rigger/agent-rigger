@@ -22,7 +22,10 @@
  * - No while loops; async uses for...of / map.
  */
 
+import { isDeepStrictEqual } from 'node:util';
+
 import { hasMcp, mergeMcp, removeMcp } from '@agent-rigger/core';
+import type { AdoptionResult } from '@agent-rigger/core/adapter';
 import {
   resolveOpencodeProjectTargets,
   resolveOpencodeUserTargets,
@@ -170,6 +173,53 @@ export async function planRemoveMcp(
 
   const opencodeJsonPath = resolveOpencodeJsonPath(scope, env, cwd);
   return [{ kind: 'remove-mcp', path: opencodeJsonPath, server }];
+}
+
+// ---------------------------------------------------------------------------
+// adoptMcp
+// ---------------------------------------------------------------------------
+
+/**
+ * Adopt gate for the opencode mcp nature (R5/D5, FM5).
+ *
+ * Adopts ONLY when the server is declared on disk AND its config DEEP-EQUALS the
+ * canonical config. Presence alone is NOT enough here (unlike auditMcp, which is
+ * key-only): a personal, divergent config for the same server id must NEVER be
+ * adopted — recording the canonical would let `remove` strip the user's real
+ * config and "restore" a wrong one (FM5). The recorded payload carries the
+ * canonical server + config so remove subtracts exactly what was installed.
+ *
+ * Returns `undefined` (refusal) when the server key is absent, or present with
+ * ANY difference from the canonical config.
+ *
+ * Read-only: no filesystem writes.
+ *
+ * @param scope   Installation scope.
+ * @param env     Injectable env for HOME resolution.
+ * @param server  The canonical MCP server id.
+ * @param config  The canonical server config to deep-compare against disk.
+ * @param cwd     Working directory (only used when scope is 'project').
+ */
+export async function adoptMcp(
+  scope: Scope,
+  env: Env,
+  server: string,
+  config: OpencodeMcpServer,
+  cwd?: string,
+): Promise<AdoptionResult | undefined> {
+  const opencodeJsonPath = resolveOpencodeJsonPath(scope, env, cwd);
+  const settings = await readOpencodeJson(opencodeJsonPath);
+  const current = extractMcp(settings);
+
+  const onDisk = current[server];
+  if (onDisk === undefined || !isDeepStrictEqual(onDisk, config)) {
+    return undefined;
+  }
+
+  return {
+    applied: { kind: 'opencode-mcp', server, config },
+    files: [opencodeJsonPath],
+  };
 }
 
 // ---------------------------------------------------------------------------

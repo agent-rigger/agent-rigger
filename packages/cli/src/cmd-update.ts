@@ -47,6 +47,7 @@ import { assertSafeArtifactName } from '@agent-rigger/core/artifact-name';
 import { apply, remove } from '@agent-rigger/core/engine';
 import { readManifest } from '@agent-rigger/core/manifest';
 import type { Env } from '@agent-rigger/core/paths';
+import { acquireRunLock } from '@agent-rigger/core/run-lock';
 import { memoizeScanner } from '@agent-rigger/core/scan';
 import type { Scanner } from '@agent-rigger/core/scan';
 import type { Scope } from '@agent-rigger/core/types';
@@ -377,11 +378,22 @@ export async function runUpdate(opts: RunUpdateOptions): Promise<UpdateResult> {
           return { aborted: true as const, scanWarnings, opWarnings };
         }
 
-        // 3h. Remove old (targets absent → plan will produce link ops in apply).
-        await remove(adapter, adapterEntries, scope, env, manifestPath);
+        // 3h/3i. Remove old then apply fresh under a SINGLE run lock (R7/D7):
+        // update is a remove-then-apply, so holding ONE hold across both phases
+        // keeps the whole transaction atomic against a concurrent run — letting
+        // the engine acquire+release twice would open a gap between them. The
+        // handle is passed to both, so neither self-acquires. ConcurrentRunError
+        // from acquireRunLock propagates (nothing removed/written yet).
+        const lock = await acquireRunLock(manifestPath);
+        try {
+          // 3h. Remove old (targets absent → plan will produce link ops in apply).
+          await remove(adapter, adapterEntries, scope, env, manifestPath, undefined, lock);
 
-        // 3i. Apply fresh content from checkout dir + upsert manifest with ref/sha.
-        await apply(adapter, adapterEntries, scope, env, manifestPath, versionFor);
+          // 3i. Apply fresh content from checkout dir + upsert manifest with ref/sha.
+          await apply(adapter, adapterEntries, scope, env, manifestPath, versionFor, lock);
+        } finally {
+          await lock.release();
+        }
 
         return { aborted: false as const, scanWarnings, opWarnings };
       },

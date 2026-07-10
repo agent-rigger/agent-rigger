@@ -63,7 +63,13 @@ export async function isRemovableTarget(target: string, store: string): Promise<
  * decide the removal plan for a store-and-link artifact from what the disk
  * actually holds.
  *
- * - target absent → [] (not installed, idempotent no-op);
+ * - target absent, store STILL present → [unlink] (R1/lot3: the post-crash /
+ *   hand-removal orphan-store window — the install symlink is gone but the
+ *   store lingers; the unlink op lets the normal apply flow reclaim it, rm
+ *   being a no-op on the absent target);
+ * - target absent AND store absent → [] (nothing to reclaim; the engine's purge
+ *   branch converges the manifest and idempotent re-removes stay no-ops — the
+ *   Lot 2 "not installed" contract holds);
  * - target is a symlink resolving to the rigger store → [unlink] (legitimate;
  *   includes a dangling link whose store was already deleted — cleanup);
  * - target is a plain copy byte-identical to the store → [unlink] (linkOrCopy
@@ -82,7 +88,15 @@ export async function planRemoveGate(
 ): Promise<RemovalOp[]> {
   const targetStat = await lstat(target).catch(() => null);
   if (targetStat === null) {
-    return [];
+    // Target absent. When the store still exists this is the orphan-store window
+    // (unlink→removeStore interrupted, or the symlink deleted by hand): emit the
+    // unlink op so the normal apply flow reclaims the store (isRemovableTarget is
+    // true on an absent target, rm-force is a no-op, removeStoreIfUnreferenced
+    // sweeps the store). When the store is ALSO gone there is nothing to reclaim:
+    // return [] so the engine's purge branch converges the manifest instead —
+    // and a re-remove after a clean remove stays a no-op (R1/lot3, D1).
+    const storeStat = await lstat(store).catch(() => null);
+    return storeStat === null ? [] : [{ kind: 'unlink', target, store }];
   }
 
   if (!(await resolvesToStore(target, store)) && !(await contentMatchesStore(target, store))) {

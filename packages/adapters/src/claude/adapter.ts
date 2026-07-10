@@ -13,7 +13,7 @@
  * Unsupported op kind → Error (should never happen in practice if plan + apply are in sync).
  */
 
-import type { Adapter, AdapterEntry } from '@agent-rigger/core/adapter';
+import type { Adapter, AdapterEntry, AdoptionResult } from '@agent-rigger/core/adapter';
 import type { Env } from '@agent-rigger/core/paths';
 import type { Scanner } from '@agent-rigger/core/scan';
 import { stubScanner } from '@agent-rigger/core/scan';
@@ -26,8 +26,9 @@ import type {
   WriteOp,
 } from '@agent-rigger/core/types';
 
-import { auditAgent, planAgent, planRemoveAgent } from './agents';
+import { adoptAgent, auditAgent, planAgent, planRemoveAgent } from './agents';
 import {
+  adoptContext,
   applyContext,
   applyRemoveContext,
   auditContext,
@@ -35,15 +36,24 @@ import {
   planRemoveContext,
 } from './context';
 import {
+  adoptGuardrail,
   applyGuardrail,
   applyRemoveGuardrail,
   auditGuardrail,
   planGuardrail,
   planRemoveGuardrail,
 } from './guardrails';
-import { applyHook, applyRemoveHook, auditHook, planHook, planRemoveHook } from './hooks';
+import {
+  adoptHook,
+  applyHook,
+  applyRemoveHook,
+  auditHook,
+  planHook,
+  planRemoveHook,
+} from './hooks';
 import type { ResolvedHook } from './hooks';
 import {
+  adoptPlugin,
   applyPlugin,
   applyRemovePlugin,
   auditPlugin,
@@ -53,7 +63,14 @@ import {
   PluginUninstallError,
 } from './plugins';
 import type { PluginRunner, PluginSource } from './plugins';
-import { applyRemoveSkill, applySkill, auditSkill, planRemoveSkill, planSkill } from './skills';
+import {
+  adoptSkill,
+  applyRemoveSkill,
+  applySkill,
+  auditSkill,
+  planRemoveSkill,
+  planSkill,
+} from './skills';
 
 // Re-export so callers can catch this typed error without importing from plugins directly
 export { PluginUninstallError };
@@ -86,6 +103,8 @@ interface NatureHandler {
   audit(entry: AdapterEntry, scope: Scope, env: Env): Promise<NatureReport>;
   plan(entry: AdapterEntry, scope: Scope, env: Env): Promise<WriteOp[]>;
   planRemove(entry: AdapterEntry, scope: Scope, env: Env): Promise<RemovalOp[]>;
+  /** R5/D5 adoption gate — records a conforming-on-disk artifact into the manifest. */
+  adopt(entry: AdapterEntry, scope: Scope, env: Env): Promise<AdoptionResult | undefined>;
 }
 
 type OpKindApply = (ops: WriteOp[], env: Env) => Promise<void>;
@@ -264,6 +283,12 @@ export function createClaudeAdapter(config: ClaudeAdapterConfig): Adapter {
             : allowRef;
           return planRemoveGuardrail(scope, env, effectiveDeny, cwd, effectiveAllow);
         },
+        adopt(entry, scope, env): Promise<AdoptionResult | undefined> {
+          const cwd = entry.scope === 'project' ? process.cwd() : undefined;
+          // Adoption records the CANONICAL rules (config.*), never a manifest
+          // payload — the adoption branch fires only when no manifest entry exists.
+          return adoptGuardrail(scope, env, config.denyRef, cwd, allowRef);
+        },
       },
     ],
     [
@@ -291,6 +316,10 @@ export function createClaudeAdapter(config: ClaudeAdapterConfig): Adapter {
           }
           return planRemoveContext(scope, env, agentsContent, cwd);
         },
+        adopt(entry, scope, env): Promise<AdoptionResult | undefined> {
+          const cwd = entry.scope === 'project' ? process.cwd() : undefined;
+          return adoptContext(scope, env, agentsContent, cwd);
+        },
       },
     ],
     [
@@ -308,6 +337,10 @@ export function createClaudeAdapter(config: ClaudeAdapterConfig): Adapter {
           const cwd = entry.scope === 'project' ? process.cwd() : undefined;
           return planRemoveSkill(entry, scope, env, cwd);
         },
+        adopt(entry, scope, env): Promise<AdoptionResult | undefined> {
+          const cwd = entry.scope === 'project' ? process.cwd() : undefined;
+          return adoptSkill(entry, scope, env, cwd);
+        },
       },
     ],
     [
@@ -321,6 +354,9 @@ export function createClaudeAdapter(config: ClaudeAdapterConfig): Adapter {
         },
         planRemove(entry, _scope, _env): Promise<RemovalOp[]> {
           return planRemovePlugin(entry, { run: pluginRunner });
+        },
+        adopt(entry, _scope, env): Promise<AdoptionResult | undefined> {
+          return adoptPlugin(entry, env, { run: pluginRunner });
         },
       },
     ],
@@ -338,6 +374,10 @@ export function createClaudeAdapter(config: ClaudeAdapterConfig): Adapter {
         planRemove(entry, scope, env): Promise<RemovalOp[]> {
           const cwd = entry.scope === 'project' ? process.cwd() : undefined;
           return planRemoveAgent(entry, scope, env, cwd);
+        },
+        adopt(entry, scope, env): Promise<AdoptionResult | undefined> {
+          const cwd = entry.scope === 'project' ? process.cwd() : undefined;
+          return adoptAgent(entry, scope, env, cwd);
         },
       },
     ],
@@ -393,6 +433,19 @@ export function createClaudeAdapter(config: ClaudeAdapterConfig): Adapter {
             return Promise.reject(err);
           }
           return planRemoveHook(entry, scope, env, spec, cwd);
+        },
+        adopt(entry, scope, env): Promise<AdoptionResult | undefined> {
+          // Adoption runs only when no manifest entry exists, so there is no
+          // `applied` to prefer — resolve the canonical spec (reject if the
+          // resolver is not configured, mirroring plan()).
+          let spec: ResolvedHook;
+          try {
+            spec = resolveHookSpec(entry);
+          } catch (err) {
+            return Promise.reject(err);
+          }
+          const cwd = entry.scope === 'project' ? process.cwd() : undefined;
+          return adoptHook(scope, env, spec, cwd);
         },
       },
     ],
@@ -491,6 +544,14 @@ export function createClaudeAdapter(config: ClaudeAdapterConfig): Adapter {
         return Promise.reject(new UnsupportedNatureError(entry.nature));
       }
       return handler.planRemove(entry, scope, env);
+    },
+
+    adopt(entry: AdapterEntry, scope: Scope, env: Env): Promise<AdoptionResult | undefined> {
+      const handler = natureHandlers.get(entry.nature);
+      if (handler === undefined) {
+        return Promise.reject(new UnsupportedNatureError(entry.nature));
+      }
+      return handler.adopt(entry, scope, env);
     },
 
     async applyRemove(ops: RemovalOp[], env: Env, manifestFiles?: string[]): Promise<void> {

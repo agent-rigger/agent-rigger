@@ -29,8 +29,10 @@ import type { Assistant } from '@agent-rigger/core';
 import type { AdapterEntry } from '@agent-rigger/core/adapter';
 import { UnsafeArtifactNameError } from '@agent-rigger/core/artifact-name';
 import { InvalidJsonError } from '@agent-rigger/core/fs-json';
+import { MalformedManifestError } from '@agent-rigger/core/manifest';
 import type { Env } from '@agent-rigger/core/paths';
 import { resolveUserTargets } from '@agent-rigger/core/paths';
+import { ConcurrentRunError } from '@agent-rigger/core/run-lock';
 import type { Scanner } from '@agent-rigger/core/scan';
 
 import {
@@ -2435,6 +2437,21 @@ function handleError(err: unknown, print: (msg: string) => void): number {
       print(`  Detail: ${err.cause.message}`);
     }
     return 2;
+  }
+
+  if (err instanceof MalformedManifestError) {
+    print(`[error] Malformed manifest: ${err.path}`);
+    print(`  Reason: ${err.reason}`);
+    print('  Expected shape: {"version":1,"artifacts":[...]}');
+    print('  Fix the top-level shape by hand, or delete the file to start fresh, then re-run.');
+    return 2;
+  }
+
+  if (err instanceof ConcurrentRunError) {
+    // Another agent-rigger run holds the lock (R7). A transient contention, not
+    // a corruption: fast-fail with a stable exit code so the user can retry.
+    print(`[error] ${err.message}`);
+    return 1;
   }
 
   if (err instanceof InvalidOpencodeJsonError) {

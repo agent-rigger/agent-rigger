@@ -35,6 +35,32 @@ export interface AdapterEntry {
 }
 
 /**
+ * Result of a successful adoption (R5/D5).
+ *
+ * Returned by Adapter.adopt when the artifact is already conforming on disk
+ * (its audit is strictly `present`) so the engine can record a manifest entry
+ * WITHOUT any disk write — the sole convergence path out of the "installed but
+ * unrecorded" state (M4, typically after a manifest loss). The engine builds
+ * the ManifestEntry from these fields exactly as a fresh install would.
+ *
+ * - `applied`: the canonical AppliedPayload (the COMPLETE trace, not a delta) so
+ *   a later remove/check reverses against it. Absent for natures with no
+ *   payload (plugins are delegated to the native CLI — nothing to reverse
+ *   offline). NEVER carries a context `previous` baseline (FM6): the on-disk
+ *   content is the canonical posted by an earlier install, not a user's
+ *   pre-install state, so recording it would make remove "restore" the
+ *   canonical forever instead of uninstalling.
+ * - `files`: the target paths the manifest entry claims (ManifestEntry.files) —
+ *   the store refcount / shared-file candidates for remove.
+ */
+export interface AdoptionResult {
+  /** Canonical applied payload; absent for payload-less natures (plugin). */
+  applied?: AppliedPayload;
+  /** Target paths recorded as ManifestEntry.files. */
+  files: string[];
+}
+
+/**
  * The Adapter interface — one implementation per supported assistant.
  *
  * M0 registers only 'claude'. 'opencode' and 'copilot' are reserved identifiers
@@ -137,4 +163,31 @@ export interface Adapter {
    *                       through the manifest, ADR-0020 §3).
    */
   applyRemove(ops: RemovalOp[], env: Env, manifestFiles?: string[]): Promise<void>;
+
+  /**
+   * Adopt an artifact that is already conforming on disk but absent from the
+   * manifest (R5/D5). OPTIONAL — an adapter that does not implement it never
+   * adopts (the engine keeps the empty-plan no-op), and test fakes stay valid
+   * without it.
+   *
+   * Called by the engine ONLY in the empty-plan branch of apply() and ONLY when
+   * the manifest has NO record for (id, scope, this assistant): a non-empty plan
+   * means the artifact is not yet conforming (install proceeds normally), and an
+   * existing record means it is already tracked (idempotent no-op).
+   *
+   * Contract — the gate is per-nature and STRICT:
+   * - return an AdoptionResult ONLY when the artifact's audit is exactly
+   *   `present` (canonical content fully on disk). Any other state — `drift`,
+   *   a divergent config, a partial install — MUST return `undefined` (refuse):
+   *   the manifest must never claim content rigger did not put there, otherwise
+   *   remove would destroy the user's work.
+   * - MUST be read-only: no filesystem writes (the engine persists only
+   *   state.json, from the returned payload).
+   *
+   * @param entry  The artifact to consider for adoption.
+   * @param scope  Installation scope.
+   * @param env    Injectable env for HOME resolution.
+   * @returns      AdoptionResult when adoptable, `undefined` to refuse.
+   */
+  adopt?(entry: AdapterEntry, scope: Scope, env: Env): Promise<AdoptionResult | undefined>;
 }

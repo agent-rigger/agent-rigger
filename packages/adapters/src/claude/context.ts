@@ -42,6 +42,7 @@ import type {
   WriteOpEnsureImport,
   WriteOpWriteText,
 } from '@agent-rigger/core';
+import type { AdoptionResult } from '@agent-rigger/core/adapter';
 
 // ---------------------------------------------------------------------------
 // Internal constants
@@ -211,16 +212,24 @@ export async function planContext(
   // confirm — same plan-warning channel as WriteOpMergeAllow.warnings.
   const overwriting = currentAgents !== '' && !agentsMatch;
 
+  // FM6 (lot3 R5/D5): capture a restore baseline ONLY when the write actually
+  // CHANGES the content. When AGENTS.md is already byte-identical to the
+  // canonical (agentsMatch — the block is what is missing, so the plan still
+  // runs), the on-disk content is the canonical a previous install posted, NOT
+  // the user's pre-install state. Recording it as `previous` would let remove
+  // "restore" the canonical forever instead of deleting — after a manifest loss
+  // the artifact would become un-uninstallable. Absent baseline → extractApplied
+  // omits `previous`, and remove degrades to "no restore baseline" (delete on
+  // exact match). Empty ≡ absent (readText returns '' for both) → null so remove
+  // deletes; foreign content overwrite → the foreign content, restored on remove.
+  const captureBaseline = currentAgents !== agentsContent;
+
   const writeTextOp: WriteOpWriteText = {
     kind: 'write-text',
     path: agentsMd,
     content: agentsContent,
     description: `Write canonical AGENTS.md to ${agentsMd}`,
-    // R6: capture the pre-install content as the restore baseline persisted
-    // in AppliedContext.previous. Empty ≡ absent (readText returns '' for
-    // both, matching the audit's 'missing' semantics) → recorded as null so
-    // remove deletes instead of restoring.
-    previous: currentAgents === '' ? null : currentAgents,
+    ...(captureBaseline ? { previous: currentAgents === '' ? null : currentAgents } : {}),
     ...(overwriting
       ? {
         warnings: [
@@ -238,6 +247,61 @@ export async function planContext(
   };
 
   return [writeTextOp, ensureImportOp];
+}
+
+// ---------------------------------------------------------------------------
+// adoptContext
+// ---------------------------------------------------------------------------
+
+/**
+ * Adopt gate for the context nature (R5/D5).
+ *
+ * Adopts ONLY when the artifact is fully present: AGENTS.md byte-identical to
+ * the canonical `agentsContent` (non-empty) AND the managed import block is in
+ * CLAUDE.md — the same condition under which planContext returns [] (empty
+ * plan). The recorded payload carries the canonical `block` but NEVER a
+ * `previous` baseline (FM6): the on-disk content is the canonical, not a user's
+ * pre-install state, so remove must degrade to "no restore baseline" and delete,
+ * never "restore" the canonical forever.
+ *
+ * Returns `undefined` (refusal) in every other state — a drifted AGENTS.md, a
+ * missing block, an empty canonical.
+ *
+ * Read-only: no filesystem writes.
+ *
+ * @param scope          Installation scope.
+ * @param env            Injectable env for HOME resolution.
+ * @param agentsContent  Canonical AGENTS.md content.
+ * @param cwd            Working directory (only used when scope is 'project').
+ */
+export async function adoptContext(
+  scope: Scope,
+  env: Env,
+  agentsContent: string,
+  cwd?: string,
+): Promise<AdoptionResult | undefined> {
+  const { agentsMd, claudeMd } = resolvePaths(scope, env, cwd);
+  const target = importTarget(scope);
+
+  const [currentAgents, currentClaudeMd] = await Promise.all([
+    readText(agentsMd),
+    readText(claudeMd),
+  ]);
+
+  const agentsMatch = currentAgents === agentsContent && agentsContent !== '';
+  const blockPresent = hasImportBlock(currentClaudeMd, target);
+
+  if (!agentsMatch || !blockPresent) {
+    return undefined;
+  }
+
+  // Payload without `previous` — FM6: never fabricate a restore baseline from
+  // the canonical already on disk. files mirror a normal install (AGENTS.md +
+  // CLAUDE.md), the shared-file refcount candidates remove relies on.
+  return {
+    applied: { kind: 'context', block: agentsContent },
+    files: [agentsMd, claudeMd],
+  };
 }
 
 // ---------------------------------------------------------------------------

@@ -218,14 +218,21 @@ describe('planRemoveContext', () => {
     expect(ops).toEqual([{ kind: 'delete-file', path: targets.agentsMd }]);
   });
 
-  it('returns [] when AGENTS.md diverges from canonical content (drift is not removed offline)', async () => {
+  it('returns a warning-only leave-alone op when AGENTS.md diverges (drift is conserved, never deleted or purged)', async () => {
     const targets = resolveOpencodeUserTargets(env);
     await fs.mkdir(path.dirname(targets.agentsMd), { recursive: true });
     await writeText(targets.agentsMd, 'drifted content\n');
 
     const ops = await planRemoveContext('user', env, AGENTS_CONTENT);
 
-    expect(ops).toHaveLength(0);
+    // Non-empty plan (leave-alone) so the engine conserves the manifest entry
+    // instead of purging it (R1). The drifted file is never touched.
+    expect(ops).toHaveLength(1);
+    expect(ops[0]?.kind).toBe('leave-alone');
+    expect((ops[0] as { target: string }).target).toBe(targets.agentsMd);
+    expect((ops[0] as { warnings: string[] }).warnings.join('\n')).toContain('diverged');
+    // The file is left untouched.
+    expect(await readText(targets.agentsMd)).toBe('drifted content\n');
   });
 });
 

@@ -16,6 +16,7 @@ import {
   detectDrift,
   emptyManifest,
   findEntry,
+  MalformedManifestError,
   readManifest,
   upsertEntry,
   writeManifest,
@@ -81,23 +82,23 @@ describe('readManifest', () => {
     expect(result).toEqual(emptyManifest());
   });
 
-  it('returns emptyManifest() when file contains {} (missing version/artifacts)', async () => {
+  // Lot 3 R3: a PRESENT-but-top-level-invalid state.json is no longer coerced to
+  // emptyManifest() (M2 data-loss); it now fails closed with MalformedManifestError.
+  it('throws MalformedManifestError when file contains {} (missing version/artifacts)', async () => {
     const filePath = path.join(tmpDir, 'state.json');
     await fs.writeFile(filePath, '{}', 'utf-8');
 
-    const result = await readManifest(filePath);
-    expect(result).toEqual(emptyManifest());
+    await expect(readManifest(filePath)).rejects.toBeInstanceOf(MalformedManifestError);
   });
 
-  it('returns emptyManifest() when version is wrong type', async () => {
+  it('throws MalformedManifestError when version is wrong type', async () => {
     const filePath = path.join(tmpDir, 'state.json');
     await fs.writeFile(filePath, JSON.stringify({ version: 'bad', artifacts: [] }), 'utf-8');
 
-    const result = await readManifest(filePath);
-    expect(result).toEqual(emptyManifest());
+    await expect(readManifest(filePath)).rejects.toBeInstanceOf(MalformedManifestError);
   });
 
-  it('returns emptyManifest() when artifacts is not an array', async () => {
+  it('throws MalformedManifestError when artifacts is not an array', async () => {
     const filePath = path.join(tmpDir, 'state.json');
     await fs.writeFile(
       filePath,
@@ -105,8 +106,7 @@ describe('readManifest', () => {
       'utf-8',
     );
 
-    const result = await readManifest(filePath);
-    expect(result).toEqual(emptyManifest());
+    await expect(readManifest(filePath)).rejects.toBeInstanceOf(MalformedManifestError);
   });
 
   it('round-trips: writeManifest then readManifest returns equal manifest', async () => {

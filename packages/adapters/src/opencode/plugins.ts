@@ -40,7 +40,7 @@
 import { readdir } from 'node:fs/promises';
 import path from 'node:path';
 
-import type { AdapterEntry } from '@agent-rigger/core/adapter';
+import type { AdapterEntry, AdoptionResult } from '@agent-rigger/core/adapter';
 import { assertSafeArtifactName } from '@agent-rigger/core/artifact-name';
 import {
   resolveOpencodeProjectTargets,
@@ -230,4 +230,58 @@ export async function planRemovePlugin(
   const store = resolveStorePath(fileName, env);
   const target = path.join(targetDir, fileName);
   return [{ kind: 'unlink', target, store }];
+}
+
+// ---------------------------------------------------------------------------
+// adoptPlugin
+// ---------------------------------------------------------------------------
+
+/**
+ * Adopt gate for the opencode plugin nature (R5/D5).
+ *
+ * Adopts ONLY when auditPlugin is `present` (pluginDir holds a file matching the
+ * name) — the same condition under which planPlugin returns [] (empty plan).
+ *
+ * The AdoptionResult MUST record the installed target in both `applied`
+ * (AppliedLink) and `files`, exactly as a normal install does (engine
+ * extractApplied maps a link WriteOp → { kind: 'link', files: [target] }). An
+ * opencode plugin is a store+symlink artifact sharing ONE user-level store
+ * (~/.config/agent-rigger/plugins/<name>.<ext>) across scopes and cwds — NOT a
+ * native-CLI delegate like the claude plugin nature. The store's cross-cwd
+ * refcount (R4/D4) is enumerated from the manifest `files` of the entries that
+ * remain after a removal (storeReferenceCandidates): a project-scope reference
+ * installed from a DIFFERENT cwd is discoverable ONLY through those files.
+ * Returning `files: []` here would drop this entry's target from the refcount,
+ * so removing a sibling reference from another cwd would delete the still-shared
+ * store and leave the adopted reference a dangling symlink. Recording the target
+ * (mirror of adoptSkill) keeps the adopted reference counted.
+ *
+ * Read-only: no filesystem writes.
+ *
+ * @param entry  Artifact entry (id carries the plugin name).
+ * @param scope  Installation scope.
+ * @param env    Injectable env for HOME resolution.
+ * @param cwd    Working directory (only used when scope is 'project').
+ */
+export async function adoptPlugin(
+  entry: AdapterEntry,
+  scope: Scope,
+  env: Env,
+  cwd?: string,
+): Promise<AdoptionResult | undefined> {
+  const report = await auditPlugin(entry, scope, env, cwd);
+  if (report.state !== 'present') {
+    return undefined;
+  }
+
+  // Discover the actually installed file (and its extension) from disk — fully
+  // offline, same lookup planRemovePlugin uses. Present per auditPlugin above,
+  // so findInstalledFile resolves; fall back defensively to the extension-less
+  // name if a concurrent removal raced the audit.
+  const name = pluginName(entry);
+  const targetDir = resolveTargetDir(scope, env, cwd);
+  const fileName = (await findInstalledFile(targetDir, name)) ?? name;
+  const target = path.join(targetDir, fileName);
+
+  return { applied: { kind: 'link', files: [target] }, files: [target] };
 }

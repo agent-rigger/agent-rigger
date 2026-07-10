@@ -147,7 +147,7 @@ describe('R1: opencode guardrail re-install cumulates and remove reverses (real 
     expect(findEntry(after, ENTRY.id, 'user', 'opencode')).toBeUndefined();
   });
 
-  it('R1: a fully hand-removed fragment plans no destructive op and keeps the entry (idempotent)', async () => {
+  it('R1: a fully hand-removed fragment plans no destructive op and PURGES the phantom entry (lot3 R1/D1)', async () => {
     const v1 = createOpencodeAdapter({ permission: V1_PERMISSION });
     await apply(v1, [ENTRY], 'user', env, manifestPath);
 
@@ -157,8 +157,15 @@ describe('R1: opencode guardrail re-install cumulates and remove reverses (real 
 
     const result = await remove(v1, [ENTRY], 'user', env, manifestPath);
 
+    // planRemoveGuardrail returns [] (no leaf matches, none drifted): the raw
+    // plan is empty, so lot3 R1/D1 converges the phantom via the purge channel
+    // instead of the pre-lot3 idempotent-keep. No destructive op runs (purge is
+    // manifest-only), and the entry — which now claims a fragment that vanished
+    // from opencode.json — is dropped (ADR-0004: the manifest is the installed
+    // reality; the symmetric counterpart is R5 adopt-on-fully-present).
     expect(result.removed).toHaveLength(0);
+    expect(result.purged).toContain(ENTRY.id);
     const after = await readManifest(manifestPath);
-    expect(findEntry(after, ENTRY.id, 'user', 'opencode')).toBeDefined();
+    expect(findEntry(after, ENTRY.id, 'user', 'opencode')).toBeUndefined();
   });
 });

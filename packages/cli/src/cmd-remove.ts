@@ -176,6 +176,11 @@ export async function runRemove(opts: RunRemoveOptions): Promise<RemoveCommandRe
 
   const groups: PlanRemovalGroup[] = [];
   const planWarnings: string[] = [];
+  // Entries whose plan is empty while still recorded in the manifest — their
+  // target vanished from disk (R1/D1). remove() converges them via the purge
+  // channel: no disk mutation, so no confirmation is required, but the recap
+  // still lists them ("purged (already absent)").
+  const purgeCandidates: string[] = [];
   for (const entry of adapterEntries) {
     // Keyed by adapter.id (E6): the preview must enrich from the SAME manifest
     // identity (id, scope, assistant) that the real remove() call below will
@@ -197,6 +202,12 @@ export async function runRemove(opts: RunRemoveOptions): Promise<RemoveCommandRe
     const ops = plannedOps.filter((op) => op.kind !== 'leave-alone');
     if (ops.length > 0) {
       groups.push({ id: entry.id, nature: entry.nature, ops });
+    } else if (plannedOps.length === 0) {
+      // Empty raw plan → target absent from disk. The entry is validated as
+      // manifest-present (step 1), so this is a phantom the engine will purge.
+      // A leave-alone (plannedOps NON-empty, ops empty) falls through: preserved,
+      // no group, no purge — the R3 Lot 2 conservation contract.
+      purgeCandidates.push(entry.id);
     }
   }
 
@@ -235,23 +246,40 @@ export async function runRemove(opts: RunRemoveOptions): Promise<RemoveCommandRe
   }) + warningsBlock;
 
   // -------------------------------------------------------------------------
-  // Empty plan → nothing to remove, skip confirm + apply
+  // Nothing to do → neither disk destruction nor a phantom to purge.
   // -------------------------------------------------------------------------
 
-  if (groups.length === 0) {
-    const output = buildOutput({ planText, reason: 'not-installed', removed: [], backedUp: [] });
+  if (groups.length === 0 && purgeCandidates.length === 0) {
+    const output = buildOutput({
+      planText,
+      reason: 'not-installed',
+      removed: [],
+      purged: [],
+      backedUp: [],
+      warnings: [],
+    });
     return { applied: false, removed: [], backedUp: [], output };
   }
 
   // -------------------------------------------------------------------------
-  // Step 5: Confirm
+  // Step 5: Confirm — only when the plan destroys something on disk. A pure
+  // purge (only phantom manifest entries, no group) mutates state.json alone,
+  // so it proceeds without a prompt (R1 scenario: "no confirmation but listed").
   // -------------------------------------------------------------------------
 
-  const confirmed = typeof confirm === 'boolean' ? confirm : await confirm(planText);
-
-  if (!confirmed) {
-    const output = buildOutput({ planText, reason: 'aborted', removed: [], backedUp: [] });
-    return { applied: false, removed: [], backedUp: [], output };
+  if (groups.length > 0) {
+    const confirmed = typeof confirm === 'boolean' ? confirm : await confirm(planText);
+    if (!confirmed) {
+      const output = buildOutput({
+        planText,
+        reason: 'aborted',
+        removed: [],
+        purged: [],
+        backedUp: [],
+        warnings: [],
+      });
+      return { applied: false, removed: [], backedUp: [], output };
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -275,11 +303,13 @@ export async function runRemove(opts: RunRemoveOptions): Promise<RemoveCommandRe
     planText,
     reason: 'applied',
     removed: removeResult.removed,
+    purged: removeResult.purged,
     backedUp: removeResult.backedUp,
+    warnings: removeResult.warnings,
   });
 
   return {
-    applied: true,
+    applied: removeResult.removed.length > 0 || removeResult.purged.length > 0,
     removed: removeResult.removed,
     backedUp: removeResult.backedUp,
     output,
@@ -294,11 +324,13 @@ interface BuildOutputOpts {
   planText: string;
   reason: 'applied' | 'aborted' | 'not-installed';
   removed: string[];
+  purged: string[];
   backedUp: string[];
+  warnings: string[];
 }
 
 function buildOutput(opts: BuildOutputOpts): string {
-  const { planText, reason, removed, backedUp } = opts;
+  const { planText, reason, removed, purged, backedUp, warnings } = opts;
   const parts: string[] = [];
 
   parts.push('--- Removal Plan ---');
@@ -312,10 +344,20 @@ function buildOutput(opts: BuildOutputOpts): string {
   } else if (reason === 'aborted') {
     parts.push('  [aborted] Removal cancelled by user.');
   } else {
-    parts.push(`  [ok] Removed ${removed.length} entry(s).`);
+    if (removed.length > 0) {
+      parts.push(`  [ok] Removed ${removed.length} entry(s).`);
+      for (const id of removed) {
+        parts.push(`    - ${id}`);
+      }
+    }
 
-    for (const id of removed) {
-      parts.push(`    - ${id}`);
+    // R1/D1: entries whose target had already vanished — purged from the
+    // manifest without touching the disk.
+    if (purged.length > 0) {
+      parts.push(`  [ok] Purged ${purged.length} entry(s) — purged (already absent).`);
+      for (const id of purged) {
+        parts.push(`    - ${id}`);
+      }
     }
 
     if (backedUp.length > 0) {
@@ -323,6 +365,10 @@ function buildOutput(opts: BuildOutputOpts): string {
       for (const b of backedUp) {
         parts.push(`    ~ ${b}`);
       }
+    }
+
+    for (const w of warnings) {
+      parts.push(`  [warning] ${w}`);
     }
   }
 

@@ -24,6 +24,7 @@
 import type { Adapter, AdapterEntry } from '@agent-rigger/core/adapter';
 import { check, reportExitCode } from '@agent-rigger/core/engine';
 import { InvalidJsonError } from '@agent-rigger/core/fs-json';
+import { MalformedManifestError } from '@agent-rigger/core/manifest';
 import type { Env } from '@agent-rigger/core/paths';
 import type { Report, Scope } from '@agent-rigger/core/types';
 
@@ -106,6 +107,10 @@ export async function runCheck(opts: RunCheckOptions): Promise<CheckResult> {
       const output = buildInvalidJsonOutput(err);
       return { exitCode: 2, report: { entries: [] }, output };
     }
+    if (err instanceof MalformedManifestError) {
+      const output = buildMalformedManifestOutput(err);
+      return { exitCode: 2, report: { entries: [] }, output };
+    }
     throw err;
   }
 
@@ -136,4 +141,19 @@ function buildInvalidJsonOutput(err: InvalidJsonError): string {
     lines.push(`  Detail: ${err.cause.message}`);
   }
   return lines.join('\n');
+}
+
+/**
+ * Build the actionable error message for a malformed manifest (top-level shape
+ * invalid, Lot 3 R3). Mirrors buildInvalidJsonOutput: mentions the path, the
+ * reason, the expected shape, and the manual repair.
+ */
+function buildMalformedManifestOutput(err: MalformedManifestError): string {
+  return [
+    '[error] Malformed manifest — cannot run audit.',
+    `  File: ${err.path}`,
+    `  Reason: ${err.reason}`,
+    '  Expected shape: {"version":1,"artifacts":[...]}',
+    '  Fix the top-level shape by hand, or delete the file to start fresh, then re-run check.',
+  ].join('\n');
 }

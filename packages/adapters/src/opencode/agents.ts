@@ -30,7 +30,7 @@
 
 import path from 'node:path';
 
-import type { AdapterEntry } from '@agent-rigger/core/adapter';
+import type { AdapterEntry, AdoptionResult } from '@agent-rigger/core/adapter';
 import { assertSafeArtifactName } from '@agent-rigger/core/artifact-name';
 import { readText } from '@agent-rigger/core/fs-json';
 import {
@@ -411,4 +411,44 @@ export async function planRemoveAgent(
   const name = agentName(entry);
   const targetPath = resolveTargetPath(name, scope, env, cwd);
   return [{ kind: 'delete-file', path: targetPath }];
+}
+
+// ---------------------------------------------------------------------------
+// adoptAgent
+// ---------------------------------------------------------------------------
+
+/**
+ * Adopt gate for the opencode agent nature (R5/D5).
+ *
+ * Adopts ONLY when auditAgent is EXACTLY `present` (the on-disk `.md` matches the
+ * freshly translated canonical content). A drifted (locally edited) file is
+ * NEVER adopted. Unlike claude (which links the source opaquely), opencode writes
+ * TRANSLATED content, so the recorded payload carries that content as an
+ * AppliedContext `block` (the same shape auditAgent/planRemoveAgent read back
+ * offline via `entry.applied.block`). FM6: no `previous` baseline is ever
+ * fabricated — the opencode agent writer never captures one.
+ *
+ * Read-only: no filesystem writes.
+ *
+ * @param entry        Artifact entry (id carries the agent name).
+ * @param scope        Installation scope.
+ * @param env          Injectable env for HOME resolution.
+ * @param agentSource  Resolver: entry → absolute path to the Claude-style source `.md`.
+ * @param cwd          Working directory (only used when scope is 'project').
+ */
+export async function adoptAgent(
+  entry: AdapterEntry,
+  scope: Scope,
+  env: Env,
+  agentSource: (entry: AdapterEntry) => string,
+  cwd?: string,
+): Promise<AdoptionResult | undefined> {
+  const report = await auditAgent(entry, scope, env, agentSource, cwd);
+  if (report.state !== 'present') {
+    return undefined;
+  }
+  const name = agentName(entry);
+  const targetPath = resolveTargetPath(name, scope, env, cwd);
+  const { content } = await computeTranslation(entry, agentSource);
+  return { applied: { kind: 'context', block: content }, files: [targetPath] };
 }

@@ -28,7 +28,7 @@
 import { lstat, stat } from 'node:fs/promises';
 import path from 'node:path';
 
-import type { AdapterEntry } from '@agent-rigger/core/adapter';
+import type { AdapterEntry, AdoptionResult } from '@agent-rigger/core/adapter';
 import { assertSafeArtifactName } from '@agent-rigger/core/artifact-name';
 import { contentMatchesStore, resolvesToStore } from '@agent-rigger/core/linker';
 import { resolveHome, resolveUserTargets } from '@agent-rigger/core/paths';
@@ -208,6 +208,41 @@ export async function planRemoveAgent(
   const target = resolveTargetPath(name, scope, env, cwd);
 
   return planRemoveGate(entry.id, target, store);
+}
+
+// ---------------------------------------------------------------------------
+// adoptAgent
+// ---------------------------------------------------------------------------
+
+/**
+ * Adopt gate for the agent nature (R5/D5).
+ *
+ * Adopts ONLY when auditAgent is EXACTLY `present` (a symlink resolving to the
+ * rigger store, or a byte-identical copy). Stricter than planAgent's empty-plan
+ * condition (which returns [] for `present` AND `drift`): a drifted target is
+ * NEVER adopted — the manifest must not claim the user's foreign file, and
+ * remove must not destroy it. Mirrors adoptSkill (agents share the link shape).
+ *
+ * Read-only: no filesystem writes.
+ *
+ * @param entry  Artifact entry (id carries the agent name).
+ * @param scope  Installation scope.
+ * @param env    Injectable env for HOME resolution.
+ * @param cwd    Working directory (only used when scope is 'project').
+ */
+export async function adoptAgent(
+  entry: AdapterEntry,
+  scope: Scope,
+  env: Env,
+  cwd?: string,
+): Promise<AdoptionResult | undefined> {
+  const report = await auditAgent(entry, scope, env, cwd);
+  if (report.state !== 'present') {
+    return undefined;
+  }
+  const name = agentName(entry);
+  const target = resolveTargetPath(name, scope, env, cwd);
+  return { applied: { kind: 'link', files: [target] }, files: [target] };
 }
 
 // ---------------------------------------------------------------------------

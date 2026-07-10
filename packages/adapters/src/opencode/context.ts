@@ -18,6 +18,7 @@
 
 import { rm } from 'node:fs/promises';
 
+import type { AdoptionResult } from '@agent-rigger/core/adapter';
 import { readText, writeText } from '@agent-rigger/core/fs-json';
 import {
   resolveOpencodeProjectTargets,
@@ -141,9 +142,19 @@ export async function planContext(
 /**
  * Compute the removal operations needed to uninstall the context artifact.
  *
- * Returns [delete-file] when the managed AGENTS.md is installed (content
- * matches the canonical content and is non-empty). Returns [] otherwise
- * (not installed, or drifted — a diverged file is left alone offline).
+ * Three outcomes (mirrors claude/context.ts planRemoveContext, minus the
+ * CLAUDE.md block dimension opencode does not have — ADR-0007):
+ * - installed (content byte-identical to the canonical, non-empty) →
+ *   [delete-file].
+ * - drifted (AGENTS.md exists, non-empty, diverged from the canonical — the
+ *   user enriched the managed file) → a warning-only [leave-alone] op. The
+ *   engine treats a leave-alone-only plan as a NON-empty plan (plannedOps
+ *   length > 0), so it does NOT fall into the R1 purge branch that would drop
+ *   the manifest entry: the entry is PRESERVED, `check` keeps reporting the
+ *   drift, and the enriched file is never deleted or hidden (R1 leave-alone
+ *   contract from Lot 2 — an empty plan here would silently purge the entry and
+ *   make the on-disk drift untracked and invisible to `check`).
+ * - not installed (missing/empty) → [].
  *
  * Read-only: no filesystem writes.
  *
@@ -162,11 +173,72 @@ export async function planRemoveContext(
   const current = await readText(agentsMd);
   const installed = current === agentsContent && agentsContent !== '';
 
-  if (!installed) {
-    return [];
+  if (installed) {
+    return [{ kind: 'delete-file', path: agentsMd }];
   }
 
-  return [{ kind: 'delete-file', path: agentsMd }];
+  // Drift: the file exists with foreign (user-enriched) content. Never delete
+  // it and never purge the manifest entry — emit a warning-only leave-alone so
+  // the engine conserves the entry (parity with claude/context.ts:377-386).
+  const drifted = current !== '' && current !== agentsContent;
+  if (drifted) {
+    return [{
+      kind: 'leave-alone',
+      target: agentsMd,
+      warnings: [
+        `AGENTS.md at ${agentsMd} diverged from the managed content — left in place`
+        + ' (remove never deletes user edits).',
+      ],
+    }];
+  }
+
+  return [];
+}
+
+// ---------------------------------------------------------------------------
+// adoptContext
+// ---------------------------------------------------------------------------
+
+/**
+ * Adopt gate for the opencode context nature (R5/D5, FM6).
+ *
+ * Adopts ONLY when AGENTS.md is byte-identical to the canonical `agentsContent`
+ * (non-empty) — the same condition under which planContext returns [] (empty
+ * plan). opencode reads AGENTS.md natively (ADR-0007): there is no CLAUDE.md
+ * import block to check, unlike claude/context.ts. The recorded payload carries
+ * the canonical `block` but NEVER a `previous` baseline (FM6): the on-disk
+ * content is the canonical posted by an earlier install, not the user's
+ * pre-install state, so remove must degrade to "no restore baseline" and delete,
+ * never "restore" the canonical forever.
+ *
+ * Returns `undefined` (refusal) when AGENTS.md is missing, empty, or drifted.
+ *
+ * Read-only: no filesystem writes.
+ *
+ * @param scope          Installation scope.
+ * @param env            Injectable env for HOME resolution.
+ * @param agentsContent  Canonical AGENTS.md content.
+ * @param cwd            Working directory (only used when scope is 'project').
+ */
+export async function adoptContext(
+  scope: Scope,
+  env: Env,
+  agentsContent: string,
+  cwd?: string,
+): Promise<AdoptionResult | undefined> {
+  const agentsMd = resolveAgentsMd(scope, env, cwd);
+  const current = await readText(agentsMd);
+
+  if (current !== agentsContent || agentsContent === '') {
+    return undefined;
+  }
+
+  // Payload without `previous` — FM6: never fabricate a restore baseline from
+  // the canonical already on disk.
+  return {
+    applied: { kind: 'context', block: agentsContent },
+    files: [agentsMd],
+  };
 }
 
 // ---------------------------------------------------------------------------

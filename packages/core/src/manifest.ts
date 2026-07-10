@@ -6,13 +6,48 @@
  *
  * Design invariants:
  * - readManifest never throws for an absent file (returns emptyManifest()).
- * - Malformed/incomplete JSON is coerced to emptyManifest() (robustness).
+ * - readManifest FAILS CLOSED on a present-but-top-level-invalid file: it throws
+ *   MalformedManifestError instead of coercing to emptyManifest() and letting a
+ *   later writeManifest overwrite the cumulated `applied` payloads and `previous`
+ *   baselines (Lot 3 R3 / M2). The fail-closed frontier is TOP-LEVEL ONLY —
+ *   entry-level shape stays tolerant (legacy entries with no `assistant`, no
+ *   `applied`, a stray `source` field remain readable).
  * - upsertEntry is pure and immutable — never mutates its input.
  * - detectDrift checks file existence only (content/hash drift = B7).
  */
 
-import { readJson, writeJson } from './fs-json';
+import { InvalidJsonError, writeJson } from './fs-json';
 import type { Assistant, Manifest, ManifestEntry, Scope } from './types';
+
+// ---------------------------------------------------------------------------
+// Typed error
+// ---------------------------------------------------------------------------
+
+/**
+ * Thrown by readManifest when a state.json file EXISTS but its top-level shape is
+ * invalid: not a JSON object, `version` not the number 1, or `artifacts` not an
+ * array. This is a fail-closed guard (Lot 3 R3): the manifest carries the source
+ * of truth (cumulated `applied` payloads, `previous` restore baselines) and must
+ * never be silently coerced to empty and then overwritten.
+ *
+ * The CLI maps this error to exit code 2. Never call process.exit() here — keep
+ * the core testable and runtime-agnostic. Distinct from InvalidJsonError, which
+ * covers syntactically broken JSON; MalformedManifestError is valid-JSON /
+ * wrong-shape.
+ */
+export class MalformedManifestError extends Error {
+  /** Absolute path of the malformed manifest file. */
+  readonly path: string;
+  /** Human-readable reason describing which top-level invariant was violated. */
+  readonly reason: string;
+
+  constructor(filePath: string, reason: string) {
+    super(`Malformed manifest at "${filePath}": ${reason}`);
+    this.name = 'MalformedManifestError';
+    this.path = filePath;
+    this.reason = reason;
+  }
+}
 
 /**
  * The assistant an entry belongs to, defaulting legacy entries (written before
@@ -44,21 +79,67 @@ export function emptyManifest(): Manifest {
  * Read and parse the manifest at `filePath`.
  *
  * - File absent → emptyManifest() (no error; a fresh install has no state.json yet).
- * - File present + valid JSON with correct shape → parsed manifest.
- * - File present + valid JSON but wrong shape (missing/invalid version or artifacts)
- *   → emptyManifest() (robustness; not a crash condition).
- * - File present + invalid JSON → readJson throws InvalidJsonError; let it propagate
+ * - File present + valid JSON with correct top-level shape → parsed manifest.
+ * - File present + valid JSON but INVALID top-level shape (non-object, `version`
+ *   not the number 1, or `artifacts` not an array) → throws MalformedManifestError
+ *   (fail-closed; never coerce-then-overwrite, Lot 3 R3 / M2).
+ * - File present + syntactically invalid JSON → throws InvalidJsonError
  *   (corrupted file is actionable by the caller / CLI exit 2).
+ *
+ * Existence is tested here directly (not delegated to readJson) because readJson
+ * conflates an absent file and a top-level-non-object value (both → {}); R3 must
+ * distinguish them: absent = fresh install (emptyManifest), present-non-object =
+ * malformed (fail-closed). Entry-level tolerance is preserved: no per-entry
+ * validation happens here (legacy entries stay readable).
  */
 export async function readManifest(filePath: string): Promise<Manifest> {
-  const raw = await readJson(filePath);
+  const file = Bun.file(filePath);
+  const exists = await file.exists();
 
-  // Coerce: require version to be a number and artifacts to be an array.
-  if (typeof raw['version'] !== 'number' || !Array.isArray(raw['artifacts'])) {
+  // Absent → fresh install, never an error.
+  if (!exists) {
     return emptyManifest();
   }
 
-  return raw as unknown as Manifest;
+  // Present: parse. Syntactically broken JSON keeps its typed rejection.
+  let parsed: unknown;
+  try {
+    parsed = await file.json();
+  } catch (cause) {
+    throw new InvalidJsonError(filePath, cause);
+  }
+
+  // Top-level must be a plain object (not null, not an array).
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new MalformedManifestError(
+      filePath,
+      'top-level value is not a JSON object (expected {"version":1,"artifacts":[...]})',
+    );
+  }
+
+  const obj = parsed as Record<string, unknown>;
+  const version = obj['version'];
+
+  // `version` must be a number, and specifically 1 — a future schema bump will
+  // require an explicit migration, not a silent coercion.
+  if (typeof version !== 'number') {
+    throw new MalformedManifestError(
+      filePath,
+      `"version" must be the number 1 (found ${typeof version})`,
+    );
+  }
+  if (version !== 1) {
+    throw new MalformedManifestError(
+      filePath,
+      `unsupported manifest version ${version} (expected 1)`,
+    );
+  }
+
+  if (!Array.isArray(obj['artifacts'])) {
+    throw new MalformedManifestError(filePath, '"artifacts" must be an array');
+  }
+
+  return parsed as unknown as Manifest;
 }
 
 // ---------------------------------------------------------------------------

@@ -16,11 +16,9 @@
  *   flags > env > project > user > preset > defaults
  */
 
-import { mkdir } from 'node:fs/promises';
-import path from 'node:path';
-
 import { parse as parseJsonc } from 'jsonc-parser';
 
+import { writeText } from '@agent-rigger/core';
 import type { Assistant } from '@agent-rigger/core';
 
 // ---------------------------------------------------------------------------
@@ -327,11 +325,10 @@ const CONFIG_HEADER = '// agent-rigger config — edit this file or run `rigger 
  * The written file is readable by loadConfigFile (round-trip safe).
  */
 export async function persistConfig(filePath: string, config: Partial<Config>): Promise<void> {
-  const dir = path.dirname(filePath);
-  await mkdir(dir, { recursive: true });
-
+  // writeText (core) writes atomically (tmp + rename) and creates parent
+  // directories — a crash never leaves a truncated config.jsonc (R6).
   const body = JSON.stringify(config, null, 2) + '\n';
-  await Bun.write(filePath, CONFIG_HEADER + body);
+  await writeText(filePath, CONFIG_HEADER + body);
 }
 
 // ---------------------------------------------------------------------------

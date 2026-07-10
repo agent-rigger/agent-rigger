@@ -25,6 +25,7 @@ import {
   readJson,
   removePermission,
 } from '@agent-rigger/core';
+import type { AdoptionResult } from '@agent-rigger/core/adapter';
 import {
   resolveOpencodeProjectTargets,
   resolveOpencodeUserTargets,
@@ -440,6 +441,58 @@ export async function planGuardrail(
     op.warnings = allWarnings;
   }
   return [op];
+}
+
+// ---------------------------------------------------------------------------
+// adoptGuardrail
+// ---------------------------------------------------------------------------
+
+/**
+ * Adopt gate for the opencode guardrail (permission) nature (R5/D5, FM5-adjacent).
+ *
+ * Adopts ONLY when the FULL canonical fragment is already in opencode.json with
+ * NO divergence — the same condition under which planGuardrail returns [] (empty
+ * plan): every leaf present (missing = {}), none conflicting (M7), none
+ * glob-overlapping (F4). The recorded payload carries the COMPLETE canonical
+ * fragment (not a delta): remove must reverse the full set, check must verify it.
+ *
+ * Returns `undefined` (refusal) when the descriptor is empty, or when any leaf
+ * is missing / conflicts / overlaps — the manifest must never claim a permission
+ * rigger did not actually enforce.
+ *
+ * Read-only: no filesystem writes.
+ *
+ * @param scope       Installation scope.
+ * @param env         Injectable env for HOME resolution.
+ * @param permission  The canonical native permission fragment.
+ * @param cwd         Working directory (only used when scope is 'project').
+ */
+export async function adoptGuardrail(
+  scope: Scope,
+  env: Env,
+  permission: OpencodePermission,
+  cwd?: string,
+): Promise<AdoptionResult | undefined> {
+  // An empty descriptor is never "installed" (mirrors auditGuardrail): refuse.
+  if (isEmptyPermission(permission)) {
+    return undefined;
+  }
+
+  const opencodeJsonPath = resolveOpencodeJsonPath(scope, env, cwd);
+  const settings = await readOpencodeJson(opencodeJsonPath);
+  const current = extractPermission(settings);
+
+  const missing = computeMissingPermission(permission, current);
+  const conflicts = computePermissionConflicts(permission, current);
+  const overlaps = computeGlobOverlapConflicts(permission, current);
+  if (Object.keys(missing).length !== 0 || conflicts.length !== 0 || overlaps.length !== 0) {
+    return undefined;
+  }
+
+  return {
+    applied: { kind: 'opencode-permission', permission },
+    files: [opencodeJsonPath],
+  };
 }
 
 // ---------------------------------------------------------------------------

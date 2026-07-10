@@ -24,7 +24,7 @@
 import { lstat, stat } from 'node:fs/promises';
 import path from 'node:path';
 
-import type { AdapterEntry } from '@agent-rigger/core/adapter';
+import type { AdapterEntry, AdoptionResult } from '@agent-rigger/core/adapter';
 import { assertSafeArtifactName } from '@agent-rigger/core/artifact-name';
 import {
   contentMatchesStore,
@@ -237,6 +237,43 @@ export async function planSkill(
 
   const op: WriteOpLink = { kind: 'link', source, store, target };
   return [op];
+}
+
+// ---------------------------------------------------------------------------
+// adoptSkill
+// ---------------------------------------------------------------------------
+
+/**
+ * Adopt gate for the skill nature (R5/D5).
+ *
+ * Adopts ONLY when auditSkill is EXACTLY `present` (a symlink resolving to the
+ * rigger store, or a byte-identical copy). This is STRICTER than planSkill's
+ * empty-plan condition: planSkill returns [] for both `present` AND `drift` (it
+ * refuses to clobber unmanaged content), so the adoption branch would otherwise
+ * see a drifted target too — but a drift MUST NOT be adopted (the manifest would
+ * claim the user's foreign directory, and remove would destroy it). files record
+ * the target symlink path only (parity with a link-op install's AppliedLink).
+ *
+ * Read-only: no filesystem writes.
+ *
+ * @param entry  Artifact entry (id carries the skill name).
+ * @param scope  Installation scope.
+ * @param env    Injectable env for HOME resolution.
+ * @param cwd    Working directory (only used when scope is 'project').
+ */
+export async function adoptSkill(
+  entry: AdapterEntry,
+  scope: Scope,
+  env: Env,
+  cwd?: string,
+): Promise<AdoptionResult | undefined> {
+  const report = await auditSkill(entry, scope, env, cwd);
+  if (report.state !== 'present') {
+    return undefined;
+  }
+  const name = skillName(entry);
+  const target = resolveTargetPath(name, scope, env, cwd);
+  return { applied: { kind: 'link', files: [target] }, files: [target] };
 }
 
 // ---------------------------------------------------------------------------

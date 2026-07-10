@@ -221,10 +221,14 @@ describe('opencode context e2e — pre-existing user-authored AGENTS.md', () => 
     await writeText(agentsMd, USER_AUTHORED);
 
     // Remove must refuse to touch a file whose content it did not author: the
-    // plan is empty, so applyRemove is a no-op and the user's bytes survive
-    // exactly. A regression that deleted unrecognized content would fail here.
+    // plan is a warning-only leave-alone op (never delete-file), so applyRemove
+    // is a no-op on disk and the user's bytes survive exactly. The leave-alone
+    // (vs an empty plan) is what stops the engine purging the manifest entry and
+    // leaving the drift untracked (R1). A regression that deleted unrecognized
+    // content — or emitted a delete-file — would fail here.
     const removeOps = await planRemoveContext('user', env, CANONICAL);
-    expect(removeOps).toHaveLength(0);
+    expect(removeOps).toHaveLength(1);
+    expect(removeOps[0]?.kind).toBe('leave-alone');
 
     await applyRemoveContext(removeOps, env);
 

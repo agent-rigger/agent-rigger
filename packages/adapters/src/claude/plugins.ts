@@ -30,7 +30,7 @@
  * - PluginInstallError carries the command string and the native stderr verbatim.
  */
 
-import type { AdapterEntry } from '@agent-rigger/core/adapter';
+import type { AdapterEntry, AdoptionResult } from '@agent-rigger/core/adapter';
 import type { Env } from '@agent-rigger/core/paths';
 import type {
   NatureReport,
@@ -267,6 +267,38 @@ export async function planRemovePlugin(
 
   const name = pluginName(entry);
   return [{ kind: 'plugin-uninstall', plugin: name }];
+}
+
+// ---------------------------------------------------------------------------
+// adoptPlugin
+// ---------------------------------------------------------------------------
+
+/**
+ * Adopt gate for the plugin nature (R5/D5).
+ *
+ * Adopts ONLY when `claude plugin list` reports the plugin present — the same
+ * condition under which planPlugin returns [] (empty plan). A plugin is a
+ * delegated nature (installed/removed through the native CLI, never copied), so
+ * there is NO offline payload to reverse: the AdoptionResult carries an empty
+ * `files` and no `applied`. Recording the entry is still what lets remove reach
+ * the `claude plugin uninstall` path and check verify presence.
+ *
+ * Read-only: no filesystem writes (the native `plugin list` is a query).
+ *
+ * @param entry  Artifact entry (id carries the plugin name).
+ * @param env    Injectable env (kept for interface symmetry).
+ * @param opts   Optional { run: PluginRunner } for test injection.
+ */
+export async function adoptPlugin(
+  entry: AdapterEntry,
+  env: Env,
+  opts?: { run?: PluginRunner },
+): Promise<AdoptionResult | undefined> {
+  const report = await auditPlugin(entry, env, opts);
+  if (report.state !== 'present') {
+    return undefined;
+  }
+  return { files: [] };
 }
 
 // ---------------------------------------------------------------------------

@@ -14,7 +14,9 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { cp, lstat, rm } from 'node:fs/promises';
+import { cp, lstat, rename, rm } from 'node:fs/promises';
+
+import { atomicWriteBytes } from './fs-json';
 
 /**
  * Format a Date as an ISO-8601 string safe for use in file names.
@@ -45,7 +47,9 @@ export async function backup(filePath: string): Promise<string | null> {
   }
 
   const dest = backupDest(filePath);
-  await Bun.write(dest, await source.arrayBuffer());
+  // Staged write (tmp + rename): a crash never leaves a truncated `.bak` under
+  // its final name — the recovery artefact is either whole or absent.
+  await atomicWriteBytes(dest, await source.arrayBuffer());
   return dest;
 }
 
@@ -65,7 +69,17 @@ export async function backupDir(dirPath: string): Promise<string | null> {
   }
 
   const dest = backupDest(dirPath);
-  await cp(dirPath, dest, { recursive: true });
+  // Copy into a staging directory first, then rename(2) it into place: an
+  // interrupted or partial recursive copy never appears under the final `.bak`
+  // name (a truncated tree is indistinguishable from a real backup otherwise).
+  const tmp = `${dest}.tmp-${randomUUID().slice(0, 8)}`;
+  try {
+    await cp(dirPath, tmp, { recursive: true });
+    await rename(tmp, dest);
+  } catch (err) {
+    await rm(tmp, { recursive: true, force: true });
+    throw err;
+  }
   return dest;
 }
 
@@ -75,7 +89,10 @@ export async function backupDir(dirPath: string): Promise<string | null> {
  * to files that existed before an apply() run.
  */
 export async function restore(backupPath: string, originalPath: string): Promise<void> {
-  await Bun.write(originalPath, await Bun.file(backupPath).arrayBuffer());
+  // Byte-exact staged write (tmp + rename): even mid-rollback — precisely when
+  // the system is already degraded — the target ends up as either the original
+  // or the complete restoration, never a truncated file.
+  await atomicWriteBytes(originalPath, await Bun.file(backupPath).arrayBuffer());
 }
 
 /**

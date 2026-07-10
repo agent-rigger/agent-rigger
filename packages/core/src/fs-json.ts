@@ -111,18 +111,42 @@ export async function readText(filePath: string): Promise<string> {
  * the path either holds the old content or the new one. Parent directories are
  * created if absent; the temp file is cleaned up if the rename never happens.
  */
-async function atomicWrite(filePath: string, content: string): Promise<void> {
+async function atomicStage(
+  filePath: string,
+  data: string | ArrayBuffer | Uint8Array,
+): Promise<void> {
   const dir = path.dirname(filePath);
   await mkdir(dir, { recursive: true });
 
   const tmp = `${filePath}.tmp-${randomUUID().slice(0, 8)}`;
   try {
-    await Bun.write(tmp, content);
+    await Bun.write(tmp, data);
     await rename(tmp, filePath);
   } catch (err) {
     await rm(tmp, { force: true });
     throw err;
   }
+}
+
+async function atomicWrite(filePath: string, content: string): Promise<void> {
+  await atomicStage(filePath, content);
+}
+
+/**
+ * Write raw `bytes` to `filePath` atomically (tmp + rename in the same
+ * directory). Byte-exact: the bytes are staged and renamed verbatim, with NO
+ * UTF-8 decode/encode round-trip — so binary or non-UTF-8 content survives
+ * intact. A crash or concurrent reader never observes a partial file under the
+ * final name; the temp file is cleaned up if the rename never happens.
+ *
+ * Shared staging primitive behind writeJson/writeText (text) and the backup
+ * recovery paths (bytes) — see backup.ts (R6, lot3-robustesse-moteur).
+ */
+export async function atomicWriteBytes(
+  filePath: string,
+  bytes: ArrayBuffer | Uint8Array,
+): Promise<void> {
+  await atomicStage(filePath, bytes);
 }
 
 /**

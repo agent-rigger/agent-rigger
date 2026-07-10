@@ -31,6 +31,7 @@ import type {
   WriteOpMergeAllow,
   WriteOpMergeDeny,
 } from '@agent-rigger/core';
+import type { AdoptionResult } from '@agent-rigger/core/adapter';
 
 // ---------------------------------------------------------------------------
 // EmptyDenyArtifactError
@@ -258,6 +259,53 @@ export async function planGuardrail(
   }
 
   return ops;
+}
+
+// ---------------------------------------------------------------------------
+// adoptGuardrail
+// ---------------------------------------------------------------------------
+
+/**
+ * Adopt gate for the guardrail nature (R5/D5).
+ *
+ * Adopts ONLY when every canonical rule is already present in settings.json
+ * (missingDeny = [] AND missingAllow = []) — the same condition under which
+ * planGuardrail returns [] (empty plan). The recorded payload carries the
+ * COMPLETE canonical sets (denyRef / allowRef), not a delta: remove must reverse
+ * the full rule set, and check must verify against it.
+ *
+ * Returns `undefined` (refusal) when any canonical rule is missing.
+ *
+ * Read-only: no filesystem writes.
+ *
+ * @param scope     Installation scope.
+ * @param env       Injectable env for HOME resolution.
+ * @param denyRef   Canonical deny rules.
+ * @param cwd       Working directory (only used when scope is 'project').
+ * @param allowRef  Canonical allow rules (default []).
+ */
+export async function adoptGuardrail(
+  scope: Scope,
+  env: Env,
+  denyRef: string[],
+  cwd?: string,
+  allowRef: string[] = [],
+): Promise<AdoptionResult | undefined> {
+  const settingsPath = resolveSettingsPath(scope, env, cwd);
+  const settings = await readJson(settingsPath);
+  const currentDeny = extractDeny(settings);
+  const missingDeny = computeMissingDeny(denyRef, currentDeny);
+  const currentAllow = extractAllow(settings);
+  const missingAllow = computeMissingDeny(allowRef, currentAllow);
+
+  if (missingDeny.length !== 0 || missingAllow.length !== 0) {
+    return undefined;
+  }
+
+  return {
+    applied: { kind: 'guardrail', denyRules: denyRef, allowRules: allowRef },
+    files: [settingsPath],
+  };
 }
 
 // ---------------------------------------------------------------------------
