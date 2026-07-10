@@ -13,17 +13,26 @@
  * Invariants:
  * - auditSkill and planSkill are read-only (no fs writes).
  * - applySkill is idempotent (linkOrCopy handles existing symlinks).
+ * - applyRemoveSkill removes the requested target but deletes the shared store
+ *   ONLY when no other install target (any assistant, any scope, any manifest
+ *   -recorded cwd) still references it (R4, ADR-0020 §3).
  * - Scanner is called with the source path; blocked verdict → SkillScanBlockedError.
  * - No while loops; no process.exit().
  * - All path resolution goes through resolveUserTargets / resolveProjectTargets.
  */
 
-import { lstat } from 'node:fs/promises';
+import { lstat, stat } from 'node:fs/promises';
 import path from 'node:path';
 
 import type { AdapterEntry } from '@agent-rigger/core/adapter';
 import { assertSafeArtifactName } from '@agent-rigger/core/artifact-name';
-import { link, unlink } from '@agent-rigger/core/linker';
+import {
+  contentMatchesStore,
+  link,
+  removeStoreIfUnreferenced,
+  resolvesToStore,
+  unlinkTarget,
+} from '@agent-rigger/core/linker';
 import { resolveUserTargets } from '@agent-rigger/core/paths';
 import type { Env } from '@agent-rigger/core/paths';
 import { stubScanner } from '@agent-rigger/core/scan';
@@ -35,6 +44,9 @@ import type {
   WriteOp,
   WriteOpLink,
 } from '@agent-rigger/core/types';
+
+import { isRemovableTarget, planRemoveGate } from '../shared/remove-gate';
+import { storeReferenceCandidates } from '../shared/store-refs';
 
 // ---------------------------------------------------------------------------
 // SkillScanBlockedError
@@ -119,8 +131,18 @@ function resolveTargetPath(name: string, scope: Scope, env: Env, cwd?: string): 
  * Audit the current state of a skill artifact on disk.
  *
  * Returns:
- * - 'present' if the target path exists (symlink or directory).
- * - 'missing' if the target path does not exist.
+ * - 'present' if the target is a symlink resolving to the rigger store, or a
+ *   plain directory byte-identical to it (linkOrCopy copy fallback).
+ * - 'drift' if the target exists but is NOT rigger's install shape (real
+ *   directory with foreign content, symlink pointing outside the store) — R3:
+ *   the removal gate refuses such a target ("present but not managed"), so the
+ *   audit must keep the divergence visible: `check` exits 3 instead of lying
+ *   'present' about content rigger no longer controls.
+ * - 'missing' if the target path does not exist, or is a DANGLING symlink
+ *   (store deleted) — R4: a dead link is not an install; reporting it present
+ *   made the breakage both undetectable (check exit 0) and unrepairable
+ *   (planSkill saw "present" → no-op). With `missing`, check exits 3 and the
+ *   next install re-plans the link op, which heals store and symlink.
  *
  * Read-only: no filesystem writes.
  */
@@ -132,13 +154,45 @@ export async function auditSkill(
 ): Promise<NatureReport> {
   const name = skillName(entry);
   const targetPath = resolveTargetPath(name, scope, env, cwd);
+  const storePath = resolveStorePath(name, env);
 
-  const exists = await lstat(targetPath).then(() => true).catch(() => false);
+  const targetStat = await lstat(targetPath).catch(() => null);
+  if (targetStat === null) {
+    return { id: entry.id, nature: 'skill', state: 'missing' };
+  }
 
+  if (targetStat.isSymbolicLink()) {
+    // stat() follows the link: null → the link value resolves to nothing.
+    const resolved = await stat(targetPath).catch(() => null);
+    if (resolved === null) {
+      return {
+        id: entry.id,
+        nature: 'skill',
+        state: 'missing',
+        detail: `dangling symlink: ${targetPath}`,
+      };
+    }
+    if (await resolvesToStore(targetPath, storePath)) {
+      return { id: entry.id, nature: 'skill', state: 'present' };
+    }
+    return {
+      id: entry.id,
+      nature: 'skill',
+      state: 'drift',
+      detail: `${targetPath} is a symlink resolving outside the rigger store — not managed`,
+    };
+  }
+
+  // Plain directory/file: a byte-identical copy of the store is a legitimate
+  // copy-fallback install; anything else is user content rigger must not claim.
+  if (await contentMatchesStore(targetPath, storePath)) {
+    return { id: entry.id, nature: 'skill', state: 'present' };
+  }
   return {
     id: entry.id,
     nature: 'skill',
-    state: exists ? 'present' : 'missing',
+    state: 'drift',
+    detail: `${targetPath} diverges from the rigger store (not a rigger symlink) — not managed`,
   };
 }
 
@@ -168,7 +222,11 @@ export async function planSkill(
   cwd?: string,
 ): Promise<WriteOp[]> {
   const report = await auditSkill(entry, scope, env, cwd);
-  if (report.state === 'present') {
+  // 'present' → nothing to do; 'drift' → the target carries content rigger
+  // does not manage — install must NOT clobber it (link() would rm -rf the
+  // target), same never-destroy posture as the R3 removal gate. Only
+  // 'missing' (absent or dangling symlink) plans the link op.
+  if (report.state !== 'missing') {
     return [];
   }
 
@@ -189,7 +247,11 @@ export async function planSkill(
  * Compute the removal operations needed to uninstall a skill.
  *
  * Returns [] when the skill target does not exist (not installed).
- * Returns [{ kind: 'unlink', target, store }] when the skill is present.
+ * Returns [{ kind: 'unlink', target, store }] ONLY when the target is a
+ * symlink resolving to the rigger store or a byte-identical copy of it
+ * (linkOrCopy copy fallback) — R3 gate, shared/remove-gate.ts. Any other
+ * present target (hand-made directory, foreign symlink) yields a warning-only
+ * leave-alone op and nothing is deleted.
  *
  * Read-only: no filesystem writes.
  *
@@ -204,16 +266,11 @@ export async function planRemoveSkill(
   env: Env,
   cwd?: string,
 ): Promise<RemovalOp[]> {
-  const report = await auditSkill(entry, scope, env, cwd);
-  if (report.state !== 'present') {
-    return [];
-  }
-
   const name = skillName(entry);
   const store = resolveStorePath(name, env);
   const target = resolveTargetPath(name, scope, env, cwd);
 
-  return [{ kind: 'unlink', target, store }];
+  return planRemoveGate(entry.id, target, store);
 }
 
 // ---------------------------------------------------------------------------
@@ -221,22 +278,64 @@ export async function planRemoveSkill(
 // ---------------------------------------------------------------------------
 
 /**
- * Execute unlink removal operations produced by planRemoveSkill.
+ * Execute unlink removal operations produced by planRemoveSkill / planRemoveAgent.
  *
- * For each unlink op: removes both the target (symlink/file/directory) and the
- * store entry. Uses core unlink() which is tolerant to absence (force:true).
+ * For each unlink op (R4, ADR-0020 §3 — one store, N symlinks):
+ * 0. Re-verify the R3 gate decision at the moment of destruction
+ *    (isRemovableTarget): the window between planRemoveGate and this rm spans
+ *    the config backups and the store backupDir, long enough for the symlink
+ *    to be swapped for a real directory (no inter-process lock before Lot 3).
+ *    A target that no longer resolves to the store (nor matches it byte for
+ *    byte) is NOT rigger's anymore — the op is skipped, nothing is deleted,
+ *    same posture as the plan-time gate.
+ * 1. Remove the requested target (symlink/file/directory).
+ * 2. Remove the store ONLY when no other install target still references it.
+ *    Reference counting is filesystem truth at the moment of the remove
+ *    (offline, never divergent from disk): the shared storeReferenceCandidates
+ *    helper enumerates the claude skill/agent and opencode skill/plugin target
+ *    paths of both scopes under `cwd`, PLUS the `manifestFiles` handed down by
+ *    the engine (targets of the manifest entries remaining after this removal
+ *    — a project install from another cwd is only discoverable there). Each
+ *    candidate is lstat'd/readlink'd; copy-fallback installs (plain
+ *    directories, no symlink) never count as references.
  *
+ * Both removals are tolerant to absence (rm force).
  * Ops of any other kind are ignored (forward-compatibility).
  *
- * @param ops  Removal operations (only 'unlink' kind are processed).
- * @param env  Injectable env (kept for interface symmetry).
+ * @param ops            Removal operations (only 'unlink' kind are processed).
+ * @param env            Injectable env for HOME resolution (candidate enumeration).
+ * @param cwd            Working directory for project-scope candidates.
+ *                       Defaults to process.cwd(), matching the adapter's
+ *                       project-scope convention.
+ * @param manifestFiles  Extra reference candidates from the manifest (R4),
+ *                       passed through Adapter.applyRemove by the engine.
  */
-export async function applyRemoveSkill(ops: RemovalOp[], _env: Env): Promise<void> {
+export async function applyRemoveSkill(
+  ops: RemovalOp[],
+  env: Env,
+  cwd?: string,
+  manifestFiles: string[] = [],
+): Promise<void> {
   for (const op of ops) {
     if (op.kind !== 'unlink') {
       continue;
     }
-    await unlink(op.target, op.store);
+    // R3 TOCTOU re-check: the plan gate's verdict must still hold NOW. A
+    // target swapped for unmanaged content since plan time is left in place
+    // (skip the whole op — the store stays too, exactly like a plan-time
+    // leave-alone). An ABSENT target passes: nothing to destroy, and rollback
+    // compensations / dangling cleanups still need the store removal below.
+    if (!(await isRemovableTarget(op.target, op.store))) {
+      continue;
+    }
+    await unlinkTarget(op.target);
+    const candidates = storeReferenceCandidates(
+      op.store,
+      env,
+      cwd ?? process.cwd(),
+      manifestFiles,
+    );
+    await removeStoreIfUnreferenced(op.store, candidates);
   }
 }
 

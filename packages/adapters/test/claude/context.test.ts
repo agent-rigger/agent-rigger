@@ -116,7 +116,10 @@ describe('auditContext — user scope', () => {
     expect(report.state).toBe('missing');
   });
 
-  it('returns missing when AGENTS.md content differs from canonical', async () => {
+  it('returns drift when AGENTS.md content differs from canonical', async () => {
+    // Inverted knowingly by lot2-remove-reversible R6: divergent content was
+    // reported 'missing', which invited a re-install that overwrote the
+    // user's work. It is now 'drift' (three-state audit, exit code unchanged).
     const targets = resolveUserTargets(env);
     await fs.mkdir(path.dirname(targets.agentsMd), { recursive: true });
     await writeText(targets.agentsMd, 'different content\n');
@@ -128,7 +131,7 @@ describe('auditContext — user scope', () => {
 
     const report = await auditContext('user', env, AGENTS_CONTENT);
 
-    expect(report.state).toBe('missing');
+    expect(report.state).toBe('drift');
   });
 
   it('returns present when AGENTS.md content matches and CLAUDE.md has the managed block', async () => {

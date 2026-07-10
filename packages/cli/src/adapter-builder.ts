@@ -53,6 +53,23 @@ function localId(id: string): string {
 }
 
 // ---------------------------------------------------------------------------
+// hookScriptStorePath
+// ---------------------------------------------------------------------------
+
+/**
+ * Path of the shared hook scriptStore: `<dirname(stateJson)>/hooks`.
+ *
+ * Derivable from the env alone, never persisted (design D6,
+ * lot2-remove-reversible): the store location is deterministic so the
+ * manifest does not carry it. Single derivation seam shared by hookSpec
+ * (script deposit at install time) and the remove path (R7: the directory is
+ * deleted with the last hook-nature manifest entry).
+ */
+export function hookScriptStorePath(env: Env): string {
+  return path.join(path.dirname(resolveUserTargets(env).stateJson), 'hooks');
+}
+
+// ---------------------------------------------------------------------------
 // BuildClaudeAdapterOpts
 // ---------------------------------------------------------------------------
 
@@ -224,7 +241,7 @@ export async function buildClaudeAdapter(
 
     if (opts?.externalIds?.has(entry.id) === true && opts.externalBaseDir !== undefined) {
       const hooksDir = path.join(opts.externalBaseDir, 'hooks');
-      const scriptStore = path.join(path.dirname(resolveUserTargets(env).stateJson), 'hooks');
+      const scriptStore = hookScriptStorePath(env);
       const command = `bun run ${scriptStore}/${name}.ts`;
 
       const base: ResolvedHook = {

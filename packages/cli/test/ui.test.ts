@@ -1076,6 +1076,35 @@ describe('renderRemovalPlan — delete-file', () => {
 });
 
 // ---------------------------------------------------------------------------
+// renderRemovalPlan — restore-file (R6)
+// ---------------------------------------------------------------------------
+
+describe('renderRemovalPlan — restore-file', () => {
+  it('R6: renders "restore  <abbr path>" so the preview states the file comes back, not that it is deleted', () => {
+    const op: RemovalOp = {
+      kind: 'restore-file',
+      path: '/home/me/.claude/harness/AGENTS.md',
+      content: '# original user content\n',
+    };
+    const group: PlanRemovalGroup = { id: 'context-claude', nature: 'context', ops: [op] };
+    const result = renderRemovalPlan([group], { color: false, home: '/home/me' });
+    expect(result).toContain('restore  ~/.claude/harness/AGENTS.md');
+    expect(result).not.toContain('delete  ~/.claude/harness/AGENTS.md');
+  });
+
+  it('R6: counts restores in the Σ summary line', () => {
+    const op: RemovalOp = {
+      kind: 'restore-file',
+      path: '/home/me/AGENTS.md',
+      content: 'x\n',
+    };
+    const group: PlanRemovalGroup = { id: 'context-claude', nature: 'context', ops: [op] };
+    const result = renderRemovalPlan([group], { color: false, home: '/home/me' });
+    expect(result).toContain('Σ  1 restore');
+  });
+});
+
+// ---------------------------------------------------------------------------
 // renderRemovalPlan — unlink
 // ---------------------------------------------------------------------------
 

@@ -14,7 +14,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { rm } from 'node:fs/promises';
+import { cp, lstat, rm } from 'node:fs/promises';
 
 /**
  * Format a Date as an ISO-8601 string safe for use in file names.
@@ -25,11 +25,18 @@ function toFsSafeIso(date: Date): string {
 }
 
 /**
+ * Build the backup destination for `sourcePath`: `<sourcePath>.bak-<ISO>-<token>`.
+ * Shared by backup() and backupDir() so both families of .bak entries follow
+ * the exact same naming convention. The 8-char random token guarantees
+ * distinct names for rapid successive calls without any retry loop.
+ */
+function backupDest(sourcePath: string): string {
+  return `${sourcePath}.bak-${toFsSafeIso(new Date())}-${randomUUID().slice(0, 8)}`;
+}
+
+/**
  * If `filePath` exists, copy it to `<filePath>.bak-<ISO>-<token>` and return the
  * backup path. Returns `null` if the file does not exist.
- *
- * The 8-char random token guarantees distinct names for rapid successive calls
- * without any retry loop.
  */
 export async function backup(filePath: string): Promise<string | null> {
   const source = Bun.file(filePath);
@@ -37,11 +44,28 @@ export async function backup(filePath: string): Promise<string | null> {
     return null;
   }
 
-  const iso = toFsSafeIso(new Date());
-  const token = randomUUID().slice(0, 8);
-  const dest = `${filePath}.bak-${iso}-${token}`;
-
+  const dest = backupDest(filePath);
   await Bun.write(dest, await source.arrayBuffer());
+  return dest;
+}
+
+/**
+ * If `dirPath` exists, copy it recursively to `<dirPath>.bak-<ISO>-<token>` and
+ * return the backup path. Returns `null` if the path does not exist.
+ *
+ * Store-level counterpart of backup() (R3, lot2-remove-reversible): a rigger
+ * store deleted by `remove` may carry user edits made through the install
+ * symlink, so its whole tree is preserved next to it before the rm. Also
+ * handles single-file stores (agent `<name>.md`) — cp copies those verbatim.
+ */
+export async function backupDir(dirPath: string): Promise<string | null> {
+  const stat = await lstat(dirPath).catch(() => null);
+  if (stat === null) {
+    return null;
+  }
+
+  const dest = backupDest(dirPath);
+  await cp(dirPath, dest, { recursive: true });
   return dest;
 }
 

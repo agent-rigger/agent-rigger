@@ -133,16 +133,25 @@ export async function auditHook(
  * Returns a single merge-hooks WriteOp when the hook is absent,
  * or an empty array when it is already registered (idempotent).
  *
+ * Traced migration (R1/D8): when `entry.applied` (injected by the engine from
+ * the manifest) records a DIFFERENT spec than the canonical one — event,
+ * matcher or command changed — the old registration is retired with a
+ * remove-hooks op emitted in the SAME plan as the merge-hooks op. hasHook is
+ * (event, matcher, command)-strict, so without this a changed spec reads as
+ * "absent" and a plain merge would leave BOTH registrations in settings.json:
+ * the hook would execute twice on every tool use and remove would only clean
+ * half.
+ *
  * Read-only: no filesystem writes.
  *
- * @param entry  Adapter entry (unused in the op; kept for interface symmetry).
+ * @param entry  Adapter entry; `applied` carries the manifest trace when set.
  * @param scope  Installation scope.
  * @param env    Injectable env for HOME resolution.
  * @param spec   Resolved hook specification to install.
  * @param cwd    Working directory (only used when scope is 'project').
  */
 export async function planHook(
-  _entry: AdapterEntry,
+  entry: AdapterEntry,
   scope: Scope,
   env: Env,
   spec: ResolvedHook,
@@ -151,23 +160,42 @@ export async function planHook(
   const settingsPath = resolveSettingsPath(scope, env, cwd);
   const settings = await readJson(settingsPath);
 
+  // exactOptionalPropertyTypes: only include optional fields when they are defined.
+  const mergeOp: WriteOp = {
+    kind: 'merge-hooks' as const,
+    path: settingsPath,
+    event: spec.event,
+    matcher: spec.matcher,
+    command: spec.command,
+    ...(spec.timeout === undefined ? {} : { timeout: spec.timeout }),
+    ...(spec.scriptSource === undefined ? {} : { scriptSource: spec.scriptSource }),
+    ...(spec.scriptStore === undefined ? {} : { scriptStore: spec.scriptStore }),
+  };
+
+  const applied = entry.applied?.kind === 'hook' ? entry.applied : undefined;
+  const specChanged = applied !== undefined
+    && (applied.event !== spec.event
+      || applied.matcher !== spec.matcher
+      || applied.command !== spec.command);
+
+  if (specChanged && applied !== undefined) {
+    const oldSpec = { event: applied.event, matcher: applied.matcher, command: applied.command };
+    // Retire the old registration only if it is still on disk (the user may
+    // have removed it by hand — nothing to migrate then).
+    const migrationOps: WriteOp[] = hasHook(settings, oldSpec)
+      ? [{ kind: 'remove-hooks' as const, path: settingsPath, ...oldSpec }]
+      : [];
+    // The merge op is emitted even when the new spec is already registered:
+    // mergeHook is idempotent, and carrying the op keeps extractApplied
+    // recording the NEW spec on the manifest (replacement semantics, D1).
+    return [...migrationOps, mergeOp];
+  }
+
   if (hasHook(settings, spec)) {
     return [];
   }
 
-  // exactOptionalPropertyTypes: only include optional fields when they are defined.
-  return [
-    {
-      kind: 'merge-hooks' as const,
-      path: settingsPath,
-      event: spec.event,
-      matcher: spec.matcher,
-      command: spec.command,
-      ...(spec.timeout === undefined ? {} : { timeout: spec.timeout }),
-      ...(spec.scriptSource === undefined ? {} : { scriptSource: spec.scriptSource }),
-      ...(spec.scriptStore === undefined ? {} : { scriptStore: spec.scriptStore }),
-    },
-  ];
+  return [mergeOp];
 }
 
 // ---------------------------------------------------------------------------
@@ -179,8 +207,15 @@ export async function planHook(
  *
  * For each merge-hooks op:
  * 1. Read the current settings.json (returns {} if absent).
- * 2. Merge the hook using mergeHook (idempotent, deduplicates by command).
- * 3. Write back, preserving ALL other keys in settings.json.
+ * 2. Compute the merged settings via mergeHook (idempotent, deduplicates by
+ *    command) — BEFORE any disk write: mergeHook is where the R2 fail-closed
+ *    validation throws (InvalidHooksEventError / InvalidHooksRootError), and
+ *    the guard scripts are executed at runtime on every tool use, so a run
+ *    that will fail must not first overwrite the scriptStore with new scripts
+ *    the failed install never registered (the engine's createdDirs rollback
+ *    only removes a store CREATED this run, not a pre-existing one).
+ * 3. Deposit guard scripts to the store (syncToStore).
+ * 4. Write the merged settings back, preserving ALL other keys.
  *
  * Ops of any other kind are ignored (forward-compatibility).
  *
@@ -196,15 +231,6 @@ export async function applyHook(ops: WriteOp[], _env: Env): Promise<void> {
     }
     const mergeOp = op as WriteOpMergeHooks;
 
-    // Deposit guard scripts to the store before merging settings.json.
-    // exactOptionalPropertyTypes: both fields must be present (not merely defined).
-    if (mergeOp.scriptSource !== undefined && mergeOp.scriptStore !== undefined) {
-      // Preserve runtime guard-*.log files written by the guard scripts at execution
-      // time. Without this, a plain rm-rf + cp would erase logs on every re-install.
-      const syncOpts: SyncOptions = { preserveGlobs: ['guard-*.log'] };
-      await syncToStore(mergeOp.scriptSource, mergeOp.scriptStore, syncOpts);
-    }
-
     const settings = await readJson(mergeOp.path);
 
     // exactOptionalPropertyTypes: only include timeout when defined.
@@ -217,7 +243,18 @@ export async function applyHook(ops: WriteOp[], _env: Env): Promise<void> {
         timeout: mergeOp.timeout,
       };
 
+    // Validate + compute BEFORE touching the disk (fail-closed order, R2).
     const next = mergeHook(settings, spec);
+
+    // Deposit guard scripts to the store before rewriting settings.json.
+    // exactOptionalPropertyTypes: both fields must be present (not merely defined).
+    if (mergeOp.scriptSource !== undefined && mergeOp.scriptStore !== undefined) {
+      // Preserve runtime guard-*.log files written by the guard scripts at execution
+      // time. Without this, a plain rm-rf + cp would erase logs on every re-install.
+      const syncOpts: SyncOptions = { preserveGlobs: ['guard-*.log'] };
+      await syncToStore(mergeOp.scriptSource, mergeOp.scriptStore, syncOpts);
+    }
+
     await writeJson(mergeOp.path, next);
   }
 }

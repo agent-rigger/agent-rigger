@@ -138,11 +138,15 @@ describe('auditSkill', () => {
     expect(report.id).toBe('skill:spec-workflow');
   });
 
-  it('returns present when the opencode user target directory exists', async () => {
-    const entry: AdapterEntry = { id: 'skill:spec-workflow', nature: 'skill', scope: 'user' };
+  it('returns present when target is a symlink to the shared rigger store', async () => {
+    const entry: AdapterEntry = { id: 'skill:my-skill', nature: 'skill', scope: 'user' };
+    const store = path.join(resolveUserTargets(env).skillsDir, 'my-skill');
+    await fs.mkdir(store, { recursive: true });
+    await fs.writeFile(path.join(store, 'SKILL.md'), '# my-skill');
     const targets = resolveOpencodeUserTargets(env);
-    const targetPath = path.join(targets.skillsDir, 'spec-workflow');
-    await fs.mkdir(targetPath, { recursive: true });
+    const userSkillTarget = path.join(targets.skillsDir, 'my-skill');
+    await fs.mkdir(path.dirname(userSkillTarget), { recursive: true });
+    await fs.symlink(store, userSkillTarget);
 
     const report = await auditSkill(entry, 'user', env);
 
@@ -150,7 +154,35 @@ describe('auditSkill', () => {
     expect(report.nature).toBe('skill');
   });
 
-  it('returns present when target is a symlink', async () => {
+  it('R3: returns present for a plain directory byte-identical to the store (copy fallback)', async () => {
+    const entry: AdapterEntry = { id: 'skill:spec-workflow', nature: 'skill', scope: 'user' };
+    const store = path.join(resolveUserTargets(env).skillsDir, 'spec-workflow');
+    await fs.mkdir(store, { recursive: true });
+    await fs.writeFile(path.join(store, 'SKILL.md'), '# spec-workflow');
+    const targets = resolveOpencodeUserTargets(env);
+    const targetPath = path.join(targets.skillsDir, 'spec-workflow');
+    await fs.mkdir(path.dirname(targetPath), { recursive: true });
+    await fs.cp(store, targetPath, { recursive: true });
+
+    const report = await auditSkill(entry, 'user', env);
+
+    expect(report.state).toBe('present');
+  });
+
+  it('R3: returns drift for a real directory that does not match the store', async () => {
+    const entry: AdapterEntry = { id: 'skill:spec-workflow', nature: 'skill', scope: 'user' };
+    const targets = resolveOpencodeUserTargets(env);
+    const targetPath = path.join(targets.skillsDir, 'spec-workflow');
+    await fs.mkdir(targetPath, { recursive: true });
+    await fs.writeFile(path.join(targetPath, 'HANDMADE.md'), 'user work');
+
+    const report = await auditSkill(entry, 'user', env);
+
+    expect(report.state).toBe('drift');
+    expect(report.detail).toContain(targetPath);
+  });
+
+  it('R3: returns drift for a symlink pointing outside the rigger store', async () => {
     const entry: AdapterEntry = { id: 'skill:my-skill', nature: 'skill', scope: 'user' };
     const targets = resolveOpencodeUserTargets(env);
     const userSkillTarget = path.join(targets.skillsDir, 'my-skill');
@@ -160,14 +192,18 @@ describe('auditSkill', () => {
 
     const report = await auditSkill(entry, 'user', env);
 
-    expect(report.state).toBe('present');
+    expect(report.state).toBe('drift');
   });
 
   it('uses the opencode project target path for scope project', async () => {
     const cwd = tmp.dir;
     const entry: AdapterEntry = { id: 'skill:spec-workflow', nature: 'skill', scope: 'project' };
-    const projectSkillDir = path.join(cwd, '.opencode', 'skills', 'spec-workflow');
-    await fs.mkdir(projectSkillDir, { recursive: true });
+    const store = path.join(resolveUserTargets(env).skillsDir, 'spec-workflow');
+    await fs.mkdir(store, { recursive: true });
+    await fs.writeFile(path.join(store, 'SKILL.md'), '# spec-workflow');
+    const projectSkillTarget = path.join(cwd, '.opencode', 'skills', 'spec-workflow');
+    await fs.mkdir(path.dirname(projectSkillTarget), { recursive: true });
+    await fs.symlink(store, projectSkillTarget);
 
     const report = await auditSkill(entry, 'project', env, cwd);
 

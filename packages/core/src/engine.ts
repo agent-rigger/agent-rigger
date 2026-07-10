@@ -21,9 +21,11 @@
  */
 
 import { lstat } from 'node:fs/promises';
+import path from 'node:path';
 
 import type { Adapter, AdapterEntry } from './adapter';
-import { backup, removeDir, removeFile, restore } from './backup';
+import { mergeApplied, mergeFiles } from './applied-merge';
+import { backup, backupDir, removeDir, removeFile, restore } from './backup';
 import { findEntry, readManifest, upsertEntry, writeManifest } from './manifest';
 import { mergePermission } from './opencode-json';
 import type { Env } from './paths';
@@ -32,13 +34,38 @@ import type {
   Assistant,
   Manifest,
   ManifestEntry,
+  Nature,
   OpencodeMcpServer,
   OpencodePermission,
   RemovalOp,
+  RemovalOpUnlink,
   Report,
   Scope,
   WriteOp,
 } from './types';
+
+// ---------------------------------------------------------------------------
+// SharedNatureStore
+// ---------------------------------------------------------------------------
+
+/**
+ * Descriptor of an on-disk directory shared by every artifact of one nature
+ * (R7, lot2-remove-reversible). The canonical case is the claude hook
+ * scriptStore: guard scripts are COPIES deposited in a single user-level
+ * directory, so no symlink refcount can tell when the store becomes garbage —
+ * the manifest is the only reliable counter.
+ *
+ * remove() deletes the directory (after a backupDir) when the run removes the
+ * LAST manifest entry of `nature`, all scopes and assistants confounded. Core
+ * stays assistant-agnostic: it knows neither which natures share a store nor
+ * where that store lives — the caller (the CLI remove command) declares both.
+ */
+export interface SharedNatureStore {
+  /** Manifest nature whose artifacts share the directory (e.g. 'hook'). */
+  nature: Nature;
+  /** Absolute path of the shared store directory on disk. */
+  dir: string;
+}
 
 // ---------------------------------------------------------------------------
 // RemoveResult
@@ -237,7 +264,17 @@ export async function apply(
 
   try {
     for (const entry of entries) {
-      const plannedOps = await adapter.plan(entry, scope, env);
+      // Enrich the entry with its pre-existing manifest `applied` payload
+      // before planning (R1/D8). Additive: handlers that ignore `applied` are
+      // unchanged. The claude hook handler compares the canonical spec against
+      // it to plan a traced migration (remove-hooks(old) + merge-hooks(new))
+      // when the spec changed. Reads the loop-mutated manifest, so an id
+      // repeated within a run sees the payload of its previous occurrence.
+      const plannedOps = await adapter.plan(
+        enrichWithApplied(entry, manifest, adapter.id),
+        scope,
+        env,
+      );
 
       // Drop warning-only ops before applying: a merge-permission op with an
       // EMPTY fragment applies nothing — the opencode guardrail plan emits it
@@ -329,8 +366,34 @@ export async function apply(
         }
       }
 
-      // Capture the applied payload from the ops for manifest reversibility
-      const applied = extractApplied(ops, targets);
+      // Capture the applied payload from the ops for manifest reversibility.
+      // R1: a re-install (drift repair, catalog update) plans only the DELTA,
+      // so the payload of this run is merged with the pre-existing `applied`
+      // of the same (id, scope, assistant) identity BEFORE the upsert — the
+      // manifest keeps the CUMULATIVE trace of everything rigger has applied,
+      // which is what remove/check reverse against. ManifestEntry.files gets
+      // the same dedup union. findEntry reads the loop-mutated manifest, so an
+      // id repeated within a single run cumulates too. upsertEntry itself
+      // stays a kind-agnostic replacement (per-kind semantics: applied-merge.ts).
+      const previous = findEntry(manifest, entry.id, scope, adapter.id);
+      const extracted = extractApplied(ops, targets);
+      // R6: an entry that EXISTS without an `applied` payload (pre-B-iii
+      // manifest) is a RE-install, not a first install — but mergeApplied only
+      // sees `previous?.applied`, which collapses both cases into undefined and
+      // would adopt the run payload wholesale, including a context `previous`
+      // captured from the POST-install disk (the canonical block itself on a
+      // repair). That capture must never become the restore baseline: strip it
+      // and carry the absence forward, exactly like mergeApplied's
+      // applied-without-previous legacy branch — remove then degrades to
+      // delete-on-exact-match with the "no restore baseline" notice.
+      const next = previous !== undefined
+          && previous.applied === undefined
+          && extracted?.kind === 'context'
+          && extracted.previous !== undefined
+        ? { kind: 'context' as const, block: extracted.block }
+        : extracted;
+      const applied = mergeApplied(previous?.applied, next);
+      const files = previous === undefined ? targets : mergeFiles(previous.files, targets);
 
       // Upsert manifest entry with the files written and the applied payload.
       // Stamp the target assistant (adapter.id) so the manifest identity is
@@ -339,7 +402,7 @@ export async function apply(
       const version = versionFor === undefined ? undefined : versionFor(entry);
       manifest = upsertEntry(
         manifest,
-        buildManifestEntry(entry, scope, targets, adapter.id, version, applied),
+        buildManifestEntry(entry, scope, files, adapter.id, version, applied),
       );
     }
 
@@ -478,17 +541,34 @@ async function rollbackCompensations(
  * Remove all entries: planRemove → backup → applyRemove → manifest update.
  *
  * For each entry:
- *   1. Call adapter.planRemove() to get the set of RemovalOps.
- *   2. If plan is empty → no-op (idempotent; not installed or already removed).
- *   3. Otherwise: backup every op target that exists on disk.
- *      - Ops with a `path` field (remove-deny, remove-block, delete-file) are backed up.
- *      - Ops with `target` (unlink) and `plugin-uninstall` ops are not backed up
- *        (unlink is handled by the primitive; plugin-uninstall has no file).
- *   4. Call adapter.applyRemove(ops, env) to perform the removals.
+ *   1. Call adapter.planRemove() to get the set of RemovalOps, then drop
+ *      warning-only leave-alone ops (R3 gate: an unmanaged target is never
+ *      deleted — the op only carries warnings into the preview).
+ *   2. If the effective plan is empty → no-op (idempotent; not installed,
+ *      already removed, or unmanaged target left alone — entry preserved).
+ *   3. Otherwise: backup every op target that carries a `path` field and
+ *      exists on disk — parity with apply() (R8). Every RemovalOp kind except
+ *      `unlink` (delegates to the primitive) and `plugin-uninstall` (no file)
+ *      carries `path`, so this is "any op targeting a config file", not a
+ *      per-kind whitelist. A path already backed up earlier THIS RUN (another
+ *      op, another entry) is skipped — one .bak per file per run, same dedup
+ *      key as apply() (engine.ts apply(), backupTargets/rollbackLedger).
+ *      Additionally, the store of every unlink op is backed up as a whole
+ *      (backupDir → <store>.bak-<ISO>-<token>) before the removal (R3).
+ *   4. Call adapter.applyRemove(ops, env, manifestFiles) to perform the
+ *      removals. `manifestFiles` (R4) is every path the manifest still claims
+ *      after this removal: the `files` of every remaining entry PLUS the
+ *      removed entry's own files that this run's ops do not touch (mergeFiles
+ *      can fold several install targets into one entry) — opaque paths the
+ *      adapter uses as extra store reference candidates (a project-scope
+ *      symlink installed from another cwd is only discoverable through the
+ *      manifest, ADR-0020 §3). Core does not interpret them.
  *   5. Remove the entry from the manifest (filter by id + scope).
- * After all entries: persist the updated manifest.
+ * After all entries: persist the updated manifest, then delete every shared
+ * nature store whose LAST manifest entry left in this run (R7) — backed up
+ * as a whole first (backupDir).
  *
- * Idempotent: if planRemove returns [] (artifact not installed) → no-op,
+ * Idempotent: if the effective plan is [] (artifact not installed) → no-op,
  * manifest unchanged.
  *
  * @param adapter       The adapter to use for planning and removing.
@@ -496,6 +576,9 @@ async function rollbackCompensations(
  * @param scope         Installation scope ('user' | 'project').
  * @param env           Injectable env for HOME resolution.
  * @param manifestPath  Absolute path to state.json.
+ * @param sharedStores  Optional shared-store descriptors (R7): directories
+ *                      shared by every artifact of one nature, deleted with
+ *                      the last manifest entry of that nature.
  */
 export async function remove(
   adapter: Adapter,
@@ -503,49 +586,138 @@ export async function remove(
   scope: Scope,
   env: Env,
   manifestPath: string,
+  sharedStores?: SharedNatureStore[],
 ): Promise<RemoveResult> {
   let manifest = await readManifest(manifestPath);
 
   const allRemoved: string[] = [];
   const allBackedUp: string[] = [];
 
+  // Paths already backed up this run — persists across entries so a file hit
+  // by several entries' remove ops (e.g. settings.json hit by both a hook
+  // removal and a guardrail removal) is backed up exactly once, capturing the
+  // ORIGINAL pre-run state (R8).
+  const backedUpPaths = new Set<string>();
+
+  // Natures of the entries actually removed this run — gates the shared-store
+  // cleanup below (R7).
+  const removedNatures = new Set<Nature>();
+
   for (const entry of entries) {
-    const ops = await adapter.planRemove(
+    const plannedOps = await adapter.planRemove(
       enrichWithApplied(entry, manifest, adapter.id),
       scope,
       env,
     );
 
-    // No ops → not installed; leave the manifest untouched for this entry.
+    // Drop warning-only ops before the empty-plan check — mirror of apply()'s
+    // warning-only merge-permission filter (review M7). A leave-alone op
+    // performs no removal: it only carries the R3 gate warnings ("present but
+    // not managed") into the plan preview. An entry whose plan contains ONLY
+    // leave-alone ops is treated exactly like an empty plan: no write, no
+    // backup, and the manifest entry is PRESERVED so `check` keeps reporting
+    // the divergence.
+    const ops = plannedOps.filter((op) => op.kind !== 'leave-alone');
+
+    // No (effective) ops → not installed; leave the manifest untouched for
+    // this entry.
     if (ops.length === 0) {
       continue;
     }
 
-    // Backup targets with a `path` field before removal.
-    // Ops with `target` (unlink) delegate removal to the primitive.
+    // Backup every op target that carries a `path` — parity with apply()
+    // (R8). Ops with `target` (unlink) delegate removal to the primitive;
     // `plugin-uninstall` has neither path nor target — nothing to back up.
-    const backupTargets = ops.flatMap((op) => {
-      if (op.kind === 'remove-deny' || op.kind === 'remove-block' || op.kind === 'delete-file') {
-        return [op.path];
-      }
-      return [];
-    });
+    const backupTargets = ops
+      .filter((op) => 'path' in op)
+      .map((op) => (op as { path: string }).path)
+      .filter((p, i, arr) => arr.indexOf(p) === i && !backedUpPaths.has(p));
 
     const bakResults = await Promise.all(backupTargets.map((p) => backup(p)));
+    backupTargets.forEach((p) => backedUpPaths.add(p));
     const backedUp = bakResults.filter((b): b is string => b !== null);
     allBackedUp.push(...backedUp);
 
+    // Backup the store of every unlink op before the primitive rm's it (R3,
+    // gate ratified 2026-07-10): edits made through the install symlink live
+    // in the store, so the whole store tree (or single-file agent store) is
+    // preserved as <store>.bak-<ISO>-<token>. Same dedup-per-run and same
+    // backedUp reporting channel as the config-file backups above.
+    const storeBackupTargets = ops
+      .filter((op): op is RemovalOpUnlink => op.kind === 'unlink')
+      .map((op) => op.store)
+      .filter((p, i, arr) => arr.indexOf(p) === i && !backedUpPaths.has(p));
+
+    const storeBakResults = await Promise.all(storeBackupTargets.map((p) => backupDir(p)));
+    storeBackupTargets.forEach((p) => backedUpPaths.add(p));
+    allBackedUp.push(...storeBakResults.filter((b): b is string => b !== null));
+
+    // R4: hand the adapter every path the manifest will STILL claim after this
+    // removal — the files of every other entry, PLUS the files of the removed
+    // entry that this run's ops do NOT touch. mergeFiles (R1) can fold several
+    // install targets into ONE entry (e.g. the same project-scope skill
+    // installed from two different cwds), so enumerating only the remaining
+    // entries would hide a sibling target that still references the shared
+    // store: the store would be deleted under a live symlink while the
+    // confirmed preview (cmd-remove) showed "kept — still referenced".
+    // Subtracting exactly the op paths/targets keeps apply aligned with that
+    // preview, and keeps the context shared-file gate intact (a path it must
+    // protect belongs to a REMAINING entry, never to the removed one's ops).
+    // Core stays assistant-agnostic — it only transports paths.
+    const nextManifest = removeEntry(manifest, entry.id, scope, adapter.id);
+    const removedEntry = findEntry(manifest, entry.id, scope, adapter.id);
+    const touchedPaths = new Set(
+      ops.flatMap((op) => {
+        if ('path' in op) return [path.resolve((op as { path: string }).path)];
+        if ('target' in op) return [path.resolve((op as { target: string }).target)];
+        return [];
+      }),
+    );
+    const survivingOwnFiles = (removedEntry?.files ?? []).filter(
+      (f) => !touchedPaths.has(path.resolve(f)),
+    );
+    const remainingFiles = [
+      ...nextManifest.artifacts.flatMap((a) => a.files),
+      ...survivingOwnFiles,
+    ];
+
     // Delegate actual removals to the adapter
-    await adapter.applyRemove(ops, env);
+    await adapter.applyRemove(ops, env, remainingFiles);
 
     // Remove this entry from the manifest (keyed by assistant so we only drop
     // the record for the assistant being operated on).
-    manifest = removeEntry(manifest, entry.id, scope, adapter.id);
+    manifest = nextManifest;
     allRemoved.push(entry.id);
+    removedNatures.add(entry.nature);
   }
 
   // Persist the manifest once after all entries have been processed
   await writeManifest(manifestPath, manifest);
+
+  // R7: a shared nature store leaves the disk with the LAST manifest entry of
+  // its nature — all scopes and assistants confounded (the manifest is one
+  // user-level file, so `manifest.artifacts` covers them all). Two gates:
+  //   1. this run actually removed an entry of that nature — a run that never
+  //      touched the nature must not delete scripts that a legacy (truncated)
+  //      manifest fails to track but that are still live in the assistant
+  //      config;
+  //   2. no entry of that nature remains at the manifest.
+  // Runs AFTER writeManifest so the cleanup acts on the persisted truth: a
+  // cleanup failure never leaves the manifest claiming entries whose config
+  // mutations were already reverted. The whole directory is preserved first
+  // (backupDir, <dir>.bak-<ISO>-<token>) on the same reporting channel as the
+  // per-store backups (R3).
+  for (const store of sharedStores ?? []) {
+    const natureRemains = manifest.artifacts.some((a) => a.nature === store.nature);
+    if (!removedNatures.has(store.nature) || natureRemains) {
+      continue;
+    }
+    const dirBak = await backupDir(store.dir);
+    if (dirBak !== null) {
+      allBackedUp.push(dirBak);
+    }
+    await removeDir(store.dir);
+  }
 
   return { removed: allRemoved, backedUp: allBackedUp, manifest };
 }
@@ -671,9 +843,22 @@ function extractApplied(ops: WriteOp[], targets: string[]): AppliedPayload | und
   }
 
   const writeTextOp = ops.find((op) => op.kind === 'write-text') as
-    | { kind: 'write-text'; path: string; content: string; description: string }
+    | {
+      kind: 'write-text';
+      path: string;
+      content: string;
+      description: string;
+      previous?: string | null;
+    }
     | undefined;
   if (writeTextOp !== undefined) {
+    // R6: the restore baseline captured at plan time rides on the op and is
+    // persisted as AppliedContext.previous. Left absent when the writer did
+    // not capture one (legacy plans, opencode agent write-text) so remove can
+    // tell "no baseline" apart from "file was absent" (null).
+    if (writeTextOp.previous !== undefined) {
+      return { kind: 'context', block: writeTextOp.content, previous: writeTextOp.previous };
+    }
     return { kind: 'context', block: writeTextOp.content };
   }
 

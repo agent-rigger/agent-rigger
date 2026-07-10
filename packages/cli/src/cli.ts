@@ -55,7 +55,7 @@ import { runInit } from './cmd-init';
 import type { CatalogProposal } from './cmd-init';
 import type { RunLsResult } from './cmd-ls';
 import { RESOURCE_NATURE_MAP, runLs } from './cmd-ls';
-import { runRemove, UnknownRemoveIdError } from './cmd-remove';
+import { NotInstalledError, runRemove } from './cmd-remove';
 import { runUpdate } from './cmd-update';
 import { LegacyConfigError, loadConfig } from './config';
 import { auditableGovernanceIds, type CatalogGovernanceMeta } from './governance';
@@ -1698,10 +1698,7 @@ async function handleResourceCommand(opts: ResourceCommandOpts): Promise<number>
       return 2;
     }
 
-    // Validate each id belongs to the resource — strict qualified match (ADR-0017 §5).
-    const effectiveCatalog = await resolveEffectiveCatalog(env, print, deps.remote);
-
-    // Reject unqualified ids immediately with an actionable error.
+    // Reject unqualified ids immediately with an actionable error (ADR-0017 §5).
     const unqualifiedRemoveIds = ids.filter((id) => !id.includes('/'));
     if (unqualifiedRemoveIds.length > 0) {
       for (const id of unqualifiedRemoveIds) {
@@ -1712,11 +1709,16 @@ async function handleResourceCommand(opts: ResourceCommandOpts): Promise<number>
       return 2;
     }
 
+    // R5: validate the nature from the manifest — remove never fetches the
+    // catalog (manifest-first, offline). Packs never reach the manifest, so a
+    // found entry can never satisfy natureMapped === 'pack'.
+    const { readManifest } = await import('@agent-rigger/core/manifest');
+    const manifest = await readManifest(resolveManifestPath(env));
+
     const invalidIds = ids.filter((id) => {
-      const entry = effectiveCatalog.find((e) => e.id === id);
-      if (entry === undefined) return false; // will fail at runRemove time with a better error
-      if (natureMapped === 'pack') return entry.kind !== 'pack';
-      return entry.kind !== 'artifact' || entry.nature !== natureMapped;
+      const entry = manifest.artifacts.find((e) => e.id === id);
+      if (entry === undefined) return false; // runRemove raises the "not installed" error
+      return entry.nature !== natureMapped;
     });
 
     if (invalidIds.length > 0) {
@@ -2108,8 +2110,8 @@ async function handleRemove(opts: HandleRemoveOpts): Promise<number> {
   const adapter = await buildAdapter(assistant, env);
   const manifestPath = resolveManifestPath(env);
 
-  // Build effective catalog for remove (entries in manifest)
-  const effectiveCatalog = await resolveEffectiveCatalog(env, print, deps.remote);
+  // R5: no catalog resolution — remove validates against the manifest alone
+  // (runRemove), so the whole path works offline and never fetches a source.
 
   let confirm: boolean | ((planText: string) => Promise<boolean>);
   if (yes) {
@@ -2121,7 +2123,6 @@ async function handleRemove(opts: HandleRemoveOpts): Promise<number> {
 
   // ids are already qualified (validated by callers — ADR-0017 §5).
   const result = await runRemove({
-    catalog: effectiveCatalog,
     adapter,
     scope,
     env,
@@ -2458,7 +2459,7 @@ function handleError(err: unknown, print: (msg: string) => void): number {
     return 2;
   }
 
-  if (err instanceof UnknownRemoveIdError) {
+  if (err instanceof NotInstalledError) {
     print(`[error] ${err.message}`);
     return 2;
   }

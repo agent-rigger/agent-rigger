@@ -102,12 +102,16 @@ describe('auditAgent', () => {
     expect(report.id).toBe('agent:tech-lead');
   });
 
-  it('returns present when target .md file exists', async () => {
-    const entry: AdapterEntry = { id: 'agent:tech-lead', nature: 'agent', scope: 'user' };
+  it('returns present when target is a symlink to the rigger store', async () => {
+    const entry: AdapterEntry = { id: 'agent:my-agent', nature: 'agent', scope: 'user' };
     const home = resolveHome(env);
-    const targetPath = path.join(home, '.claude', 'agents', 'tech-lead.md');
+    const targets = resolveUserTargets(env);
+    const store = path.join(path.dirname(targets.skillsDir), 'agents', 'my-agent.md');
+    await fs.mkdir(path.dirname(store), { recursive: true });
+    await fs.writeFile(store, '# my-agent');
+    const targetPath = path.join(home, '.claude', 'agents', 'my-agent.md');
     await fs.mkdir(path.dirname(targetPath), { recursive: true });
-    await fs.writeFile(targetPath, '# tech-lead');
+    await fs.symlink(store, targetPath);
 
     const report = await auditAgent(entry, 'user', env);
 
@@ -115,7 +119,37 @@ describe('auditAgent', () => {
     expect(report.nature).toBe('agent');
   });
 
-  it('returns present when target is a symlink to a .md file', async () => {
+  it('R3: returns present for a plain .md byte-identical to the store (copy fallback)', async () => {
+    const entry: AdapterEntry = { id: 'agent:tech-lead', nature: 'agent', scope: 'user' };
+    const home = resolveHome(env);
+    const targets = resolveUserTargets(env);
+    const store = path.join(path.dirname(targets.skillsDir), 'agents', 'tech-lead.md');
+    await fs.mkdir(path.dirname(store), { recursive: true });
+    await fs.writeFile(store, '# tech-lead');
+    // Copy-fallback shape: the target is a plain copy of the store, no symlink.
+    const targetPath = path.join(home, '.claude', 'agents', 'tech-lead.md');
+    await fs.mkdir(path.dirname(targetPath), { recursive: true });
+    await fs.writeFile(targetPath, '# tech-lead');
+
+    const report = await auditAgent(entry, 'user', env);
+
+    expect(report.state).toBe('present');
+  });
+
+  it('R3: returns drift for a real .md file that does not match the store', async () => {
+    const entry: AdapterEntry = { id: 'agent:tech-lead', nature: 'agent', scope: 'user' };
+    const home = resolveHome(env);
+    const targetPath = path.join(home, '.claude', 'agents', 'tech-lead.md');
+    await fs.mkdir(path.dirname(targetPath), { recursive: true });
+    await fs.writeFile(targetPath, '# my own tech-lead');
+
+    const report = await auditAgent(entry, 'user', env);
+
+    expect(report.state).toBe('drift');
+    expect(report.detail).toContain(targetPath);
+  });
+
+  it('R3: returns drift for a symlink pointing outside the rigger store', async () => {
     const entry: AdapterEntry = { id: 'agent:my-agent', nature: 'agent', scope: 'user' };
     const home = resolveHome(env);
     const targetPath = path.join(home, '.claude', 'agents', 'my-agent.md');
@@ -125,15 +159,19 @@ describe('auditAgent', () => {
 
     const report = await auditAgent(entry, 'user', env);
 
-    expect(report.state).toBe('present');
+    expect(report.state).toBe('drift');
   });
 
   it('uses project target path for scope project', async () => {
     const cwd = tmp.dir;
     const entry: AdapterEntry = { id: 'agent:tech-lead', nature: 'agent', scope: 'project' };
+    const targets = resolveUserTargets(env);
+    const store = path.join(path.dirname(targets.skillsDir), 'agents', 'tech-lead.md');
+    await fs.mkdir(path.dirname(store), { recursive: true });
+    await fs.writeFile(store, '# tech-lead');
     const projectAgentPath = path.join(cwd, '.claude', 'agents', 'tech-lead.md');
     await fs.mkdir(path.dirname(projectAgentPath), { recursive: true });
-    await fs.writeFile(projectAgentPath, '# tech-lead');
+    await fs.symlink(store, projectAgentPath);
 
     const report = await auditAgent(entry, 'project', env, cwd);
 

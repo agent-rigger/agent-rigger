@@ -20,7 +20,7 @@ import path from 'node:path';
 
 import type { AdapterEntry } from '@agent-rigger/core/adapter';
 import { readJson, writeJson } from '@agent-rigger/core/fs-json';
-import { hasHook } from '@agent-rigger/core/hooks';
+import { hasHook, InvalidHooksEventError } from '@agent-rigger/core/hooks';
 import { resolveProjectTargets, resolveUserTargets } from '@agent-rigger/core/paths';
 import type { Env } from '@agent-rigger/core/paths';
 
@@ -812,5 +812,154 @@ describe('applyHook — guard-*.log files preserved on re-install (D4)', () => {
     const entries = await fs.readdir(scriptStore);
     expect(entries).toContain('guard-new.sh');
     expect(entries).not.toContain('guard-old.sh');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// R2 — hook rewrite preserves everything rigger does not recognize
+// ---------------------------------------------------------------------------
+
+const STOP_SPEC: ResolvedHook = {
+  event: 'Stop',
+  matcher: '*',
+  command: 'bun run /abs/rigger-stop.ts',
+};
+
+/** Native Claude Code entry without matcher (Stop, PreCompact… format). */
+const userStopEntry = () => ({
+  hooks: [{ type: 'command', command: '~/bin/notify.sh' }],
+});
+
+describe('R2: hook rewrite preserves unrecognized settings.json content', () => {
+  it('R2: install then remove round-trips a user Stop entry without matcher', async () => {
+    const targets = resolveUserTargets(env);
+    await fs.mkdir(path.dirname(targets.claudeSettings), { recursive: true });
+    await writeJson(targets.claudeSettings, { hooks: { Stop: [userStopEntry()] } });
+    const originalText = await fs.readFile(targets.claudeSettings, 'utf8');
+
+    const mergeOps = await planHook(ENTRY, 'user', env, STOP_SPEC);
+    await applyHook(mergeOps, env);
+
+    const afterInstall = await readJson(targets.claudeSettings);
+    const installedEntries =
+      (afterInstall['hooks'] as Record<string, unknown>)['Stop'] as unknown[];
+    expect(installedEntries).toHaveLength(2);
+    expect(installedEntries[0]).toEqual(userStopEntry());
+    expect(hasHook(afterInstall, STOP_SPEC)).toBe(true);
+
+    const removeOps = await planRemoveHook(ENTRY, 'user', env, STOP_SPEC);
+    await applyRemoveHook(removeOps, env);
+
+    const finalText = await fs.readFile(targets.claudeSettings, 'utf8');
+    expect(finalText).toBe(originalText);
+  });
+
+  it('R2: applyHook fails on a non-array event value and leaves settings.json untouched', async () => {
+    const targets = resolveUserTargets(env);
+    await fs.mkdir(path.dirname(targets.claudeSettings), { recursive: true });
+    await writeJson(targets.claudeSettings, { hooks: { Stop: { oops: true } } });
+    const originalText = await fs.readFile(targets.claudeSettings, 'utf8');
+
+    const ops = [
+      {
+        kind: 'merge-hooks' as const,
+        path: targets.claudeSettings,
+        event: STOP_SPEC.event,
+        matcher: STOP_SPEC.matcher,
+        command: STOP_SPEC.command,
+      },
+    ];
+    await expect(applyHook(ops, env)).rejects.toThrow(InvalidHooksEventError);
+
+    const finalText = await fs.readFile(targets.claudeSettings, 'utf8');
+    expect(finalText).toBe(originalText);
+  });
+
+  it('R2: applyHook validates BEFORE syncToStore — a failing re-install never touches the scriptStore', async () => {
+    // The guard scripts in the scriptStore are executed at runtime on every
+    // tool use. On a re-install the store pre-exists, so the engine's
+    // createdDirs rollback does not remove it: if applyHook synced the v2
+    // scripts before the fail-closed mergeHook validation, a failed run would
+    // leave v2 scripts live on disk with neither settings nor manifest
+    // updated. The error must fire before ANY disk write.
+    const targets = resolveUserTargets(env);
+    await fs.mkdir(path.dirname(targets.claudeSettings), { recursive: true });
+    await writeJson(targets.claudeSettings, { hooks: { Stop: { oops: true } } });
+    const originalText = await fs.readFile(targets.claudeSettings, 'utf8');
+
+    // Pre-existing store with the v1 script (previous successful install).
+    const scriptSource = path.join(tmp.dir, 'r2-order-src');
+    const scriptStore = path.join(tmp.dir, 'r2-order-store');
+    await fs.mkdir(scriptSource, { recursive: true });
+    await fs.mkdir(scriptStore, { recursive: true });
+    await fs.writeFile(path.join(scriptStore, 'guard.sh'), '#!/bin/sh\necho guard v1');
+    await fs.writeFile(path.join(scriptSource, 'guard.sh'), '#!/bin/sh\necho guard v2');
+
+    const ops = [
+      {
+        kind: 'merge-hooks' as const,
+        path: targets.claudeSettings,
+        event: STOP_SPEC.event,
+        matcher: STOP_SPEC.matcher,
+        command: STOP_SPEC.command,
+        scriptSource,
+        scriptStore,
+      },
+    ];
+    await expect(applyHook(ops, env)).rejects.toThrow(InvalidHooksEventError);
+
+    // settings.json untouched AND the store still carries the v1 script.
+    expect(await fs.readFile(targets.claudeSettings, 'utf8')).toBe(originalText);
+    expect(await fs.readFile(path.join(scriptStore, 'guard.sh'), 'utf8'))
+      .toBe('#!/bin/sh\necho guard v1');
+  });
+
+  it('R2: applyHook on a FRESH install with malformed settings creates no scriptStore at all', async () => {
+    const targets = resolveUserTargets(env);
+    await fs.mkdir(path.dirname(targets.claudeSettings), { recursive: true });
+    await writeJson(targets.claudeSettings, { hooks: { Stop: { oops: true } } });
+
+    const scriptSource = path.join(tmp.dir, 'r2-fresh-src');
+    const scriptStore = path.join(tmp.dir, 'r2-fresh-store');
+    await fs.mkdir(scriptSource, { recursive: true });
+    await fs.writeFile(path.join(scriptSource, 'guard.sh'), '#!/bin/sh\necho guard');
+
+    const ops = [
+      {
+        kind: 'merge-hooks' as const,
+        path: targets.claudeSettings,
+        event: STOP_SPEC.event,
+        matcher: STOP_SPEC.matcher,
+        command: STOP_SPEC.command,
+        scriptSource,
+        scriptStore,
+      },
+    ];
+    await expect(applyHook(ops, env)).rejects.toThrow(InvalidHooksEventError);
+
+    // No orphan store dropped by the failed run.
+    const storeExists = await fs.lstat(scriptStore).then(() => true).catch(() => false);
+    expect(storeExists).toBe(false);
+  });
+
+  it('R2: applyRemoveHook fails on a non-array event value and leaves settings.json untouched', async () => {
+    const targets = resolveUserTargets(env);
+    await fs.mkdir(path.dirname(targets.claudeSettings), { recursive: true });
+    await writeJson(targets.claudeSettings, { hooks: { Stop: { oops: true } } });
+    const originalText = await fs.readFile(targets.claudeSettings, 'utf8');
+
+    const ops = [
+      {
+        kind: 'remove-hooks' as const,
+        path: targets.claudeSettings,
+        event: STOP_SPEC.event,
+        matcher: STOP_SPEC.matcher,
+        command: STOP_SPEC.command,
+      },
+    ];
+    await expect(applyRemoveHook(ops, env)).rejects.toThrow(InvalidHooksEventError);
+
+    const finalText = await fs.readFile(targets.claudeSettings, 'utf8');
+    expect(finalText).toBe(originalText);
   });
 });

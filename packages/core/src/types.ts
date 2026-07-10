@@ -107,6 +107,17 @@ export interface AppliedContext {
   kind: 'context';
   /** Full UTF-8 content of the AGENTS.md file that was written. */
   block: string;
+  /**
+   * AGENTS.md content as it was BEFORE the first install — the restore
+   * baseline replayed by remove (R6). `null` records that the file did not
+   * exist (or was empty) before install, so remove deletes it. Absent on
+   * legacy entries recorded before lot2-remove-reversible: remove degrades
+   * to delete-on-exact-match with a "no restore baseline" notice, and never
+   * touches a drifted file. mergeApplied preserves the FIRST install's value
+   * across re-install upserts — the baseline never drifts to an intermediate
+   * state.
+   */
+  previous?: string | null;
 }
 
 /**
@@ -180,8 +191,10 @@ export type AppliedPayload =
  * - sha: resolved commit sha (reproducibility + drift detection).
  * - installedAt: ISO-8601 timestamp string.
  * - files: absolute paths of files written or managed.
- * - applied: structured payload of the mutations applied at install time.
- *   Optional for backward compatibility with manifests written before B-iii.
+ * - applied: cumulative structured payload of the mutations rigger applied.
+ *   Re-installs merge the run delta into the existing payload instead of
+ *   replacing it (mergeApplied, R1). Optional for backward compatibility with
+ *   manifests written before B-iii.
  */
 export interface ManifestEntry {
   id: string;
@@ -191,7 +204,12 @@ export interface ManifestEntry {
   scope: Scope;
   installedAt: string;
   files: string[];
-  /** Structured payload of the mutations applied at install time. Added in B-iii. */
+  /**
+   * Cumulative structured payload of the mutations rigger applied — the exact
+   * trace replayed by remove (ADR-0016). Re-installs merge the run delta into
+   * the existing payload instead of replacing it (mergeApplied, R1); per-kind
+   * fusion semantics live in applied-merge.ts. Added in B-iii.
+   */
   applied?: AppliedPayload;
   /**
    * Target assistant this entry was installed for (M3).
@@ -239,9 +257,18 @@ export interface WriteOpWriteText {
   /**
    * Translation warnings surfaced to the user before confirm (R6.3 / HIGH-2):
    * used by the opencode agent handler when frontmatter fields cannot be
-   * translated. Absent for plain writes (e.g. context AGENTS.md).
+   * translated, and by the claude context handler to signal that an existing
+   * AGENTS.md is about to be overwritten (lot2 R6). Absent for plain writes.
    */
   warnings?: string[];
+  /**
+   * Pre-install content of the target file captured at plan time (lot2 R6):
+   * extractApplied copies it into AppliedContext.previous as the restore
+   * baseline for remove. `null` = the file did not exist (or was empty)
+   * before this install. Absent for writers that do not capture a baseline
+   * (e.g. the opencode agent handler).
+   */
+  previous?: string | null;
 }
 
 /**
@@ -387,7 +414,12 @@ export type WriteOp =
   | WriteOpPluginInstall
   | WriteOpMergeHooks
   | WriteOpMergePermission
-  | WriteOpMergeMcp;
+  | WriteOpMergeMcp
+  // Traced hook migration (R1/D8): when the canonical hook spec changed since
+  // install (matcher or command), the install plan retires the OLD registration
+  // with a remove-hooks op alongside the merge-hooks op adding the new one —
+  // one plan, one run, never two live registrations.
+  | RemovalOpRemoveHooks;
 
 // ---------------------------------------------------------------------------
 // RemovalOp — planned removal operations (for diff display and apply)
@@ -434,6 +466,29 @@ export interface RemovalOpDeleteFile {
   kind: 'delete-file';
   /** Absolute path to the file to delete. */
   path: string;
+  /**
+   * Human-readable warnings surfaced in the removal preview (same channel as
+   * install-plan op warnings). Used by the R6 retro-compat path: a legacy
+   * context entry without a `previous` baseline is deleted on exact content
+   * match only, with a "no restore baseline" notice.
+   */
+  warnings?: string[];
+}
+
+/**
+ * Restore a managed file to its pre-install content (R6): overwrite the file
+ * at `path` with `content` — the AppliedContext.previous baseline captured at
+ * install time. Chosen over a delete-file + rewrite pair so remove ends on
+ * the user's original bytes, not on absence (ADR-0016 "restore exactly the
+ * prior state"). Carries `path`, so engine.remove backs the file up before
+ * the rewrite (R8) like every other path-bearing removal op.
+ */
+export interface RemovalOpRestoreFile {
+  kind: 'restore-file';
+  /** Absolute path of the file to restore. */
+  path: string;
+  /** Pre-install content written back verbatim. */
+  content: string;
 }
 
 /**
@@ -501,16 +556,38 @@ export interface RemovalOpRemoveMcp {
   server: string;
 }
 
+/**
+ * Warning-only removal op: the target is present on disk but NOT managed by
+ * rigger (R3 gate — a real directory/file where the install symlink used to
+ * be, or a symlink resolving outside the rigger store). Nothing is deleted;
+ * the op exists solely to carry `warnings` into the removal preview — same
+ * plan-warning channel as install ops (WriteOpMergeAllow.warnings, and the
+ * warning-only empty merge-permission op of review M7).
+ *
+ * The engine treats a plan containing only leave-alone ops exactly like an
+ * empty plan: no backup, no applyRemove, and the manifest entry is PRESERVED
+ * so `check` keeps reporting the divergence.
+ */
+export interface RemovalOpLeaveAlone {
+  kind: 'leave-alone';
+  /** Path of the unmanaged target that is left in place. */
+  target: string;
+  /** Human-readable warnings surfaced in the plan preview. */
+  warnings: string[];
+}
+
 export type RemovalOp =
   | RemovalOpRemoveDeny
   | RemovalOpRemoveAllow
   | RemovalOpRemoveBlock
   | RemovalOpDeleteFile
+  | RemovalOpRestoreFile
   | RemovalOpUnlink
   | RemovalOpPluginUninstall
   | RemovalOpRemoveHooks
   | RemovalOpRemovePermission
-  | RemovalOpRemoveMcp;
+  | RemovalOpRemoveMcp
+  | RemovalOpLeaveAlone;
 
 // ---------------------------------------------------------------------------
 // Scanner / Verdict

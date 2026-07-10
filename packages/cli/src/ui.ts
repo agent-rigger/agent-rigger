@@ -127,6 +127,15 @@ export interface RenderRemovalPlanOpts {
   scope?: Scope;
   color?: boolean;
   maxDetail?: number;
+  /**
+   * Fate of the shared store for each unlink op, keyed by store path (R4):
+   * 'delete' — this removal drops the last reference, the store is deleted;
+   * 'keep'   — another scope/assistant (or a manifest-recorded target from
+   *            another cwd) still references it, the store is preserved.
+   * Computed by cmd-remove from the reference candidates; when absent no store
+   * line is rendered (backward compatibility for callers without a manifest).
+   */
+  storeFates?: Record<string, 'delete' | 'keep'>;
 }
 
 // ---------------------------------------------------------------------------
@@ -217,6 +226,7 @@ function getRemovalGroupPrimaryTarget(ops: RemovalOp[], abbr: (p: string) => str
       || op.kind === 'remove-allow'
       || op.kind === 'remove-block'
       || op.kind === 'delete-file'
+      || op.kind === 'restore-file'
       || op.kind === 'remove-hooks'
     ) {
       return abbr(op.path);
@@ -366,6 +376,20 @@ export function renderPlan(groups: PlanGroup[], opts: RenderPlanOpts = {}): stri
           }
           break;
         }
+        case 'remove-hooks': {
+          // Traced hook migration (R1/D8): the plan retires the previously
+          // installed spec before merging the new one — shown so the confirm
+          // prompt tells the whole story of the run.
+          const cmdParts = op.command.trim().split(/\s+/);
+          const cmdLast = cmdParts.at(-1) ?? '';
+          const scriptName = cmdLast.split('/').pop() ?? cmdLast;
+          lines.push(
+            `  ${
+              paint('unhook', ANSI.yellow, colorOn)
+            }  ${op.event}/${op.matcher} → ${scriptName} (spec changed)`,
+          );
+          break;
+        }
       }
     }
 
@@ -439,6 +463,7 @@ export function renderRemovalPlan(
   let denyCount = 0;
   let allowCount = 0;
   let deleteCount = 0;
+  let restoreCount = 0;
   let unimportCount = 0;
   let hooksCount = 0;
   let unlinksCount = 0;
@@ -490,9 +515,33 @@ export function renderRemovalPlan(
           lines.push(`  delete  ${abbr(op.path)}`);
           break;
         }
+        case 'restore-file': {
+          // R6: the confirmation must state that the file returns to its
+          // pre-install content — a "delete" line here would misrepresent
+          // what the remove actually does.
+          restoreCount++;
+          lines.push(`  restore  ${abbr(op.path)}`);
+          break;
+        }
         case 'unlink': {
           unlinksCount++;
           lines.push(`  unlink  ${abbr(op.target)}`);
+          // R4: the confirmation must state what is actually destroyed — the
+          // shared store's fate is part of the preview, not a surprise.
+          const fate = opts.storeFates?.[op.store];
+          if (fate === 'delete') {
+            lines.push(
+              `  store   ${abbr(op.store)}  ${
+                paint('(deleted — last reference)', ANSI.red, colorOn)
+              }`,
+            );
+          } else if (fate === 'keep') {
+            lines.push(
+              `  store   ${abbr(op.store)}  ${
+                paint('(kept — still referenced)', ANSI.dim, colorOn)
+              }`,
+            );
+          }
           break;
         }
         case 'plugin-uninstall': {
@@ -516,6 +565,7 @@ export function renderRemovalPlan(
   if (denyCount > 0) sigmaParts.push(`deny -${denyCount}`);
   if (allowCount > 0) sigmaParts.push(`allow -${allowCount}`);
   if (deleteCount > 0) sigmaParts.push(`${deleteCount} delete${deleteCount > 1 ? 's' : ''}`);
+  if (restoreCount > 0) sigmaParts.push(`${restoreCount} restore${restoreCount > 1 ? 's' : ''}`);
   if (unimportCount > 0) {
     sigmaParts.push(`${unimportCount} unimport${unimportCount > 1 ? 's' : ''}`);
   }

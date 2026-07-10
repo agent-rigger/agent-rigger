@@ -17,7 +17,14 @@ import type { Adapter, AdapterEntry } from '@agent-rigger/core/adapter';
 import type { Env } from '@agent-rigger/core/paths';
 import type { Scanner } from '@agent-rigger/core/scan';
 import { stubScanner } from '@agent-rigger/core/scan';
-import type { Nature, NatureReport, RemovalOp, Scope, WriteOp } from '@agent-rigger/core/types';
+import type {
+  Nature,
+  NatureReport,
+  RemovalOp,
+  RemovalOpRemoveHooks,
+  Scope,
+  WriteOp,
+} from '@agent-rigger/core/types';
 
 import { auditAgent, planAgent, planRemoveAgent } from './agents';
 import {
@@ -82,7 +89,11 @@ interface NatureHandler {
 }
 
 type OpKindApply = (ops: WriteOp[], env: Env) => Promise<void>;
-type RemovalOpKindApply = (ops: RemovalOp[], env: Env) => Promise<void>;
+type RemovalOpKindApply = (
+  ops: RemovalOp[],
+  env: Env,
+  manifestFiles?: string[],
+) => Promise<void>;
 
 // ---------------------------------------------------------------------------
 // Config
@@ -272,11 +283,13 @@ export function createClaudeAdapter(config: ClaudeAdapterConfig): Adapter {
         },
         planRemove(entry, scope, env): Promise<RemovalOp[]> {
           const cwd = entry.scope === 'project' ? process.cwd() : undefined;
-          // B-iii: prefer applied payload from manifest when available.
-          const effectiveContent = entry.applied?.kind === 'context'
-            ? entry.applied.block
-            : agentsContent;
-          return planRemoveContext(scope, env, effectiveContent, cwd);
+          // B-iii: prefer applied payload from manifest when available. R6
+          // threads the recorded restore baseline (previous) into the plan;
+          // a legacy payload without it degrades to delete-on-exact-match.
+          if (entry.applied?.kind === 'context') {
+            return planRemoveContext(scope, env, entry.applied.block, cwd, entry.applied.previous);
+          }
+          return planRemoveContext(scope, env, agentsContent, cwd);
         },
       },
     ],
@@ -400,15 +413,33 @@ export function createClaudeAdapter(config: ClaudeAdapterConfig): Adapter {
     ['link', (ops, env) => applySkill(ops, env, scanner)],
     ['plugin-install', (ops, env) => applyPlugin(ops, env, pluginApplyOpts)],
     ['merge-hooks', (ops, env) => applyHook(ops, env)],
+    // Traced hook migration (R1/D8): an install plan may carry remove-hooks
+    // ops retiring the previously installed spec. Same executor as the remove
+    // path; the type-guard filter narrows WriteOp[] to the removal shape.
+    [
+      'remove-hooks',
+      (ops, env) =>
+        applyRemoveHook(
+          ops.filter((op): op is RemovalOpRemoveHooks => op.kind === 'remove-hooks'),
+          env,
+        ),
+    ],
   ]);
 
   // RemovalOp kind → applyRemove fn — mirrors the install dispatch pattern
   const removalOpKindHandlers = new Map<RemovalOp['kind'], RemovalOpKindApply>([
     ['remove-deny', (ops, env) => applyRemoveGuardrail(ops, env)],
     ['remove-allow', (ops, env) => applyRemoveGuardrail(ops, env)],
-    ['delete-file', (ops, env) => applyRemoveContext(ops, env)],
-    ['remove-block', (ops, env) => applyRemoveContext(ops, env)],
-    ['unlink', (ops, env) => applyRemoveSkill(ops, env)],
+    // R6: manifestFiles (files of the entries remaining after the removal)
+    // feed the shared-AGENTS.md gate — a path another assistant still
+    // references is neither deleted nor restored, only the block goes.
+    ['delete-file', (ops, env, manifestFiles) => applyRemoveContext(ops, env, manifestFiles)],
+    ['remove-block', (ops, env, manifestFiles) => applyRemoveContext(ops, env, manifestFiles)],
+    ['restore-file', (ops, env, manifestFiles) => applyRemoveContext(ops, env, manifestFiles)],
+    // R4: manifestFiles (targets of the entries remaining after the removal)
+    // feed the store refcount — cwd stays the adapter's project convention
+    // (process.cwd(), resolved inside applyRemoveSkill).
+    ['unlink', (ops, env, manifestFiles) => applyRemoveSkill(ops, env, undefined, manifestFiles)],
     ['plugin-uninstall', (ops, env) => applyRemovePlugin(ops, env, { run: pluginRunner })],
     ['remove-hooks', (ops, env) => applyRemoveHook(ops, env)],
   ]);
@@ -462,7 +493,7 @@ export function createClaudeAdapter(config: ClaudeAdapterConfig): Adapter {
       return handler.planRemove(entry, scope, env);
     },
 
-    async applyRemove(ops: RemovalOp[], env: Env): Promise<void> {
+    async applyRemove(ops: RemovalOp[], env: Env, manifestFiles?: string[]): Promise<void> {
       // Group ops by kind to delegate each group to the right handler.
       // Maintain the original ordering within each kind group.
       const grouped = new Map<RemovalOp['kind'], RemovalOp[]>();
@@ -480,7 +511,7 @@ export function createClaudeAdapter(config: ClaudeAdapterConfig): Adapter {
         if (applyFn === undefined) {
           throw new Error(`ClaudeAdapter: unsupported removal op kind "${kind}"`);
         }
-        await applyFn(kindOps, env);
+        await applyFn(kindOps, env, manifestFiles);
       }
     },
   };

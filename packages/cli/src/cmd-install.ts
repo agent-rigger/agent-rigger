@@ -30,7 +30,7 @@ import path from 'node:path';
 
 import type { Adapter, AdapterEntry } from '@agent-rigger/core/adapter';
 import { isConsented, recordConsent } from '@agent-rigger/core/consent';
-import { apply } from '@agent-rigger/core/engine';
+import { apply, enrichWithApplied } from '@agent-rigger/core/engine';
 import { findEntry, readManifest } from '@agent-rigger/core/manifest';
 import type { Env } from '@agent-rigger/core/paths';
 import { resolveHome } from '@agent-rigger/core/paths';
@@ -280,7 +280,10 @@ export async function runInstall(opts: RunInstallOptions): Promise<InstallResult
   const manifest = await readManifest(manifestPath);
   const groups: PlanGroup[] = [];
   for (const entry of adapterEntries) {
-    const ops = await adapter.plan(entry, scope, env);
+    // Enrich with the manifest `applied` payload — same seam as engine.apply
+    // (R1/D8): the previewed plan must match the executed one, including the
+    // remove-hooks op of a traced hook migration.
+    const ops = await adapter.plan(enrichWithApplied(entry, manifest, adapter.id), scope, env);
     if (ops.length > 0) {
       const action: 'install' | 'update' =
         findEntry(manifest, entry.id, scope, adapter.id) === undefined

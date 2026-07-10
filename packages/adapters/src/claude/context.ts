@@ -23,6 +23,7 @@
  */
 
 import { rm } from 'node:fs/promises';
+import path from 'node:path';
 
 import {
   ensureImportBlock,
@@ -120,12 +121,15 @@ export async function loadCanonicalContext(agentsMdPath: string): Promise<string
 /**
  * Audit the current state of the context artifact on disk.
  *
- * Returns:
- * - state 'present' if:
- *     (1) AGENTS.md exists AND its content matches `agentsContent`
- *     AND
- *     (2) CLAUDE.md contains a managed import block with the correct import target.
- * - state 'missing' otherwise.
+ * Three states (R6 — mirrors opencode/context.ts, plus the CLAUDE.md block
+ * dimension specific to claude):
+ * - 'present' — AGENTS.md content matches `agentsContent` AND CLAUDE.md
+ *   carries the managed import block with the correct target.
+ * - 'drift'   — AGENTS.md exists with content diverging from `agentsContent`
+ *   (detail names the path). Never reported as 'missing': "missing" invites a
+ *   re-install that would overwrite the user's work.
+ * - 'missing' — AGENTS.md absent/empty, or content matches but the CLAUDE.md
+ *   block is gone (re-installing only re-adds the block — nothing destroyed).
  *
  * Read-only: no filesystem writes.
  *
@@ -151,11 +155,18 @@ export async function auditContext(
   const agentsMatch = currentAgents === agentsContent;
   const blockPresent = hasImportBlock(currentClaudeMd, target);
 
-  return {
-    id: CONTEXT_ID,
-    nature: 'context',
-    state: agentsMatch && blockPresent ? 'present' : 'missing',
-  };
+  if (agentsMatch && blockPresent) {
+    return { id: CONTEXT_ID, nature: 'context', state: 'present' };
+  }
+  if (currentAgents !== '' && !agentsMatch) {
+    return {
+      id: CONTEXT_ID,
+      nature: 'context',
+      state: 'drift',
+      detail: `AGENTS.md diverges from canonical content at ${agentsMd}`,
+    };
+  }
+  return { id: CONTEXT_ID, nature: 'context', state: 'missing' };
 }
 
 // ---------------------------------------------------------------------------
@@ -196,11 +207,28 @@ export async function planContext(
     return [];
   }
 
+  // R6: an install over existing foreign content must be signalled before
+  // confirm — same plan-warning channel as WriteOpMergeAllow.warnings.
+  const overwriting = currentAgents !== '' && !agentsMatch;
+
   const writeTextOp: WriteOpWriteText = {
     kind: 'write-text',
     path: agentsMd,
     content: agentsContent,
     description: `Write canonical AGENTS.md to ${agentsMd}`,
+    // R6: capture the pre-install content as the restore baseline persisted
+    // in AppliedContext.previous. Empty ≡ absent (readText returns '' for
+    // both, matching the audit's 'missing' semantics) → recorded as null so
+    // remove deletes instead of restoring.
+    previous: currentAgents === '' ? null : currentAgents,
+    ...(overwriting
+      ? {
+        warnings: [
+          `AGENTS.md at ${agentsMd} has existing content that will be overwritten`
+          + ' — the current content is recorded and restored on remove.',
+        ],
+      }
+      : {}),
   };
 
   const ensureImportOp: WriteOpEnsureImport = {
@@ -217,11 +245,24 @@ export async function planContext(
 // ---------------------------------------------------------------------------
 
 /**
- * Compute the removal operations needed to uninstall the context artifact.
+ * Compute the removal operations needed to uninstall the context artifact (R6).
  *
- * Returns [delete-file, remove-block] when the managed AGENTS.md exists OR
- * the managed import block is present in CLAUDE.md. Returns [] when neither
- * artifact is installed (idempotent).
+ * AGENTS.md fate — decided against the manifest trace, never against mere
+ * disk presence (the M5 fix):
+ * - content === `agentsContent` (the applied block) →
+ *     - `previous` is a string → restore-file (pre-install content written back);
+ *     - `previous` is null     → delete-file (the file did not exist before install);
+ *     - `previous` undefined   → delete-file + "no restore baseline" warning
+ *       (legacy entry recorded before previous-content capture — safe degraded
+ *       mode: deletion happens on exact content match ONLY).
+ * - content diverged (user enriched the file) → warning-only leave-alone op:
+ *   the file is never deleted or overwritten; the engine drops the op before
+ *   applyRemove and PRESERVES the manifest entry when nothing else is removable.
+ *
+ * The CLAUDE.md import block is removed whenever present, in ALL cases above:
+ * a marker-fenced block is unambiguously managed (gate 2026-07-10: decoupled).
+ *
+ * Returns [] when neither artifact is installed (idempotent).
  *
  * Read-only: no filesystem writes.
  *
@@ -229,12 +270,16 @@ export async function planContext(
  * @param env            Injectable env for HOME resolution.
  * @param agentsContent  Canonical AGENTS.md content (used to detect installed state).
  * @param cwd            Working directory (only used when scope is 'project').
+ * @param previous       Restore baseline from AppliedContext.previous:
+ *                       string = pre-install content, null = file was absent,
+ *                       undefined = legacy entry without a baseline.
  */
 export async function planRemoveContext(
   scope: Scope,
   env: Env,
   agentsContent: string,
   cwd?: string,
+  previous?: string | null,
 ): Promise<RemovalOp[]> {
   const { agentsMd, claudeMd } = resolvePaths(scope, env, cwd);
   const target = importTarget(scope);
@@ -244,17 +289,43 @@ export async function planRemoveContext(
     readText(claudeMd),
   ]);
 
-  const agentsInstalled = currentAgents === agentsContent && agentsContent !== '';
   const blockInstalled = hasImportBlock(currentClaudeMd, target);
+  const agentsInstalled = currentAgents === agentsContent && agentsContent !== '';
+  const agentsDrifted = currentAgents !== '' && currentAgents !== agentsContent;
 
-  if (!agentsInstalled && !blockInstalled) {
-    return [];
+  const ops: RemovalOp[] = [];
+
+  if (agentsInstalled) {
+    if (previous === undefined) {
+      ops.push({
+        kind: 'delete-file',
+        path: agentsMd,
+        warnings: [
+          `No restore baseline recorded for ${agentsMd} (entry predates previous-content capture)`
+          + ' — deleting the managed file; the pre-install content cannot be restored.',
+        ],
+      });
+    } else if (previous === null) {
+      ops.push({ kind: 'delete-file', path: agentsMd });
+    } else {
+      ops.push({ kind: 'restore-file', path: agentsMd, content: previous });
+    }
+  } else if (agentsDrifted) {
+    ops.push({
+      kind: 'leave-alone',
+      target: agentsMd,
+      warnings: [
+        `AGENTS.md at ${agentsMd} diverged from the managed content — left in place`
+        + ' (remove never deletes user edits).',
+      ],
+    });
   }
 
-  return [
-    { kind: 'delete-file', path: agentsMd },
-    { kind: 'remove-block', path: claudeMd },
-  ];
+  if (blockInstalled) {
+    ops.push({ kind: 'remove-block', path: claudeMd });
+  }
+
+  return ops;
 }
 
 // ---------------------------------------------------------------------------
@@ -262,20 +333,42 @@ export async function planRemoveContext(
 // ---------------------------------------------------------------------------
 
 /**
- * Execute delete-file and remove-block operations produced by planRemoveContext.
+ * Execute delete-file, restore-file and remove-block operations produced by
+ * planRemoveContext.
  *
  * For each delete-file op: removes the file at op.path with force:true (tolerant to absence).
+ * For each restore-file op: writes op.content (the pre-install baseline) back to op.path (R6).
  * For each remove-block op: reads the Markdown file, calls removeImportBlock, writes back.
+ *
+ * Shared-file gate (R6): a delete/restore whose path is still referenced by
+ * the `files` of another manifest entry (e.g. the opencode context install of
+ * the same `<cwd>/AGENTS.md`) is SKIPPED — only the claude-specific CLAUDE.md
+ * block goes. Reuses the R4 manifestFiles channel: the engine hands the files
+ * of every entry REMAINING after this removal, and the gate lives at apply
+ * time, mirroring the store refcount (T7). remove-block is never gated —
+ * CLAUDE.md's marker-fenced block belongs to claude alone.
  *
  * Ops of any other kind are ignored (forward-compatibility).
  *
- * @param ops  Removal operations (delete-file and remove-block are processed).
- * @param env  Injectable env (kept for interface symmetry).
+ * @param ops            Removal operations (delete-file, restore-file, remove-block).
+ * @param env            Injectable env (kept for interface symmetry).
+ * @param manifestFiles  Files of the manifest entries remaining after this
+ *                       removal (R4/R6 channel) — opaque reference candidates.
  */
-export async function applyRemoveContext(ops: RemovalOp[], _env: Env): Promise<void> {
+export async function applyRemoveContext(
+  ops: RemovalOp[],
+  _env: Env,
+  manifestFiles?: string[],
+): Promise<void> {
+  const referenced = new Set((manifestFiles ?? []).map((p) => path.resolve(p)));
+
   for (const op of ops) {
     if (op.kind === 'delete-file') {
+      if (referenced.has(path.resolve(op.path))) continue;
       await rm(op.path, { force: true });
+    } else if (op.kind === 'restore-file') {
+      if (referenced.has(path.resolve(op.path))) continue;
+      await writeText(op.path, op.content);
     } else if (op.kind === 'remove-block') {
       const current = await readText(op.path);
       const updated = removeImportBlock(current);

@@ -26,12 +26,18 @@
  *   resolveOpencodeProjectTargets.
  */
 
-import { lstat } from 'node:fs/promises';
+import { lstat, stat } from 'node:fs/promises';
 import path from 'node:path';
 
 import type { AdapterEntry } from '@agent-rigger/core/adapter';
 import { assertSafeArtifactName } from '@agent-rigger/core/artifact-name';
-import { link, removeStoreIfUnreferenced, unlinkTarget } from '@agent-rigger/core/linker';
+import {
+  contentMatchesStore,
+  link,
+  removeStoreIfUnreferenced,
+  resolvesToStore,
+  unlinkTarget,
+} from '@agent-rigger/core/linker';
 import {
   resolveOpencodeProjectTargets,
   resolveOpencodeUserTargets,
@@ -47,6 +53,9 @@ import type {
   WriteOp,
   WriteOpLink,
 } from '@agent-rigger/core/types';
+
+import { isRemovableTarget, planRemoveGate } from '../shared/remove-gate';
+import { storeReferenceCandidates } from '../shared/store-refs';
 
 // ---------------------------------------------------------------------------
 // SkillScanBlockedError
@@ -120,62 +129,6 @@ function resolveTargetPath(name: string, scope: Scope, env: Env, cwd?: string): 
   return path.join(resolveOpencodeUserTargets(env).skillsDir, name);
 }
 
-/**
- * Enumerate every known install target path that may reference the shared
- * skill store for `name`: both assistants (claude, opencode) × both scopes
- * (user, project under `cwd`).
- *
- * Claude's paths mirror claude/skills.ts resolveTargetPath:
- * - user:    <home>/.claude/skills/<name>
- * - project: <cwd>/.claude/skills/<name>
- */
-function skillTargetCandidates(name: string, env: Env, cwd: string): string[] {
-  const claudeDir = path.dirname(resolveUserTargets(env).claudeSettings);
-  return [
-    path.join(claudeDir, 'skills', name),
-    path.join(cwd, '.claude', 'skills', name),
-    path.join(resolveOpencodeUserTargets(env).skillsDir, name),
-    path.join(resolveOpencodeProjectTargets(cwd).skillsDir, name),
-  ];
-}
-
-/**
- * Enumerate every known install target that may reference the shared *plugin*
- * store for `fileName`. Plugins are an opencode-only nature (no Claude
- * equivalent), so the candidates are the two opencode pluginDir paths — user and
- * project — mirroring plugins.ts's resolveTargetDir. `fileName` carries the
- * module extension (e.g. `enforce-tests.ts`), matching the on-disk symlink
- * basename verbatim.
- */
-function pluginTargetCandidates(fileName: string, env: Env, cwd: string): string[] {
-  return [
-    path.join(resolveOpencodeUserTargets(env).pluginDir, fileName),
-    path.join(resolveOpencodeProjectTargets(cwd).pluginDir, fileName),
-  ];
-}
-
-/**
- * Enumerate ALL install targets that may keep `store` alive, spanning both
- * store families (skills and plugins). `applyRemoveSkill` is the shared unlink
- * handler for both natures (ADR-0020 §3 — one store, N symlinks), so the store
- * being removed can be either a skill store (`.../agent-rigger/skills/<name>`)
- * or a plugin store (`.../agent-rigger/plugins/<name>.<ext>`).
- *
- * Both families' candidates are enumerated unconditionally rather than branching
- * on the store's location: candidates that do not exist are skipped by
- * removeStoreIfUnreferenced (lstat → null), and a candidate that DOES exist only
- * counts as a reference when its symlink resolves to *this* store, so the extra
- * cross-family paths can never produce a false positive. This keeps the handler
- * nature-agnostic without coupling it to the exact store directory names.
- */
-function storeReferenceCandidates(store: string, env: Env, cwd: string): string[] {
-  const fileName = path.basename(store);
-  return [
-    ...skillTargetCandidates(fileName, env, cwd),
-    ...pluginTargetCandidates(fileName, env, cwd),
-  ];
-}
-
 // ---------------------------------------------------------------------------
 // auditSkill
 // ---------------------------------------------------------------------------
@@ -183,9 +136,17 @@ function storeReferenceCandidates(store: string, env: Env, cwd: string): string[
 /**
  * Audit the current state of a skill artifact on disk.
  *
- * Returns:
- * - 'present' if the target path exists (symlink or directory).
- * - 'missing' if the target path does not exist.
+ * Returns (same contract as the claude handler):
+ * - 'present' if the target is a symlink resolving to the rigger store, or a
+ *   plain directory byte-identical to it (linkOrCopy copy fallback).
+ * - 'drift' if the target exists but is NOT rigger's install shape (real
+ *   directory with foreign content, symlink pointing outside the store) — R3:
+ *   the removal gate refuses such a target, so the audit must keep the
+ *   divergence visible (`check` exits 3).
+ * - 'missing' if the target path does not exist, or is a DANGLING symlink
+ *   (store deleted) — R4: same truthful-audit contract as the claude handler;
+ *   a dead link must be reported broken (check exit 3) and repairable (the
+ *   next install re-plans the link op, link() heals store and symlink).
  *
  * Read-only: no filesystem writes.
  */
@@ -197,13 +158,45 @@ export async function auditSkill(
 ): Promise<NatureReport> {
   const name = skillName(entry);
   const targetPath = resolveTargetPath(name, scope, env, cwd);
+  const storePath = resolveStorePath(name, env);
 
-  const exists = await lstat(targetPath).then(() => true).catch(() => false);
+  const targetStat = await lstat(targetPath).catch(() => null);
+  if (targetStat === null) {
+    return { id: entry.id, nature: 'skill', state: 'missing' };
+  }
 
+  if (targetStat.isSymbolicLink()) {
+    // stat() follows the link: null → the link value resolves to nothing.
+    const resolved = await stat(targetPath).catch(() => null);
+    if (resolved === null) {
+      return {
+        id: entry.id,
+        nature: 'skill',
+        state: 'missing',
+        detail: `dangling symlink: ${targetPath}`,
+      };
+    }
+    if (await resolvesToStore(targetPath, storePath)) {
+      return { id: entry.id, nature: 'skill', state: 'present' };
+    }
+    return {
+      id: entry.id,
+      nature: 'skill',
+      state: 'drift',
+      detail: `${targetPath} is a symlink resolving outside the rigger store — not managed`,
+    };
+  }
+
+  // Plain directory/file: a byte-identical copy of the store is a legitimate
+  // copy-fallback install; anything else is user content rigger must not claim.
+  if (await contentMatchesStore(targetPath, storePath)) {
+    return { id: entry.id, nature: 'skill', state: 'present' };
+  }
   return {
     id: entry.id,
     nature: 'skill',
-    state: exists ? 'present' : 'missing',
+    state: 'drift',
+    detail: `${targetPath} diverges from the rigger store (not a rigger symlink) — not managed`,
   };
 }
 
@@ -233,7 +226,10 @@ export async function planSkill(
   cwd?: string,
 ): Promise<WriteOp[]> {
   const report = await auditSkill(entry, scope, env, cwd);
-  if (report.state === 'present') {
+  // 'present' → nothing to do; 'drift' → the target carries content rigger
+  // does not manage — install must NOT clobber it (link() would rm -rf the
+  // target). Only 'missing' (absent or dangling symlink) plans the link op.
+  if (report.state !== 'missing') {
     return [];
   }
 
@@ -254,7 +250,15 @@ export async function planSkill(
  * Compute the removal operations needed to uninstall a skill.
  *
  * Returns [] when the skill target does not exist (not installed).
- * Returns [{ kind: 'unlink', target, store }] when the skill is present.
+ * Returns [{ kind: 'unlink', target, store }] ONLY when the target is a
+ * symlink resolving to the rigger store — including a DANGLING one (the audit
+ * reports a dead link as `missing`, R4, but remove must still clean it up:
+ * resolvesToStore compares paths without requiring the store to exist) — or a
+ * byte-identical copy of the store (linkOrCopy copy fallback). Any other
+ * present target (hand-made directory, foreign symlink) yields a warning-only
+ * leave-alone op and nothing is deleted — same R3 gate as the claude handler
+ * (shared/remove-gate.ts): an unmanaged target replacing the install symlink
+ * is user content, never rm -rf'd.
  *
  * Read-only: no filesystem writes.
  *
@@ -269,16 +273,11 @@ export async function planRemoveSkill(
   env: Env,
   cwd?: string,
 ): Promise<RemovalOp[]> {
-  const report = await auditSkill(entry, scope, env, cwd);
-  if (report.state !== 'present') {
-    return [];
-  }
-
   const name = skillName(entry);
   const store = resolveStorePath(name, env);
   const target = resolveTargetPath(name, scope, env, cwd);
 
-  return [{ kind: 'unlink', target, store }];
+  return planRemoveGate(entry.id, target, store);
 }
 
 // ---------------------------------------------------------------------------
@@ -291,12 +290,16 @@ export async function planRemoveSkill(
  * For each unlink op (ADR-0020 §3 — one store, N symlinks):
  * 1. Always remove the requested target (symlink/file/directory).
  * 2. Remove the store ONLY when no other known install target still references
- *    it. Reference counting uses filesystem truth (offline): storeReferenceCandidates
- *    enumerates the skill target paths of BOTH assistants (claude, opencode) AND
- *    the opencode plugin target paths, across BOTH scopes (user, project under
- *    `cwd`); each is lstat'd/readlink'd, and any symlink resolving to the store
- *    keeps it alive. Copy-fallback installs (plain directories, no symlink) are
- *    not counted as references.
+ *    it. Reference counting uses filesystem truth (offline): the shared
+ *    storeReferenceCandidates helper (shared/store-refs.ts, common with the
+ *    claude adapter — R4 de-duplication) enumerates the claude skill/agent and
+ *    opencode skill/plugin target paths across BOTH scopes (user, project
+ *    under `cwd`), PLUS the `manifestFiles` handed down by the engine (targets
+ *    of the manifest entries remaining after this removal — a project install
+ *    from another cwd is only discoverable there). Each candidate is
+ *    lstat'd/readlink'd, and any symlink resolving to the store keeps it
+ *    alive. Copy-fallback installs (plain directories, no symlink) are not
+ *    counted as references.
  *
  * Plugin unlink ops also flow through this function (shared 'unlink' op kind,
  * see adapter.ts). Their store lives under ~/.config/agent-rigger/plugins/ and
@@ -307,22 +310,38 @@ export async function planRemoveSkill(
  * Both removals are tolerant to absence (rm force).
  * Ops of any other kind are ignored (forward-compatibility).
  *
- * @param ops  Removal operations (only 'unlink' kind are processed).
- * @param env  Injectable env for HOME resolution (candidate enumeration).
- * @param cwd  Working directory for project-scope candidates. Defaults to
- *             process.cwd(), matching the adapter's project-scope convention.
+ * @param ops            Removal operations (only 'unlink' kind are processed).
+ * @param env            Injectable env for HOME resolution (candidate enumeration).
+ * @param cwd            Working directory for project-scope candidates. Defaults to
+ *                       process.cwd(), matching the adapter's project-scope convention.
+ * @param manifestFiles  Extra reference candidates from the manifest (R4),
+ *                       passed through Adapter.applyRemove by the engine.
  */
 export async function applyRemoveSkill(
   ops: RemovalOp[],
   env: Env,
   cwd?: string,
+  manifestFiles: string[] = [],
 ): Promise<void> {
   for (const op of ops) {
     if (op.kind !== 'unlink') {
       continue;
     }
+    // R3 TOCTOU re-check: the plan gate's verdict must still hold NOW. A
+    // target swapped for unmanaged content since plan time is left in place
+    // (skip the whole op — the store stays too, exactly like a plan-time
+    // leave-alone). An ABSENT target passes: nothing to destroy, and rollback
+    // compensations / dangling cleanups still need the store removal below.
+    if (!(await isRemovableTarget(op.target, op.store))) {
+      continue;
+    }
     await unlinkTarget(op.target);
-    const candidates = storeReferenceCandidates(op.store, env, cwd ?? process.cwd());
+    const candidates = storeReferenceCandidates(
+      op.store,
+      env,
+      cwd ?? process.cwd(),
+      manifestFiles,
+    );
     await removeStoreIfUnreferenced(op.store, candidates);
   }
 }

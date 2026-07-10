@@ -418,6 +418,45 @@ describe('planRemoveGuardrail', () => {
 
     expect(ops).toHaveLength(0);
   });
+
+  it('R1: a single drifted leaf does not block the removal of the intact ones', async () => {
+    const targets = resolveOpencodeUserTargets(env);
+    // Recorded fragment: bash rm-rf deny + read deny. On disk the user flipped
+    // `read` to "allow" — the remaining leaves must still be removable.
+    await writeJson(targets.opencodeJson, {
+      permission: { bash: { 'rm -rf *': 'deny', 'ls *': 'allow' }, read: 'allow' },
+    });
+
+    const ops = await planRemoveGuardrail('user', env, REF_PERMISSION);
+
+    // The destructive op carries the FULL recorded fragment (removePermission
+    // is exact-per-leaf: the drifted `read` leaf is left intact on apply)…
+    expect(ops.filter((op) => op.kind === 'remove-permission')).toEqual([
+      { kind: 'remove-permission', path: targets.opencodeJson, permission: REF_PERMISSION },
+    ]);
+    // …and the drifted leaf is named in a warning, never silently skipped.
+    const warnings = ops.flatMap((op) =>
+      'warnings' in op && Array.isArray(op.warnings) ? op.warnings : []
+    );
+    expect(warnings.join('\n')).toContain('"read"');
+    expect(warnings.join('\n')).toContain('was not removed');
+  });
+
+  it('R1: every leaf drifted → warning-only plan (no destructive op, entry preserved by the engine)', async () => {
+    const targets = resolveOpencodeUserTargets(env);
+    await writeJson(targets.opencodeJson, {
+      permission: { bash: { 'rm -rf *': 'ask', 'ls *': 'deny' }, read: 'allow' },
+    });
+
+    const ops = await planRemoveGuardrail('user', env, REF_PERMISSION);
+
+    expect(ops.filter((op) => op.kind === 'remove-permission')).toHaveLength(0);
+    const leaveAlone = ops.find((op) => op.kind === 'leave-alone') as
+      | { kind: 'leave-alone'; warnings: string[] }
+      | undefined;
+    expect(leaveAlone).toBeDefined();
+    expect(leaveAlone!.warnings.length).toBeGreaterThanOrEqual(3);
+  });
 });
 
 // ---------------------------------------------------------------------------

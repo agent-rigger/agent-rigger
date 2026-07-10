@@ -447,11 +447,77 @@ export async function planGuardrail(
 // ---------------------------------------------------------------------------
 
 /**
+ * Classify the leaves of the recorded `fragment` against the on-disk `current`
+ * permission object (R1 fusion — the recorded payload is CUMULATIVE across
+ * re-installs, so a single hand-edited leaf must never block the whole
+ * removal):
+ * - `removable`: leaves present on disk with the EXACT recorded state —
+ *   removePermission will strip them;
+ * - `drifted`: leaves the disk still claims but with a DIFFERENT value or
+ *   shape (user modification) — removePermission leaves them intact, so the
+ *   plan surfaces a warning naming each one instead of failing silently;
+ * - leaves entirely absent from disk are neither (already gone, idempotent).
+ */
+function classifyRemovalLeaves(
+  fragment: OpencodePermission,
+  current: OpencodePermission,
+): { removable: number; drifted: string[] } {
+  let removable = 0;
+  const drifted: string[] = [];
+  for (const [tool, wanted] of Object.entries(fragment)) {
+    const existing = current[tool];
+    if (typeof wanted === 'string') {
+      if (existing === wanted) {
+        removable += 1;
+      } else if (existing !== undefined) {
+        drifted.push(
+          `"${tool}" (recorded "${wanted}", found ${renderPermissionValue(existing)})`,
+        );
+      }
+      continue;
+    }
+    for (const [pattern, state] of Object.entries(wanted)) {
+      if (existing === undefined) {
+        continue; // whole tool key gone — nothing left to remove or warn about
+      }
+      if (typeof existing === 'string') {
+        drifted.push(
+          `"${tool}" > "${pattern}" (recorded "${state}", found ${
+            renderPermissionValue(existing)
+          })`,
+        );
+        continue;
+      }
+      const found = existing[pattern];
+      if (found === state) {
+        removable += 1;
+      } else if (found !== undefined) {
+        drifted.push(`"${tool}" > "${pattern}" (recorded "${state}", found "${found}")`);
+      }
+    }
+  }
+  return { removable, drifted };
+}
+
+/**
  * Compute the removal operations needed to uninstall the guardrail.
  *
- * Returns [{ kind: 'remove-permission', path, permission }] when every leaf of
- * `permission` is currently present (idempotent inverse of a full install).
- * Returns [] when the fragment is empty or not (fully) installed.
+ * The recorded fragment (entry.applied) cumulates across re-installs (R1), so
+ * removal is decided LEAF BY LEAF — never all-or-nothing. A single leaf the
+ * user hand-edited must not turn remove into a silent no-op that leaves every
+ * other rigger-managed leaf (including privilege-widening `allow` carve-outs)
+ * orphaned in opencode.json forever:
+ * - at least one leaf still matches exactly → one remove-permission op with
+ *   the FULL recorded fragment (removePermission is exact-per-leaf and
+ *   idempotent: matching leaves are stripped, drifted/absent leaves are left
+ *   intact);
+ * - leaves present with a DIFFERENT value (user drift) additionally yield a
+ *   warning-only leave-alone op naming each one — same plan-warning channel as
+ *   the R3 gate, so nothing is ever silently left behind;
+ * - no leaf matches and none drifted (fragment empty or fully absent) → []
+ *   (idempotent no-op);
+ * - no leaf matches but some drifted → leave-alone only: the engine treats the
+ *   plan as empty, preserves the manifest entry, and the warnings surface.
  *
  * Read-only: no filesystem writes.
  *
@@ -475,11 +541,25 @@ export async function planRemoveGuardrail(
   const settings = await readOpencodeJson(opencodeJsonPath);
   const current = extractPermission(settings);
 
-  if (!hasPermission(current, permission)) {
-    return [];
-  }
+  const { removable, drifted } = classifyRemovalLeaves(permission, current);
 
-  return [{ kind: 'remove-permission', path: opencodeJsonPath, permission }];
+  const ops: RemovalOp[] = [];
+  if (removable > 0) {
+    ops.push({ kind: 'remove-permission', path: opencodeJsonPath, permission });
+  }
+  if (drifted.length > 0) {
+    ops.push({
+      kind: 'leave-alone',
+      target: opencodeJsonPath,
+      warnings: drifted.map(
+        (leaf) =>
+          `Permission ${leaf} was not removed: the current value in opencode.json differs `
+          + `from what rigger recorded at install time (user modification preserved) — `
+          + `remove it manually if desired.`,
+      ),
+    });
+  }
+  return ops;
 }
 
 // ---------------------------------------------------------------------------

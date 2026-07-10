@@ -2,7 +2,8 @@
  * cmd-remove — implementation of the `remove` command.
  *
  * Responsibilities:
- * - Validate requested ids against the catalog.
+ * - Validate requested ids against the manifest (R5: manifest-first, offline —
+ *   the catalog plays no role on the remove path).
  * - Build the removal plan (RemovalOp[]) via adapter.planRemove() for each entry.
  * - Render the plan and confirm with the user (injectable for tests).
  * - If confirmed and plan is non-empty: apply (backup → remove → manifest).
@@ -13,17 +14,21 @@
  * - No while loops — for...of / map / Promise.all only.
  * - No import of process directly — all paths are injectable.
  * - Human-in-the-loop: nothing is removed without confirmation.
+ * - Zero network: validation, planning and execution read the manifest and the
+ *   disk only (ADR-0016, realized by lot2-remove-reversible R5).
  */
 
+import path from 'node:path';
+
+import { isStoreReferenced, storeReferenceCandidates } from '@agent-rigger/adapters';
 import type { Adapter, AdapterEntry } from '@agent-rigger/core/adapter';
 import { enrichWithApplied, remove } from '@agent-rigger/core/engine';
-import { readManifest } from '@agent-rigger/core/manifest';
+import { findEntry, readManifest } from '@agent-rigger/core/manifest';
 import type { Env } from '@agent-rigger/core/paths';
 import { resolveHome } from '@agent-rigger/core/paths';
-import type { Scope } from '@agent-rigger/core/types';
+import type { RemovalOpUnlink, Scope } from '@agent-rigger/core/types';
 
-import type { CatalogEntry } from '@agent-rigger/catalog';
-
+import { hookScriptStorePath } from './adapter-builder';
 import { renderRemovalPlan } from './ui';
 import type { PlanRemovalGroup } from './ui';
 
@@ -54,8 +59,6 @@ export interface RemoveCommandResult {
  * Options for runRemove — all injectable for test isolation.
  */
 export interface RunRemoveOptions {
-  /** Catalog to look up ids from. */
-  catalog: CatalogEntry[];
   /** Adapter used for planRemove() and applyRemove(). */
   adapter: Adapter;
   /** Removal scope. */
@@ -78,16 +81,41 @@ export interface RunRemoveOptions {
 }
 
 // ---------------------------------------------------------------------------
-// UnknownRemoveIdError
+// NotInstalledError
 // ---------------------------------------------------------------------------
 
+/** True when the id's local part (after the catalog qualifier) is a pack id. */
+function isPackId(id: string): boolean {
+  const slashIdx = id.indexOf('/');
+  const localPart = slashIdx === -1 ? id : id.slice(slashIdx + 1);
+  return localPart.startsWith('pack:');
+}
+
+function buildNotInstalledMessage(id: string, installedIds: string[]): string {
+  const installed = installedIds.length > 0
+    ? `Installed entries: ${installedIds.join(', ')}.`
+    : 'Nothing is installed.';
+
+  if (isPackId(id)) {
+    return (
+      `Pack "${id}" is not installed — packs are expanded at install time; `
+      + `remove their member artifacts instead. ${installed}`
+    );
+  }
+
+  return `Artifact "${id}" is not installed. ${installed}`;
+}
+
 /**
- * Thrown when a requested id is not found in the catalog.
+ * Thrown when a requested id has no manifest entry for the target
+ * (id, scope, assistant) identity — R5: the manifest is the sole source of
+ * truth for remove; the message lists what IS installed so the user can pick
+ * the right id without any catalog fetch.
  */
-export class UnknownRemoveIdError extends Error {
-  constructor(public readonly id: string) {
-    super(`Unknown artifact id "${id}". Run "agent-rigger ls" to see available entries.`);
-    this.name = 'UnknownRemoveIdError';
+export class NotInstalledError extends Error {
+  constructor(public readonly id: string, installedIds: string[]) {
+    super(buildNotInstalledMessage(id, installedIds));
+    this.name = 'NotInstalledError';
   }
 }
 
@@ -98,10 +126,12 @@ export class UnknownRemoveIdError extends Error {
 /**
  * Execute the remove command end-to-end and return a typed RemoveCommandResult.
  *
- * Step 1 — Validation: each id must exist in the catalog.
- *   Unknown ids throw UnknownRemoveIdError immediately.
+ * Step 1 — Validation (R5, manifest-first): each id must have a manifest entry
+ *   for the (id, scope, assistant) identity triple. Ids the manifest does not
+ *   know throw NotInstalledError immediately — no catalog, no network.
  *
- * Step 2 — Build AdapterEntries: { id, nature, scope } for each id.
+ * Step 2 — Build AdapterEntries: { id, nature, scope } from the manifest entry
+ *   (ManifestEntry.nature is required — the catalog is not needed for nature).
  *   Tool-nature entries have no adapter planRemove — they are skipped.
  *
  * Step 3 — Plan: adapter.planRemove(entry, scope, env) for each entry.
@@ -118,30 +148,25 @@ export class UnknownRemoveIdError extends Error {
  * Step 7 — Compose output with recap.
  */
 export async function runRemove(opts: RunRemoveOptions): Promise<RemoveCommandResult> {
-  const { catalog, adapter, scope, env, manifestPath, selectedIds, confirm } = opts;
+  const { adapter, scope, env, manifestPath, selectedIds, confirm } = opts;
 
   // -------------------------------------------------------------------------
-  // Step 1: Validate ids against catalog
+  // Step 1 + 2: Validate ids against the manifest (identity triple) and build
+  // adapter entries from the manifest's own nature (skip tool-nature).
   // -------------------------------------------------------------------------
 
-  const catalogEntries: CatalogEntry[] = [];
+  const manifest = await readManifest(manifestPath);
+
+  const adapterEntries: AdapterEntry[] = [];
   for (const id of selectedIds) {
-    const entry = catalog.find((e) => e.id === id);
+    const entry = findEntry(manifest, id, scope, adapter.id);
     if (entry === undefined) {
-      throw new UnknownRemoveIdError(id);
+      const installedIds = [...new Set(manifest.artifacts.map((e) => e.id))];
+      throw new NotInstalledError(id, installedIds);
     }
-    catalogEntries.push(entry);
+    if (entry.nature === 'tool') continue;
+    adapterEntries.push({ id: entry.id, nature: entry.nature, scope });
   }
-
-  // -------------------------------------------------------------------------
-  // Step 2: Build adapter entries (skip tool-nature)
-  // -------------------------------------------------------------------------
-
-  const adapterEntries: AdapterEntry[] = catalogEntries.flatMap((entry) => {
-    if (entry.kind === 'pack') return [];
-    if (entry.nature === 'tool') return [];
-    return [{ id: entry.id, nature: entry.nature, scope }];
-  });
 
   // -------------------------------------------------------------------------
   // Step 3: Plan — build per-entry removal groups.
@@ -149,29 +174,65 @@ export async function runRemove(opts: RunRemoveOptions): Promise<RemoveCommandRe
   // matches what remove() will actually do.
   // -------------------------------------------------------------------------
 
-  const manifest = await readManifest(manifestPath);
   const groups: PlanRemovalGroup[] = [];
+  const planWarnings: string[] = [];
   for (const entry of adapterEntries) {
     // Keyed by adapter.id (E6): the preview must enrich from the SAME manifest
     // identity (id, scope, assistant) that the real remove() call below will
     // read — otherwise a two-assistant manifest would preview one assistant's
     // `applied` payload while removing the other's.
     const enriched = enrichWithApplied(entry, manifest, adapter.id);
-    const ops = await adapter.planRemove(enriched, scope, env);
+    const plannedOps = await adapter.planRemove(enriched, scope, env);
+
+    // Collect plan warnings — same channel as install plans (cmd-install):
+    // any op carrying a `warnings` array surfaces it to the user before
+    // confirm. The R3 leave-alone ops (unmanaged target left in place) carry
+    // ONLY warnings: they are excluded from the rendered groups since nothing
+    // will be removed for them (the engine drops them the same way).
+    planWarnings.push(
+      ...plannedOps.flatMap((op) =>
+        'warnings' in op && Array.isArray(op.warnings) ? op.warnings : []
+      ),
+    );
+    const ops = plannedOps.filter((op) => op.kind !== 'leave-alone');
     if (ops.length > 0) {
       groups.push({ id: entry.id, nature: entry.nature, ops });
     }
   }
 
   // -------------------------------------------------------------------------
-  // Step 4: Render plan
+  // Step 4: Render plan (+ warnings block, visible before confirm)
   // -------------------------------------------------------------------------
+
+  const warningsBlock = planWarnings.length > 0
+    ? '\n\n--- Warnings ---\n' + planWarnings.map((w) => `  [warning] ${w}`).join('\n')
+    : '';
+
+  const cwd = opts.cwd ?? process.cwd();
+
+  // R4: preview the fate of each unlink op's store — deleted with the last
+  // reference, or kept because still referenced. The candidates are the same
+  // the adapter will use at apply time (shared helper + ALL manifest files),
+  // minus the targets being unlinked in THIS run: they still resolve at plan
+  // time but will be gone before the store decision is made.
+  const unlinkOps = groups
+    .flatMap((g) => g.ops)
+    .filter((op): op is RemovalOpUnlink => op.kind === 'unlink');
+  const plannedTargets = new Set(unlinkOps.map((op) => path.resolve(op.target)));
+  const manifestFiles = manifest.artifacts.flatMap((e) => e.files);
+  const storeFates: Record<string, 'delete' | 'keep'> = {};
+  for (const op of unlinkOps) {
+    const candidates = storeReferenceCandidates(op.store, env, cwd, manifestFiles)
+      .filter((candidate) => !plannedTargets.has(path.resolve(candidate)));
+    storeFates[op.store] = (await isStoreReferenced(op.store, candidates)) ? 'keep' : 'delete';
+  }
 
   const planText = renderRemovalPlan(groups, {
     home: resolveHome(env),
-    cwd: opts.cwd ?? process.cwd(),
+    cwd,
     scope,
-  });
+    storeFates,
+  }) + warningsBlock;
 
   // -------------------------------------------------------------------------
   // Empty plan → nothing to remove, skip confirm + apply
@@ -197,7 +258,14 @@ export async function runRemove(opts: RunRemoveOptions): Promise<RemoveCommandRe
   // Step 6: Apply (backup → remove → manifest)
   // -------------------------------------------------------------------------
 
-  const removeResult = await remove(adapter, adapterEntries, scope, env, manifestPath);
+  // R7: hook guard scripts are copies shared through one user-level directory
+  // (path derivable from the env — design D6, same seam as adapter-builder).
+  // The engine deletes it, backed up as a whole, when the run removes the
+  // last hook-nature manifest entry (all scopes — hooks are claude-only, so
+  // passing the descriptor to any adapter is inert for the others).
+  const removeResult = await remove(adapter, adapterEntries, scope, env, manifestPath, [
+    { nature: 'hook', dir: hookScriptStorePath(env) },
+  ]);
 
   // -------------------------------------------------------------------------
   // Step 7: Compose output

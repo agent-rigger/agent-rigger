@@ -16,7 +16,16 @@
  * - Bun-native where natural; node:fs/promises for symlink/lstat/readlink.
  */
 
-import { cp, lstat, mkdir, readdir, readlink, rm, symlink as fsSymlink } from 'node:fs/promises';
+import {
+  cp,
+  lstat,
+  mkdir,
+  readdir,
+  readFile,
+  readlink,
+  rm,
+  symlink as fsSymlink,
+} from 'node:fs/promises';
 import path from 'node:path';
 
 // ---------------------------------------------------------------------------
@@ -96,18 +105,114 @@ export async function unlinkTarget(target: string): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
+// resolvesToStore
+// ---------------------------------------------------------------------------
+
+/**
+ * True when `candidate` is a symlink whose value resolves to `store`.
+ *
+ * Detection uses filesystem truth, fully offline:
+ * - the candidate is lstat'd; absent or non-symlink entries are false
+ *   (copy-fallback installs are NOT recognized as rigger-managed links);
+ * - the symlink value is resolved relative to the symlink's own directory, so
+ *   both absolute and relative link values are compared against the store.
+ *
+ * Shared predicate of the "one store, N symlinks" contract (ADR-0020 §3):
+ * removeStoreIfUnreferenced uses it to count live references, and the R3
+ * removal gate (claude skills/agents) uses it to refuse deleting a target
+ * that rigger does not manage.
+ *
+ * @param candidate  Install target path to test.
+ * @param store      Path to the managed store entry.
+ */
+export async function resolvesToStore(candidate: string, store: string): Promise<boolean> {
+  const stat = await lstat(candidate).catch(() => null);
+  if (stat === null || !stat.isSymbolicLink()) {
+    return false;
+  }
+  const linkValue = await readlink(candidate).catch(() => null);
+  if (linkValue === null) {
+    return false;
+  }
+  const resolved = path.resolve(path.dirname(candidate), linkValue);
+  return resolved === path.resolve(store);
+}
+
+// ---------------------------------------------------------------------------
+// contentMatchesStore
+// ---------------------------------------------------------------------------
+
+/**
+ * True when `candidate` is a plain file/directory whose content is
+ * byte-identical to `store` (same tree shape, same file bytes).
+ *
+ * Companion of resolvesToStore for COPY-FALLBACK installs (linkOrCopy falls
+ * back to a plain copy when symlink() fails, e.g. on a filesystem without
+ * symlink support). Such a target carries no link value to compare, but a
+ * byte-identical copy of the managed store contains nothing user-authored:
+ * removing it destroys no user work (the store backup keeps the bytes). The R3
+ * removal gate accepts it as rigger-managed instead of leaving it orphaned
+ * forever — the alternative would make remove permanently impossible on a FS
+ * where install worked.
+ *
+ * Fail-safe: any doubt returns false — absent paths, a symlink on either side
+ * (a store never contains symlinks; a copy of it cannot either), a file/dir
+ * type mismatch, differing entry lists, or differing bytes.
+ *
+ * @param candidate  Install target path to test (plain copy suspected).
+ * @param store      Path to the managed store entry.
+ */
+export async function contentMatchesStore(candidate: string, store: string): Promise<boolean> {
+  const [candStat, storeStat] = await Promise.all([
+    lstat(candidate).catch(() => null),
+    lstat(store).catch(() => null),
+  ]);
+  if (candStat === null || storeStat === null) {
+    return false;
+  }
+  if (candStat.isSymbolicLink() || storeStat.isSymbolicLink()) {
+    return false;
+  }
+  if (candStat.isDirectory() !== storeStat.isDirectory()) {
+    return false;
+  }
+
+  if (!candStat.isDirectory()) {
+    const [candBytes, storeBytes] = await Promise.all([
+      readFile(candidate),
+      readFile(store),
+    ]);
+    return candBytes.equals(storeBytes);
+  }
+
+  const [candEntries, storeEntries] = await Promise.all([
+    readdir(candidate),
+    readdir(store),
+  ]);
+  const candSorted = [...candEntries].sort();
+  const storeSorted = [...storeEntries].sort();
+  if (
+    candSorted.length !== storeSorted.length
+    || candSorted.some((name, i) => name !== storeSorted[i])
+  ) {
+    return false;
+  }
+  for (const name of candSorted) {
+    if (!(await contentMatchesStore(path.join(candidate, name), path.join(store, name)))) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// ---------------------------------------------------------------------------
 // removeStoreIfUnreferenced
 // ---------------------------------------------------------------------------
 
 /**
  * Delete `store` unless at least one of `candidateTargets` is a symlink that
- * resolves to it (ADR-0020 §3 — one store, N symlinks).
- *
- * Reference detection uses filesystem truth, fully offline:
- * - each candidate is lstat'd; absent or non-symlink entries are skipped
- *   (copy-fallback installs are NOT counted as references);
- * - symlink values are resolved relative to the symlink's own directory, so
- *   both absolute and relative link values are compared against the store.
+ * resolves to it (ADR-0020 §3 — one store, N symlinks). Reference detection
+ * delegates to resolvesToStore (see its contract for the offline semantics).
  *
  * Store removal is tolerant to absence (rm force).
  *
@@ -119,19 +224,8 @@ export async function removeStoreIfUnreferenced(
   store: string,
   candidateTargets: string[],
 ): Promise<boolean> {
-  const storeResolved = path.resolve(store);
-
   for (const candidate of candidateTargets) {
-    const stat = await lstat(candidate).catch(() => null);
-    if (stat === null || !stat.isSymbolicLink()) {
-      continue;
-    }
-    const linkValue = await readlink(candidate).catch(() => null);
-    if (linkValue === null) {
-      continue;
-    }
-    const resolved = path.resolve(path.dirname(candidate), linkValue);
-    if (resolved === storeResolved) {
+    if (await resolvesToStore(candidate, store)) {
       return false;
     }
   }

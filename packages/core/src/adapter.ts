@@ -66,7 +66,7 @@ export interface AdapterEntry {
  * before the user confirms removal.
  * MUST NOT write to the filesystem.
  *
- * ### applyRemove(ops, env): Promise<void>
+ * ### applyRemove(ops, env, manifestFiles?): Promise<void>
  * Execute the removal operations produced by planRemove(). The engine handles
  * backup before calling applyRemove; this method only performs the actual removals.
  * This is the inverse of apply().
@@ -128,6 +128,13 @@ export interface Adapter {
    *
    * @param ops  Removal operations produced by planRemove().
    * @param env  Injectable env for HOME resolution.
+   * @param manifestFiles  Optional (R4): target paths (`ManifestEntry.files`)
+   *                       of the entries REMAINING in the manifest after the
+   *                       current removal. Opaque to core — the engine only
+   *                       transports them; adapters use them as extra store
+   *                       reference candidates (a project-scope symlink
+   *                       installed from another cwd is only discoverable
+   *                       through the manifest, ADR-0020 §3).
    */
-  applyRemove(ops: RemovalOp[], env: Env): Promise<void>;
+  applyRemove(ops: RemovalOp[], env: Env, manifestFiles?: string[]): Promise<void>;
 }

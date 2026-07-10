@@ -88,7 +88,11 @@ interface NatureHandler {
 }
 
 type OpKindApply = (ops: WriteOp[], env: Env) => Promise<void>;
-type RemovalOpKindApply = (ops: RemovalOp[], env: Env) => Promise<void>;
+type RemovalOpKindApply = (
+  ops: RemovalOp[],
+  env: Env,
+  manifestFiles?: string[],
+) => Promise<void>;
 
 // ---------------------------------------------------------------------------
 // Config
@@ -367,7 +371,10 @@ export function createOpencodeAdapter(config: OpencodeAdapterConfig): Adapter {
   // 'unlink' is shared by skill AND plugin (applyRemoveSkill is nature-agnostic).
   const removalOpKindHandlers = new Map<RemovalOp['kind'], RemovalOpKindApply>([
     ['delete-file', (ops, env) => applyRemoveContext(ops, env)],
-    ['unlink', (ops, env) => applyRemoveSkill(ops, env)],
+    // R4: manifestFiles (targets of the entries remaining after the removal)
+    // feed the store refcount — cwd stays the adapter's project convention
+    // (process.cwd(), resolved inside applyRemoveSkill).
+    ['unlink', (ops, env, manifestFiles) => applyRemoveSkill(ops, env, undefined, manifestFiles)],
     ['remove-permission', (ops, env) => applyRemoveGuardrail(ops, env)],
     ['remove-mcp', (ops, env) => applyRemoveMcp(ops, env)],
   ]);
@@ -421,7 +428,7 @@ export function createOpencodeAdapter(config: OpencodeAdapterConfig): Adapter {
       return handler.planRemove(entry, scope, env);
     },
 
-    async applyRemove(ops: RemovalOp[], env: Env): Promise<void> {
+    async applyRemove(ops: RemovalOp[], env: Env, manifestFiles?: string[]): Promise<void> {
       // Group ops by kind to delegate each group to the right handler.
       // Maintain the original ordering within each kind group.
       const grouped = new Map<RemovalOp['kind'], RemovalOp[]>();
@@ -439,7 +446,7 @@ export function createOpencodeAdapter(config: OpencodeAdapterConfig): Adapter {
         if (applyFn === undefined) {
           throw new Error(`OpencodeAdapter: unsupported removal op kind "${kind}"`);
         }
-        await applyFn(kindOps, env);
+        await applyFn(kindOps, env, manifestFiles);
       }
     },
   };

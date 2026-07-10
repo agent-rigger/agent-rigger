@@ -10,8 +10,8 @@
  * 1. remove after install (confirm:true)  → deny rules removed, manifest entry deleted,
  *    applied:true, removed non-empty.
  * 2. confirm:false                        → applied:false, nothing removed, manifest intact.
- * 3. id not installed (plan empty)        → applied:false, "nothing to remove" output.
- * 4. id unknown (not in catalog)          → throws error (actionable message).
+ * 3. id absent from manifest              → throws NotInstalledError (R5: manifest-first).
+ * 4. pack id                              → NotInstalledError explaining pack expansion (R5).
  * 5. remove context-claude               → AGENTS.md deleted, manifest entry deleted.
  * 6. check after remove                  → missing state.
  */
@@ -30,7 +30,7 @@ import { createClaudeAdapter } from '@agent-rigger/adapters';
 import type { CatalogEntry } from '@agent-rigger/catalog';
 
 import { runInstall } from '../src/cmd-install';
-import { runRemove } from '../src/cmd-remove';
+import { NotInstalledError, runRemove } from '../src/cmd-remove';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -146,7 +146,6 @@ describe('runRemove — guardrails-claude, confirm:true', () => {
     const adapter = createClaudeAdapter({ denyRef: REF_DENY, agentsContent: AGENTS_CONTENT });
 
     const result = await runRemove({
-      catalog: MINI_CATALOG,
       adapter,
       scope: SCOPE,
       env,
@@ -163,7 +162,6 @@ describe('runRemove — guardrails-claude, confirm:true', () => {
     const adapter = createClaudeAdapter({ denyRef: REF_DENY, agentsContent: AGENTS_CONTENT });
 
     const result = await runRemove({
-      catalog: MINI_CATALOG,
       adapter,
       scope: SCOPE,
       env,
@@ -180,7 +178,6 @@ describe('runRemove — guardrails-claude, confirm:true', () => {
     const adapter = createClaudeAdapter({ denyRef: REF_DENY, agentsContent: AGENTS_CONTENT });
 
     await runRemove({
-      catalog: MINI_CATALOG,
       adapter,
       scope: SCOPE,
       env,
@@ -200,7 +197,6 @@ describe('runRemove — guardrails-claude, confirm:true', () => {
     const adapter = createClaudeAdapter({ denyRef: REF_DENY, agentsContent: AGENTS_CONTENT });
 
     await runRemove({
-      catalog: MINI_CATALOG,
       adapter,
       scope: SCOPE,
       env,
@@ -223,7 +219,6 @@ describe('runRemove — guardrails-claude, confirm:true', () => {
     const adapter = createClaudeAdapter({ denyRef: REF_DENY, agentsContent: AGENTS_CONTENT });
 
     const result = await runRemove({
-      catalog: MINI_CATALOG,
       adapter,
       scope: SCOPE,
       env,
@@ -241,7 +236,6 @@ describe('runRemove — guardrails-claude, confirm:true', () => {
     let confirmCalled = false;
 
     await runRemove({
-      catalog: MINI_CATALOG,
       adapter,
       scope: SCOPE,
       env,
@@ -262,7 +256,6 @@ describe('runRemove — guardrails-claude, confirm:true', () => {
     let capturedPlanText = '';
 
     await runRemove({
-      catalog: MINI_CATALOG,
       adapter,
       scope: SCOPE,
       env,
@@ -288,7 +281,6 @@ describe('runRemove — confirm:false', () => {
     const adapter = createClaudeAdapter({ denyRef: REF_DENY, agentsContent: AGENTS_CONTENT });
 
     const result = await runRemove({
-      catalog: MINI_CATALOG,
       adapter,
       scope: SCOPE,
       env,
@@ -305,7 +297,6 @@ describe('runRemove — confirm:false', () => {
     const adapter = createClaudeAdapter({ denyRef: REF_DENY, agentsContent: AGENTS_CONTENT });
 
     await runRemove({
-      catalog: MINI_CATALOG,
       adapter,
       scope: SCOPE,
       env,
@@ -325,7 +316,6 @@ describe('runRemove — confirm:false', () => {
     const adapter = createClaudeAdapter({ denyRef: REF_DENY, agentsContent: AGENTS_CONTENT });
 
     await runRemove({
-      catalog: MINI_CATALOG,
       adapter,
       scope: SCOPE,
       env,
@@ -345,7 +335,6 @@ describe('runRemove — confirm:false', () => {
     const adapter = createClaudeAdapter({ denyRef: REF_DENY, agentsContent: AGENTS_CONTENT });
 
     const result = await runRemove({
-      catalog: MINI_CATALOG,
       adapter,
       scope: SCOPE,
       env,
@@ -362,7 +351,6 @@ describe('runRemove — confirm:false', () => {
     const adapter = createClaudeAdapter({ denyRef: REF_DENY, agentsContent: AGENTS_CONTENT });
 
     const result = await runRemove({
-      catalog: MINI_CATALOG,
       adapter,
       scope: SCOPE,
       env,
@@ -376,92 +364,89 @@ describe('runRemove — confirm:false', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Scenario 3: id not installed → plan empty → applied:false "nothing to remove"
+// Scenario 3: id absent from the manifest → throws NotInstalledError.
+// Inverted knowingly for R5 (lot2-remove-reversible): remove validates against
+// the manifest, not the catalog — an id the manifest does not know is an error.
 // ---------------------------------------------------------------------------
 
-describe('runRemove — id not installed', () => {
-  it('returns applied:false when entry is not installed', async () => {
+describe('runRemove — id absent from manifest', () => {
+  it('R5: throws NotInstalledError when the entry was never installed', async () => {
     const adapter = createClaudeAdapter({ denyRef: REF_DENY, agentsContent: AGENTS_CONTENT });
 
-    const result = await runRemove({
-      catalog: MINI_CATALOG,
-      adapter,
-      scope: SCOPE,
-      env,
-      manifestPath,
-      selectedIds: ['guardrails-claude'],
-      confirm: true,
-    });
+    const fn = () =>
+      runRemove({
+        adapter,
+        scope: SCOPE,
+        env,
+        manifestPath,
+        selectedIds: ['guardrails-claude'],
+        confirm: true,
+      });
 
-    expect(result.applied).toBe(false);
+    await expect(fn).toThrow(NotInstalledError);
   });
 
-  it('output contains "nothing to remove" when entry is not installed', async () => {
+  it('R5: error names the id and lists the entries installed in the manifest', async () => {
+    await installGuardrail();
     const adapter = createClaudeAdapter({ denyRef: REF_DENY, agentsContent: AGENTS_CONTENT });
 
-    const result = await runRemove({
-      catalog: MINI_CATALOG,
-      adapter,
-      scope: SCOPE,
-      env,
-      manifestPath,
-      selectedIds: ['guardrails-claude'],
-      confirm: true,
-    });
+    let errorMessage = '';
+    try {
+      await runRemove({
+        adapter,
+        scope: SCOPE,
+        env,
+        manifestPath,
+        selectedIds: ['context-claude'],
+        confirm: true,
+      });
+    } catch (err) {
+      errorMessage = err instanceof Error ? err.message : String(err);
+    }
 
-    expect(result.output.toLowerCase()).toMatch(/nothing to remove|not installed/);
+    expect(errorMessage).toContain('context-claude');
+    expect(errorMessage.toLowerCase()).toContain('not installed');
+    expect(errorMessage).toContain('guardrails-claude');
+    expect(errorMessage).not.toContain('agent-rigger ls');
   });
 
-  it('confirm callback is NOT called when plan is empty', async () => {
+  it('R5: confirm callback is NOT called when validation fails', async () => {
     const adapter = createClaudeAdapter({ denyRef: REF_DENY, agentsContent: AGENTS_CONTENT });
     let confirmCallCount = 0;
 
-    await runRemove({
-      catalog: MINI_CATALOG,
-      adapter,
-      scope: SCOPE,
-      env,
-      manifestPath,
-      selectedIds: ['guardrails-claude'],
-      confirm: async (_planText) => {
-        confirmCallCount++;
-        return true;
-      },
-    });
+    try {
+      await runRemove({
+        adapter,
+        scope: SCOPE,
+        env,
+        manifestPath,
+        selectedIds: ['guardrails-claude'],
+        confirm: async (_planText) => {
+          confirmCallCount++;
+          return true;
+        },
+      });
+    } catch {
+      // Expected: NotInstalledError.
+    }
 
     expect(confirmCallCount).toBe(0);
   });
 });
 
 // ---------------------------------------------------------------------------
-// Scenario 4: id unknown (not in catalog) → throws
+// Scenario 4: pack id → NotInstalledError explaining pack expansion.
+// Inverted knowingly for R5: the catalog no longer plays any role in remove —
+// the former "unknown id (not in catalog)" case IS the manifest-absence case.
 // ---------------------------------------------------------------------------
 
-describe('runRemove — unknown id', () => {
-  it('throws when id is not in catalog', async () => {
-    const adapter = createClaudeAdapter({ denyRef: REF_DENY, agentsContent: AGENTS_CONTENT });
-
-    const fn = () =>
-      runRemove({
-        catalog: MINI_CATALOG,
-        adapter,
-        scope: SCOPE,
-        env,
-        manifestPath,
-        selectedIds: ['unknown:artifact'],
-        confirm: true,
-      });
-
-    await expect(fn).toThrow();
-  });
-
-  it('error message mentions the unknown id', async () => {
+describe('runRemove — pack id', () => {
+  it('R5: unknown ids raise NotInstalledError naming the id', async () => {
     const adapter = createClaudeAdapter({ denyRef: REF_DENY, agentsContent: AGENTS_CONTENT });
 
     let errorMessage = '';
     try {
       await runRemove({
-        catalog: MINI_CATALOG,
         adapter,
         scope: SCOPE,
         env,
@@ -473,7 +458,30 @@ describe('runRemove — unknown id', () => {
       errorMessage = err instanceof Error ? err.message : String(err);
     }
 
-    expect(errorMessage.toLowerCase()).toMatch(/unknown|not found|unknown:artifact/);
+    expect(errorMessage).toContain('unknown:artifact');
+    expect(errorMessage.toLowerCase()).toContain('not installed');
+  });
+
+  it('R5: pack ids raise NotInstalledError explaining packs are expanded at install', async () => {
+    const adapter = createClaudeAdapter({ denyRef: REF_DENY, agentsContent: AGENTS_CONTENT });
+
+    let errorMessage = '';
+    try {
+      await runRemove({
+        adapter,
+        scope: SCOPE,
+        env,
+        manifestPath,
+        selectedIds: ['principal/pack:harness'],
+        confirm: true,
+      });
+    } catch (err) {
+      errorMessage = err instanceof Error ? err.message : String(err);
+    }
+
+    expect(errorMessage.toLowerCase()).toContain('not installed');
+    expect(errorMessage.toLowerCase()).toMatch(/expanded at install/);
+    expect(errorMessage.toLowerCase()).toMatch(/member/);
   });
 });
 
@@ -491,7 +499,6 @@ describe('runRemove — context-claude, AGENTS.md', () => {
 
     const adapter = createClaudeAdapter({ denyRef: REF_DENY, agentsContent: AGENTS_CONTENT });
     await runRemove({
-      catalog: MINI_CATALOG,
       adapter,
       scope: SCOPE,
       env,
@@ -509,7 +516,6 @@ describe('runRemove — context-claude, AGENTS.md', () => {
     const adapter = createClaudeAdapter({ denyRef: REF_DENY, agentsContent: AGENTS_CONTENT });
 
     await runRemove({
-      catalog: MINI_CATALOG,
       adapter,
       scope: SCOPE,
       env,
@@ -535,7 +541,6 @@ describe('runRemove — remove both guardrails+context', () => {
     const adapter = createClaudeAdapter({ denyRef: REF_DENY, agentsContent: AGENTS_CONTENT });
 
     const result = await runRemove({
-      catalog: MINI_CATALOG,
       adapter,
       scope: SCOPE,
       env,
@@ -558,7 +563,6 @@ describe('runRemove — remove both guardrails+context', () => {
     const adapter = createClaudeAdapter({ denyRef: REF_DENY, agentsContent: AGENTS_CONTENT });
 
     await runRemove({
-      catalog: MINI_CATALOG,
       adapter,
       scope: SCOPE,
       env,

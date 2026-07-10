@@ -25,12 +25,12 @@
  * - All path resolution goes through resolveHome / resolveUserTargets.
  */
 
-import { lstat } from 'node:fs/promises';
+import { lstat, stat } from 'node:fs/promises';
 import path from 'node:path';
 
 import type { AdapterEntry } from '@agent-rigger/core/adapter';
 import { assertSafeArtifactName } from '@agent-rigger/core/artifact-name';
-import { unlink } from '@agent-rigger/core/linker';
+import { contentMatchesStore, resolvesToStore } from '@agent-rigger/core/linker';
 import { resolveHome, resolveUserTargets } from '@agent-rigger/core/paths';
 import type { Env } from '@agent-rigger/core/paths';
 import type {
@@ -40,6 +40,8 @@ import type {
   WriteOp,
   WriteOpLink,
 } from '@agent-rigger/core/types';
+
+import { planRemoveGate } from '../shared/remove-gate';
 
 // ---------------------------------------------------------------------------
 // agentName
@@ -103,9 +105,16 @@ function resolveTargetPath(name: string, scope: Scope, env: Env, cwd?: string): 
 /**
  * Audit the current state of an agent artifact on disk.
  *
- * Returns:
- * - 'present' if the target .md path exists (symlink or file).
- * - 'missing' if the target path does not exist.
+ * Returns (same contract as auditSkill):
+ * - 'present' if the target is a symlink resolving to the rigger store, or a
+ *   plain .md file byte-identical to it (linkOrCopy copy fallback).
+ * - 'drift' if the target exists but is NOT rigger's install shape (real file
+ *   with foreign content, symlink pointing outside the store) — R3: the
+ *   removal gate refuses such a target, so the audit must keep the divergence
+ *   visible (`check` exits 3).
+ * - 'missing' if the target path does not exist, or is a DANGLING symlink
+ *   (store deleted) — R4: a dead link must be reported broken (check exit 3)
+ *   and repairable (the next install re-plans the link op).
  *
  * Read-only: no filesystem writes.
  */
@@ -117,13 +126,45 @@ export async function auditAgent(
 ): Promise<NatureReport> {
   const name = agentName(entry);
   const targetPath = resolveTargetPath(name, scope, env, cwd);
+  const storePath = resolveStorePath(name, env);
 
-  const exists = await lstat(targetPath).then(() => true).catch(() => false);
+  const targetStat = await lstat(targetPath).catch(() => null);
+  if (targetStat === null) {
+    return { id: entry.id, nature: 'agent', state: 'missing' };
+  }
 
+  if (targetStat.isSymbolicLink()) {
+    // stat() follows the link: null → the link value resolves to nothing.
+    const resolved = await stat(targetPath).catch(() => null);
+    if (resolved === null) {
+      return {
+        id: entry.id,
+        nature: 'agent',
+        state: 'missing',
+        detail: `dangling symlink: ${targetPath}`,
+      };
+    }
+    if (await resolvesToStore(targetPath, storePath)) {
+      return { id: entry.id, nature: 'agent', state: 'present' };
+    }
+    return {
+      id: entry.id,
+      nature: 'agent',
+      state: 'drift',
+      detail: `${targetPath} is a symlink resolving outside the rigger store — not managed`,
+    };
+  }
+
+  // Plain file: a byte-identical copy of the store is a legitimate
+  // copy-fallback install; anything else is user content rigger must not claim.
+  if (await contentMatchesStore(targetPath, storePath)) {
+    return { id: entry.id, nature: 'agent', state: 'present' };
+  }
   return {
     id: entry.id,
     nature: 'agent',
-    state: exists ? 'present' : 'missing',
+    state: 'drift',
+    detail: `${targetPath} diverges from the rigger store (not a rigger symlink) — not managed`,
   };
 }
 
@@ -139,7 +180,15 @@ export async function auditAgent(
  * Compute the removal operations needed to uninstall a sub-agent.
  *
  * Returns [] when the agent target does not exist (not installed).
- * Returns [{ kind: 'unlink', target, store }] when the agent is present.
+ * Returns [{ kind: 'unlink', target, store }] ONLY when the target is a
+ * symlink resolving to the rigger store or a byte-identical copy of it
+ * (linkOrCopy copy fallback) — R3 gate, shared/remove-gate.ts. Any other
+ * present target (real file, foreign symlink) yields a warning-only
+ * leave-alone op and nothing is deleted.
+ *
+ * The apply for the unlink op is shared with skills (applyRemoveSkill via the
+ * 'unlink' op kind in adapter.ts) — agents have no removal executor of their
+ * own (the former applyRemoveAgent was dead code, deleted by lot2 T6).
  *
  * Read-only: no filesystem writes.
  *
@@ -154,40 +203,11 @@ export async function planRemoveAgent(
   env: Env,
   cwd?: string,
 ): Promise<RemovalOp[]> {
-  const report = await auditAgent(entry, scope, env, cwd);
-  if (report.state !== 'present') {
-    return [];
-  }
-
   const name = agentName(entry);
   const store = resolveStorePath(name, env);
   const target = resolveTargetPath(name, scope, env, cwd);
 
-  return [{ kind: 'unlink', target, store }];
-}
-
-// ---------------------------------------------------------------------------
-// applyRemoveAgent
-// ---------------------------------------------------------------------------
-
-/**
- * Execute unlink removal operations produced by planRemoveAgent.
- *
- * For each unlink op: removes both the target (.md symlink or file) and the
- * store entry. Uses core unlink() which is tolerant to absence (force:true).
- *
- * Ops of any other kind are ignored (forward-compatibility).
- *
- * @param ops  Removal operations (only 'unlink' kind are processed).
- * @param env  Injectable env (kept for interface symmetry).
- */
-export async function applyRemoveAgent(ops: RemovalOp[], _env: Env): Promise<void> {
-  for (const op of ops) {
-    if (op.kind !== 'unlink') {
-      continue;
-    }
-    await unlink(op.target, op.store);
-  }
+  return planRemoveGate(entry.id, target, store);
 }
 
 // ---------------------------------------------------------------------------
@@ -218,7 +238,10 @@ export async function planAgent(
   cwd?: string,
 ): Promise<WriteOp[]> {
   const report = await auditAgent(entry, scope, env, cwd);
-  if (report.state === 'present') {
+  // 'present' → nothing to do; 'drift' → the target carries content rigger
+  // does not manage — install must NOT clobber it (link() would rm -f the
+  // target). Only 'missing' (absent or dangling symlink) plans the link op.
+  if (report.state !== 'missing') {
     return [];
   }
 

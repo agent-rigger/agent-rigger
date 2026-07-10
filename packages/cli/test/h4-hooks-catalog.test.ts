@@ -7,7 +7,9 @@
  * - apply writes hook to settings.json AND deposits scripts to store/hooks/.
  * - Idempotence: 2nd plan after apply returns [].
  * - audit after apply → state present.
- * - planRemove → applyRemove removes hook from settings.json; scripts remain in store.
+ * - engine remove of the last hook cleans settings.json AND deletes the
+ *   scriptStore (R7, lot2-remove-reversible — inverts the pre-lot2 lock
+ *   "scripts remain in store").
  * - hookSpec unknown id → actionable error.
  * - apply preserves preexisting permissions.deny.
  *
@@ -23,6 +25,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import type { AdapterEntry } from '@agent-rigger/core/adapter';
+import { apply as engineApply, remove as engineRemove } from '@agent-rigger/core/engine';
 import { readJson, writeJson } from '@agent-rigger/core/fs-json';
 import { hasHook } from '@agent-rigger/core/hooks';
 import { resolveUserTargets } from '@agent-rigger/core/paths';
@@ -295,7 +298,7 @@ describe('buildClaudeAdapter hookSpec — hook:guard-secret install/remove lifec
     expect(report.nature).toBe('hook');
   });
 
-  it('planRemove → applyRemove removes hook from settings.json; scripts remain in store', async () => {
+  it('R7: engine remove of the last hook cleans settings.json AND deletes the scriptStore', async () => {
     const checkoutDir = await makeCheckoutDir(tmp.dir);
     const adapter = await buildClaudeAdapter(env, {
       externalIds: HOOK_EXTERNAL_IDS,
@@ -303,33 +306,35 @@ describe('buildClaudeAdapter hookSpec — hook:guard-secret install/remove lifec
       effectiveEntries: FIXTURE_EFFECTIVE_ENTRIES,
     });
     const targets = resolveUserTargets(env);
+    const scriptStore = path.join(path.dirname(targets.stateJson), 'hooks');
 
-    // Install
+    // Install through the engine so the manifest tracks the hook — the
+    // manifest is R7's counter (scripts are copies, no symlink refcount).
     const ops = await adapter.plan(ENTRY, 'user', env);
-    await adapter.apply(ops, env);
-
     const command = (ops[0] as { command: string }).command;
+    await engineApply(adapter, [ENTRY], 'user', env, targets.stateJson);
+
     const hookSpec = {
       event: 'PreToolUse',
       matcher: 'Read|Edit|MultiEdit|Write|NotebookEdit|Grep|Glob|Bash',
       command,
     };
+    expect(hasHook(await readJson(targets.claudeSettings), hookSpec)).toBe(true);
 
-    // Remove
-    const removeOps = await adapter.planRemove(ENTRY, 'user', env);
-    expect(removeOps).toHaveLength(1);
-    expect(removeOps[0]!.kind).toBe('remove-hooks');
-    await adapter.applyRemove(removeOps, env);
+    // Remove through the engine with the shared-store descriptor (R7).
+    await engineRemove(adapter, [ENTRY], 'user', env, targets.stateJson, [
+      { nature: 'hook', dir: scriptStore },
+    ]);
 
     // Hook removed from settings.json
     const settings = await readJson(targets.claudeSettings);
     expect(hasHook(settings, hookSpec)).toBe(false);
 
-    // Scripts remain in store (not deleted on remove — intentional)
-    const scriptStore = path.join(path.dirname(targets.stateJson), 'hooks');
-    const guardStillExists = await fs.stat(path.join(scriptStore, 'guard-secret.ts'))
-      .then(() => true).catch(() => false);
-    expect(guardStillExists).toBe(true);
+    // R7 (inverts the pre-lot2 lock "scripts remain in store"): guard-secret
+    // was the LAST hook at the manifest, so the whole scriptStore left the
+    // disk with it.
+    const storeStat = await fs.stat(scriptStore).catch(() => null);
+    expect(storeStat).toBeNull();
   });
 
   it('check → present after install', async () => {

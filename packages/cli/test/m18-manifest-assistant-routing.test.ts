@@ -217,8 +217,12 @@ describe('M18 — remove without --assistant (non-TTY)', () => {
       makeDeps(cap.print),
     );
 
-    expect(code).toBe(0);
-    expect(cap.lines.join('\n')).toContain('Nothing to remove');
+    // Updated for R5 (lot2-remove-reversible): the id is not installed for
+    // claude (identity triple miss) → "not installed" error, exit 2 — the old
+    // catalog-era "Nothing to remove" exit 0 is gone. The override still wins:
+    // the removal targeted the claude adapter, not the manifest-routed opencode.
+    expect(code).toBe(2);
+    expect(cap.lines.join('\n').toLowerCase()).toContain('not installed');
 
     // The opencode entry is untouched by the claude-targeted removal.
     const manifest = await readManifest(manifestPath);

@@ -1,4 +1,5 @@
 export * from './adapter';
+export * from './applied-merge';
 export * from './artifact-name';
 export * from './assert-never';
 export * from './backup';

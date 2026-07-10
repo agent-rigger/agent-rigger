@@ -86,3 +86,4 @@ export {
   skillName as opencodeSkillName,
   SkillScanBlockedError as OpencodeSkillScanBlockedError,
 } from './opencode/skills';
+export { isStoreReferenced, storeReferenceCandidates } from './shared/store-refs';
