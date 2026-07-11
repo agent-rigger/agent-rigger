@@ -38,9 +38,17 @@ export {
   defaultPluginRunner,
   planPlugin,
   PluginInstallError,
+  pluginLedgerKey,
   pluginName,
+  readInstalledPlugins,
+  resolvePluginPaths,
 } from './claude/plugins';
-export type { PluginRunner, PluginSource } from './claude/plugins';
+export type {
+  PluginPaths,
+  PluginRunner,
+  PluginSource,
+  ReadInstalledPluginsResult,
+} from './claude/plugins';
 export {
   applySkill,
   auditSkill,

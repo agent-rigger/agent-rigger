@@ -37,7 +37,7 @@ import { renderReport } from './ui';
 /**
  * Result of a runCheck call.
  *
- * - exitCode  0 = all entries present
+ * - exitCode  0 = all entries present (or advisory 'unknown' — see reportExitCode)
  *             2 = invalid JSON encountered (no report entries)
  *             3 = one or more entries missing or drifted
  * - report    Aggregated audit report (entries = [] when exitCode is 2).

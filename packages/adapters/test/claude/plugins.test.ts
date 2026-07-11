@@ -1,12 +1,13 @@
 /**
- * Tests for claude/plugins handler (TDD — written before implementation).
+ * Tests for claude/plugins handler.
+ *
+ * obs1-plugin-reads: reads are on-disk (never spawn); apply keeps its spawn.
  *
  * Covers:
  * - pluginName: strips 'plugin:' prefix from entry id.
- * - auditPlugin: fake runner stdout contains plugin → present; absent → missing.
- *   Assert the command passed to runner is 'claude plugin list'.
+ * - auditPlugin: on-disk ledger key present → present; absent → missing.
  * - planPlugin: absent → 1 op plugin-install (correct plugin + marketplace);
- *   present → [].
+ *   present → []; unknown → [].
  * - applyPlugin: success → 2 runs in order (marketplace add then install) with
  *   correct args (asserted via spy runner).
  * - applyPlugin: failure (exitCode ≠ 0) → PluginInstallError carrying stderr.
@@ -32,8 +33,30 @@ import {
   planPlugin,
   PluginInstallError,
   pluginName,
+  resolvePluginPaths,
 } from '../../src/claude/plugins';
 import type { PluginRunner } from '../../src/claude/plugins';
+
+// ---------------------------------------------------------------------------
+// On-disk ledger fixture helper (obs1: reads inspect installed_plugins.json)
+// ---------------------------------------------------------------------------
+
+/** Write installed_plugins.json under <RIGGER_HOME>/.claude/plugins/. */
+async function writeLedger(env: Env, ledger: unknown): Promise<void> {
+  const { installedPluginsPath } = resolvePluginPaths(env);
+  await fs.mkdir(path.dirname(installedPluginsPath), { recursive: true });
+  const body = typeof ledger === 'string' ? ledger : JSON.stringify(ledger, null, 2);
+  await fs.writeFile(installedPluginsPath, body, 'utf8');
+}
+
+/** A version-2 ledger declaring the given `<name>@<marketplace>` keys as installed. */
+function ledgerWith(...keys: string[]): unknown {
+  const plugins: Record<string, unknown> = {};
+  for (const key of keys) {
+    plugins[key] = [{ scope: 'user', installPath: `/cache/${key}`, version: '1.0.0' }];
+  }
+  return { version: 2, plugins };
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -114,6 +137,9 @@ function makeSpyRunner(opts: {
 
 const PLUGIN_NAME = 'my-rigger-plugin';
 const MARKETPLACE = '/path/to/.claude-plugin/marketplace.json';
+const MARKETPLACE_NAME = 'my-marketplace';
+/** The exact on-disk ledger key the audit matches. */
+const LEDGER_KEY = `${PLUGIN_NAME}@${MARKETPLACE_NAME}`;
 
 const PLUGIN_ENTRY: AdapterEntry = {
   id: `plugin:${PLUGIN_NAME}`,
@@ -124,6 +150,7 @@ const PLUGIN_ENTRY: AdapterEntry = {
 const PLUGIN_SOURCE = (_entry: AdapterEntry) => ({
   plugin: PLUGIN_NAME,
   marketplace: MARKETPLACE,
+  marketplaceName: MARKETPLACE_NAME,
 });
 
 /**
@@ -178,70 +205,45 @@ describe('pluginName', () => {
 // ---------------------------------------------------------------------------
 
 describe('auditPlugin', () => {
-  it('returns present when plugin name appears in list stdout', async () => {
-    const runner = makeSpyRunner({ listStdout: `some-other\n${PLUGIN_NAME}\nfoo` });
+  it('returns present when the ledger key is declared on disk', async () => {
+    await writeLedger(env, ledgerWith('some-other@x', LEDGER_KEY, 'foo@y'));
 
-    const report = await auditPlugin(PLUGIN_ENTRY, env, { run: runner });
+    const report = await auditPlugin(PLUGIN_ENTRY, env, MARKETPLACE_NAME);
 
     expect(report.state).toBe('present');
     expect(report.nature).toBe('plugin');
     expect(report.id).toBe(PLUGIN_ENTRY.id);
   });
 
-  it('returns missing when plugin name is absent from list stdout', async () => {
-    const runner = makeSpyRunner({ listStdout: 'other-plugin\nanother-one' });
+  it('returns missing when the ledger has other keys but not ours', async () => {
+    await writeLedger(env, ledgerWith('other-plugin@x', 'another-one@y'));
 
-    const report = await auditPlugin(PLUGIN_ENTRY, env, { run: runner });
+    const report = await auditPlugin(PLUGIN_ENTRY, env, MARKETPLACE_NAME);
 
     expect(report.state).toBe('missing');
     expect(report.nature).toBe('plugin');
   });
 
-  it('returns missing when list stdout is empty', async () => {
-    const runner = makeSpyRunner({ listStdout: '' });
+  it('returns missing when the ledger is empty (plugins: {})', async () => {
+    await writeLedger(env, { version: 2, plugins: {} });
 
-    const report = await auditPlugin(PLUGIN_ENTRY, env, { run: runner });
-
-    expect(report.state).toBe('missing');
-  });
-
-  it('calls runner with "claude plugin list" command and args', async () => {
-    const runner = makeSpyRunner({ listStdout: '' });
-
-    await auditPlugin(PLUGIN_ENTRY, env, { run: runner });
-
-    expect(runner.calls).toHaveLength(1);
-    const call = runner.calls[0]!;
-    expect(call.command).toBe('claude');
-    expect(call.args).toContain('plugin');
-    expect(call.args).toContain('list');
-  });
-
-  it('returns missing when plugin name is a substring of another token (no false positive)', async () => {
-    // 'git' must NOT match when the line contains 'legit' (substring, not exact token)
-    const gitEntry: AdapterEntry = { id: 'plugin:git', nature: 'plugin', scope: 'user' };
-    const runner = makeSpyRunner({ listStdout: 'legit-plugin\nanother-legit' });
-
-    const report = await auditPlugin(gitEntry, env, { run: runner });
+    const report = await auditPlugin(PLUGIN_ENTRY, env, MARKETPLACE_NAME);
 
     expect(report.state).toBe('missing');
   });
 
-  it('returns present when plugin name is an exact token on a line', async () => {
-    const gitEntry: AdapterEntry = { id: 'plugin:git', nature: 'plugin', scope: 'user' };
-    const runner = makeSpyRunner({ listStdout: 'legit-plugin\ngit\nfoo' });
+  it('returns missing when no ledger file exists (virgin config)', async () => {
+    const report = await auditPlugin(PLUGIN_ENTRY, env, MARKETPLACE_NAME);
 
-    const report = await auditPlugin(gitEntry, env, { run: runner });
-
-    expect(report.state).toBe('present');
+    expect(report.state).toBe('missing');
   });
 
-  it('returns missing when plugin name appears only as infix in every line', async () => {
-    // 'foo' appears inside 'foobar' and 'prefoo' but never as its own token
-    const fooEntry: AdapterEntry = { id: 'plugin:foo', nature: 'plugin', scope: 'user' };
-    const runner = makeSpyRunner({ listStdout: 'foobar\nprefoo\n  foosuffix  ' });
+  it('returns missing when the same name is keyed under a DIFFERENT marketplace', async () => {
+    // The plugin exists in the ledger but under another marketplace: the exact
+    // key `<name>@<marketplaceName>` does not match → missing, no false positive.
+    await writeLedger(env, ledgerWith(`${PLUGIN_NAME}@other-marketplace`));
 
-    const report = await auditPlugin(fooEntry, env, { run: runner });
+    const report = await auditPlugin(PLUGIN_ENTRY, env, MARKETPLACE_NAME);
 
     expect(report.state).toBe('missing');
   });
@@ -253,18 +255,16 @@ describe('auditPlugin', () => {
 
 describe('planPlugin', () => {
   it('returns one plugin-install op when plugin is absent', async () => {
-    const runner = makeSpyRunner({ listStdout: 'other-plugin' });
+    await writeLedger(env, ledgerWith('other-plugin@x'));
 
-    const ops = await planPlugin(PLUGIN_ENTRY, PLUGIN_SOURCE, { run: runner });
+    const ops = await planPlugin(PLUGIN_ENTRY, env, PLUGIN_SOURCE);
 
     expect(ops).toHaveLength(1);
     expect(ops[0]!.kind).toBe('plugin-install');
   });
 
   it('plugin-install op carries correct plugin and marketplace', async () => {
-    const runner = makeSpyRunner({ listStdout: '' });
-
-    const ops = await planPlugin(PLUGIN_ENTRY, PLUGIN_SOURCE, { run: runner });
+    const ops = await planPlugin(PLUGIN_ENTRY, env, PLUGIN_SOURCE);
     const op = ops[0] as { kind: string; plugin: string; marketplace: string };
 
     expect(op.plugin).toBe(PLUGIN_NAME);
@@ -272,9 +272,17 @@ describe('planPlugin', () => {
   });
 
   it('returns empty array when plugin is already present', async () => {
-    const runner = makeSpyRunner({ listStdout: PLUGIN_NAME });
+    await writeLedger(env, ledgerWith(LEDGER_KEY));
 
-    const ops = await planPlugin(PLUGIN_ENTRY, PLUGIN_SOURCE, { run: runner });
+    const ops = await planPlugin(PLUGIN_ENTRY, env, PLUGIN_SOURCE);
+
+    expect(ops).toHaveLength(0);
+  });
+
+  it('returns empty array (no churn) when the ledger is unknown', async () => {
+    await writeLedger(env, '{ this is not json');
+
+    const ops = await planPlugin(PLUGIN_ENTRY, env, PLUGIN_SOURCE);
 
     expect(ops).toHaveLength(0);
   });
@@ -440,22 +448,20 @@ describe('applyPlugin', () => {
 // ---------------------------------------------------------------------------
 
 describe('createClaudeAdapter — plugin end-to-end via engine', () => {
-  it('check missing → apply (fake runner OK) → check present → 2nd apply no-op', async () => {
+  it('check missing → apply (fake runner writes ledger) → check present → 2nd apply no-op', async () => {
     let installCount = 0;
 
-    // Fake runner: list returns empty until install is triggered
-    const runner: PluginRunner = (
+    // Fake runner: audit is on-disk now, so the runner is only hit at APPLY.
+    // Simulate Claude writing the ledger when `plugin install` runs.
+    const runner: PluginRunner = async (
       _command: string,
       args: string[],
     ) => {
-      if (args.includes('list')) {
-        const stdout = installCount > 0 ? PLUGIN_NAME : '';
-        return Promise.resolve({ exitCode: 0, stdout, stderr: '' });
-      }
       if (args.includes('install')) {
         installCount++;
+        await writeLedger(env, ledgerWith(LEDGER_KEY));
       }
-      return Promise.resolve({ exitCode: 0, stdout: '', stderr: '' });
+      return { exitCode: 0, stdout: '', stderr: '' };
     };
 
     const adapter = createClaudeAdapter({

@@ -28,6 +28,7 @@ import {
 import type { CatalogEntry } from '@agent-rigger/catalog';
 import type { Assistant, RemovalOp, Report, Scope, WriteOp } from '@agent-rigger/core';
 import { assistantRoot } from '@agent-rigger/core';
+import { assertNever } from '@agent-rigger/core/assert-never';
 
 // ---------------------------------------------------------------------------
 // Path abbreviation helpers
@@ -164,6 +165,7 @@ export const ANSI = {
   green: '\x1b[32m',
   yellow: '\x1b[33m',
   red: '\x1b[31m',
+  cyan: '\x1b[36m',
   bold: '\x1b[1m',
   dim: '\x1b[2m',
   reset: '\x1b[0m',
@@ -388,6 +390,16 @@ export function renderPlan(groups: PlanGroup[], opts: RenderPlanOpts = {}): stri
           pluginsCount++;
           lines.push(`  plugin  ${op.plugin}`);
           lines.push(`     via ${abbr(op.marketplace)}`);
+          // obs1-R4: the plan shows the exact native commands that will be
+          // spawned at apply (parity with the tool-checks display) — the
+          // user must be able to read them BEFORE confirming, not discover
+          // them after the fact. Verbatim: same command/args applyPlugin runs.
+          lines.push(
+            `     $ ${paint(`claude plugin marketplace add ${op.marketplace}`, ANSI.dim, colorOn)}`,
+          );
+          lines.push(
+            `     $ ${paint(`claude plugin install ${op.plugin}`, ANSI.dim, colorOn)}`,
+          );
           break;
         }
         case 'merge-hooks': {
@@ -567,6 +579,10 @@ export function renderRemovalPlan(
         case 'plugin-uninstall': {
           pluginsCount++;
           lines.push(`  uninstall  ${op.plugin}`);
+          // obs1-R4: verbatim parity — same command applyRemovePlugin runs.
+          lines.push(
+            `     $ ${paint(`claude plugin uninstall ${op.plugin}`, ANSI.dim, colorOn)}`,
+          );
           break;
         }
         case 'remove-hooks': {
@@ -616,10 +632,13 @@ export interface RenderReportOpts {
  * Render an audit Report as a human-readable status list.
  *
  * State tags are padded to equal width for column alignment, and colourised
- * as a contiguous unit (green/red/yellow) so substring assertions stay stable:
+ * as a contiguous unit (green/red/yellow/cyan) so substring assertions stay
+ * stable:
  *   [ ok  ]   present  (green)
  *   [miss ]   missing  (red)
  *   [drift]   drift    (yellow) — detail appended when provided
+ *   [ ?   ]   unknown  (cyan)   — advisory, detail appended when provided;
+ *     never counted as drift by reportExitCode (engine.ts)
  *
  * Returns a "no entries" message when entries is empty.
  */
@@ -648,6 +667,15 @@ export function renderReport(report: Report, opts: RenderReportOpts = {}): strin
         );
         break;
       }
+      case 'unknown': {
+        const detail = entry.detail === undefined ? '' : `  — ${entry.detail}`;
+        lines.push(
+          `  ${paint('[ ?   ]', ANSI.cyan, colorOn)}  ${entry.id}  (${entry.nature})${detail}`,
+        );
+        break;
+      }
+      default:
+        assertNever(entry.state);
     }
   }
 

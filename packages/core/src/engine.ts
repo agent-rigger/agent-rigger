@@ -7,7 +7,7 @@
  *   apply(adapter, entries, scope, env, manifestPath) → ApplyResult
  *
  * Exit code mapping (derived — CLI maps these):
- *   0 → all entries 'present'
+ *   0 → all entries 'present' or 'unknown' (unknown is advisory, never drift)
  *   2 → JSON invalid (InvalidJsonError propagates; CLI catches it)
  *   3 → at least one entry 'missing' or 'drift'
  *
@@ -242,13 +242,15 @@ export async function check(
 /**
  * Derive the CLI exit code from a Report.
  *
- * Returns 0 if every entry is 'present'; 3 if any entry is 'missing' or 'drift'.
- * Exit code 2 (invalid JSON / usage error) is never produced here — it comes
- * from InvalidJsonError propagating through check() to the CLI.
+ * Returns 3 if any entry is 'missing' or 'drift'; 0 otherwise. 'unknown' is
+ * advisory (an observation that failed to produce a verdict, e.g. an
+ * unparsable on-disk ledger) — it never contributes to exit 3, alongside
+ * 'present'. Exit code 2 (invalid JSON / usage error) is never produced here —
+ * it comes from InvalidJsonError propagating through check() to the CLI.
  */
 export function reportExitCode(report: Report): 0 | 3 {
-  const allPresent = report.entries.every((e) => e.state === 'present');
-  return allPresent ? 0 : 3;
+  const hasDrift = report.entries.some((e) => e.state === 'missing' || e.state === 'drift');
+  return hasDrift ? 3 : 0;
 }
 
 // ---------------------------------------------------------------------------

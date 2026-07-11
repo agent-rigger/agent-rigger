@@ -38,8 +38,7 @@ import { resolveUserTargets } from '@agent-rigger/core/paths';
 import type { Env } from '@agent-rigger/core/paths';
 
 import { createClaudeAdapter } from '../../src/claude/adapter';
-import { adoptPlugin } from '../../src/claude/plugins';
-import type { PluginRunner } from '../../src/claude/plugins';
+import { adoptPlugin, resolvePluginPaths } from '../../src/claude/plugins';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -250,20 +249,36 @@ describe('lot3 R5 — hook adoption', () => {
 // Plugin — adopt with files=[] and no applied payload
 // ---------------------------------------------------------------------------
 
-/** Fake runner: reports `my-plugin` as present in `plugin list`. */
-const presentPluginRunner: PluginRunner = async (_cmd, args) => {
-  if (args[0] === 'plugin' && args[1] === 'list') {
-    return { exitCode: 0, stdout: 'my-plugin  1.0.0\n', stderr: '' };
-  }
-  return { exitCode: 0, stdout: '', stderr: '' };
-};
+const ADOPT_MARKETPLACE = 'adopt-marketplace';
 
-/** Fake runner: reports NO plugin present. */
-const absentPluginRunner: PluginRunner = async () => ({ exitCode: 0, stdout: '', stderr: '' });
+/** Write installed_plugins.json declaring `<name>@<ADOPT_MARKETPLACE>` present. */
+async function writeLedgerWithPlugin(pluginEnv: Env, name: string): Promise<void> {
+  const { installedPluginsPath } = resolvePluginPaths(pluginEnv);
+  await fs.mkdir(path.dirname(installedPluginsPath), { recursive: true });
+  const key = `${name}@${ADOPT_MARKETPLACE}`;
+  await fs.writeFile(
+    installedPluginsPath,
+    JSON.stringify({
+      version: 2,
+      plugins: { [key]: [{ scope: 'user', installPath: `/cache/${key}`, version: '1.0.0' }] },
+    }),
+    'utf8',
+  );
+}
 
 describe('lot3 R5 — plugin adoption', () => {
   it('lot3-R5: a present plugin absent from the manifest is adopted with files=[] and no applied', async () => {
-    const adapter = createClaudeAdapter({ denyRef: [], pluginRunner: presentPluginRunner });
+    // On-disk ledger declares the plugin present (obs1: audit reads the ledger,
+    // never spawns `claude`).
+    await writeLedgerWithPlugin(env, 'my-plugin');
+    const adapter = createClaudeAdapter({
+      denyRef: [],
+      pluginSource: (_e) => ({
+        plugin: 'my-plugin',
+        marketplace: '/some/path',
+        marketplaceName: ADOPT_MARKETPLACE,
+      }),
+    });
     const entry: AdapterEntry = { id: 'plugin:my-plugin', nature: 'plugin', scope: 'user' };
 
     const result = await apply(adapter, [entry], 'user', env, manifestPath);
@@ -278,10 +293,10 @@ describe('lot3 R5 — plugin adoption', () => {
   it('lot3-R5: the adopt gate refuses an absent plugin (undefined)', async () => {
     // Direct gate unit: an absent plugin never reaches the adoption branch via
     // apply (its plan is non-empty → install path), so the refusal is proved on
-    // the gate itself.
+    // the gate itself. No ledger written → the plugin is absent.
     const entry: AdapterEntry = { id: 'plugin:absent', nature: 'plugin', scope: 'user' };
 
-    const adoption = await adoptPlugin(entry, env, { run: absentPluginRunner });
+    const adoption = await adoptPlugin(entry, env, ADOPT_MARKETPLACE);
     expect(adoption).toBeUndefined();
   });
 });

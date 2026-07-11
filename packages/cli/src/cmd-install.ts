@@ -320,17 +320,36 @@ export async function runInstall(opts: RunInstallOptions): Promise<InstallResult
   // Read manifest once to determine action (install vs update) per entry.
   const manifest = await readManifest(manifestPath);
   const groups: PlanGroup[] = [];
+  // Advisory warnings for entries whose plan came back empty because the
+  // audit could not confirm a state — e.g. a plugin nature whose
+  // installed_plugins.json is unparsable / an unrecognised version (obs1 R2
+  // 'unknown'). planPlugin deliberately returns [] there (no reinstall
+  // churn), so there is no op left to carry a `warnings` array; audit is
+  // queried directly so the install run still surfaces the advisory
+  // ("install no-op on this artefact, advisory warning shown" — R2 scenario 4)
+  // instead of finishing in silence.
+  const advisoryWarnings: string[] = [];
   for (const entry of adapterEntries) {
     // Enrich with the manifest `applied` payload — same seam as engine.apply
     // (R1/D8): the previewed plan must match the executed one, including the
     // remove-hooks op of a traced hook migration.
-    const ops = await adapter.plan(enrichWithApplied(entry, manifest, adapter.id), scope, env);
+    const enriched = enrichWithApplied(entry, manifest, adapter.id);
+    const ops = await adapter.plan(enriched, scope, env);
     if (ops.length > 0) {
       const action: 'install' | 'update' =
         findEntry(manifest, entry.id, scope, adapter.id) === undefined
           ? 'install'
           : 'update';
       groups.push({ id: entry.id, nature: entry.nature, action, ops });
+    } else if (entry.nature === 'plugin') {
+      const report = await adapter.audit(enriched, scope, env);
+      if (report.state === 'unknown') {
+        advisoryWarnings.push(
+          `"${entry.id}": ${
+            report.detail ?? 'state unknown (advisory) — no install plan generated'
+          }`,
+        );
+      }
     }
   }
 
@@ -354,15 +373,17 @@ export async function runInstall(opts: RunInstallOptions): Promise<InstallResult
     ? await buildProjectScopeNote(effectiveCwd)
     : '';
 
-  // Collect translation warnings from planned ops (guardrail/agent → opencode).
+  // Collect translation warnings from planned ops (guardrail/agent → opencode),
+  // plus the audit-derived advisory warnings collected above (obs1 R2 unknown).
   // Rendered in planText so they are visible in the confirm prompt AND the final
   // output — a non-translatable rule is never silently dropped (R5.3/R6.3, HIGH-2).
   const warnings = [
-    ...new Set(
-      groups
+    ...new Set([
+      ...groups
         .flatMap((g) => g.ops)
         .flatMap((op) => ('warnings' in op && Array.isArray(op.warnings) ? op.warnings : [])),
-    ),
+      ...advisoryWarnings,
+    ]),
   ];
   const warningsBlock = warnings.length > 0
     ? '\n--- Warnings ---\n' + warnings.map((w) => `  [warning] ${w}`).join('\n') + '\n'

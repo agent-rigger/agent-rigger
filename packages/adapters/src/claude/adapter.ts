@@ -392,17 +392,22 @@ export function createClaudeAdapter(config: ClaudeAdapterConfig): Adapter {
     [
       'plugin',
       {
-        audit(entry, _scope, env): Promise<NatureReport> {
-          return auditPlugin(entry, env, { run: pluginRunner });
+        // Reads are on-disk and spawn-free (obs1, R1): the ledger under the
+        // Claude config dir is the source of truth. resolvePluginSource can throw
+        // synchronously (missing pluginSource config) — `async` converts that into
+        // a rejected Promise, the contract audit/plan/planRemove/adopt callers rely
+        // on. The pluginRunner spawns ONLY at apply time (post-confirm), never here.
+        async audit(entry, _scope, env): Promise<NatureReport> {
+          return auditPlugin(entry, env, resolvePluginSource(entry).marketplaceName);
         },
-        plan(entry, _scope, _env): Promise<WriteOp[]> {
-          return planPlugin(entry, () => resolvePluginSource(entry), { run: pluginRunner });
+        async plan(entry, _scope, env): Promise<WriteOp[]> {
+          return planPlugin(entry, env, resolvePluginSource);
         },
-        planRemove(entry, _scope, _env): Promise<RemovalOp[]> {
-          return planRemovePlugin(entry, { run: pluginRunner });
+        async planRemove(entry, _scope, env): Promise<RemovalOp[]> {
+          return planRemovePlugin(entry, env, resolvePluginSource(entry).marketplaceName);
         },
-        adopt(entry, _scope, env): Promise<AdoptionResult | undefined> {
-          return adoptPlugin(entry, env, { run: pluginRunner });
+        async adopt(entry, _scope, env): Promise<AdoptionResult | undefined> {
+          return adoptPlugin(entry, env, resolvePluginSource(entry).marketplaceName);
         },
       },
     ],

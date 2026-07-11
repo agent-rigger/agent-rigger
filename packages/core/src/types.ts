@@ -714,8 +714,13 @@ export interface Verdict {
  * - 'missing'  → not installed; check exits 3.
  * - 'present'  → installed and matches manifest sha/content; check exits 0.
  * - 'drift'    → installed but diverged (file modified or sha mismatch); check exits 3.
+ * - 'unknown'  → observation failed to produce a verdict (e.g. an on-disk
+ *   ledger exists but doesn't parse, or carries an unrecognised version) —
+ *   advisory only: check never exits 3 for it (see `reportExitCode` in
+ *   engine.ts) and adapters MUST NOT plan a reinstall from it (that would
+ *   churn a possibly-healthy artefact on every ledger-layout change).
  */
-export type ArtifactState = 'missing' | 'present' | 'drift';
+export type ArtifactState = 'missing' | 'present' | 'drift' | 'unknown';
 
 /**
  * Audit result for one artefact entry.

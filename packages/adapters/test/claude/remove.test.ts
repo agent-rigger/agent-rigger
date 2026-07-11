@@ -31,6 +31,7 @@ import { resolveUserTargets } from '@agent-rigger/core/paths';
 import type { Env } from '@agent-rigger/core/paths';
 
 import { createClaudeAdapter } from '../../src/claude/adapter';
+import { resolvePluginPaths } from '../../src/claude/plugins';
 import type { PluginRunner } from '../../src/claude/plugins';
 
 // ---------------------------------------------------------------------------
@@ -105,6 +106,24 @@ function makeSpyPluginRunner(opts: {
 const REF_DENY = ['Read(./.env)', 'Read(~/.ssh/**)', 'Read(./secrets/**)'];
 const AGENTS_CONTENT = '# Managed AGENTS.md\nContent for testing.\n';
 const PLUGIN_NAME = 'my-remove-plugin';
+const MARKETPLACE_NAME = 'remove-marketplace';
+/** The exact on-disk ledger key the plugin audit matches for the remove tests. */
+const PLUGIN_LEDGER_KEY = `${PLUGIN_NAME}@${MARKETPLACE_NAME}`;
+
+/** Write installed_plugins.json declaring the given keys under <RIGGER_HOME>/.claude. */
+async function writeLedger(pluginEnv: Env, ...keys: string[]): Promise<void> {
+  const { installedPluginsPath } = resolvePluginPaths(pluginEnv);
+  await fs.mkdir(path.dirname(installedPluginsPath), { recursive: true });
+  const plugins: Record<string, unknown> = {};
+  for (const key of keys) {
+    plugins[key] = [{ scope: 'user', installPath: `/cache/${key}`, version: '1.0.0' }];
+  }
+  await fs.writeFile(
+    installedPluginsPath,
+    JSON.stringify({ version: 2, plugins }, null, 2),
+    'utf8',
+  );
+}
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -526,26 +545,38 @@ describe('planRemove — agent', () => {
 // ---------------------------------------------------------------------------
 
 describe('planRemove — plugin', () => {
-  it('returns [] when plugin is not installed (runner says absent)', async () => {
-    const runner = makeSpyPluginRunner({ listStdout: 'other-plugin' });
+  it('returns [] when plugin is not installed (ledger says absent)', async () => {
+    await writeLedger(env, 'other-plugin@x');
+    const runner = makeSpyPluginRunner();
     const adapter = createClaudeAdapter({
       denyRef: [],
       pluginRunner: runner,
-      pluginSource: (_e) => ({ plugin: PLUGIN_NAME, marketplace: '/some/path' }),
+      pluginSource: (_e) => ({
+        plugin: PLUGIN_NAME,
+        marketplace: '/some/path',
+        marketplaceName: MARKETPLACE_NAME,
+      }),
     });
     const entry: AdapterEntry = { id: `plugin:${PLUGIN_NAME}`, nature: 'plugin', scope: 'user' };
 
     const ops = await adapter.planRemove(entry, 'user', env);
 
     expect(ops).toHaveLength(0);
+    // Read path never spawns (obs1 R1): the runner is untouched.
+    expect(runner.calls).toHaveLength(0);
   });
 
   it('returns one plugin-uninstall op when plugin is present', async () => {
-    const runner = makeSpyPluginRunner({ listStdout: PLUGIN_NAME });
+    await writeLedger(env, PLUGIN_LEDGER_KEY);
+    const runner = makeSpyPluginRunner();
     const adapter = createClaudeAdapter({
       denyRef: [],
       pluginRunner: runner,
-      pluginSource: (_e) => ({ plugin: PLUGIN_NAME, marketplace: '/some/path' }),
+      pluginSource: (_e) => ({
+        plugin: PLUGIN_NAME,
+        marketplace: '/some/path',
+        marketplaceName: MARKETPLACE_NAME,
+      }),
     });
     const entry: AdapterEntry = { id: `plugin:${PLUGIN_NAME}`, nature: 'plugin', scope: 'user' };
 
@@ -553,14 +584,20 @@ describe('planRemove — plugin', () => {
 
     expect(ops).toHaveLength(1);
     expect(ops[0]!.kind).toBe('plugin-uninstall');
+    expect(runner.calls).toHaveLength(0);
   });
 
   it('plugin-uninstall op carries the correct plugin name', async () => {
-    const runner = makeSpyPluginRunner({ listStdout: PLUGIN_NAME });
+    await writeLedger(env, PLUGIN_LEDGER_KEY);
+    const runner = makeSpyPluginRunner();
     const adapter = createClaudeAdapter({
       denyRef: [],
       pluginRunner: runner,
-      pluginSource: (_e) => ({ plugin: PLUGIN_NAME, marketplace: '/some/path' }),
+      pluginSource: (_e) => ({
+        plugin: PLUGIN_NAME,
+        marketplace: '/some/path',
+        marketplaceName: MARKETPLACE_NAME,
+      }),
     });
     const entry: AdapterEntry = { id: `plugin:${PLUGIN_NAME}`, nature: 'plugin', scope: 'user' };
 
@@ -581,7 +618,11 @@ describe('applyRemove — plugin-uninstall', () => {
     const adapter = createClaudeAdapter({
       denyRef: [],
       pluginRunner: runner,
-      pluginSource: (_e) => ({ plugin: PLUGIN_NAME, marketplace: '/some/path' }),
+      pluginSource: (_e) => ({
+        plugin: PLUGIN_NAME,
+        marketplace: '/some/path',
+        marketplaceName: MARKETPLACE_NAME,
+      }),
     });
 
     const ops = [{ kind: 'plugin-uninstall' as const, plugin: PLUGIN_NAME }];
@@ -603,7 +644,11 @@ describe('applyRemove — plugin-uninstall', () => {
     const adapter = createClaudeAdapter({
       denyRef: [],
       pluginRunner: runner,
-      pluginSource: (_e) => ({ plugin: PLUGIN_NAME, marketplace: '/some/path' }),
+      pluginSource: (_e) => ({
+        plugin: PLUGIN_NAME,
+        marketplace: '/some/path',
+        marketplaceName: MARKETPLACE_NAME,
+      }),
     });
 
     const ops = [{ kind: 'plugin-uninstall' as const, plugin: PLUGIN_NAME }];
@@ -621,7 +666,11 @@ describe('applyRemove — plugin-uninstall', () => {
     const adapter = createClaudeAdapter({
       denyRef: [],
       pluginRunner: runner,
-      pluginSource: (_e) => ({ plugin: PLUGIN_NAME, marketplace: '/some/path' }),
+      pluginSource: (_e) => ({
+        plugin: PLUGIN_NAME,
+        marketplace: '/some/path',
+        marketplaceName: MARKETPLACE_NAME,
+      }),
     });
 
     const ops = [{ kind: 'plugin-uninstall' as const, plugin: PLUGIN_NAME }];
