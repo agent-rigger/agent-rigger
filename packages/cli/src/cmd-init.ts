@@ -15,7 +15,8 @@
  * - PreflightAuthError is caught → ok:false + actionable output; config is NOT persisted.
  * - Config is only persisted after a successful preflightAuth.
  * - fetchCatalogFn / proposeInstall failures are caught non-fatally: config stays saved,
- *   output gets an actionable hint to re-run `install` later.
+ *   output gets an actionable hint to re-run `install` later. A CancelledError (R2, user
+ *   Ctrl+C in the post-init picker) is re-thrown, not swallowed — it maps to exit 130.
  *
  * Error handling:
  * - PreflightAuthError → captured, returned as { ok: false, output: <PreflightAuthError.message> }.
@@ -45,6 +46,7 @@ import { DEFAULT_CONFIG, LegacyConfigError, loadConfigFile, persistConfig } from
 import type { Config } from './config';
 import { preflightAuth, PreflightAuthError } from './preflight-auth';
 import type { AskMethod, CommandRunner } from './preflight-auth';
+import { CancelledError } from './ui';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -291,7 +293,12 @@ export async function runInit(opts: RunInitOpts): Promise<InitResult> {
     try {
       const catalog = await fetchCatalogFn(url);
       await proposeInstall(catalog);
-    } catch {
+    } catch (err) {
+      // R2/ADR-0024: a user cancel (Ctrl+C in the post-init picker) must
+      // propagate to exit 130, not be swallowed as a non-fatal fetch failure.
+      if (err instanceof CancelledError) {
+        throw err;
+      }
       // Non-fatal: config is already saved. Give the user an actionable hint.
       output +=
         '\n\nCatalog fetch failed. Run `install` later to install artifacts from the catalog.';

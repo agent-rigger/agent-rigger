@@ -23,9 +23,11 @@
  * - No process.exit — callers decide what to do with a thrown error.
  */
 
-import { isCancel, text } from '@clack/prompts';
+import { cancel, isCancel, text } from '@clack/prompts';
 
 import type { SecretDecl } from '@agent-rigger/catalog';
+
+import { CancelledError } from './ui';
 
 // ---------------------------------------------------------------------------
 // InvalidSecretEnvFlagError
@@ -191,7 +193,10 @@ async function defaultSecretPicker(secret: SecretDecl): Promise<string> {
   });
 
   if (isCancel(result)) {
-    throw new Error(`Secret "${secret.ref}" prompt cancelled.`);
+    // R2: migrated from a generic Error (→ exit 1, indistinguishable from a
+    // runtime failure) to CancelledError (→ exit 130 via handleError).
+    cancel('Operation cancelled.');
+    throw new CancelledError(`Secret "${secret.ref}" prompt cancelled.`);
   }
 
   return result.length === 0 ? secret.ref : result;

@@ -459,8 +459,11 @@ describe('remote install — builtin id with catalogUrl → local defaults', () 
 // ---------------------------------------------------------------------------
 
 describe('remote install — install WITHOUT catalogUrl → actionable message', () => {
-  it('exits 0 without calling remote runner (no catalogUrl → no fetch needed)', async () => {
-    // Create a separate env without catalogUrl
+  it('exits 2 without calling remote runner (no catalogUrl → missing precondition, ADR-0024)', async () => {
+    // Inverted (lot5-R1, ADR-0024): install with no catalog configured is a
+    // missing precondition, not a voluntary abort — exit 2, not 0. --yes is set
+    // so the R4 non-TTY gate is bypassed; the flow reaches the no-catalog check
+    // and returns 2 before any fetch (runner never called).
     const localEnv = await makeRemoteEnv({ withCatalogUrl: false });
 
     let runnerCallCount = 0;
@@ -476,7 +479,7 @@ describe('remote install — install WITHOUT catalogUrl → actionable message',
         env: localEnv.env,
         remote: { run: countingRunner, tmpFactory: localEnv.tmpFactory, scanner: stubScanner },
       });
-      expect(code).toBe(0);
+      expect(code).toBe(2);
       // No catalogUrl → handleInstall exits early with actionable message → runner never called
       expect(runnerCallCount).toBe(0);
       const out = cap.lines.join('\n');

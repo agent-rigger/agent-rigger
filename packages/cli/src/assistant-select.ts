@@ -14,13 +14,15 @@
  * - No process.exit — callers decide what to do with a thrown error.
  */
 
-import { isCancel, select } from '@clack/prompts';
+import { cancel, isCancel, select } from '@clack/prompts';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
 import type { Assistant } from '@agent-rigger/core';
 import type { Env } from '@agent-rigger/core/paths';
 import { resolveHome } from '@agent-rigger/core/paths';
+
+import { CancelledError } from './ui';
 
 // ---------------------------------------------------------------------------
 // decideAssistant — pure
@@ -159,7 +161,10 @@ async function defaultPicker(candidates: Assistant[]): Promise<Assistant> {
   });
 
   if (isCancel(result)) {
-    throw new Error('Assistant selection cancelled.');
+    // R2: migrated from a generic Error (→ exit 1, indistinguishable from a
+    // runtime failure) to CancelledError (→ exit 130 via handleError).
+    cancel('Operation cancelled.');
+    throw new CancelledError('Assistant selection cancelled.');
   }
 
   return result;

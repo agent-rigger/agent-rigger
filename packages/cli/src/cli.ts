@@ -44,6 +44,7 @@ import {
   qualifyEntries,
   qualifyRef,
   RefShaMismatchError,
+  RemoteFetchError,
   resolveVersion,
   type TmpDirFactory,
 } from '@agent-rigger/catalog';
@@ -76,7 +77,14 @@ import {
   MissingRequiredSecretError,
   parseSecretEnvFlags,
 } from './secret-collect';
-import { ANSI, paint, renderEntryInfo, shouldColor, type StatusedEntry } from './ui';
+import {
+  ANSI,
+  CancelledError,
+  paint,
+  renderEntryInfo,
+  shouldColor,
+  type StatusedEntry,
+} from './ui';
 
 import pkg from '../package.json';
 
@@ -235,6 +243,34 @@ export function deriveAdHocPrefix(source: string): string {
  */
 const KNOWN_RESOURCES = new Set(Object.keys(RESOURCE_NATURE_MAP));
 
+/**
+ * Flags that take a value and accept BOTH `--flag=value` and `--flag value`
+ * (space syntax, R3). When `--flag` appears without `=`, the next argv token
+ * is consumed as its value — even if that token itself looks like a flag —
+ * so a missing value only occurs at the true end of argv.
+ */
+const VALUE_FLAGS = new Set(['scope', 'assistant', 'secret-env']);
+
+/**
+ * The complete allowlist of flags this CLI recognises (R3). Any `--key` (with
+ * or without `=value`) outside this set is an operator typo, not a silent
+ * no-op — parseArgs rejects it instead of swallowing it into `flags`.
+ *
+ * Exported so the anti-drift test (lot5-r3-flags.test.ts) can assert USAGE
+ * documents exactly this set — a flag added here without a matching
+ * `--<flag>` line in USAGE's Options section must fail that test, not slip
+ * into an undocumented CLI surface.
+ */
+export const KNOWN_FLAGS = new Set([
+  'scope',
+  'assistant',
+  'secret-env',
+  'yes',
+  'force',
+  'help',
+  'version',
+]);
+
 /** Result of parsing argv. */
 export interface ParsedArgs {
   /**
@@ -258,6 +294,13 @@ export interface ParsedArgs {
    * for parity with every other flag, but only this array preserves all of them.
    */
   secretEnvFlags: string[];
+  /**
+   * Set when argv violates the flag grammar (R3): a value-flag with no value
+   * at end of argv, or a flag key outside KNOWN_FLAGS. Every other field is
+   * empty/undefined on this path — callers (runCli) MUST check this first and
+   * exit 2 with the message, before looking at `command`/`flags`.
+   */
+  error?: string;
 }
 
 /**
@@ -275,8 +318,12 @@ export interface ParsedArgs {
  *   remaining non-flag tokens are `resourceIds`.
  * - When command is 'install': remaining non-flag tokens are `resourceIds`
  *   (non-interactive if non-empty; interactive if empty).
- * - --key=value → flags[key] = value
- * - --key       → flags[key] = true
+ * - --key=value        → flags[key] = value
+ * - --key value         (VALUE_FLAGS only, R3) → flags[key] = value, consumes
+ *   the next token
+ * - --key               (everything else)      → flags[key] = true
+ * - --key outside KNOWN_FLAGS, in either form → `error` set, exit 2 (R3)
+ * - a VALUE_FLAGS key with no `=` and no following token → `error` set (R3)
  */
 export function parseArgs(argv: string[]): ParsedArgs {
   const resourceIds: string[] = [];
@@ -286,23 +333,57 @@ export function parseArgs(argv: string[]): ParsedArgs {
   // Collect flags and positional tokens in order.
   const positionals: string[] = [];
 
-  for (const arg of argv) {
-    if (arg.startsWith('--')) {
-      const rest = arg.slice(2);
-      const eqIdx = rest.indexOf('=');
-      if (eqIdx === -1) {
-        flags[rest] = true;
-      } else {
-        const key = rest.slice(0, eqIdx);
-        const value = rest.slice(eqIdx + 1);
-        if (key === 'secret-env') {
-          secretEnvFlags.push(value);
-        }
-        flags[key] = value;
-      }
-    } else {
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i] as string;
+    if (!arg.startsWith('--')) {
       positionals.push(arg);
+      continue;
     }
+
+    const rest = arg.slice(2);
+    const eqIdx = rest.indexOf('=');
+
+    let key: string;
+    let value: string | boolean;
+
+    if (eqIdx !== -1) {
+      key = rest.slice(0, eqIdx);
+      value = rest.slice(eqIdx + 1);
+    } else if (VALUE_FLAGS.has(rest)) {
+      key = rest;
+      const next = argv[i + 1];
+      if (next === undefined) {
+        return {
+          command: undefined,
+          resourceVerb: undefined,
+          resourceIds: [],
+          flags: {},
+          secretEnvFlags: [],
+          error: `--${key} requires a value`,
+        };
+      }
+      value = next;
+      i += 1; // consume the value token (space syntax, R3)
+    } else {
+      key = rest;
+      value = true;
+    }
+
+    if (!KNOWN_FLAGS.has(key)) {
+      return {
+        command: undefined,
+        resourceVerb: undefined,
+        resourceIds: [],
+        flags: {},
+        secretEnvFlags: [],
+        error: `unknown flag "--${key}"`,
+      };
+    }
+
+    if (key === 'secret-env' && typeof value === 'string') {
+      secretEnvFlags.push(value);
+    }
+    flags[key] = value;
   }
 
   if (positionals.length === 0) {
@@ -372,7 +453,7 @@ Workflow commands:
 Discovery commands:
   ls                       List all catalog entries with install status.
   catalog ls               List configured catalog sources (name + url).
-  catalog add <n> <url>    Add a catalog source (name must be unique).
+  catalog add <name> <url> Add a catalog source (name must be unique).
   catalog remove <name>    Remove a catalog source by name.
 
 Update commands:
@@ -408,23 +489,28 @@ Resources:
   pack | packs             Named bundles of multiple entries.
 
 Options:
-  --scope=<user|project>  Installation scope (default: user).
-  --yes                   Skip confirmation prompt (non-interactive install only).
+  --scope=<user|project>        Installation scope (default: user).
+  --assistant=<claude|opencode>
+                                 Target assistant (default: resolved from config/detection,
+                                 or prompted; see README § Assistants).
+  --yes                         Skip confirmation prompt (non-interactive install only).
+  --force                       Proceed despite scan findings (ad-hoc install only).
   --secret-env=<ref>=<VAR>
-                          Override which env var resolves an mcp secret ref (repeatable).
-  --help                  Show this help message.
-  --version               Show CLI version.
+                                 Override which env var resolves an mcp secret ref (repeatable).
+  --help                        Show this help message.
+  --version                     Show CLI version.
 
 Examples:
   agent-rigger check
   agent-rigger ls
   agent-rigger skills ls
-  agent-rigger guardrails add guardrails-claude --yes
-  agent-rigger guardrails info guardrails-claude
+  agent-rigger guardrails add jr/guardrail:claude --yes
+  agent-rigger guardrails info jr/guardrail:claude
   agent-rigger guardrails check
   agent-rigger install --scope=user
   agent-rigger update --yes
-  agent-rigger skills update skill:remote-demo --yes
+  agent-rigger skills update jr/skill:remote-demo --yes
+  agent-rigger install jr/skill:foo --assistant opencode
   agent-rigger init
 `;
 
@@ -445,7 +531,8 @@ export interface CliPrompts {
    * the flat `selectArtifacts` picker with scope asked afterwards.
    */
   selectArtifactsByStatus?: (entries: StatusedEntry[]) => Promise<string[]>;
-  selectScope: () => Promise<'user' | 'project'>;
+  /** `assistant` (R5, optional — defaults to 'claude') picks the picker's root labels. */
+  selectScope: (assistant?: Assistant) => Promise<'user' | 'project'>;
   confirmApply: (planText: string) => Promise<boolean>;
   askUrl: () => Promise<string>;
   askMethod: () => Promise<'provider-cli' | 'https' | 'ssh'>;
@@ -696,6 +783,15 @@ interface EffectiveCatalog {
   entries: CatalogEntry[];
   /** sourceName → its meta.required/recommended. Absent for failed sources. */
   metaBySource: Map<string, CatalogGovernanceMeta>;
+  /**
+   * True when at least one catalog is configured AND every one of them
+   * failed to fetch (R1, ADR-0024: offline — the request was legitimate,
+   * the runtime failed). False both when no catalog is configured at all
+   * (a different condition, handled by the caller before this ever runs)
+   * and when at least one source responded (existing per-source degradation
+   * — unchanged, the caller proceeds on the partial catalog).
+   */
+  allSourcesFailed: boolean;
 }
 
 /**
@@ -716,14 +812,14 @@ async function resolveEffectiveCatalogFull(
       print(
         `[warning] ${err.message}`,
       );
-      return { entries: [], metaBySource: new Map() };
+      return { entries: [], metaBySource: new Map(), allSourcesFailed: false };
     }
     throw err;
   }
 
   if (config.catalogs.length === 0) {
     print('no catalog configured — run `agent-rigger init`');
-    return { entries: [], metaBySource: new Map() };
+    return { entries: [], metaBySource: new Map(), allSourcesFailed: false };
   }
 
   const run: CommandRunner | undefined = remote?.run;
@@ -779,7 +875,13 @@ async function resolveEffectiveCatalogFull(
     if (r.meta !== undefined) metaBySource.set(r.name, r.meta);
   }
 
-  return { entries: effective.entries, metaBySource };
+  // R1 (ADR-0024): at least one catalog IS configured here (checked above) —
+  // allSourcesFailed distinguishes "every source unreachable" (offline, exit
+  // 1 for install) from "some responded" (existing per-source degradation,
+  // caller proceeds on the partial catalog, unchanged).
+  const allSourcesFailed = sourceResults.every((r) => !r.ok);
+
+  return { entries: effective.entries, metaBySource, allSourcesFailed };
 }
 
 /**
@@ -961,17 +1063,27 @@ async function runInteractiveProposeInstall(
  * Route argv to the appropriate command and return the exit code.
  * Does NOT call process.exit — the caller (main) does that.
  *
- * Exit codes:
- *   0  success / help / version / clean abort
- *   2  invalid JSON / unknown command / init parse error
- *   3  check: one or more missing/drifted entries
- *   1  other runtime errors
+ * Exit code contract: see ADR-0024 (`docs/adr/0024-contrat-exit-codes-cli.md`)
+ * — 0/2/1/130, identical for a given condition across every command. `check`
+ * additionally returns 3 for one or more missing/drifted entries, a
+ * domain-specific code outside the ADR's scope (not a confirmation/precondition/
+ * runtime distinction).
  */
 export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number> {
   const print = deps.print ?? ((msg: string) => process.stdout.write(msg + '\n'));
   const env: Env = deps.env ?? Bun.env;
 
-  const { command, resourceVerb, resourceIds, flags, secretEnvFlags } = parseArgs(argv);
+  const parsed = parseArgs(argv);
+
+  // Flag grammar violation (R3): unknown flag, or a value-flag with no value
+  // at end of argv. Checked before anything else — `command`/`flags` are
+  // empty on this path.
+  if (parsed.error !== undefined) {
+    print(`[error] ${parsed.error}`);
+    return 2;
+  }
+
+  const { command, resourceVerb, resourceIds, flags, secretEnvFlags } = parsed;
 
   // --version (check before --help so `--version` alone works)
   if (flags['version'] === true) {
@@ -988,6 +1100,22 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
   // Validate --scope before entering any command block
   if (flags['scope'] !== undefined && flags['scope'] !== 'user' && flags['scope'] !== 'project') {
     print(`[error] Invalid --scope value: "${flags['scope']}". Must be "user" or "project".`);
+    return 2;
+  }
+
+  // Validate --assistant before entering any command block (R3): centralised
+  // here, next to --scope, so every command sees the same exit code (2) for
+  // the same typo — the per-command checks below (ls/info/install/check/…)
+  // become unreachable for an invalid value but are left in place as
+  // defense-in-depth for direct callers of those helpers.
+  if (
+    flags['assistant'] !== undefined
+    && flags['assistant'] !== 'claude'
+    && flags['assistant'] !== 'opencode'
+  ) {
+    print(
+      `[error] Invalid --assistant value: "${flags['assistant']}". Must be "claude" or "opencode".`,
+    );
     return 2;
   }
 
@@ -1297,8 +1425,10 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
             required: false,
           });
           if (isCancel(result)) {
+            // R2: interruption, not a silent "configure nothing" default —
+            // propagate so runInit never persists config.assistants.
             cancel('Operation cancelled.');
-            return [];
+            throw new CancelledError();
           }
           return result;
         };
@@ -1780,6 +1910,56 @@ async function handleResourceCommand(opts: ResourceCommandOpts): Promise<number>
 }
 
 // ---------------------------------------------------------------------------
+// assertConfirmableOrYes — non-TTY fail-closed gate (R4, ADR-0018, ADR-0024)
+// ---------------------------------------------------------------------------
+
+/**
+ * Fail-closed gate for any command that would ask for a confirmation prompt
+ * (install, remove, update, ad-hoc install).
+ *
+ * clack `confirm`/`select`/`multiselect` on a non-TTY stdin never resolves —
+ * it hangs forever (proven empirically). A CI job that omits `--yes` would
+ * therefore checkout, scan, and then freeze on the confirmation. This gate is
+ * called at the HEAD of every confirming handler, before any catalog
+ * resolution / network fetch / checkout / scan, so the process exits 2 with an
+ * actionable message instead of doing work it would then block on.
+ *
+ * - `--yes` present → proceed (scripted, non-interactive path, unchanged).
+ * - TTY session     → proceed (the real interactive prompt can run).
+ * - non-TTY, no `--yes` → the request cannot be satisfied (ADR-0024 exit 2):
+ *   print an actionable message and return false; the caller returns 2.
+ *
+ * The caller guards this with `deps.prompts === undefined` (see each handler):
+ * the hang this gate prevents can only happen when the REAL clack prompts are
+ * used (`deps.prompts ?? importUiPrompts()`). When a caller injects
+ * `deps.prompts` — only reachable programmatically, never from the CLI/argv
+ * surface — those stand-ins resolve synchronously, so there is nothing to hang
+ * on and the gate would wrongly reject a caller that supplies its own answers.
+ * In production `runCli(process.argv.slice(2))` passes no deps, so the gate is
+ * unconditional there and the R4 security property holds on the real CLI.
+ *
+ * This is the same fail-closed policy already codified in remote-install and
+ * secret-collect, generalised to one helper (design decision 4).
+ *
+ * @returns `true` when it is safe to proceed; `false` after printing the
+ *   error, in which case the caller must return exit 2.
+ */
+function assertConfirmableOrYes(
+  flags: Record<string, string | boolean>,
+  print: (msg: string) => void,
+): boolean {
+  if (flags['yes'] === true) return true;
+  // R4: the hang this gate prevents is a property of STDIN (clack's Prompt
+  // reads keypresses from `stdin`; `setRawMode` only applies when
+  // `stdin.isTTY`). Gating on stdout.isTTY is bypassable by redirecting only
+  // stdin (stdout still a TTY) — the gate must track the stream the prompt
+  // actually blocks on.
+  if (process.stdin.isTTY === true) return true;
+  print('[error] non-interactive session — pass --yes to confirm non-interactively');
+  return false;
+}
+
+// ---------------------------------------------------------------------------
 // handleInstall — shared install logic (interactive or non-interactive)
 // ---------------------------------------------------------------------------
 
@@ -1807,6 +1987,15 @@ async function handleInstall(opts: HandleInstallOpts): Promise<number> {
   // through, unconsumed here: the render (env-presence check, substitution)
   // is T6 — this is plumbing only.
   const secretOverrides = parseSecretEnvFlags(secretEnvFlags);
+
+  // R4 (ADR-0018, ADR-0024): fail-closed before any catalog resolution,
+  // network fetch, checkout or scan — but after the flag-level validation
+  // above (a malformed --secret-env is a more specific "impossible request"
+  // and must surface its own message). A non-TTY session without --yes cannot
+  // answer the confirmation prompt (it would hang), so exit 2 immediately.
+  // Guarded by deps.prompts === undefined: the hang only exists when the real
+  // clack prompts run; an injected prompt set answers synchronously.
+  if (deps.prompts === undefined && !assertConfirmableOrYes(flags, print)) return 2;
 
   // Resolve the target assistant once (R1): flag > config.assistants > detected
   // > TTY prompt > 'claude' fallback (back-compat, see resolveCliAssistant).
@@ -1860,9 +2049,12 @@ async function handleInstall(opts: HandleInstallOpts): Promise<number> {
     const config = await loadCliConfig(env);
 
     if (config.catalogs.length === 0) {
-      // No catalogs configured → actionable message, nothing to install locally
-      print('no catalog configured — run `agent-rigger init`');
-      return 0;
+      // No catalogs configured (R1, ADR-0024): the request cannot be
+      // satisfied — a missing precondition, not a voluntary abort. Nothing
+      // is written (no manifest, no config). Same message used by the
+      // interactive site below.
+      print('[error] no catalog configured — run `agent-rigger init`');
+      return 2;
     }
 
     const runner: CommandRunner = deps.remote?.run ?? defaultRunner;
@@ -1925,7 +2117,29 @@ async function handleInstall(opts: HandleInstallOpts): Promise<number> {
   // Interactive: no ids — use selectArtifacts prompt with effective catalog (remote only).
   const prompts = deps.prompts ?? (await importUiPrompts());
 
-  const effective = await resolveEffectiveCatalog(env, print, deps.remote);
+  // Load config up-front (R1, ADR-0024): interactive install is still an
+  // explicit request for install — no catalog configured is a missing
+  // precondition, not a voluntary abort, same as the non-interactive site
+  // above (same message, same code). Reused below for the per-prefix
+  // routing, so this is the only load for the whole interactive branch.
+  const interactiveConfig = await loadCliConfig(env);
+
+  if (interactiveConfig.catalogs.length === 0) {
+    print('[error] no catalog configured — run `agent-rigger init`');
+    return 2;
+  }
+
+  const effectiveFull = await resolveEffectiveCatalogFull(env, print, deps.remote);
+  const effective = effectiveFull.entries;
+
+  if (effectiveFull.allSourcesFailed) {
+    // Every configured source failed to fetch (R1 offline): same intent,
+    // same code as the explicit path (RemoteFetchError → 1 via handleError)
+    // — not an empty picker silently exiting 0. When at least one source
+    // responds, allSourcesFailed is false and the flow below proceeds on
+    // the partial catalog (existing per-source degradation, unchanged).
+    return 1;
+  }
 
   if (effective.length === 0) {
     return 0;
@@ -1933,6 +2147,14 @@ async function handleInstall(opts: HandleInstallOpts): Promise<number> {
 
   let selectedIds: string[];
   let interactiveScope: 'user' | 'project';
+
+  // R6: when --scope was given explicitly, honor it and skip the scope prompt
+  // entirely — statuses/picker below are computed on this resolved scope,
+  // same as the flagless prompt path. `scope` (opts) already carries the
+  // resolved value (flag > 'user' default); flags['scope'] !== undefined is
+  // the only reliable signal that the flag was actually passed (see central
+  // validation above, which already rejected any invalid value).
+  const scopeFlagProvided = flags['scope'] !== undefined;
 
   const statusPicker = prompts.selectArtifactsByStatus;
   if (statusPicker === undefined) {
@@ -1942,12 +2164,12 @@ async function handleInstall(opts: HandleInstallOpts): Promise<number> {
       print('No artifacts selected — nothing to install.');
       return 0;
     }
-    interactiveScope = await prompts.selectScope();
+    interactiveScope = scopeFlagProvided ? scope : await prompts.selectScope(assistant);
   } else {
     // Status-aware flow: scope first (status is per-scope), classify each entry
     // against the manifest + remote version, short-circuit when nothing is
     // actionable, then render the grouped install/update picker.
-    interactiveScope = await prompts.selectScope();
+    interactiveScope = scopeFlagProvided ? scope : await prompts.selectScope(assistant);
     const statuses = await computeArtifactStatuses(
       effective,
       interactiveScope,
@@ -1971,13 +2193,8 @@ async function handleInstall(opts: HandleInstallOpts): Promise<number> {
   }
 
   const interactiveManifestPath = resolveManifestPath(env);
-  const interactiveConfig = await loadCliConfig(env);
-
-  if (interactiveConfig.catalogs.length === 0) {
-    // No catalogs configured → actionable message
-    print('no catalog configured — run `agent-rigger init`');
-    return 0;
-  }
+  // interactiveConfig already loaded above (catalogs.length > 0, checked before
+  // any fetch) — reused here for the per-prefix routing, no second load.
 
   const interactiveRunner: CommandRunner = deps.remote?.run ?? defaultRunner;
   const interactiveTmpFactory: TmpDirFactory = deps.remote?.tmpFactory ?? defaultTmpFactory;
@@ -2067,6 +2284,14 @@ interface HandleAdHocInstallOpts {
 async function handleAdHocInstall(opts: HandleAdHocInstallOpts): Promise<number> {
   const { source, flags, scope, env, print, deps, assistant, secretOverrides } = opts;
 
+  // R4 (ADR-0018, ADR-0024): fail-closed before the ad-hoc fetch/scan. A
+  // non-TTY session without --yes cannot answer the confirmation prompt, and
+  // the untrusted select-all below must never run without explicit consent —
+  // exit 2 immediately. (handleInstall already gates before routing here; this
+  // second guard keeps the handler safe on its own.) Guarded by
+  // deps.prompts === undefined — see assertConfirmableOrYes.
+  if (deps.prompts === undefined && !assertConfirmableOrYes(flags, print)) return 2;
+
   const yes = flags['yes'] === true;
   const force = flags['force'] === true;
 
@@ -2084,8 +2309,12 @@ async function handleAdHocInstall(opts: HandleAdHocInstallOpts): Promise<number>
 
   // Step 3: select which entries to install.
   let selectedIds: string[];
-  if (yes || !process.stdout.isTTY) {
-    // Non-interactive: install all entries from the remote catalog.
+  if (yes) {
+    // --yes: install all entries from the remote catalog. This select-all over
+    // untrusted content is the documented, explicitly-consented behaviour
+    // (R4). The non-TTY-without-yes case never reaches here — it is stopped by
+    // assertConfirmableOrYes above, so the `|| !process.stdout.isTTY` arm that
+    // used to select-all silently on a non-TTY session is gone.
     selectedIds = qualifiedEntries.map((e) => e.id);
   } else {
     // Interactive: show picker.
@@ -2168,6 +2397,13 @@ async function handleRemove(opts: HandleRemoveOpts): Promise<number> {
     return 2;
   }
 
+  // R4 (ADR-0018, ADR-0024): fail-closed before any mutation. A non-TTY
+  // session without --yes cannot answer the confirmation prompt — exit 2
+  // immediately, after the actionable arg-validation errors above but before
+  // any adapter build or manifest write. Guarded by deps.prompts === undefined
+  // — see assertConfirmableOrYes.
+  if (deps.prompts === undefined && !assertConfirmableOrYes(flags, print)) return 2;
+
   const yes = flags['yes'] === true;
   // Resolve the target assistant once (R1/M18): flag > manifest routing
   // (entry.assistant of the requested ids, ADR-0020 §1 — no re-prompt) >
@@ -2230,6 +2466,12 @@ async function handleUpdate(opts: HandleUpdateOpts): Promise<number> {
       return 2;
     }
   }
+
+  // R4 (ADR-0018, ADR-0024): fail-closed before any catalog resolution,
+  // network fetch, checkout or mutation. A non-TTY session without --yes
+  // cannot answer the confirmation prompt — exit 2 immediately. Guarded by
+  // deps.prompts === undefined — see assertConfirmableOrYes.
+  if (deps.prompts === undefined && !assertConfirmableOrYes(flags, print)) return 2;
 
   const config = await loadCliConfig(env);
 
@@ -2486,6 +2728,15 @@ function printRemoteSections(print: (m: string) => void, sections: CheckRemoteSe
 // ---------------------------------------------------------------------------
 
 function handleError(err: unknown, print: (msg: string) => void): number {
+  if (err instanceof CancelledError) {
+    // R2/ADR-0024: the user interrupted a prompt (Ctrl+C) — clack's own
+    // cancel() call already printed a message to the terminal, so no
+    // re-print here (a second line would contradict "message d'annulation
+    // unique"). 130 = 128+SIGINT, distinguishing an interruption from a
+    // refusal (exit 0) or a runtime failure (exit 1).
+    return 130;
+  }
+
   if (err instanceof LegacyConfigError) {
     print(`[error] ${err.message}`);
     return 2;
@@ -2568,6 +2819,17 @@ function handleError(err: unknown, print: (msg: string) => void): number {
     return 2;
   }
 
+  if (err instanceof RemoteFetchError) {
+    // R1 (lot 5, ADR-0024): a git fetch/clone against a configured source
+    // failed (network/auth/host down) — the request was legitimate, the
+    // runtime failed, not the caller's fault. Names the source so a script
+    // reading only the exit code still gets an actionable log line. Checked
+    // AFTER RefShaMismatchError (a RemoteFetchError subclass with its own,
+    // more specific, exit code) so the narrower match wins.
+    print(`[error] fetch failed for "${err.url}": ${err.message}`);
+    return 1;
+  }
+
   if (err instanceof ScanBlockedError) {
     print(`[error] ${err.message}`);
     return 1;
@@ -2619,7 +2881,7 @@ async function importUiPrompts(): Promise<CliPrompts> {
   return {
     selectArtifacts: (entries) => ui.selectArtifacts(entries),
     selectArtifactsByStatus: (entries) => ui.selectArtifactsByStatus(entries),
-    selectScope: () => ui.selectScope(),
+    selectScope: (assistant) => ui.selectScope(assistant),
     confirmApply: (planText) => ui.confirmApply(planText),
     askUrl: async () => {
       const { text } = await import('@clack/prompts');
@@ -2628,8 +2890,10 @@ async function importUiPrompts(): Promise<CliPrompts> {
         placeholder: 'https://github.com/org/repo.git',
       });
       if (ui.isCancel(result)) {
+        // R2: interruption, not an empty-URL default — propagate so
+        // preflightAuth is never invoked and nothing is persisted.
         ui.cancel('Operation cancelled.');
-        return '';
+        throw new CancelledError();
       }
       return result as string;
     },
@@ -2644,8 +2908,10 @@ async function importUiPrompts(): Promise<CliPrompts> {
         ],
       });
       if (isCancel(result)) {
+        // R2: interruption, not a silent 'https' default — propagate so
+        // runInit never persists an authMethod the user never chose.
         cancel('Operation cancelled.');
-        return 'https';
+        throw new CancelledError();
       }
       return result as 'provider-cli' | 'https' | 'ssh';
     },

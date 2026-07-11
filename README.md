@@ -347,16 +347,18 @@ reverted) and asks for confirmation before making any change.
 
 ```
 # Resource-scoped form — validates the id belongs to the resource type
-agent-rigger guardrails remove guardrails-claude [--yes] [--scope=user|project]
-agent-rigger context remove context-claude --yes
+agent-rigger guardrails remove jr/guardrail:claude [--yes] [--scope=user|project]
+agent-rigger context remove jr/context:claude --yes
 
 # Top-level form — any resource type
-agent-rigger remove guardrails-claude context-claude --yes
+agent-rigger remove jr/guardrail:claude jr/context:claude --yes
 ```
 
 The command:
 
-1. Looks up each id in the catalog — unknown ids are rejected immediately.
+1. Looks up each id in the **manifest** (what is actually installed) — this is
+   offline and requires no catalog or network access; unknown/unqualified ids
+   are rejected immediately.
 2. Validates that each id matches the resource type (when using the resource
    form: `guardrails remove`, `skills remove`, etc.).
 3. Computes the removal plan via the adapter: rules to un-deny, import blocks

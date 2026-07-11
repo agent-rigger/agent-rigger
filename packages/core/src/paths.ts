@@ -13,6 +13,8 @@
 import os from 'node:os';
 import path from 'node:path';
 
+import type { Assistant, Scope } from './types';
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -180,4 +182,50 @@ export function resolveOpencodeProjectTargets(
     pluginDir: path.join(opencodeDir, 'plugin'),
     skillsDir: path.join(opencodeDir, 'skills'),
   };
+}
+
+// ---------------------------------------------------------------------------
+// assistantRoot — per-assistant root directory (R5, lot5-ux-dx)
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolve the root directory a transaction targets for a given assistant +
+ * scope, so plan headers and the scope picker can name the true directory
+ * instead of assuming `.claude` (R5).
+ *
+ * Derived from the `resolve*Targets` functions above — the sole source of
+ * truth for these conventions, no duplicated path literals:
+ *   - claude/user    → dirname(resolveUserTargets(...).claudeSettings)   = <home>/.claude
+ *   - claude/project → dirname(resolveProjectTargets(...).claudeSettings) = <cwd>/.claude
+ *   - opencode/user  → dirname(resolveOpencodeUserTargets(...).opencodeJson) = <home>/.config/opencode
+ *   - opencode/project → cwd itself (opencode.json lives at the project root;
+ *     `.opencode/` is only a sub-tree, not the root — see resolveOpencodeProjectTargets).
+ *   - copilot → undefined, fail-soft (reserved assistant id, no adapter, no
+ *     path suffix — Hors périmètre).
+ *
+ * Returns `undefined` when the assistant has no on-disk convention (copilot)
+ * or when the required `home`/`cwd` for the requested scope is absent/empty
+ * — callers (ui.ts) render no root suffix in that case.
+ */
+export function assistantRoot(
+  assistant: Assistant,
+  scope: Scope,
+  opts: { home?: string; cwd?: string } = {},
+): string | undefined {
+  if (assistant === 'copilot') return undefined;
+
+  if (scope === 'user') {
+    const { home } = opts;
+    if (home === undefined || home === '') return undefined;
+    const env: Env = { HOME: home };
+    return assistant === 'claude'
+      ? path.dirname(resolveUserTargets(env).claudeSettings)
+      : path.dirname(resolveOpencodeUserTargets(env).opencodeJson);
+  }
+
+  const { cwd } = opts;
+  if (cwd === undefined || cwd === '') return undefined;
+  return assistant === 'claude'
+    ? path.dirname(resolveProjectTargets(cwd).claudeSettings)
+    : path.dirname(resolveOpencodeProjectTargets(cwd).opencodeJson);
 }

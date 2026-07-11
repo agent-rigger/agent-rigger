@@ -321,7 +321,11 @@ describe('interactive install — without catalogUrl', () => {
     }
   });
 
-  it('exits 0 with actionable message when no catalogUrl configured', async () => {
+  it('exits 2 with actionable message when no catalogUrl configured (ADR-0024)', async () => {
+    // Inverted (lot5-R1, ADR-0024): interactive install with no catalog is a
+    // missing precondition, not a voluntary abort — exit 2, not 0. Prompts are
+    // injected (interactive session stand-in), so the R4 non-TTY gate is not
+    // engaged; the flow reaches the no-catalog check and returns 2.
     const noUrlIso = await makeIsolatedEnv({ withCatalogUrl: false });
     const lines: string[] = [];
 
@@ -340,7 +344,7 @@ describe('interactive install — without catalogUrl', () => {
         prompts,
       });
 
-      expect(code).toBe(0);
+      expect(code).toBe(2);
       const out = lines.join('\n');
       expect(out).toMatch(/aucun catalog|agent-rigger init/);
     } finally {

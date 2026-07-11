@@ -241,6 +241,7 @@ export async function runRemove(opts: RunRemoveOptions): Promise<RemoveCommandRe
     home: resolveHome(env),
     cwd,
     scope,
+    assistant: adapter.id,
     storeFates,
   }) + warningsBlock;
 

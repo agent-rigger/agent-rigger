@@ -27,6 +27,7 @@ import {
 
 import type { CatalogEntry } from '@agent-rigger/catalog';
 import type { Assistant, RemovalOp, Report, Scope, WriteOp } from '@agent-rigger/core';
+import { assistantRoot } from '@agent-rigger/core';
 
 // ---------------------------------------------------------------------------
 // Path abbreviation helpers
@@ -109,6 +110,12 @@ export interface RenderPlanOpts {
   /** Installation scope — shown in the plan header when provided. */
   scope?: Scope;
   /**
+   * Target assistant (R5) — the plan header's root path is derived from this
+   * (via `assistantRoot`) instead of assuming `.claude`. Defaults to 'claude'
+   * for backward compatibility with callers that don't pass it.
+   */
+  assistant?: Assistant;
+  /**
    * Enable ANSI colour codes.
    * Defaults to `process.stdout.isTTY === true && process.env.NO_COLOR === undefined`.
    * Pass `color: false` in tests to get deterministic plain-text output.
@@ -125,6 +132,11 @@ export interface RenderRemovalPlanOpts {
   home?: string;
   cwd?: string;
   scope?: Scope;
+  /**
+   * Target assistant (R5) — see RenderPlanOpts.assistant. Defaults to
+   * 'claude' for backward compatibility with callers that don't pass it.
+   */
+  assistant?: Assistant;
   color?: boolean;
   maxDetail?: number;
   /**
@@ -179,6 +191,24 @@ export function shouldColor(color?: boolean): boolean {
 // ---------------------------------------------------------------------------
 // Internal helpers for group rendering
 // ---------------------------------------------------------------------------
+
+/**
+ * Render the "(<root>)" suffix for a plan/removal-plan header's scope part
+ * (R5): resolves the true root directory for `assistant`/`scope` via
+ * `assistantRoot` (single source of truth, `core/paths`) instead of assuming
+ * `.claude`, abbreviates it with `abbr`, and returns '' when no root is
+ * resolvable (missing home/cwd for the scope, or a fail-soft assistant like
+ * copilot) — same behaviour as before this option existed.
+ */
+function scopeRootSuffix(
+  assistant: Assistant | undefined,
+  scope: Scope,
+  opts: { home?: string; cwd?: string },
+  abbr: (p: string) => string,
+): string {
+  const root = assistantRoot(assistant ?? 'claude', scope, opts);
+  return root === undefined ? '' : ` (${abbr(root)})`;
+}
 
 /**
  * Return the primary target string for a group header line.
@@ -270,12 +300,7 @@ export function renderPlan(groups: PlanGroup[], opts: RenderPlanOpts = {}): stri
 
   let scopePart = '';
   if (opts.scope !== undefined) {
-    let root = '';
-    if (opts.scope === 'user' && opts.home !== undefined && opts.home !== '') {
-      root = ` (${abbr(opts.home + '/.claude')})`;
-    } else if (opts.scope === 'project' && opts.cwd !== undefined && opts.cwd !== '') {
-      root = ` (${abbr(opts.cwd + '/.claude')})`;
-    }
+    const root = scopeRootSuffix(opts.assistant, opts.scope, opts, abbr);
     scopePart = ` · scope: ${opts.scope}${root}`;
   }
 
@@ -447,12 +472,7 @@ export function renderRemovalPlan(
 
   let scopePart = '';
   if (opts.scope !== undefined) {
-    let root = '';
-    if (opts.scope === 'user' && opts.home !== undefined && opts.home !== '') {
-      root = ` (${abbr(opts.home + '/.claude')})`;
-    } else if (opts.scope === 'project' && opts.cwd !== undefined && opts.cwd !== '') {
-      root = ` (${abbr(opts.cwd + '/.claude')})`;
-    }
+    const root = scopeRootSuffix(opts.assistant, opts.scope, opts, abbr);
     scopePart = ` · scope: ${opts.scope}${root}`;
   }
 
@@ -689,6 +709,27 @@ export function renderEntryInfo(entry: CatalogEntry, opts: RenderEntryInfoOpts =
 // ---------------------------------------------------------------------------
 
 /**
+ * Thrown by every interactive prompt in this module — and by
+ * assistant-select.ts / secret-collect.ts, which migrate their own
+ * `throw new Error(...)` to it — when the user cancels via Ctrl+C
+ * (clack's `isCancel`). `handleError` (cli.ts) maps it to exit 130 without
+ * re-printing a message: the `cancel()` call already printed clack's own
+ * cancellation line (R2, ADR-0024).
+ *
+ * Cancelling is an INTERRUPTION, not a refusal: it carries no default value,
+ * triggers no further I/O (no network, no write), and is distinct from a
+ * confirmed negative/empty response — which returns normally and lets the
+ * caller decide (e.g. exit 0 for `confirmApply`'s "no", or a submitted empty
+ * multiselect).
+ */
+export class CancelledError extends Error {
+  constructor(message = 'Operation cancelled.') {
+    super(message);
+    this.name = 'CancelledError';
+  }
+}
+
+/**
  * Present a multiselect prompt listing catalog entries by id.
  * Returns the array of selected ids.
  * Throws a CancelledError (via cancel helper) if the user aborts.
@@ -703,7 +744,7 @@ export async function selectArtifacts(entries: CatalogEntry[]): Promise<string[]
 
   if (isCancel(result)) {
     cancel('Operation cancelled.');
-    return [];
+    throw new CancelledError();
   }
 
   return result;
@@ -732,12 +773,13 @@ export interface SelectWithDefaultsOpts {
  * Behaviour:
  * - Entries in `required`    → initially checked; always included in the returned ids
  *   (enforced after the picker returns, so even if the user unchecks them they come back).
- *   On CANCEL the full proposal is abandoned — returns [] (no install at all).
+ *   On CANCEL (Ctrl+C) the proposal is interrupted — throws CancelledError (R2).
  * - Entries in `recommended` → initially checked; can be unchecked by the user.
  * - Remaining entries        → initially unchecked.
  *
- * Cancellation (isCancel): returns [] — the user chose to install nothing.
- * The `required` enforcement only applies to a CONFIRMED selection, not an abort.
+ * Cancellation (isCancel): throws CancelledError (R2) — handleError maps it to
+ * exit 130. The `required` enforcement only applies to a CONFIRMED selection,
+ * not a cancellation.
  *
  * Note: `enforceRequired` is inlined to avoid a circular dependency with
  * cmd-init; callers (bin/cli.ts) should use this together with cmd-init's helpers.
@@ -765,9 +807,9 @@ export async function selectArtifactsWithDefaults(
 
   if (isCancel(result)) {
     cancel('Operation cancelled.');
-    // Abort = install nothing at all (the user opted out of the entire proposal).
-    // `required` enforcement only applies to a confirmed selection, not an abort.
-    return [];
+    // Cancellation (R2): the caller (handleError) maps CancelledError to exit
+    // 130. `required` enforcement only applies to a confirmed selection.
+    throw new CancelledError();
   }
 
   // Enforce: re-add any required ids that were unchecked.
@@ -855,7 +897,8 @@ export function buildStatusOptions(entries: StatusedEntry[]): Record<string, Sta
  *
  * Three groups, only rendered when non-empty (see {@link buildStatusOptions}).
  * Pre-checked set = install ∪ update. The "current" group lets the user opt into
- * a reinstall by checking an item. Cancellation returns [] (install nothing).
+ * a reinstall by checking an item. Cancellation (isCancel) throws CancelledError
+ * (R2) — handleError maps it to exit 130.
  */
 export async function selectArtifactsByStatus(entries: StatusedEntry[]): Promise<string[]> {
   const options = buildStatusOptions(entries);
@@ -878,29 +921,54 @@ export async function selectArtifactsByStatus(entries: StatusedEntry[]): Promise
 
   if (isCancel(result)) {
     cancel('Operation cancelled.');
-    return [];
+    throw new CancelledError();
   }
 
   return result;
 }
 
 /**
+ * Build the scope picker's options (pure, testable) (R5).
+ *
+ * Labels' root directory is derived from `assistantRoot` — so an opencode
+ * transaction reads `~/.config/opencode` / the cwd root, never `.claude`.
+ * Placeholder tokens ('~', 'cwd') stand in for the real home/cwd, which the
+ * picker has no access to — same convention the previous hardcoded labels
+ * used. A fail-soft assistant (copilot) falls back to a bare label, no path.
+ */
+export function buildScopeOptions(
+  assistant: Assistant = 'claude',
+): { value: Scope; label: string }[] {
+  const userRoot = assistantRoot(assistant, 'user', { home: '~' });
+  const projectRoot = assistantRoot(assistant, 'project', { cwd: 'cwd' });
+
+  return [
+    { value: 'user', label: userRoot === undefined ? 'user' : `user  (${userRoot}/)` },
+    {
+      value: 'project',
+      label: projectRoot === undefined ? 'project' : `project  (${projectRoot}/)`,
+    },
+  ];
+}
+
+/**
  * Present a select prompt for installation scope.
  * Returns 'user' or 'project'.
- * Falls back to 'user' if the user cancels.
+ * Throws a CancelledError if the user cancels (R2) — the caller must stop
+ * immediately: no fallback scope, no further network call, no picker shown.
+ *
+ * `assistant` (R5, defaults to 'claude' for backward compatibility) picks the
+ * labels via {@link buildScopeOptions}.
  */
-export async function selectScope(): Promise<Scope> {
+export async function selectScope(assistant: Assistant = 'claude'): Promise<Scope> {
   const result = await select<Scope>({
     message: 'Select installation scope:',
-    options: [
-      { value: 'user', label: 'user  (~/.claude/)' },
-      { value: 'project', label: 'project  (cwd/.claude/)' },
-    ],
+    options: buildScopeOptions(assistant),
   });
 
   if (isCancel(result)) {
     cancel('Operation cancelled.');
-    return 'user';
+    throw new CancelledError();
   }
 
   return result;
@@ -1041,6 +1109,16 @@ export async function confirmApply(summary: string): Promise<boolean> {
 export async function confirmToolChecks(
   commands: { id: string; command: string }[],
 ): Promise<boolean> {
+  // R4 (ADR-0018, fail-closed): a non-TTY session cannot answer this prompt
+  // (clack confirm hangs on non-TTY stdin — the prompt reads keypresses from
+  // stdin, not stdout). No consent → run none of the listed check commands,
+  // exactly as a "no" answer would. Reaching this point non-interactively
+  // means --yes was passed to the top-level command but the granular
+  // tool-check consent is deliberately never auto-granted.
+  if (process.stdin.isTTY !== true) {
+    return false;
+  }
+
   const list = commands.map((c) => `  ${c.id}  →  ${c.command}`).join('\n');
   const result = await confirm({
     message: `Run the following tool presence-checks?\n\n${list}`,

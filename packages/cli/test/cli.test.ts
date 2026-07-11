@@ -119,8 +119,57 @@ describe('parseArgs', () => {
   });
 
   it('handles boolean flag without value', () => {
-    const result = parseArgs(['--verbose']);
-    expect(result.flags['verbose']).toBe(true);
+    // '--verbose' is not a real CLI flag (KNOWN_FLAGS, R3/lot5) — use '--yes',
+    // an actual boolean flag, to exercise the same "no '=' → true" behaviour.
+    const result = parseArgs(['--yes']);
+    expect(result.flags['yes']).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// parseArgs — space syntax for VALUE_FLAGS (R3, lot5)
+// ---------------------------------------------------------------------------
+
+describe('parseArgs — space syntax for --scope/--assistant/--secret-env (R3)', () => {
+  it('parses "--assistant opencode" (space) the same as "--assistant=opencode"', () => {
+    const spaced = parseArgs(['check', '--assistant', 'opencode']);
+    const equalled = parseArgs(['check', '--assistant=opencode']);
+    expect(spaced.flags['assistant']).toBe('opencode');
+    expect(spaced.error).toBeUndefined();
+    expect(spaced.flags).toEqual(equalled.flags);
+  });
+
+  it('parses "--scope project" (space) without leaking the value as a positional id', () => {
+    const result = parseArgs(['install', 'jr/skill:foo', '--scope', 'project']);
+    expect(result.flags['scope']).toBe('project');
+    expect(result.resourceIds).toEqual(['jr/skill:foo']);
+  });
+
+  it('parses "--secret-env ref=VAR" (space) into secretEnvFlags', () => {
+    const result = parseArgs(['install', 'jr/mcp:x', '--secret-env', 'ref=VAR']);
+    expect(result.secretEnvFlags).toEqual(['ref=VAR']);
+    expect(result.resourceIds).toEqual(['jr/mcp:x']);
+  });
+
+  it('a value-flag at the very end of argv (no following token) sets `error`', () => {
+    const result = parseArgs(['check', '--assistant']);
+    expect(result.error).toBe('--assistant requires a value');
+  });
+
+  it('an unknown flag (with "=") sets `error` naming it', () => {
+    const result = parseArgs(['install', 'jr/skill:foo', '--sope=project']);
+    expect(result.error).toBe('unknown flag "--sope"');
+  });
+
+  it('an unknown flag (no "=") also sets `error` naming it', () => {
+    const result = parseArgs(['install', '--bogus']);
+    expect(result.error).toBe('unknown flag "--bogus"');
+  });
+
+  it('boolean flags (--yes/--force/--help/--version) do not consume the next token', () => {
+    const result = parseArgs(['install', 'jr/skill:foo', '--yes', 'jr/skill:bar']);
+    expect(result.flags['yes']).toBe(true);
+    expect(result.resourceIds).toEqual(['jr/skill:foo', 'jr/skill:bar']);
   });
 });
 
@@ -293,7 +342,7 @@ describe('runCli — check without catalogUrl → empty catalog + actionable mes
 // runCli — install command + idempotence
 // ---------------------------------------------------------------------------
 
-describe('runCli — install without catalogUrl → actionable message, exit 0', () => {
+describe('runCli — install without catalogUrl → missing precondition, exit 2 (R1, ADR-0024)', () => {
   let tmp: { dir: string; cleanup: () => Promise<void> };
 
   beforeEach(async () => {
@@ -304,16 +353,23 @@ describe('runCli — install without catalogUrl → actionable message, exit 0',
     await tmp.cleanup();
   });
 
-  it('install with fake prompts returns exit code 0 (no catalogUrl → actionable message)', async () => {
+  // Inverted (lot5-R1, ADR-0024): interactive install with no catalog configured
+  // used to print an actionable message and exit 0 — a false success (a CI job
+  // reading only the exit code believed it had installed). The absence of a
+  // catalog is a missing precondition, not a voluntary abort: install is an
+  // explicit request, so it now exits 2. See lot5-r1-exit-codes.test.ts for the
+  // full scenario coverage; this test keeps the regression pinned in place.
+  it('install with fake prompts returns exit code 2 (no catalogUrl → missing precondition)', async () => {
     const cap = makeCapture();
     const code = await runCli(['install'], {
       print: cap.print,
       env: { RIGGER_HOME: tmp.dir },
       prompts: fakePrompts(),
     });
-    expect(code).toBe(0);
+    expect(code).toBe(2);
     const out = cap.lines.join('\n');
-    expect(out).toMatch(/aucun catalog|agent-rigger init/);
+    expect(out).toMatch(/\[error\]/);
+    expect(out).toMatch(/no catalog configured|agent-rigger init/);
   });
 
   it('install does not write settings.json when no catalogUrl configured', async () => {
@@ -329,14 +385,16 @@ describe('runCli — install without catalogUrl → actionable message, exit 0',
     expect(exists).toBe(false);
   });
 
-  it('install returns exit code 0 (no catalogUrl, no ids provided)', async () => {
+  // Inverted (lot5-R1): duplicate of the scenario above, kept as its own
+  // assertion (predates the split into a dedicated exit-code check).
+  it('install returns exit code 2 (no catalogUrl, no ids provided)', async () => {
     const cap = makeCapture();
     const code = await runCli(['install'], {
       print: cap.print,
       env: { RIGGER_HOME: tmp.dir },
       prompts: fakePrompts(),
     });
-    expect(code).toBe(0);
+    expect(code).toBe(2);
   });
 
   it('check without catalogUrl returns exit code 0 (empty catalog → actionable message)', async () => {
@@ -345,25 +403,11 @@ describe('runCli — install without catalogUrl → actionable message, exit 0',
       print: checkCap.print,
       env: { RIGGER_HOME: tmp.dir },
     });
-    // Without catalogUrl, catalog is empty → actionable message, exit 0
+    // check is a read command (R1: dégradation légitime inchangée) — reading
+    // an empty state is not a failure, unlike install's explicit request.
     expect(checkCode).toBe(0);
     const out = checkCap.lines.join('\n');
     expect(out).toMatch(/aucun catalog|agent-rigger init/);
-  });
-
-  it('install with confirmApply=false returns exit code 0 (aborted cleanly)', async () => {
-    const cap = makeCapture();
-    const prompts: CliPrompts = {
-      ...fakePrompts(),
-      confirmApply: async (_planText) => false,
-    };
-    const code = await runCli(['install'], {
-      print: cap.print,
-      env: { RIGGER_HOME: tmp.dir },
-      prompts,
-    });
-    // Aborted cleanly = 0 (no error, user cancelled or no catalog)
-    expect(code).toBe(0);
   });
 });
 
@@ -482,7 +526,7 @@ describe('runCli — skills ls (filtered) without catalogUrl → actionable mess
 // runCli — non-interactive install with --yes
 // ---------------------------------------------------------------------------
 
-describe('runCli — install <id> --yes without catalogUrl → actionable message', () => {
+describe('runCli — install <id> --yes without catalogUrl → missing precondition (R1)', () => {
   let tmp: { dir: string; cleanup: () => Promise<void> };
 
   beforeEach(async () => {
@@ -493,16 +537,18 @@ describe('runCli — install <id> --yes without catalogUrl → actionable messag
     await tmp.cleanup();
   });
 
-  it('returns exit code 0 even when id provided but no catalogUrl configured', async () => {
+  // Inverted (lot5-R1, ADR-0024): --yes skips confirmation, not preconditions —
+  // no catalog configured is still a missing precondition, so this exits 2
+  // (not the false-success 0 it used to return).
+  it('returns exit code 2 even when id provided but no catalogUrl configured', async () => {
     const cap = makeCapture();
-    // Without catalogUrl, catalog is empty → actionable message + exit 0
     const code = await runCli(['install', 'principal/skill:some-skill', '--yes'], {
       print: cap.print,
       env: { RIGGER_HOME: tmp.dir },
     });
-    expect(code).toBe(0);
+    expect(code).toBe(2);
     const out = cap.lines.join('\n');
-    expect(out).toMatch(/aucun catalog|agent-rigger init/);
+    expect(out).toMatch(/no catalog configured|agent-rigger init/);
   });
 
   it('does not call selectArtifacts prompt when ids provided', async () => {
@@ -542,16 +588,19 @@ describe('runCli — install <id> --yes without catalogUrl → actionable messag
     expect(confirmCalled).toBe(false);
   });
 
-  it('exits 0 with actionable message when --yes is NOT set and no catalogUrl', async () => {
+  // Inverted (lot5-R1, ADR-0024): same missing precondition whether or not
+  // --yes is set — the flag only decides whether a confirm prompt would have
+  // appeared, not whether the catalog exists.
+  it('exits 2 with actionable message when --yes is NOT set and no catalogUrl', async () => {
     const cap = makeCapture();
-    await runCli(['install', 'principal/skill:some-skill'], {
+    const code = await runCli(['install', 'principal/skill:some-skill'], {
       print: cap.print,
       env: { RIGGER_HOME: tmp.dir },
       prompts: fakePrompts(),
     });
-    // With no catalogUrl, install resolves empty catalog → actionable message, exit 0
+    expect(code).toBe(2);
     const out = cap.lines.join('\n');
-    expect(out).toMatch(/aucun catalog|agent-rigger init/);
+    expect(out).toMatch(/no catalog configured|agent-rigger init/);
   });
 });
 

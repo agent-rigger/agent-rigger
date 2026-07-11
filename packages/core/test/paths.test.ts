@@ -2,7 +2,12 @@ import { describe, expect, it } from 'bun:test';
 import os from 'node:os';
 import path from 'node:path';
 
-import { resolveHome, resolveProjectTargets, resolveUserTargets } from '../src/paths';
+import {
+  assistantRoot,
+  resolveHome,
+  resolveProjectTargets,
+  resolveUserTargets,
+} from '../src/paths';
 
 // ---------------------------------------------------------------------------
 // resolveHome
@@ -112,6 +117,63 @@ describe('resolveProjectTargets', () => {
     const targets = resolveProjectTargets();
     expect(targets.claudeSettings).toBe(
       path.join(process.cwd(), '.claude', 'settings.json'),
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// assistantRoot — per-assistant root directory (R5, lot5-ux-dx)
+// ---------------------------------------------------------------------------
+
+describe('assistantRoot', () => {
+  const HOME = '/tmp/rigger-test-home';
+  const CWD = '/tmp/proj';
+
+  it('resolves claude/user to <home>/.claude', () => {
+    expect(assistantRoot('claude', 'user', { home: HOME })).toBe(path.join(HOME, '.claude'));
+  });
+
+  it('resolves claude/project to <cwd>/.claude', () => {
+    expect(assistantRoot('claude', 'project', { cwd: CWD })).toBe(path.join(CWD, '.claude'));
+  });
+
+  it('resolves opencode/user to <home>/.config/opencode', () => {
+    expect(assistantRoot('opencode', 'user', { home: HOME })).toBe(
+      path.join(HOME, '.config', 'opencode'),
+    );
+  });
+
+  it('resolves opencode/project to the cwd root (not .opencode/)', () => {
+    expect(assistantRoot('opencode', 'project', { cwd: CWD })).toBe(CWD);
+  });
+
+  it('returns undefined for copilot regardless of scope (fail-soft, no adapter)', () => {
+    expect(assistantRoot('copilot', 'user', { home: HOME })).toBeUndefined();
+    expect(assistantRoot('copilot', 'project', { cwd: CWD })).toBeUndefined();
+  });
+
+  it('returns undefined when home is missing for a user-scope lookup', () => {
+    expect(assistantRoot('claude', 'user', {})).toBeUndefined();
+    expect(assistantRoot('opencode', 'user', {})).toBeUndefined();
+  });
+
+  it('returns undefined when home is an empty string for a user-scope lookup', () => {
+    expect(assistantRoot('claude', 'user', { home: '' })).toBeUndefined();
+  });
+
+  it('returns undefined when cwd is missing for a project-scope lookup', () => {
+    expect(assistantRoot('claude', 'project', {})).toBeUndefined();
+    expect(assistantRoot('opencode', 'project', {})).toBeUndefined();
+  });
+
+  it('returns undefined when cwd is an empty string for a project-scope lookup', () => {
+    expect(assistantRoot('opencode', 'project', { cwd: '' })).toBeUndefined();
+  });
+
+  it('is derived from resolveUserTargets/resolveOpencodeUserTargets (single source of truth)', () => {
+    const env = { HOME };
+    expect(assistantRoot('claude', 'user', { home: HOME })).toBe(
+      path.dirname(resolveUserTargets(env).claudeSettings),
     );
   });
 });

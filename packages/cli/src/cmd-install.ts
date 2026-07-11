@@ -344,6 +344,7 @@ export async function runInstall(opts: RunInstallOptions): Promise<InstallResult
     home: resolveHome(env),
     cwd: effectiveCwd,
     scope,
+    assistant: adapter.id,
   });
 
   // Prepend project-scope note (cwd + optional git-repo warning) when relevant.

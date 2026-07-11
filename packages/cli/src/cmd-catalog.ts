@@ -13,11 +13,13 @@
  * - Config is read and written via loadConfigFile / persistConfig (round-trip safe).
  * - fetchCatalogFn / proposeInstall failures after add are caught non-fatally:
  *   config stays saved, output gets an actionable hint to run `install` later.
- *   Same pattern as cmd-init.ts §step-6.
+ *   Same pattern as cmd-init.ts §step-6. A CancelledError (R2, user Ctrl+C in the
+ *   post-add picker) is re-thrown, not swallowed — it maps to exit 130.
  */
 
 import type { CatalogProposal } from './cmd-init';
 import { loadConfigFile, persistConfig } from './config';
+import { CancelledError } from './ui';
 
 // Re-export so tests importing from cmd-catalog get the type without a separate import.
 export type { CatalogProposal } from './cmd-init';
@@ -121,7 +123,12 @@ export async function runCatalog(opts: RunCatalogOpts): Promise<number> {
       try {
         const catalog = await fetchCatalogFn(url, name);
         await proposeInstall(catalog);
-      } catch {
+      } catch (err) {
+        // R2/ADR-0024: a user cancel (Ctrl+C in the post-add picker) must
+        // propagate to exit 130, not be swallowed as a non-fatal fetch failure.
+        if (err instanceof CancelledError) {
+          throw err;
+        }
         // Non-fatal: config is already saved. Give the user an actionable hint.
         print(
           `\nCatalog fetch failed. Run \`install\` later to install artifacts from the catalog.`,
