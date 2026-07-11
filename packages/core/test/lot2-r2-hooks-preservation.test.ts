@@ -51,8 +51,8 @@ const foreignItem = (): Record<string, unknown> => ({ type: 'future-type', x: 1 
 // R2 — install on an event carrying a user entry without matcher
 // ---------------------------------------------------------------------------
 
-describe('R2: mergeHook preserves user entries without matcher', () => {
-  it('R2: keeps the user entry unchanged and appends the rigger entry', () => {
+describe('lot2-R2: mergeHook preserves user entries without matcher', () => {
+  it('lot2-R2: keeps the user entry unchanged and appends the rigger entry', () => {
     const settings = { hooks: { Stop: [userEntryWithoutMatcher()] } };
 
     const result = mergeHook(settings, RIGGER_STOP_SPEC);
@@ -68,7 +68,7 @@ describe('R2: mergeHook preserves user entries without matcher', () => {
     ]);
   });
 
-  it('R2: preserves the order of existing entries (rigger entry appended last)', () => {
+  it('lot2-R2: preserves the order of existing entries (rigger entry appended last)', () => {
     const first = userEntryWithoutMatcher();
     const second = { matcher: 'Edit', hooks: [{ type: 'command', command: 'user-edit.sh' }] };
     const settings = { hooks: { PreToolUse: [first, second] } };
@@ -83,7 +83,7 @@ describe('R2: mergeHook preserves user entries without matcher', () => {
     expect((entries[2] as Record<string, unknown>)['matcher']).toBe('Bash');
   });
 
-  it('R2: preserves entries that are not even objects (unknown future format)', () => {
+  it('lot2-R2: preserves entries that are not even objects (unknown future format)', () => {
     const settings = { hooks: { Stop: ['opaque-string-entry', userEntryWithoutMatcher()] } };
 
     const result = mergeHook(settings, RIGGER_STOP_SPEC);
@@ -99,8 +99,8 @@ describe('R2: mergeHook preserves user entries without matcher', () => {
 // R2 — remove only touches the rigger entry (round-trip byte for byte)
 // ---------------------------------------------------------------------------
 
-describe('R2: removeHook only touches the rigger entry', () => {
-  it('R2: merge then remove restores the settings byte for byte (entry without matcher)', () => {
+describe('lot2-R2: removeHook only touches the rigger entry', () => {
+  it('lot2-R2: merge then remove restores the settings byte for byte (entry without matcher)', () => {
     const original = {
       hooks: { Stop: [userEntryWithoutMatcher()] },
       permissions: { deny: ['Read(~/.ssh/**)'] },
@@ -113,7 +113,7 @@ describe('R2: removeHook only touches the rigger entry', () => {
     expect(JSON.stringify(removed)).toBe(snapshot);
   });
 
-  it('R2: after remove, hooks.Stop contains exactly the original user entry', () => {
+  it('lot2-R2: after remove, hooks.Stop contains exactly the original user entry', () => {
     const settings = { hooks: { Stop: [userEntryWithoutMatcher()] } };
 
     const merged = mergeHook(settings, RIGGER_STOP_SPEC);
@@ -123,7 +123,7 @@ describe('R2: removeHook only touches the rigger entry', () => {
     expect(hooks['Stop']).toEqual([userEntryWithoutMatcher()]);
   });
 
-  it('R2: a user entry without matcher between two matcher entries stays in place', () => {
+  it('lot2-R2: a user entry without matcher between two matcher entries stays in place', () => {
     const before = { matcher: 'Edit', hooks: [{ type: 'command', command: 'edit.sh' }] };
     const middle = userEntryWithoutMatcher();
     const after = {
@@ -144,13 +144,13 @@ describe('R2: removeHook only touches the rigger entry', () => {
 // R2 — non-command items preserved inside the targeted matcher entry
 // ---------------------------------------------------------------------------
 
-describe('R2: non-command items preserved in the targeted matcher', () => {
+describe('lot2-R2: non-command items preserved in the targeted matcher', () => {
   const originalEntry = () => ({
     matcher: 'Bash',
     hooks: [{ type: 'command', command: 'user.sh' }, foreignItem()],
   });
 
-  it('R2: after merge, both original items are still present next to the rigger command', () => {
+  it('lot2-R2: after merge, both original items are still present next to the rigger command', () => {
     const settings = { hooks: { PreToolUse: [originalEntry()] } };
 
     const merged = mergeHook(settings, RIGGER_BASH_SPEC);
@@ -166,7 +166,7 @@ describe('R2: non-command items preserved in the targeted matcher', () => {
     expect(items[2]).toEqual({ type: 'command', command: RIGGER_BASH_SPEC.command });
   });
 
-  it('R2: after merge then remove, the array is back byte for byte', () => {
+  it('lot2-R2: after merge then remove, the array is back byte for byte', () => {
     const original = { hooks: { PreToolUse: [originalEntry()] } };
     const snapshot = JSON.stringify(original);
 
@@ -176,7 +176,7 @@ describe('R2: non-command items preserved in the targeted matcher', () => {
     expect(JSON.stringify(removed)).toBe(snapshot);
   });
 
-  it('R2: unknown fields on the matcher entry survive merge and remove', () => {
+  it('lot2-R2: unknown fields on the matcher entry survive merge and remove', () => {
     const entry = {
       matcher: 'Bash',
       description: 'user annotation',
@@ -206,8 +206,8 @@ describe('R2: non-command items preserved in the targeted matcher', () => {
 // R2 — the matcher entry survives if foreign items remain
 // ---------------------------------------------------------------------------
 
-describe('R2: matcher entry survives when foreign items remain', () => {
-  it('R2: removing the rigger command keeps the entry with its foreign item', () => {
+describe('lot2-R2: matcher entry survives when foreign items remain', () => {
+  it('lot2-R2: removing the rigger command keeps the entry with its foreign item', () => {
     const settings = {
       hooks: {
         PreToolUse: [
@@ -229,7 +229,7 @@ describe('R2: matcher entry survives when foreign items remain', () => {
     expect(entry['hooks']).toEqual([foreignItem()]);
   });
 
-  it('R2: the entry is still removed when its hooks[] becomes truly empty', () => {
+  it('lot2-R2: the entry is still removed when its hooks[] becomes truly empty', () => {
     const settings = {
       hooks: {
         PreToolUse: [
@@ -251,8 +251,8 @@ describe('R2: matcher entry survives when foreign items remain', () => {
 // R2 — malformed event value: fail-closed
 // ---------------------------------------------------------------------------
 
-describe('R2: non-array event value fails closed', () => {
-  it('R2: mergeHook throws InvalidHooksEventError naming the path and expected shape', () => {
+describe('lot2-R2: non-array event value fails closed', () => {
+  it('lot2-R2: mergeHook throws InvalidHooksEventError naming the path and expected shape', () => {
     const settings = { hooks: { Stop: { oops: true } } };
 
     expect(() => mergeHook(settings, RIGGER_STOP_SPEC)).toThrow(InvalidHooksEventError);
@@ -269,13 +269,13 @@ describe('R2: non-array event value fails closed', () => {
     }
   });
 
-  it('R2: removeHook throws InvalidHooksEventError on a non-array event value', () => {
+  it('lot2-R2: removeHook throws InvalidHooksEventError on a non-array event value', () => {
     const settings = { hooks: { Stop: 'not-an-array' } };
 
     expect(() => removeHook(settings, RIGGER_STOP_SPEC)).toThrow(InvalidHooksEventError);
   });
 
-  it('R2: the input settings object is not mutated when the event value is malformed', () => {
+  it('lot2-R2: the input settings object is not mutated when the event value is malformed', () => {
     const settings = { hooks: { Stop: { oops: true } } };
     const snapshot = JSON.stringify(settings);
 
@@ -284,7 +284,7 @@ describe('R2: non-array event value fails closed', () => {
     expect(JSON.stringify(settings)).toBe(snapshot);
   });
 
-  it('R2: a malformed value on ANOTHER event does not block the targeted event', () => {
+  it('lot2-R2: a malformed value on ANOTHER event does not block the targeted event', () => {
     const settings = {
       hooks: { PreCompact: { oops: true }, Stop: [userEntryWithoutMatcher()] },
     };
@@ -296,7 +296,7 @@ describe('R2: non-array event value fails closed', () => {
     expect(hooks['Stop']).toHaveLength(2);
   });
 
-  it('R2: hasHook stays matcher-strict and lenient — false on a non-array event value', () => {
+  it('lot2-R2: hasHook stays matcher-strict and lenient — false on a non-array event value', () => {
     const settings = { hooks: { Stop: { oops: true } } };
 
     expect(hasHook(settings, RIGGER_STOP_SPEC)).toBe(false);
@@ -307,8 +307,8 @@ describe('R2: non-array event value fails closed', () => {
 // R2 — malformed hooks ROOT: fail-closed one level above the event
 // ---------------------------------------------------------------------------
 
-describe('R2: non-object hooks root fails closed', () => {
-  it('R2: mergeHook throws InvalidHooksRootError when hooks is an array (user content never replaced)', () => {
+describe('lot2-R2: non-object hooks root fails closed', () => {
+  it('lot2-R2: mergeHook throws InvalidHooksRootError when hooks is an array (user content never replaced)', () => {
     const settings = { hooks: ['user-opaque-entry', { custom: true }] };
     const snapshot = JSON.stringify(settings);
 
@@ -326,13 +326,13 @@ describe('R2: non-object hooks root fails closed', () => {
     expect(JSON.stringify(settings)).toBe(snapshot);
   });
 
-  it('R2: removeHook throws InvalidHooksRootError when hooks is a string (user content never deleted)', () => {
+  it('lot2-R2: removeHook throws InvalidHooksRootError when hooks is a string (user content never deleted)', () => {
     const settings = { hooks: 'str' };
 
     expect(() => removeHook(settings, RIGGER_STOP_SPEC)).toThrow(InvalidHooksRootError);
   });
 
-  it('R2: mergeHook and removeHook throw on hooks: null and hooks: 42', () => {
+  it('lot2-R2: mergeHook and removeHook throw on hooks: null and hooks: 42', () => {
     for (const value of [null, 42]) {
       const settings = { hooks: value };
       expect(() => mergeHook(settings, RIGGER_STOP_SPEC)).toThrow(InvalidHooksRootError);
@@ -340,13 +340,13 @@ describe('R2: non-object hooks root fails closed', () => {
     }
   });
 
-  it('R2: an ABSENT hooks key is not an error — mergeHook creates the map', () => {
+  it('lot2-R2: an ABSENT hooks key is not an error — mergeHook creates the map', () => {
     const merged = mergeHook({ permissions: { deny: [] } }, RIGGER_STOP_SPEC);
 
     expect(hasHook(merged, RIGGER_STOP_SPEC)).toBe(true);
   });
 
-  it('R2: hasHook stays lenient — false on a malformed hooks root, never a throw', () => {
+  it('lot2-R2: hasHook stays lenient — false on a malformed hooks root, never a throw', () => {
     expect(hasHook({ hooks: ['x'] }, RIGGER_STOP_SPEC)).toBe(false);
     expect(hasHook({ hooks: 'str' }, RIGGER_STOP_SPEC)).toBe(false);
     expect(hasHook({ hooks: null }, RIGGER_STOP_SPEC)).toBe(false);
@@ -357,7 +357,7 @@ describe('R2: non-object hooks root fails closed', () => {
 // R2 — duplicate matcher entries: recognition spans ALL of them
 // ---------------------------------------------------------------------------
 
-describe('R2: duplicate matcher entries are all inspected', () => {
+describe('lot2-R2: duplicate matcher entries are all inspected', () => {
   /** The rigger command lives in the SECOND Bash entry (manual reorder/edit —
    * a format Claude Code accepts). */
   const duplicateMatcherSettings = () => ({
@@ -369,11 +369,11 @@ describe('R2: duplicate matcher entries are all inspected', () => {
     },
   });
 
-  it('R2: hasHook finds the command in a later same-matcher entry', () => {
+  it('lot2-R2: hasHook finds the command in a later same-matcher entry', () => {
     expect(hasHook(duplicateMatcherSettings(), RIGGER_BASH_SPEC)).toBe(true);
   });
 
-  it('R2: mergeHook does not register the command a second time (no double execution)', () => {
+  it('lot2-R2: mergeHook does not register the command a second time (no double execution)', () => {
     const settings = duplicateMatcherSettings();
     const snapshot = JSON.stringify(settings);
 
@@ -391,7 +391,7 @@ describe('R2: duplicate matcher entries are all inspected', () => {
     expect(registrations).toHaveLength(1);
   });
 
-  it('R2: removeHook strips the command from every same-matcher entry', () => {
+  it('lot2-R2: removeHook strips the command from every same-matcher entry', () => {
     const settings = {
       hooks: {
         PreToolUse: [

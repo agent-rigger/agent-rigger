@@ -154,7 +154,7 @@ describe('auditSkill', () => {
     expect(report.nature).toBe('skill');
   });
 
-  it('R3: returns present for a plain directory byte-identical to the store (copy fallback)', async () => {
+  it('lot2-R3: returns present for a plain directory byte-identical to the store (copy fallback)', async () => {
     const entry: AdapterEntry = { id: 'skill:spec-workflow', nature: 'skill', scope: 'user' };
     const store = path.join(resolveUserTargets(env).skillsDir, 'spec-workflow');
     await fs.mkdir(store, { recursive: true });
@@ -169,7 +169,7 @@ describe('auditSkill', () => {
     expect(report.state).toBe('present');
   });
 
-  it('R3: returns drift for a real directory that does not match the store', async () => {
+  it('lot2-R3: returns drift for a real directory that does not match the store', async () => {
     const entry: AdapterEntry = { id: 'skill:spec-workflow', nature: 'skill', scope: 'user' };
     const targets = resolveOpencodeUserTargets(env);
     const targetPath = path.join(targets.skillsDir, 'spec-workflow');
@@ -182,7 +182,7 @@ describe('auditSkill', () => {
     expect(report.detail).toContain(targetPath);
   });
 
-  it('R3: returns drift for a symlink pointing outside the rigger store', async () => {
+  it('lot2-R3: returns drift for a symlink pointing outside the rigger store', async () => {
     const entry: AdapterEntry = { id: 'skill:my-skill', nature: 'skill', scope: 'user' };
     const targets = resolveOpencodeUserTargets(env);
     const userSkillTarget = path.join(targets.skillsDir, 'my-skill');

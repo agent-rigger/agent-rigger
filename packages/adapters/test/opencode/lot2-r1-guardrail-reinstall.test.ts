@@ -78,8 +78,8 @@ afterEach(async () => {
 // R1 — v1 → v2 re-install → remove through the real opencode adapter
 // ---------------------------------------------------------------------------
 
-describe('R1: opencode guardrail re-install cumulates and remove reverses (real adapter)', () => {
-  it('R1: install v1 then v2 then remove — both leaves leave opencode.json', async () => {
+describe('lot2-R1: opencode guardrail re-install cumulates and remove reverses (real adapter)', () => {
+  it('lot2-R1: install v1 then v2 then remove — both leaves leave opencode.json', async () => {
     // v1 install: one bash pattern leaf.
     const v1 = createOpencodeAdapter({ permission: V1_PERMISSION });
     await apply(v1, [ENTRY], 'user', env, manifestPath);
@@ -109,7 +109,7 @@ describe('R1: opencode guardrail re-install cumulates and remove reverses (real 
     expect(findEntry(after, ENTRY.id, 'user', 'opencode')).toBeUndefined();
   });
 
-  it('R1: one hand-edited leaf never blocks the removal of the others (drift variant)', async () => {
+  it('lot2-R1: one hand-edited leaf never blocks the removal of the others (drift variant)', async () => {
     const v1 = createOpencodeAdapter({ permission: V1_PERMISSION });
     await apply(v1, [ENTRY], 'user', env, manifestPath);
     const v2 = createOpencodeAdapter({ permission: V2_PERMISSION });
@@ -147,7 +147,7 @@ describe('R1: opencode guardrail re-install cumulates and remove reverses (real 
     expect(findEntry(after, ENTRY.id, 'user', 'opencode')).toBeUndefined();
   });
 
-  it('R1: a fully hand-removed fragment plans no destructive op and PURGES the phantom entry (lot3 R1/D1)', async () => {
+  it('lot3-R1: a fully hand-removed fragment plans no destructive op and PURGES the phantom entry', async () => {
     const v1 = createOpencodeAdapter({ permission: V1_PERMISSION });
     await apply(v1, [ENTRY], 'user', env, manifestPath);
 

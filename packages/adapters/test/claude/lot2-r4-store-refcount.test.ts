@@ -114,8 +114,8 @@ function agentStorePath(name: string): string {
 // Cross-scope claude — the store outlives the first removal
 // ---------------------------------------------------------------------------
 
-describe('R4 — cross-scope claude skill refcount', () => {
-  it('R4: removing the project scope keeps the store; removing the last reference deletes it', async () => {
+describe('lot2-R4 — cross-scope claude skill refcount', () => {
+  it('lot2-R4: removing the project scope keeps the store; removing the last reference deletes it', async () => {
     const srcDir = await makeSkillFixture(fixturesDir, 'foo');
     const adapter = createClaudeAdapter({ denyRef: [], skillSource: () => srcDir });
     const userEntry: AdapterEntry = { id: 'skill:foo', nature: 'skill', scope: 'user' };
@@ -161,8 +161,8 @@ describe('R4 — cross-scope claude skill refcount', () => {
 // Cross-assistant claude → opencode
 // ---------------------------------------------------------------------------
 
-describe('R4 — cross-assistant refcount (claude → opencode)', () => {
-  it('R4: removing the claude install keeps the store while opencode still references it', async () => {
+describe('lot2-R4 — cross-assistant refcount (claude → opencode)', () => {
+  it('lot2-R4: removing the claude install keeps the store while opencode still references it', async () => {
     const srcDir = await makeSkillFixture(fixturesDir, 'shared');
     const claudeAdapter = createClaudeAdapter({ denyRef: [], skillSource: () => srcDir });
     const opencodeAdapter = createOpencodeAdapter({ skillSource: () => srcDir });
@@ -195,8 +195,8 @@ describe('R4 — cross-assistant refcount (claude → opencode)', () => {
 // Agents store (.md) shared between scopes
 // ---------------------------------------------------------------------------
 
-describe('R4 — agents store (.md) refcount between scopes', () => {
-  it('R4: the agent store survives while the other scope references it', async () => {
+describe('lot2-R4 — agents store (.md) refcount between scopes', () => {
+  it('lot2-R4: the agent store survives while the other scope references it', async () => {
     const agentFile = await makeAgentFixture(fixturesDir, 'reviewer');
     const adapter = createClaudeAdapter({ denyRef: [], agentSource: () => agentFile });
     const userEntry: AdapterEntry = { id: 'agent:reviewer', nature: 'agent', scope: 'user' };
@@ -234,8 +234,8 @@ describe('R4 — agents store (.md) refcount between scopes', () => {
 // Dangling symlink — truthful audit, install repairs
 // ---------------------------------------------------------------------------
 
-describe('R4 — dangling symlink: audit tells the truth, install repairs', () => {
-  it('R4: check reports a dangling skill symlink as missing (exit 3) and install repairs it', async () => {
+describe('lot2-R4 — dangling symlink: audit tells the truth, install repairs', () => {
+  it('lot2-R4: check reports a dangling skill symlink as missing (exit 3) and install repairs it', async () => {
     const srcDir = await makeSkillFixture(fixturesDir, 'broken');
     const adapter = createClaudeAdapter({ denyRef: [], skillSource: () => srcDir });
     const entry: AdapterEntry = { id: 'skill:broken', nature: 'skill', scope: 'user' };
@@ -263,7 +263,7 @@ describe('R4 — dangling symlink: audit tells the truth, install repairs', () =
     expect(reportExitCode(repaired)).toBe(0);
   });
 
-  it('R4: the opencode audit reports a dangling skill symlink as missing too', async () => {
+  it('lot2-R4: the opencode audit reports a dangling skill symlink as missing too', async () => {
     const srcDir = await makeSkillFixture(fixturesDir, 'oc-broken');
     const opencodeAdapter = createOpencodeAdapter({ skillSource: () => srcDir });
     const entry: AdapterEntry = { id: 'skill:oc-broken', nature: 'skill', scope: 'user' };
@@ -277,7 +277,7 @@ describe('R4 — dangling symlink: audit tells the truth, install repairs', () =
     expect(report.state).toBe('missing');
   });
 
-  it('R4: a dangling agent symlink is missing, not present', async () => {
+  it('lot2-R4: a dangling agent symlink is missing, not present', async () => {
     const agentFile = await makeAgentFixture(fixturesDir, 'ghost');
     const adapter = createClaudeAdapter({ denyRef: [], agentSource: () => agentFile });
     const entry: AdapterEntry = { id: 'agent:ghost', nature: 'agent', scope: 'user' };
@@ -294,8 +294,8 @@ describe('R4 — dangling symlink: audit tells the truth, install repairs', () =
 // Reference candidates come from the manifest, not the cwd
 // ---------------------------------------------------------------------------
 
-describe('R4 — one manifest entry, several folded targets (R1 mergeFiles)', () => {
-  it('R4: removing one cwd of a two-cwd project install keeps the store the sibling references', async () => {
+describe('lot2-R4 — one manifest entry, several folded targets (R1 mergeFiles)', () => {
+  it('lot2-R4: removing one cwd of a two-cwd project install keeps the store the sibling references', async () => {
     // The SAME (id, project, claude) identity installed from TWO different
     // cwds: mergeFiles (R1) folds both targets into ONE manifest entry. The
     // removal from projB drops that entry — the reference candidates handed to
@@ -336,8 +336,8 @@ describe('R4 — one manifest entry, several folded targets (R1 mergeFiles)', ()
   });
 });
 
-describe('R4 — candidates enumerated from manifest files, not process.cwd()', () => {
-  it('R4: a project install from another cwd counts as a reference (store kept)', async () => {
+describe('lot2-R4 — candidates enumerated from manifest files, not process.cwd()', () => {
+  it('lot2-R4: a project install from another cwd counts as a reference (store kept)', async () => {
     const srcDir = await makeSkillFixture(fixturesDir, 'foo');
     const adapter = createClaudeAdapter({ denyRef: [], skillSource: () => srcDir });
     const userEntry: AdapterEntry = { id: 'skill:foo', nature: 'skill', scope: 'user' };

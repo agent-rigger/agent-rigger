@@ -81,8 +81,8 @@ function skillTargetPath(name: string): string {
 // Scenario 1 — hand-made directory, never installed
 // ---------------------------------------------------------------------------
 
-describe('R3 — runRemove on a hand-made directory never installed', () => {
-  it('R3: fails "not installed" and leaves the directory intact', async () => {
+describe('lot2-R3 — runRemove on a hand-made directory never installed', () => {
+  it('lot2-R3: fails "not installed" and leaves the directory intact', async () => {
     const adapter = createClaudeAdapter({ denyRef: [] });
 
     // Hand-made directory at the exact target path a remove would hit.
@@ -113,8 +113,8 @@ describe('R3 — runRemove on a hand-made directory never installed', () => {
 // Scenario 2 — drifted target: warning surfaced, entry preserved
 // ---------------------------------------------------------------------------
 
-describe('R3 — runRemove on a drifted target (manifest entry, real directory)', () => {
-  it('R3: destroys nothing, surfaces the "present but not managed" warning, keeps the entry', async () => {
+describe('lot2-R3 — runRemove on a drifted target (manifest entry, real directory)', () => {
+  it('lot2-R3: destroys nothing, surfaces the "present but not managed" warning, keeps the entry', async () => {
     const srcDir = await makeSkillFixture(fixturesDir, 'drifted');
     const adapter = createClaudeAdapter({ denyRef: [], skillSource: () => srcDir });
     const entry: AdapterEntry = { id: 'skill:drifted', nature: 'skill', scope: 'user' };
@@ -152,8 +152,8 @@ describe('R3 — runRemove on a drifted target (manifest entry, real directory)'
 // Scenario 3 — legitimate removal: store backup surfaces in the recap
 // ---------------------------------------------------------------------------
 
-describe('R3 — runRemove on a legitimate install', () => {
-  it('R3: removes the symlink and reports the store backup in backedUp', async () => {
+describe('lot2-R3 — runRemove on a legitimate install', () => {
+  it('lot2-R3: removes the symlink and reports the store backup in backedUp', async () => {
     const srcDir = await makeSkillFixture(fixturesDir, 'legit');
     const adapter = createClaudeAdapter({ denyRef: [], skillSource: () => srcDir });
     const entry: AdapterEntry = { id: 'skill:legit', nature: 'skill', scope: 'user' };

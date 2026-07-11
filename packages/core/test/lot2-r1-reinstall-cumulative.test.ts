@@ -244,8 +244,8 @@ afterEach(async () => {
 // R1: drift repair — applied is the union, remove strips everything
 // ---------------------------------------------------------------------------
 
-describe('R1: drift repair cumulates the applied payload', () => {
-  it('R1: repair install after user drift records the union and remove strips both rules', async () => {
+describe('lot2-R1: drift repair cumulates the applied payload', () => {
+  it('lot2-R1: repair install after user drift records the union and remove strips both rules', async () => {
     const ID = 'main/guardrail:base';
     const adapter = makeGuardrailAdapter({ deny: [DENY_A, DENY_B], allow: [] });
 
@@ -284,8 +284,8 @@ describe('R1: drift repair cumulates the applied payload', () => {
 // R1: enriched canonical set (catalog v2) — no orphaned allow rule after remove
 // ---------------------------------------------------------------------------
 
-describe('R1: no orphaned allow rule after remove', () => {
-  it('R1: catalog v2 adds an allow rule — remove leaves neither v1 nor v2 rule behind', async () => {
+describe('lot2-R1: no orphaned allow rule after remove', () => {
+  it('lot2-R1: catalog v2 adds an allow rule — remove leaves neither v1 nor v2 rule behind', async () => {
     const ID = 'main/guardrail:allow';
 
     // v1 install.
@@ -315,8 +315,8 @@ describe('R1: no orphaned allow rule after remove', () => {
 // R1: catalog v2 adds a deny rule — union recorded, remove strips both
 // ---------------------------------------------------------------------------
 
-describe('R1: catalog update cumulates deny rules', () => {
-  it('R1: catalog v2 adds a deny rule — applied is the union and remove strips both', async () => {
+describe('lot2-R1: catalog update cumulates deny rules', () => {
+  it('lot2-R1: catalog v2 adds a deny rule — applied is the union and remove strips both', async () => {
     const ID = 'main/guardrail:deny-v2';
 
     const v1 = makeGuardrailAdapter({ deny: [DENY_A], allow: [] });
@@ -342,8 +342,8 @@ describe('R1: catalog update cumulates deny rules', () => {
 // R1: check is exact again after a repair
 // ---------------------------------------------------------------------------
 
-describe('R1: check audits against the cumulative payload', () => {
-  it('R1: after repair, drift of a first-install rule is detected (exit 3)', async () => {
+describe('lot2-R1: check audits against the cumulative payload', () => {
+  it('lot2-R1: after repair, drift of a first-install rule is detected (exit 3)', async () => {
     const ID = 'main/guardrail:check';
     const adapter = makeGuardrailAdapter({ deny: [DENY_A, DENY_B], allow: [] });
 
@@ -367,8 +367,8 @@ describe('R1: check audits against the cumulative payload', () => {
 // R1: opencode merge-permission — previous fragment folded into the trace
 // ---------------------------------------------------------------------------
 
-describe('R1: opencode permission fragments cumulate per leaf', () => {
-  it('R1: re-install folds the previous fragment and remove cleans both leaves', async () => {
+describe('lot2-R1: opencode permission fragments cumulate per leaf', () => {
+  it('lot2-R1: re-install folds the previous fragment and remove cleans both leaves', async () => {
     const ID = 'main/guardrail:opencode';
     const opencodeTargets = resolveOpencodeUserTargets(env);
 
@@ -398,8 +398,8 @@ describe('R1: opencode permission fragments cumulate per leaf', () => {
 // R1: the merge respects the (id, scope, assistant) identity
 // ---------------------------------------------------------------------------
 
-describe('R1: merge respects the triple identity', () => {
-  it('R1: re-installing for claude leaves the opencode entry of the same id intact', async () => {
+describe('lot2-R1: merge respects the triple identity', () => {
+  it('lot2-R1: re-installing for claude leaves the opencode entry of the same id intact', async () => {
     const ID = 'shared/guardrail:multi';
 
     // Same id installed for BOTH assistants — two distinct manifest entries.

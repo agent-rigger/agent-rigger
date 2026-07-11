@@ -83,14 +83,14 @@ function skillStorePath(name: string): string {
 // renderRemovalPlan — unit: store fate lines
 // ---------------------------------------------------------------------------
 
-describe('R4 — renderRemovalPlan shows the fate of the store', () => {
+describe('lot2-R4 — renderRemovalPlan shows the fate of the store', () => {
   const unlinkOp: RemovalOp = {
     kind: 'unlink',
     target: '/home/u/.claude/skills/foo',
     store: '/home/u/.config/agent-rigger/skills/foo',
   };
 
-  it('R4: announces the store deletion when this unlink is the last reference', () => {
+  it('lot2-R4: announces the store deletion when this unlink is the last reference', () => {
     const result = renderRemovalPlan(
       [{ id: 'skill:foo', nature: 'skill', ops: [unlinkOp] }],
       { color: false, storeFates: { '/home/u/.config/agent-rigger/skills/foo': 'delete' } },
@@ -100,7 +100,7 @@ describe('R4 — renderRemovalPlan shows the fate of the store', () => {
     expect(result).toContain('deleted — last reference');
   });
 
-  it('R4: announces the store conservation when it is still referenced elsewhere', () => {
+  it('lot2-R4: announces the store conservation when it is still referenced elsewhere', () => {
     const result = renderRemovalPlan(
       [{ id: 'skill:foo', nature: 'skill', ops: [unlinkOp] }],
       { color: false, storeFates: { '/home/u/.config/agent-rigger/skills/foo': 'keep' } },
@@ -114,8 +114,8 @@ describe('R4 — renderRemovalPlan shows the fate of the store', () => {
 // runRemove — end-to-end fate in the plan output
 // ---------------------------------------------------------------------------
 
-describe('R4 — runRemove plan output announces the store fate', () => {
-  it('R4: single reference → "deleted — last reference" and the store is gone', async () => {
+describe('lot2-R4 — runRemove plan output announces the store fate', () => {
+  it('lot2-R4: single reference → "deleted — last reference" and the store is gone', async () => {
     const srcDir = await makeSkillFixture(fixturesDir, 'solo');
     const adapter = createClaudeAdapter({ denyRef: [], skillSource: () => srcDir });
     const entry: AdapterEntry = { id: 'skill:solo', nature: 'skill', scope: 'user' };
@@ -136,7 +136,7 @@ describe('R4 — runRemove plan output announces the store fate', () => {
     expect(await exists(skillStorePath('solo'))).toBe(false);
   });
 
-  it('R4: another assistant still references the store → "kept — still referenced" and the store survives', async () => {
+  it('lot2-R4: another assistant still references the store → "kept — still referenced" and the store survives', async () => {
     const srcDir = await makeSkillFixture(fixturesDir, 'shared');
     const adapter = createClaudeAdapter({ denyRef: [], skillSource: () => srcDir });
     const entry: AdapterEntry = { id: 'skill:shared', nature: 'skill', scope: 'user' };
@@ -165,7 +165,7 @@ describe('R4 — runRemove plan output announces the store fate', () => {
     expect(await exists(skillTargetPath('shared'))).toBe(false);
   });
 
-  it('R4: a manifest-recorded target from another cwd keeps the store (preview + effect)', async () => {
+  it('lot2-R4: a manifest-recorded target from another cwd keeps the store (preview + effect)', async () => {
     const srcDir = await makeSkillFixture(fixturesDir, 'foo');
     const adapter = createClaudeAdapter({ denyRef: [], skillSource: () => srcDir });
     const userEntry: AdapterEntry = { id: 'skill:foo', nature: 'skill', scope: 'user' };

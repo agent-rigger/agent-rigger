@@ -35,6 +35,7 @@ import { stubScanner } from '@agent-rigger/core/scan';
 import { runCli } from '../src/cli';
 import type { CliDeps } from '../src/cli';
 import { loadConfigFile } from '../src/config';
+import { pinStdoutIsTTY, setStdoutIsTTY } from './fixtures/tty';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -224,18 +225,12 @@ let fix: Awaited<ReturnType<typeof makeInitEnv>>;
  * the suite runs in a real terminal (isTTY=true) the production code enters the
  * interactive proposeInstall branch and awaits a real stdin prompt → 5s timeout.
  * Forcing it false makes these tests hermetic regardless of where `bun test`
- * runs. D5 deliberately overrides to true in its own beforeEach.
+ * runs. D5 deliberately overrides to true in its own beforeEach; the file-level
+ * afterEach below still restores the true pre-suite descriptor for D5's tests.
  */
-function setStdoutIsTTY(value: boolean | undefined): void {
-  Object.defineProperty(process.stdout, 'isTTY', { value, configurable: true });
-}
-
-beforeEach(() => {
-  setStdoutIsTTY(false);
-});
+pinStdoutIsTTY(false);
 
 afterEach(async () => {
-  setStdoutIsTTY(false);
   await fix.cleanupAll();
 });
 

@@ -35,7 +35,7 @@
  * not by a multi-op rollback. Implementing a multi-op rollback is out of scope for R26.
  */
 
-import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'bun:test';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -47,6 +47,7 @@ import type { Scanner } from '@agent-rigger/core/scan';
 import type { Verdict } from '@agent-rigger/core/types';
 
 import { runCli } from '../src/cli';
+import { pinStdoutIsTTY } from './fixtures/tty';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -285,18 +286,31 @@ let env_: AtomicityEnv;
  * an ambient TTY the production code would enter the interactive proposeInstall
  * branch and await a real stdin prompt → 5s timeout (flaky in a real terminal).
  */
-function setStdoutIsTTY(value: boolean | undefined): void {
-  Object.defineProperty(process.stdout, 'isTTY', { value, configurable: true });
-}
+pinStdoutIsTTY(false);
 
 beforeEach(async () => {
-  setStdoutIsTTY(false);
   env_ = await makeAtomicityEnv();
 });
 
 afterEach(async () => {
-  setStdoutIsTTY(false);
   await env_.cleanupAll();
+});
+
+// ---------------------------------------------------------------------------
+// tty fixture sanity — proves pinStdoutIsTTY restores the exact pre-suite
+// descriptor rather than merely forcing it back to `false` (the L13 bug).
+// ---------------------------------------------------------------------------
+
+let ttyDescriptorBeforeSuite: PropertyDescriptor | undefined;
+
+beforeAll(() => {
+  ttyDescriptorBeforeSuite = Object.getOwnPropertyDescriptor(process.stdout, 'isTTY');
+});
+
+afterAll(() => {
+  expect(Object.getOwnPropertyDescriptor(process.stdout, 'isTTY')).toEqual(
+    ttyDescriptorBeforeSuite,
+  );
 });
 
 // ---------------------------------------------------------------------------
@@ -772,19 +786,39 @@ describe('R26-CLI — init command: proposeInstall wired via deps.prompts', () =
     expect(code).toBe(0);
   });
 
-  it('no proposeInstall injected via deps.prompts → config-only mode, proposeInstall not called', async () => {
-    const proposeCalled = false;
+  it('no proposeInstall injected via deps.prompts → config-only mode, fetchCatalogFn never invoked', async () => {
+    const { loadConfigFile } = await import('../src/config');
+
     const homeDir = env_.homeDir;
     const configDir = path.join(homeDir, '.config', 'agent-rigger');
     const configPath = path.join(configDir, 'config.json');
     await fs.rm(configPath, { force: true });
 
+    // Spy wrapper around the base runner: records every (command, args) call.
+    // The init wizard always calls the runner once — preflightAuth's ambient
+    // probe `git ls-remote <url>` (cmd-init.ts → preflight-auth.ts), which runs
+    // regardless of the proposeInstall/TTY gate. What must NOT happen in
+    // config-only mode is any *catalog-fetch* call: fetchCatalogFn is only
+    // built when proposeInstallFn is defined (cli.ts:1309), and
+    // proposeInstallFn only becomes defined via test injection, --yes, or a
+    // real TTY (cli.ts:1177-1274) — none apply here. A regression that takes
+    // the TTY branch (cli.ts:1250) in a non-TTY context would wrongly build
+    // proposeInstallFn/fetchCatalogFn and add resolveVersion's
+    // `ls-remote --tags`/`ls-remote -- <url> HEAD` and fetchCatalog's `clone`
+    // calls to this list, changing it from the single preflight probe below.
+    const calls: Array<{ command: string; args: string[] }> = [];
+    const baseRunner = buildSuccessRunner(env_.contentDir);
+    const spyRunner: CommandRunner = (command, args) => {
+      calls.push({ command, args: args ?? [] });
+      return baseRunner(command, args);
+    };
+
     // No proposeInstall key in prompts → config-only (non-TTY path)
-    await runCli(['init'], {
+    const code = await runCli(['init'], {
       print: () => {},
       env: env_.env,
       remote: {
-        run: buildSuccessRunner(env_.contentDir),
+        run: spyRunner,
         tmpFactory: env_.tmpFactory,
         scanner: blockingScanner,
       },
@@ -798,6 +832,15 @@ describe('R26-CLI — init command: proposeInstall wired via deps.prompts', () =
       },
     });
 
-    expect(proposeCalled).toBe(false);
+    expect(code).toBe(0);
+    expect(calls).toEqual([
+      { command: 'git', args: ['ls-remote', 'https://example.com/catalog.git'] },
+    ]);
+
+    const entries = await readManifestEntries(env_.env);
+    expect(entries).toHaveLength(0);
+
+    const saved = await loadConfigFile(configPath);
+    expect(saved.catalogs?.[0]?.url).toBe('https://example.com/catalog.git');
   });
 });

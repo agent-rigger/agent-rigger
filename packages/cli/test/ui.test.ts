@@ -1080,7 +1080,7 @@ describe('renderRemovalPlan — delete-file', () => {
 // ---------------------------------------------------------------------------
 
 describe('renderRemovalPlan — restore-file', () => {
-  it('R6: renders "restore  <abbr path>" so the preview states the file comes back, not that it is deleted', () => {
+  it('lot2-R6: renders "restore  <abbr path>" so the preview states the file comes back, not that it is deleted', () => {
     const op: RemovalOp = {
       kind: 'restore-file',
       path: '/home/me/.claude/harness/AGENTS.md',
@@ -1092,7 +1092,7 @@ describe('renderRemovalPlan — restore-file', () => {
     expect(result).not.toContain('delete  ~/.claude/harness/AGENTS.md');
   });
 
-  it('R6: counts restores in the Σ summary line', () => {
+  it('lot2-R6: counts restores in the Σ summary line', () => {
     const op: RemovalOp = {
       kind: 'restore-file',
       path: '/home/me/AGENTS.md',

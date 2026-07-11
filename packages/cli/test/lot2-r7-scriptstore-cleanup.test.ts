@@ -135,8 +135,8 @@ async function installAllHooks(): Promise<void> {
 // Scenario: last hook removed → scriptStore deleted (logs included)
 // ---------------------------------------------------------------------------
 
-describe('R7 — the scriptStore leaves the disk with the last hook', () => {
-  it('R7: removing every hook deletes the scriptStore directory, runtime logs included', async () => {
+describe('lot2-R7 — the scriptStore leaves the disk with the last hook', () => {
+  it('lot2-R7: removing every hook deletes the scriptStore directory, runtime logs included', async () => {
     await installAllHooks();
     expect(await exists(scriptStore)).toBe(true);
 
@@ -155,7 +155,7 @@ describe('R7 — the scriptStore leaves the disk with the last hook', () => {
     expect(await exists(scriptStore)).toBe(false);
   });
 
-  it('R7: the scriptStore is backed up as a whole before deletion (engine backupDir channel)', async () => {
+  it('lot2-R7: the scriptStore is backed up as a whole before deletion (engine backupDir channel)', async () => {
     await installAllHooks();
 
     const result = await runRemove({
@@ -180,8 +180,8 @@ describe('R7 — the scriptStore leaves the disk with the last hook', () => {
 // Scenario: hooks remain → scriptStore kept intact
 // ---------------------------------------------------------------------------
 
-describe('R7 — the scriptStore is kept while hooks remain at the manifest', () => {
-  it('R7: removing a single hook keeps the scriptStore intact (_shared/ and removed copy included)', async () => {
+describe('lot2-R7 — the scriptStore is kept while hooks remain at the manifest', () => {
+  it('lot2-R7: removing a single hook keeps the scriptStore intact (_shared/ and removed copy included)', async () => {
     await installAllHooks();
 
     const result = await runRemove({
@@ -211,8 +211,8 @@ describe('R7 — the scriptStore is kept while hooks remain at the manifest', ()
 // Scenario: safety gate — a run without hook removals never touches the store
 // ---------------------------------------------------------------------------
 
-describe('R7 — a remove run that touched no hook leaves the scriptStore alone', () => {
-  it('R7: removing a non-hook entry never deletes a scriptStore the manifest does not track', async () => {
+describe('lot2-R7 — a remove run that touched no hook leaves the scriptStore alone', () => {
+  it('lot2-R7: removing a non-hook entry never deletes a scriptStore the manifest does not track', async () => {
     // Only a skill at the manifest (no hook-nature entries at all)...
     await apply(
       adapter,

@@ -34,7 +34,7 @@ afterEach(async () => {
 });
 
 describe('backupDir — R3 store backup primitive', () => {
-  it('R3: returns null when the path does not exist', async () => {
+  it('lot2-R3: returns null when the path does not exist', async () => {
     const missing = path.join(tmp.dir, 'no-such-store');
 
     const result = await backupDir(missing);
@@ -44,7 +44,7 @@ describe('backupDir — R3 store backup primitive', () => {
     expect(entries).toHaveLength(0);
   });
 
-  it('R3: copies a directory recursively to <path>.bak-<ISO>-<token>', async () => {
+  it('lot2-R3: copies a directory recursively to <path>.bak-<ISO>-<token>', async () => {
     const store = path.join(tmp.dir, 'my-skill');
     await fs.mkdir(path.join(store, 'nested'), { recursive: true });
     await fs.writeFile(path.join(store, 'SKILL.md'), '# Skill\nuser edit\n');
@@ -67,7 +67,7 @@ describe('backupDir — R3 store backup primitive', () => {
     expect(original).toBe('# Skill\nuser edit\n');
   });
 
-  it('R3: handles a single-file store (agent .md)', async () => {
+  it('lot2-R3: handles a single-file store (agent .md)', async () => {
     const store = path.join(tmp.dir, 'reviewer.md');
     await fs.writeFile(store, '# Agent: reviewer\n');
 
@@ -79,7 +79,7 @@ describe('backupDir — R3 store backup primitive', () => {
     expect(copy).toBe('# Agent: reviewer\n');
   });
 
-  it('R3: successive calls on the same path produce distinct backups', async () => {
+  it('lot2-R3: successive calls on the same path produce distinct backups', async () => {
     const store = path.join(tmp.dir, 'twice');
     await fs.mkdir(store, { recursive: true });
     await fs.writeFile(path.join(store, 'f.txt'), 'x');

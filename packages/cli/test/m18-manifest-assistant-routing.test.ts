@@ -27,6 +27,7 @@ import type { Env } from '@agent-rigger/core/paths';
 
 import { runCli } from '../src/cli';
 import type { CliDeps } from '../src/cli';
+import { pinStdoutIsTTY } from './fixtures/tty';
 
 const SHA = 'a'.repeat(40);
 const QUALIFIED_ID = 'principal/guardrail:main';
@@ -94,9 +95,7 @@ function makeGuardrailTmpFactory(dir: string): TmpDirFactory {
 }
 
 /** Pin isTTY: the whole point of M18 is non-TTY routing without any prompt. */
-function setStdoutIsTTY(value: boolean | undefined): void {
-  Object.defineProperty(process.stdout, 'isTTY', { value, configurable: true });
-}
+pinStdoutIsTTY(false);
 
 let tmp: { dir: string; cleanup: () => Promise<void> };
 let contentDir: string;
@@ -112,8 +111,6 @@ function makeDeps(print?: (msg: string) => void): CliDeps {
 }
 
 beforeEach(async () => {
-  setStdoutIsTTY(false);
-
   tmp = {
     dir: await fs.mkdtemp(path.join(os.tmpdir(), 'rigger-m18-')),
     cleanup: () => Promise.resolve(),
@@ -146,7 +143,6 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  setStdoutIsTTY(false);
   await tmp.cleanup();
   await fs.rm(contentDir, { recursive: true, force: true });
 });

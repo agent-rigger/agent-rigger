@@ -21,7 +21,7 @@ import path from 'node:path';
 
 import type { AdapterEntry } from '@agent-rigger/core/adapter';
 import { apply, check, remove } from '@agent-rigger/core/engine';
-import { readJson, writeJson } from '@agent-rigger/core/fs-json';
+import { readJson, readText, writeJson } from '@agent-rigger/core/fs-json';
 import { findEntry, readManifest } from '@agent-rigger/core/manifest';
 import {
   resolveOpencodeProjectTargets,
@@ -389,6 +389,113 @@ describe('planGuardrail — cross-pattern glob-overlap conflicts (F4, R10.4)', (
     const op = ops[0] as WriteOpMergePermission;
     expect(op.warnings).toBeUndefined();
   });
+
+  it('warns on a trailing-space-star bash glob overlapping a concrete user leaf (matchOpencodeGlob trailing-star branch)', async () => {
+    const targets = resolveOpencodeUserTargets(env);
+    // Concrete user leaf inside the "rm -rf *" family, but spelled differently
+    // from the guardrail's pattern — no shared key, so only F4 catches it.
+    await writeJson(targets.opencodeJson, {
+      permission: { bash: { 'rm -rf /tmp/data': 'allow' } },
+    });
+
+    // "rm -rf *" ends with a literal " *": matchOpencodeGlob's trailing-star
+    // branch makes the space-plus-glob suffix optional so bare "rm -rf" also
+    // matches, not just "rm -rf <something>".
+    const fragment: OpencodePermission = { bash: { 'rm -rf *': 'deny' } };
+    const ops = await planGuardrail('user', env, fragment);
+
+    expect(ops).toHaveLength(1);
+    const op = ops[0] as WriteOpMergePermission;
+    expect(op.warnings).toHaveLength(1);
+    const warning = op.warnings?.[0] ?? '';
+    expect(warning).toContain('rm -rf *');
+    expect(warning).toContain('rm -rf /tmp/data');
+    expect(warning).toContain('"deny"');
+    expect(warning).toContain('"allow"');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// applyGuardrail — raw-text leaf ordering (M15 residual, SECURITY invariant)
+// ---------------------------------------------------------------------------
+
+// The load-bearing hypothesis at guardrails.ts:198-200: mergePermission appends
+// its new leaves AFTER the user's existing leaves in the SAME map (JS object key
+// insertion order — clonePermission copies `current` first, setLeaf then extends
+// the same object with the missing leaves in fragment order), and applyOpencodeKey
+// (opencode-json-io.ts) writes each added leaf as a jsonc-parser `modify` edit
+// whose default insertion index is `parent.children.length` (no `getInsertionIndex`
+// configured) — i.e. also appended last in the RAW TEXT. Together these determine
+// who wins at runtime under opencode's findLast precedence, and are what
+// computeGlobOverlapConflicts (F4) simulates to decide whether a warning is owed.
+// No existing test pins this: every merge assertion in this suite is `toEqual`,
+// which is insensitive to key order. A refactor of mergePermission (e.g. sorting
+// keys) or a jsonc-parser upgrade that changes the default insertion point would
+// silently invert the effective precedence without failing any other test here.
+describe('applyGuardrail — raw-text leaf ordering (M15, ADR-0021 findLast precedence)', () => {
+  it('appends new leaves AFTER the user leaf, and the allow carve-out AFTER the denies, in the file text', async () => {
+    const targets = resolveOpencodeUserTargets(env);
+    // A user leaf that overlaps the guardrail's glob (opencode resolves a path
+    // by findLast: whichever leaf is written LAST in the map wins).
+    await writeJson(targets.opencodeJson, {
+      permission: { read: { 'config/prod.env': 'allow' } },
+    });
+
+    // A secret-guardrail-shaped fragment: two globbed denies plus the concrete
+    // allow carve-out that re-opens them (mirrors the shipped catalog descriptor).
+    const secretFragment: OpencodePermission = {
+      read: { '*.env': 'deny', '*.env.*': 'deny', '.env.example': 'allow' },
+    };
+
+    const ops = await planGuardrail('user', env, secretFragment);
+    await applyGuardrail(ops, env);
+
+    const raw = await readText(targets.opencodeJson);
+    // Every key must actually be present in the written file (sanity guard
+    // before trusting the indexOf comparisons below).
+    expect(raw).toContain('"config/prod.env"');
+    expect(raw).toContain('"*.env"');
+    expect(raw).toContain('"*.env.*"');
+    expect(raw).toContain('".env.example"');
+
+    // (1) Appended-after-user: the pre-existing user leaf stays textually
+    // BEFORE the guardrail's appended leaves. This is what lets the guardrail's
+    // "*.env": "deny" win over the user's "config/prod.env": "allow" under
+    // opencode's findLast precedence — the fail-secure direction F4
+    // (computeGlobOverlapConflicts) warns about instead of silently trusting.
+    expect(raw.indexOf('"config/prod.env"')).toBeLessThan(raw.indexOf('"*.env"'));
+
+    // (2) Descriptor-internal order: the allow carve-out is written AFTER the
+    // broader denies it excepts (ADR-0021, "précédence findLast") — otherwise a
+    // later-appended deny would silently re-close the carve-out.
+    expect(raw.indexOf('"*.env"')).toBeLessThan(raw.indexOf('".env.example"'));
+    expect(raw.indexOf('"*.env.*"')).toBeLessThan(raw.indexOf('".env.example"'));
+  });
+
+  // The assertions above use the shipped descriptor's real pattern keys, which
+  // happen to already sort alphabetically in fragment-definition order — so a
+  // mutant that sorted mergePermission's keys would NOT flip any of the
+  // comparisons above and this suite would stay green (falsifiability gap,
+  // lot7 Low-1 review). This test picks keys that are alphabetically REVERSED
+  // from their fragment order, so a key-sorting mutation inverts the observed
+  // text order and this assertion fails.
+  it('preserves fragment order (not alphabetical order) when appending new leaves', async () => {
+    const targets = resolveOpencodeUserTargets(env);
+    // 'zzz-first-deny' is defined FIRST but sorts alphabetically AFTER
+    // 'aaa-second-allow': only fragment-definition order, not a sort, explains
+    // the expected text order below.
+    const fragment: OpencodePermission = {
+      read: { 'zzz-first-deny': 'deny', 'aaa-second-allow': 'allow' },
+    };
+
+    const ops = await planGuardrail('user', env, fragment);
+    await applyGuardrail(ops, env);
+
+    const raw = await readText(targets.opencodeJson);
+    expect(raw).toContain('"zzz-first-deny"');
+    expect(raw).toContain('"aaa-second-allow"');
+    expect(raw.indexOf('"zzz-first-deny"')).toBeLessThan(raw.indexOf('"aaa-second-allow"'));
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -419,7 +526,7 @@ describe('planRemoveGuardrail', () => {
     expect(ops).toHaveLength(0);
   });
 
-  it('R1: a single drifted leaf does not block the removal of the intact ones', async () => {
+  it('lot2-R1: a single drifted leaf does not block the removal of the intact ones', async () => {
     const targets = resolveOpencodeUserTargets(env);
     // Recorded fragment: bash rm-rf deny + read deny. On disk the user flipped
     // `read` to "allow" — the remaining leaves must still be removable.
@@ -442,7 +549,7 @@ describe('planRemoveGuardrail', () => {
     expect(warnings.join('\n')).toContain('was not removed');
   });
 
-  it('R1: every leaf drifted → warning-only plan (no destructive op, entry preserved by the engine)', async () => {
+  it('lot2-R1: every leaf drifted → warning-only plan (no destructive op, entry preserved by the engine)', async () => {
     const targets = resolveOpencodeUserTargets(env);
     await writeJson(targets.opencodeJson, {
       permission: { bash: { 'rm -rf *': 'ask', 'ls *': 'deny' }, read: 'allow' },

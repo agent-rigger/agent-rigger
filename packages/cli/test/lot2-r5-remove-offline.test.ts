@@ -237,7 +237,7 @@ async function installConfiguredGuardrail(
 // Scenario 1 — ad-hoc install then remove, fully offline
 // ---------------------------------------------------------------------------
 
-describe('R5 — ad-hoc install then remove offline', () => {
+describe('lot2-R5 — ad-hoc install then remove offline', () => {
   let ctx: Awaited<ReturnType<typeof makeAdHocEnv>>;
 
   beforeEach(async () => {
@@ -249,7 +249,7 @@ describe('R5 — ad-hoc install then remove offline', () => {
     await ctx.cleanupAll();
   });
 
-  it('R5: remove of the qualified ad-hoc id succeeds with a sentinel git runner (zero network)', async () => {
+  it('lot2-R5: remove of the qualified ad-hoc id succeeds with a sentinel git runner (zero network)', async () => {
     const calls: string[] = [];
     const cap = makeCapture();
 
@@ -263,7 +263,7 @@ describe('R5 — ad-hoc install then remove offline', () => {
     expect(calls).toHaveLength(0);
   });
 
-  it('R5: remove deletes the manifest entry and the installed skill target', async () => {
+  it('lot2-R5: remove deletes the manifest entry and the installed skill target', async () => {
     const calls: string[] = [];
     const targets = resolveUserTargets(ctx.env);
 
@@ -286,7 +286,7 @@ describe('R5 — ad-hoc install then remove offline', () => {
 // Scenario 2 — configured catalog unreachable: no fetch, no warning
 // ---------------------------------------------------------------------------
 
-describe('R5 — remove with config.catalogs configured and network down', () => {
+describe('lot2-R5 — remove with config.catalogs configured and network down', () => {
   let ctx: Awaited<ReturnType<typeof makeConfiguredEnv>>;
 
   beforeEach(async () => {
@@ -298,7 +298,7 @@ describe('R5 — remove with config.catalogs configured and network down', () =>
     await ctx.cleanupAll();
   });
 
-  it('R5: remove succeeds without any "Catalog unavailable" warning — no fetch is attempted', async () => {
+  it('lot2-R5: remove succeeds without any "Catalog unavailable" warning — no fetch is attempted', async () => {
     const calls: string[] = [];
     const cap = makeCapture();
 
@@ -320,7 +320,7 @@ describe('R5 — remove with config.catalogs configured and network down', () =>
 // Scenario 3 — id absent from the manifest: exit 2, installed entries listed
 // ---------------------------------------------------------------------------
 
-describe('R5 — remove of an id absent from the manifest', () => {
+describe('lot2-R5 — remove of an id absent from the manifest', () => {
   let ctx: Awaited<ReturnType<typeof makeConfiguredEnv>>;
 
   beforeEach(async () => {
@@ -332,7 +332,7 @@ describe('R5 — remove of an id absent from the manifest', () => {
     await ctx.cleanupAll();
   });
 
-  it('R5: exits 2 and names the id, with zero fetch', async () => {
+  it('lot2-R5: exits 2 and names the id, with zero fetch', async () => {
     const calls: string[] = [];
     const cap = makeCapture();
 
@@ -349,7 +349,7 @@ describe('R5 — remove of an id absent from the manifest', () => {
     expect(output.toLowerCase()).toContain('not installed');
   });
 
-  it('R5: message lists the entries actually installed (from the manifest), never "agent-rigger ls"', async () => {
+  it('lot2-R5: message lists the entries actually installed (from the manifest), never "agent-rigger ls"', async () => {
     const cap = makeCapture();
 
     await runCli(['remove', 'principal/skill:never-installed', '--yes'], {
@@ -368,7 +368,7 @@ describe('R5 — remove of an id absent from the manifest', () => {
 // Scenario 4 — pack id: packs are expanded at install, removed via members
 // ---------------------------------------------------------------------------
 
-describe('R5 — remove of a pack id', () => {
+describe('lot2-R5 — remove of a pack id', () => {
   let ctx: Awaited<ReturnType<typeof makeConfiguredEnv>>;
 
   beforeEach(async () => {
@@ -380,7 +380,7 @@ describe('R5 — remove of a pack id', () => {
     await ctx.cleanupAll();
   });
 
-  it('R5: exits 2 and explains packs are expanded at install and removed via their members', async () => {
+  it('lot2-R5: exits 2 and explains packs are expanded at install and removed via their members', async () => {
     const calls: string[] = [];
     const cap = makeCapture();
 
@@ -403,7 +403,7 @@ describe('R5 — remove of a pack id', () => {
 // Scenario 5 — <resource> remove path is local too
 // ---------------------------------------------------------------------------
 
-describe('R5 — <resource> remove without network', () => {
+describe('lot2-R5 — <resource> remove without network', () => {
   let ctx: Awaited<ReturnType<typeof makeAdHocEnv>>;
 
   beforeEach(async () => {
@@ -415,7 +415,7 @@ describe('R5 — <resource> remove without network', () => {
     await ctx.cleanupAll();
   });
 
-  it('R5: skills remove succeeds offline — nature validated from manifest.nature, zero fetch', async () => {
+  it('lot2-R5: skills remove succeeds offline — nature validated from manifest.nature, zero fetch', async () => {
     const calls: string[] = [];
     const cap = makeCapture();
 
@@ -433,7 +433,7 @@ describe('R5 — <resource> remove without network', () => {
     expect(manifest.artifacts.find((a) => a.id === 'gh-bar/skill:remote-demo')).toBeUndefined();
   });
 
-  it('R5: nature mismatch is rejected locally from the manifest (agents remove <skill id>)', async () => {
+  it('lot2-R5: nature mismatch is rejected locally from the manifest (agents remove <skill id>)', async () => {
     const calls: string[] = [];
     const cap = makeCapture();
 

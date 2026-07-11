@@ -60,8 +60,8 @@ afterEach(async () => {
 // R8: hook removal must back up settings.json
 // ---------------------------------------------------------------------------
 
-describe('R8: hook removal creates a settings.json backup', () => {
-  it('R8: removing a hook creates a .bak of settings.json with pre-remove content', async () => {
+describe('lot2-R8: hook removal creates a settings.json backup', () => {
+  it('lot2-R8: removing a hook creates a .bak of settings.json with pre-remove content', async () => {
     const ENTRY_ID = 'hook-entry';
 
     const adapter: Adapter = {
@@ -135,8 +135,8 @@ describe('R8: hook removal creates a settings.json backup', () => {
 // R8: opencode guardrail removal must back up opencode.json
 // ---------------------------------------------------------------------------
 
-describe('R8: opencode guardrail removal creates an opencode.json backup', () => {
-  it('R8: removing an opencode guardrail creates a .bak of opencode.json with pre-remove content', async () => {
+describe('lot2-R8: opencode guardrail removal creates an opencode.json backup', () => {
+  it('lot2-R8: removing an opencode guardrail creates a .bak of opencode.json with pre-remove content', async () => {
     const ENTRY_ID = 'opencode-guardrail-entry';
     const PERMISSION_FRAGMENT: OpencodePermission = { bash: { 'rm -rf *': 'deny' } };
     const opencodeTargets = resolveOpencodeUserTargets(env);
@@ -209,8 +209,8 @@ describe('R8: opencode guardrail removal creates an opencode.json backup', () =>
 // R8: dedup — a single .bak per file per run
 // ---------------------------------------------------------------------------
 
-describe('R8: a single backup per file even across several remove ops', () => {
-  it('R8: a single .bak per file even when several remove ops target it', async () => {
+describe('lot2-R8: a single backup per file even across several remove ops', () => {
+  it('lot2-R8: a single .bak per file even when several remove ops target it', async () => {
     const HOOK_ENTRY_ID = 'hook-entry-dedup';
     const DENY_ENTRY_ID = 'deny-entry-dedup';
 

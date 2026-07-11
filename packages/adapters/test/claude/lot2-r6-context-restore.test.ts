@@ -146,8 +146,8 @@ afterEach(async () => {
 // R6 scenario 1 — install→remove cycle over a pre-existing AGENTS.md
 // ---------------------------------------------------------------------------
 
-describe('R6: cycle over a pre-existing AGENTS.md', () => {
-  it('R6: the install plan captures the pre-install content and signals the overwrite', async () => {
+describe('lot2-R6: cycle over a pre-existing AGENTS.md', () => {
+  it('lot2-R6: the install plan captures the pre-install content and signals the overwrite', async () => {
     await writeText(targets.agentsMd, USER_CONTENT);
 
     const ops = await planContext('user', env, CANONICAL);
@@ -161,7 +161,7 @@ describe('R6: cycle over a pre-existing AGENTS.md', () => {
     expect(writeOp!.warnings!.join(' ')).toContain(targets.agentsMd);
   });
 
-  it('R6: install records previous in the manifest; remove restores it byte-for-byte and drops the CLAUDE.md block', async () => {
+  it('lot2-R6: install records previous in the manifest; remove restores it byte-for-byte and drops the CLAUDE.md block', async () => {
     await writeText(targets.agentsMd, USER_CONTENT);
     const adapter = createClaudeAdapter({ denyRef: [], agentsContent: CANONICAL });
 
@@ -197,7 +197,7 @@ describe('R6: cycle over a pre-existing AGENTS.md', () => {
     expect(findEntry(after, 'context-claude', 'user', 'claude')).toBeUndefined();
   });
 
-  it('R6: planRemoveContext emits restore-file with the previous content on exact match', async () => {
+  it('lot2-R6: planRemoveContext emits restore-file with the previous content on exact match', async () => {
     await writeText(targets.agentsMd, CANONICAL);
     await writeText(targets.claudeMd, managedBlock('~/.claude/harness/AGENTS.md'));
 
@@ -219,8 +219,8 @@ describe('R6: cycle over a pre-existing AGENTS.md', () => {
 // R6 scenario 2 — AGENTS.md absent before install
 // ---------------------------------------------------------------------------
 
-describe('R6: AGENTS.md absent before install', () => {
-  it('R6: install records previous=null; remove deletes the file (prior state was absence)', async () => {
+describe('lot2-R6: AGENTS.md absent before install', () => {
+  it('lot2-R6: install records previous=null; remove deletes the file (prior state was absence)', async () => {
     const adapter = createClaudeAdapter({ denyRef: [], agentsContent: CANONICAL });
 
     await apply(adapter, [CONTEXT_ENTRY], 'user', env, targets.stateJson);
@@ -239,10 +239,10 @@ describe('R6: AGENTS.md absent before install', () => {
 // R6 scenario 3 — remove over a drifted AGENTS.md
 // ---------------------------------------------------------------------------
 
-describe('R6: remove over a drifted AGENTS.md', () => {
+describe('lot2-R6: remove over a drifted AGENTS.md', () => {
   const DRIFTED = `${CANONICAL}\n## User additions\n\nKeep this.\n`;
 
-  it('R6: the plan leaves the drifted file alone (warning-only op) and still removes the block', async () => {
+  it('lot2-R6: the plan leaves the drifted file alone (warning-only op) and still removes the block', async () => {
     await writeText(targets.agentsMd, DRIFTED);
     await writeText(targets.claudeMd, managedBlock('~/.claude/harness/AGENTS.md'));
 
@@ -262,7 +262,7 @@ describe('R6: remove over a drifted AGENTS.md', () => {
     expect(ops.some((op) => op.kind === 'remove-block')).toBe(true);
   });
 
-  it('R6: remove leaves the drifted bytes untouched, removes the block, drops the entry', async () => {
+  it('lot2-R6: remove leaves the drifted bytes untouched, removes the block, drops the entry', async () => {
     await writeText(targets.agentsMd, USER_CONTENT);
     const adapter = createClaudeAdapter({ denyRef: [], agentsContent: CANONICAL });
     await apply(adapter, [CONTEXT_ENTRY], 'user', env, targets.stateJson);
@@ -288,8 +288,8 @@ describe('R6: remove over a drifted AGENTS.md', () => {
 // R6 scenario 5 — re-install after drift: the restore baseline never moves
 // ---------------------------------------------------------------------------
 
-describe('R6: re-install after drift keeps the first install baseline (R1 interaction)', () => {
-  it('R6: previous survives the upsert; remove restores the original content, not the drifted one', async () => {
+describe('lot2-R6: re-install after drift keeps the first install baseline (R1 interaction)', () => {
+  it('lot2-R6: previous survives the upsert; remove restores the original content, not the drifted one', async () => {
     const DRIFTED = `${CANONICAL}\nuser drift\n`;
     await writeText(targets.agentsMd, USER_CONTENT);
     const adapter = createClaudeAdapter({ denyRef: [], agentsContent: CANONICAL });
@@ -320,8 +320,8 @@ describe('R6: re-install after drift keeps the first install baseline (R1 intera
 // R6 scenario 6 — AGENTS.md shared between assistants (project scope)
 // ---------------------------------------------------------------------------
 
-describe('R6: AGENTS.md shared between assistants', () => {
-  it('R6: removing the claude context keeps the shared file while opencode references it; only the block goes', async () => {
+describe('lot2-R6: AGENTS.md shared between assistants', () => {
+  it('lot2-R6: removing the claude context keeps the shared file while opencode references it; only the block goes', async () => {
     // Project scope: claude and opencode both target <cwd>/AGENTS.md. The
     // claude adapter resolves project paths from process.cwd(), so chdir into
     // a realpath'd tmp dir (T7 pattern) and restore the cwd in finally.
@@ -371,7 +371,7 @@ describe('R6: AGENTS.md shared between assistants', () => {
     }
   });
 
-  it('R6: delete-file is skipped when another manifest entry references the path (handler level)', async () => {
+  it('lot2-R6: delete-file is skipped when another manifest entry references the path (handler level)', async () => {
     await writeText(targets.agentsMd, CANONICAL);
 
     await applyRemoveContext(
@@ -383,7 +383,7 @@ describe('R6: AGENTS.md shared between assistants', () => {
     expect(await readText(targets.agentsMd)).toBe(CANONICAL);
   });
 
-  it('R6: restore-file is skipped when another manifest entry references the path (handler level)', async () => {
+  it('lot2-R6: restore-file is skipped when another manifest entry references the path (handler level)', async () => {
     await writeText(targets.agentsMd, CANONICAL);
 
     await applyRemoveContext(
@@ -400,8 +400,8 @@ describe('R6: AGENTS.md shared between assistants', () => {
 // R6 scenario 7 — retro-compat: legacy entry without `previous`
 // ---------------------------------------------------------------------------
 
-describe('R6: retro-compat — legacy entry without previous', () => {
-  it('R6: the plan warns "no restore baseline" and deletes on exact match only', async () => {
+describe('lot2-R6: retro-compat — legacy entry without previous', () => {
+  it('lot2-R6: the plan warns "no restore baseline" and deletes on exact match only', async () => {
     await writeText(targets.agentsMd, CANONICAL);
     await writeText(targets.claudeMd, managedBlock('~/.claude/harness/AGENTS.md'));
     const adapter = createClaudeAdapter({ denyRef: [] });
@@ -421,7 +421,7 @@ describe('R6: retro-compat — legacy entry without previous', () => {
     expect(ops.some((op) => op.kind === 'restore-file')).toBe(false);
   });
 
-  it('R6: engine remove of a legacy entry deletes the exactly-matching file (degraded but safe)', async () => {
+  it('lot2-R6: engine remove of a legacy entry deletes the exactly-matching file (degraded but safe)', async () => {
     await writeText(targets.agentsMd, USER_CONTENT);
     const adapter = createClaudeAdapter({ denyRef: [], agentsContent: CANONICAL });
     await apply(adapter, [CONTEXT_ENTRY], 'user', env, targets.stateJson);
@@ -433,7 +433,7 @@ describe('R6: retro-compat — legacy entry without previous', () => {
     expect(await fileExists(targets.agentsMd)).toBe(false);
   });
 
-  it('R6: a pre-B-iii entry (no applied at all) never adopts the repair capture as restore baseline', async () => {
+  it('lot2-R6: a pre-B-iii entry (no applied at all) never adopts the repair capture as restore baseline', async () => {
     // Legacy manifest older than B-iii: the entry exists WITHOUT any `applied`
     // payload. A repair install (user deleted the CLAUDE.md block; AGENTS.md
     // still canonical) plans a write-text whose plan-time `previous` capture
@@ -480,7 +480,7 @@ describe('R6: retro-compat — legacy entry without previous', () => {
     expect(findEntry(after, 'context-claude', 'user', 'claude')).toBeUndefined();
   });
 
-  it('R6: a legacy entry NEVER deletes a drifted file', async () => {
+  it('lot2-R6: a legacy entry NEVER deletes a drifted file', async () => {
     const DRIFTED = `${CANONICAL}\nuser work\n`;
     const adapter = createClaudeAdapter({ denyRef: [], agentsContent: CANONICAL });
     await apply(adapter, [CONTEXT_ENTRY], 'user', env, targets.stateJson);
@@ -499,8 +499,8 @@ describe('R6: retro-compat — legacy entry without previous', () => {
 // R6 scenario 4 — the audit distinguishes drift from absence
 // ---------------------------------------------------------------------------
 
-describe('R6: audit distinguishes drift from absence', () => {
-  it('R6: a diverged AGENTS.md audits as drift with a detail naming the path — never missing', async () => {
+describe('lot2-R6: audit distinguishes drift from absence', () => {
+  it('lot2-R6: a diverged AGENTS.md audits as drift with a detail naming the path — never missing', async () => {
     await writeText(targets.agentsMd, 'enriched by the user\n');
     await writeText(targets.claudeMd, managedBlock('~/.claude/harness/AGENTS.md'));
 
@@ -510,13 +510,13 @@ describe('R6: audit distinguishes drift from absence', () => {
     expect(report.detail).toContain(targets.agentsMd);
   });
 
-  it('R6: an absent AGENTS.md still audits as missing', async () => {
+  it('lot2-R6: an absent AGENTS.md still audits as missing', async () => {
     const report = await auditContext('user', env, CANONICAL);
 
     expect(report.state).toBe('missing');
   });
 
-  it('R6: check exits 3 on a drifted context (engine round-trip)', async () => {
+  it('lot2-R6: check exits 3 on a drifted context (engine round-trip)', async () => {
     const adapter = createClaudeAdapter({ denyRef: [], agentsContent: CANONICAL });
     await apply(adapter, [CONTEXT_ENTRY], 'user', env, targets.stateJson);
     await writeText(targets.agentsMd, `${CANONICAL}\nuser addition\n`);

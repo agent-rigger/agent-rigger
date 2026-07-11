@@ -105,8 +105,8 @@ function agentStorePath(name: string): string {
 // planRemove — gate on skills
 // ---------------------------------------------------------------------------
 
-describe('R3 — planRemove gate (skill)', () => {
-  it('R3: emits no unlink when the target is a real directory (not a rigger symlink)', async () => {
+describe('lot2-R3 — planRemove gate (skill)', () => {
+  it('lot2-R3: emits no unlink when the target is a real directory (not a rigger symlink)', async () => {
     const srcDir = await makeSkillFixture(fixturesDir, 'drifted');
     const adapter = createClaudeAdapter({ denyRef: [], skillSource: () => srcDir });
     const entry: AdapterEntry = { id: 'skill:drifted', nature: 'skill', scope: 'user' };
@@ -128,7 +128,7 @@ describe('R3 — planRemove gate (skill)', () => {
     expect(warnings.join('\n')).toContain('present but not managed');
   });
 
-  it('R3: emits no unlink when the target symlink points outside the rigger store', async () => {
+  it('lot2-R3: emits no unlink when the target symlink points outside the rigger store', async () => {
     const srcDir = await makeSkillFixture(fixturesDir, 'foreign');
     const adapter = createClaudeAdapter({ denyRef: [], skillSource: () => srcDir });
     const entry: AdapterEntry = { id: 'skill:foreign', nature: 'skill', scope: 'user' };
@@ -151,7 +151,7 @@ describe('R3 — planRemove gate (skill)', () => {
     expect(warnings.join('\n')).toContain('present but not managed');
   });
 
-  it('R3: emits the unlink op for a legitimate rigger symlink', async () => {
+  it('lot2-R3: emits the unlink op for a legitimate rigger symlink', async () => {
     const srcDir = await makeSkillFixture(fixturesDir, 'legit');
     const adapter = createClaudeAdapter({ denyRef: [], skillSource: () => srcDir });
     const entry: AdapterEntry = { id: 'skill:legit', nature: 'skill', scope: 'user' };
@@ -172,8 +172,8 @@ describe('R3 — planRemove gate (skill)', () => {
 // planRemove — gate on agents
 // ---------------------------------------------------------------------------
 
-describe('R3 — planRemove gate (agent)', () => {
-  it('R3: emits no unlink when the agent target is a real file (not a rigger symlink)', async () => {
+describe('lot2-R3 — planRemove gate (agent)', () => {
+  it('lot2-R3: emits no unlink when the agent target is a real file (not a rigger symlink)', async () => {
     const agentFile = await makeAgentFixture(fixturesDir, 'drifted-agent');
     const adapter = createClaudeAdapter({ denyRef: [], agentSource: () => agentFile });
     const entry: AdapterEntry = { id: 'agent:drifted-agent', nature: 'agent', scope: 'user' };
@@ -194,7 +194,7 @@ describe('R3 — planRemove gate (agent)', () => {
     expect(warnings.join('\n')).toContain('present but not managed');
   });
 
-  it('R3: emits the unlink op for a legitimate rigger agent symlink', async () => {
+  it('lot2-R3: emits the unlink op for a legitimate rigger agent symlink', async () => {
     const agentFile = await makeAgentFixture(fixturesDir, 'legit-agent');
     const adapter = createClaudeAdapter({ denyRef: [], agentSource: () => agentFile });
     const entry: AdapterEntry = { id: 'agent:legit-agent', nature: 'agent', scope: 'user' };
@@ -215,8 +215,8 @@ describe('R3 — planRemove gate (agent)', () => {
 // engine.remove — end-to-end gating
 // ---------------------------------------------------------------------------
 
-describe('R3 — engine.remove leaves unmanaged targets alone', () => {
-  it('R3: a hand-made directory never installed is left intact', async () => {
+describe('lot2-R3 — engine.remove leaves unmanaged targets alone', () => {
+  it('lot2-R3: a hand-made directory never installed is left intact', async () => {
     const adapter = createClaudeAdapter({ denyRef: [] });
     const entry: AdapterEntry = { id: 'skill:spec-workflow', nature: 'skill', scope: 'user' };
 
@@ -233,7 +233,7 @@ describe('R3 — engine.remove leaves unmanaged targets alone', () => {
     expect(content).toBe('precious user work');
   });
 
-  it('R3: a drifted target (real directory) is preserved and the manifest entry is kept', async () => {
+  it('lot2-R3: a drifted target (real directory) is preserved and the manifest entry is kept', async () => {
     const srcDir = await makeSkillFixture(fixturesDir, 'kept');
     const adapter = createClaudeAdapter({ denyRef: [], skillSource: () => srcDir });
     const entry: AdapterEntry = { id: 'skill:kept', nature: 'skill', scope: 'user' };
@@ -258,7 +258,7 @@ describe('R3 — engine.remove leaves unmanaged targets alone', () => {
     expect(manifest.artifacts.find((a) => a.id === 'skill:kept')).toBeDefined();
   });
 
-  it('R3: a foreign symlink is preserved and the manifest entry is kept', async () => {
+  it('lot2-R3: a foreign symlink is preserved and the manifest entry is kept', async () => {
     const srcDir = await makeSkillFixture(fixturesDir, 'foreign-e2e');
     const adapter = createClaudeAdapter({ denyRef: [], skillSource: () => srcDir });
     const entry: AdapterEntry = { id: 'skill:foreign-e2e', nature: 'skill', scope: 'user' };
@@ -287,8 +287,8 @@ describe('R3 — engine.remove leaves unmanaged targets alone', () => {
 // apply-time re-check — the gate holds at the moment of destruction (TOCTOU)
 // ---------------------------------------------------------------------------
 
-describe('R3 — applyRemoveSkill re-verifies the gate before deleting (TOCTOU)', () => {
-  it('R3: an unlink op whose target became a real directory deletes NOTHING (target and store intact)', async () => {
+describe('lot2-R3 — applyRemoveSkill re-verifies the gate before deleting (TOCTOU)', () => {
+  it('lot2-R3: an unlink op whose target became a real directory deletes NOTHING (target and store intact)', async () => {
     // Reproduces the reviewed probe: a plan-time unlink op raced against a
     // symlink→directory swap (2nd rigger process, or a tool recreating the
     // folder) must not rm -rf the directory — engine.remove backs up only the
@@ -309,7 +309,7 @@ describe('R3 — applyRemoveSkill re-verifies the gate before deleting (TOCTOU)'
     expect(await exists(store)).toBe(true);
   });
 
-  it('R3: an unlink op whose target is still the rigger symlink proceeds normally', async () => {
+  it('lot2-R3: an unlink op whose target is still the rigger symlink proceeds normally', async () => {
     const store = skillStorePath('sane');
     await fs.mkdir(store, { recursive: true });
     await fs.writeFile(path.join(store, 'SKILL.md'), '# sane');
@@ -328,8 +328,8 @@ describe('R3 — applyRemoveSkill re-verifies the gate before deleting (TOCTOU)'
 // copy-fallback installs are removable (target byte-identical to the store)
 // ---------------------------------------------------------------------------
 
-describe('R3 — copy-fallback installs stay removable', () => {
-  it('R3: a plain-copy target byte-identical to the store audits present and is removed with it', async () => {
+describe('lot2-R3 — copy-fallback installs stay removable', () => {
+  it('lot2-R3: a plain-copy target byte-identical to the store audits present and is removed with it', async () => {
     const srcDir = await makeSkillFixture(fixturesDir, 'copied');
     const adapter = createClaudeAdapter({ denyRef: [], skillSource: () => srcDir });
     const entry: AdapterEntry = { id: 'skill:copied', nature: 'skill', scope: 'user' };
@@ -361,8 +361,8 @@ describe('R3 — copy-fallback installs stay removable', () => {
 // check keeps reporting the divergence after a leave-alone
 // ---------------------------------------------------------------------------
 
-describe('R3 — check reports the drifted target the remove gate refused', () => {
-  it('R3: a real directory replacing the symlink makes check exit 3 (drift), before and after remove', async () => {
+describe('lot2-R3 — check reports the drifted target the remove gate refused', () => {
+  it('lot2-R3: a real directory replacing the symlink makes check exit 3 (drift), before and after remove', async () => {
     const srcDir = await makeSkillFixture(fixturesDir, 'visible');
     const adapter = createClaudeAdapter({ denyRef: [], skillSource: () => srcDir });
     const entry: AdapterEntry = { id: 'skill:visible', nature: 'skill', scope: 'user' };
@@ -396,8 +396,8 @@ describe('R3 — check reports the drifted target the remove gate refused', () =
 // engine.remove — store backed up before deletion
 // ---------------------------------------------------------------------------
 
-describe('R3 — engine.remove backs up the store before deletion', () => {
-  it('R3: a legitimate skill remove backs up the store directory (user edits survive)', async () => {
+describe('lot2-R3 — engine.remove backs up the store before deletion', () => {
+  it('lot2-R3: a legitimate skill remove backs up the store directory (user edits survive)', async () => {
     const srcDir = await makeSkillFixture(fixturesDir, 'backed');
     const adapter = createClaudeAdapter({ denyRef: [], skillSource: () => srcDir });
     const entry: AdapterEntry = { id: 'skill:backed', nature: 'skill', scope: 'user' };
@@ -422,7 +422,7 @@ describe('R3 — engine.remove backs up the store before deletion', () => {
     expect(saved).toBe('# backed\nuser modified\n');
   });
 
-  it('R3: a legitimate agent remove backs up the store .md file', async () => {
+  it('lot2-R3: a legitimate agent remove backs up the store .md file', async () => {
     const agentFile = await makeAgentFixture(fixturesDir, 'backed-agent');
     const adapter = createClaudeAdapter({ denyRef: [], agentSource: () => agentFile });
     const entry: AdapterEntry = { id: 'agent:backed-agent', nature: 'agent', scope: 'user' };

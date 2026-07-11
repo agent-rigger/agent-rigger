@@ -32,8 +32,8 @@ import type {
 // guardrail — dedup union, stable order
 // ---------------------------------------------------------------------------
 
-describe('R1: mergeApplied guardrail', () => {
-  it('R1: unions denyRules and allowRules, dedup, previous order preserved and new rules appended', () => {
+describe('lot2-R1: mergeApplied guardrail', () => {
+  it('lot2-R1: unions denyRules and allowRules, dedup, previous order preserved and new rules appended', () => {
     const previous: AppliedGuardrail = {
       kind: 'guardrail',
       denyRules: ['Bash(rm -rf *)', 'Bash(curl *)'],
@@ -52,7 +52,7 @@ describe('R1: mergeApplied guardrail', () => {
     });
   });
 
-  it('R1: a repair delta (subset of previous) leaves the cumulative payload unchanged', () => {
+  it('lot2-R1: a repair delta (subset of previous) leaves the cumulative payload unchanged', () => {
     const previous: AppliedGuardrail = {
       kind: 'guardrail',
       denyRules: ['Bash(rm -rf *)', 'Bash(curl *)'],
@@ -68,7 +68,7 @@ describe('R1: mergeApplied guardrail', () => {
     expect(mergeApplied(previous, next)).toEqual(previous);
   });
 
-  it('R1: does not mutate its inputs', () => {
+  it('lot2-R1: does not mutate its inputs', () => {
     const previous: AppliedGuardrail = {
       kind: 'guardrail',
       denyRules: ['Bash(rm -rf *)'],
@@ -93,8 +93,8 @@ describe('R1: mergeApplied guardrail', () => {
 // opencode-permission — per-leaf union
 // ---------------------------------------------------------------------------
 
-describe('R1: mergeApplied opencode-permission', () => {
-  it('R1: unions permission fragments per leaf', () => {
+describe('lot2-R1: mergeApplied opencode-permission', () => {
+  it('lot2-R1: unions permission fragments per leaf', () => {
     const previous: AppliedOpencodePermission = {
       kind: 'opencode-permission',
       permission: { bash: { 'rm -rf *': 'deny' } },
@@ -110,7 +110,7 @@ describe('R1: mergeApplied opencode-permission', () => {
     });
   });
 
-  it('R1: an already-recorded leaf keeps its previous state (merge is additive, never destructive)', () => {
+  it('lot2-R1: an already-recorded leaf keeps its previous state (merge is additive, never destructive)', () => {
     // Mirrors the on-disk merge (mergePermission): an existing leaf is never
     // overwritten, so the recorded trace must not drift from what is on disk.
     const previous: AppliedOpencodePermission = {
@@ -128,7 +128,7 @@ describe('R1: mergeApplied opencode-permission', () => {
     });
   });
 
-  it('R1: does not mutate nested permission objects', () => {
+  it('lot2-R1: does not mutate nested permission objects', () => {
     const previous: AppliedOpencodePermission = {
       kind: 'opencode-permission',
       permission: { bash: { 'rm -rf *': 'deny' } },
@@ -151,8 +151,8 @@ describe('R1: mergeApplied opencode-permission', () => {
 // hook / link / opencode-mcp / context — replacement
 // ---------------------------------------------------------------------------
 
-describe('R1: mergeApplied replacement kinds', () => {
-  it('R1: hook payload is replaced by the last run', () => {
+describe('lot2-R1: mergeApplied replacement kinds', () => {
+  it('lot2-R1: hook payload is replaced by the last run', () => {
     const previous: AppliedHook = {
       kind: 'hook',
       event: 'PreToolUse',
@@ -170,14 +170,14 @@ describe('R1: mergeApplied replacement kinds', () => {
     expect(mergeApplied(previous, next)).toEqual(next);
   });
 
-  it('R1: link payload is replaced by the last run', () => {
+  it('lot2-R1: link payload is replaced by the last run', () => {
     const previous: AppliedLink = { kind: 'link', files: ['/old/target', '/old/store'] };
     const next: AppliedLink = { kind: 'link', files: ['/new/target', '/new/store'] };
 
     expect(mergeApplied(previous, next)).toEqual(next);
   });
 
-  it('R1: opencode-mcp payload is replaced by the last run', () => {
+  it('lot2-R1: opencode-mcp payload is replaced by the last run', () => {
     const previous: AppliedOpencodeMcp = {
       kind: 'opencode-mcp',
       server: 'context7',
@@ -192,7 +192,7 @@ describe('R1: mergeApplied replacement kinds', () => {
     expect(mergeApplied(previous, next)).toEqual(next);
   });
 
-  it('R1: context block is replaced by the last run (previous preservation: r6-context-previous)', () => {
+  it('lot2-R1: context block is replaced by the last run (previous preservation: r6-context-previous)', () => {
     const previous: AppliedContext = { kind: 'context', block: 'old content\n' };
     const next: AppliedContext = { kind: 'context', block: 'new content\n' };
 
@@ -204,8 +204,8 @@ describe('R1: mergeApplied replacement kinds', () => {
 // edges — absent sides, kind mismatch
 // ---------------------------------------------------------------------------
 
-describe('R1: mergeApplied edges', () => {
-  it('R1: first install (no previous) returns the run payload as-is', () => {
+describe('lot2-R1: mergeApplied edges', () => {
+  it('lot2-R1: first install (no previous) returns the run payload as-is', () => {
     const next: AppliedGuardrail = {
       kind: 'guardrail',
       denyRules: ['Bash(rm -rf *)'],
@@ -215,7 +215,7 @@ describe('R1: mergeApplied edges', () => {
     expect(mergeApplied(undefined, next)).toEqual(next);
   });
 
-  it('R1: a run with no recognisable payload preserves the previous trace', () => {
+  it('lot2-R1: a run with no recognisable payload preserves the previous trace', () => {
     const previous: AppliedGuardrail = {
       kind: 'guardrail',
       denyRules: ['Bash(rm -rf *)'],
@@ -225,11 +225,11 @@ describe('R1: mergeApplied edges', () => {
     expect(mergeApplied(previous, undefined)).toEqual(previous);
   });
 
-  it('R1: both sides absent → undefined', () => {
+  it('lot2-R1: both sides absent → undefined', () => {
     expect(mergeApplied(undefined, undefined)).toBeUndefined();
   });
 
-  it('R1: kind mismatch → the last run replaces the previous payload', () => {
+  it('lot2-R1: kind mismatch → the last run replaces the previous payload', () => {
     const previous: AppliedGuardrail = {
       kind: 'guardrail',
       denyRules: ['Bash(rm -rf *)'],
@@ -245,8 +245,8 @@ describe('R1: mergeApplied edges', () => {
 // mergeFiles — ManifestEntry.files union
 // ---------------------------------------------------------------------------
 
-describe('R1: mergeFiles', () => {
-  it('R1: unions file lists, dedup, previous order preserved and new paths appended', () => {
+describe('lot2-R1: mergeFiles', () => {
+  it('lot2-R1: unions file lists, dedup, previous order preserved and new paths appended', () => {
     expect(mergeFiles(['/a/settings.json', '/b/store'], ['/b/store', '/c/target'])).toEqual([
       '/a/settings.json',
       '/b/store',
@@ -254,11 +254,11 @@ describe('R1: mergeFiles', () => {
     ]);
   });
 
-  it('R1: identical lists stay unchanged (idempotent re-install)', () => {
+  it('lot2-R1: identical lists stay unchanged (idempotent re-install)', () => {
     expect(mergeFiles(['/a/settings.json'], ['/a/settings.json'])).toEqual(['/a/settings.json']);
   });
 
-  it('R1: duplicates within the run delta are collapsed', () => {
+  it('lot2-R1: duplicates within the run delta are collapsed', () => {
     expect(mergeFiles([], ['/a', '/a', '/b'])).toEqual(['/a', '/b']);
   });
 });

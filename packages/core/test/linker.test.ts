@@ -1,19 +1,33 @@
 /**
- * Tests for linker.ts — syncToStore, linkOrCopy, link.
+ * Tests for core/src/linker.ts — syncToStore, linkOrCopy, link.
  *
- * Isolation: each test uses fresh tmp directories under os.tmpdir().
- * afterEach removes the entire tmp tree.
+ * Canonical suite (Lot 7 / T5, L14): merges the two previously-duplicated
+ * suites (this file and the now-deleted `src/linker.test.ts`) into one.
+ * The living copy was `src/linker.test.ts` (preserveGlobs + R3 symlink
+ * security); this file ports the 8 behaviors that were unique to the old
+ * `test/` copy and folds divergent assertions on shared behaviors into a
+ * single test rather than keeping near-duplicates.
  *
- * Covered scenarios:
- * - syncToStore: file source → store copy
- * - syncToStore: directory source → recursive store copy
- * - syncToStore: re-sync updates the store to reflect the new source
- * - linkOrCopy: creates a symlink from target → store
- * - linkOrCopy: idempotent (correct symlink already present → no error)
- * - linkOrCopy: replaces a stale target (wrong symlink or plain file)
- * - linkOrCopy (fallback): injected symlink throws → copy fallback, method === 'copy'
- * - link: syncToStore + linkOrCopy composed, returns summary
- * - link: stable on second call (idempotence)
+ * `unlink` / `unlinkTarget` / `removeStoreIfUnreferenced` are out of scope —
+ * see linker.unlink.test.ts.
+ *
+ * Isolation: each test uses a fresh tmp dir via makeTmp(). No real fs outside
+ * of tmp.
+ *
+ * Coverage:
+ * - syncToStore file: copies source to store, creates parents, overwrites.
+ * - syncToStore dir: mirrors recursively (incl. nested subdirectories),
+ *   removes stale entries, replaces the store wholesale.
+ * - syncToStore dir with preserveGlobs: copies source files, preserves
+ *   matching files, still purges non-matching stale files.
+ * - syncToStore — R3: rejects any symlink found in cloned content
+ *   (fail-closed), at any depth, for both directory and mono-file sources.
+ * - linkOrCopy: creates a symlink; content is readable through it; creates
+ *   target parents; is idempotent; re-links a stale/plain target; falls
+ *   back to a real (non-symlink) copy — file or directory — when injected
+ *   symlink throws.
+ * - link: composes syncToStore + linkOrCopy, is idempotent on a second call,
+ *   and propagates opts.symlink through to the linkOrCopy fallback.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
@@ -21,130 +35,333 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
-import { link, linkOrCopy, syncToStore } from '../src/linker';
+import { link, linkOrCopy, SymlinkInContentError, syncToStore } from '../src/linker';
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-let tmpDir: string;
+async function makeTmp(): Promise<{ dir: string; cleanup: () => Promise<void> }> {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'linker-test-'));
+  return { dir, cleanup: () => fs.rm(dir, { recursive: true, force: true }) };
+}
+
+// ---------------------------------------------------------------------------
+// Fixtures
+// ---------------------------------------------------------------------------
+
+let tmp: Awaited<ReturnType<typeof makeTmp>>;
 
 beforeEach(async () => {
-  tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'rigger-linker-'));
+  tmp = await makeTmp();
 });
 
 afterEach(async () => {
-  await fs.rm(tmpDir, { recursive: true, force: true });
+  await tmp.cleanup();
 });
 
 // ---------------------------------------------------------------------------
-// syncToStore — file source
+// syncToStore — file
 // ---------------------------------------------------------------------------
 
-describe('syncToStore (file source)', () => {
-  it('copies the source file into the store path', async () => {
-    const srcPath = path.join(tmpDir, 'src', 'skill.md');
-    const storePath = path.join(tmpDir, 'store', 'skill.md');
+describe('syncToStore — file', () => {
+  it('copies source file to store path', async () => {
+    const src = path.join(tmp.dir, 'source.sh');
+    const store = path.join(tmp.dir, 'store', 'target.sh');
+    await fs.writeFile(src, '#!/bin/sh\necho hello');
 
-    await fs.mkdir(path.dirname(srcPath), { recursive: true });
-    await fs.writeFile(srcPath, '# Skill content', 'utf-8');
+    await syncToStore(src, store);
 
-    await syncToStore(srcPath, storePath);
-
-    const content = await fs.readFile(storePath, 'utf-8');
-    expect(content).toBe('# Skill content');
+    const content = await fs.readFile(store, 'utf8');
+    expect(content).toBe('#!/bin/sh\necho hello');
   });
 
-  it('creates parent directories for the store path', async () => {
-    const srcPath = path.join(tmpDir, 'src', 'skill.md');
-    const storePath = path.join(tmpDir, 'deep', 'nested', 'store', 'skill.md');
+  it('creates parent directories for store path', async () => {
+    const src = path.join(tmp.dir, 'source.sh');
+    const store = path.join(tmp.dir, 'deep', 'nested', 'dir', 'target.sh');
+    await fs.writeFile(src, 'content');
 
-    await fs.mkdir(path.dirname(srcPath), { recursive: true });
-    await fs.writeFile(srcPath, 'data', 'utf-8');
+    await syncToStore(src, store);
 
-    await syncToStore(srcPath, storePath);
-
-    const exists = await fs.stat(storePath).then(() => true).catch(() => false);
-    expect(exists).toBe(true);
+    const stat = await fs.stat(store);
+    expect(stat.isFile()).toBe(true);
   });
 
-  it('overwrites an existing store file with the new source content', async () => {
-    const srcPath = path.join(tmpDir, 'src', 'skill.md');
-    const storePath = path.join(tmpDir, 'store', 'skill.md');
+  it('overwrites existing store file', async () => {
+    const src = path.join(tmp.dir, 'source.sh');
+    const store = path.join(tmp.dir, 'store.sh');
+    await fs.writeFile(src, 'new content');
+    await fs.writeFile(store, 'old content');
 
-    await fs.mkdir(path.dirname(srcPath), { recursive: true });
-    await fs.mkdir(path.dirname(storePath), { recursive: true });
-    await fs.writeFile(storePath, 'old content', 'utf-8');
-    await fs.writeFile(srcPath, 'new content', 'utf-8');
+    await syncToStore(src, store);
 
-    await syncToStore(srcPath, storePath);
-
-    const content = await fs.readFile(storePath, 'utf-8');
+    const content = await fs.readFile(store, 'utf8');
     expect(content).toBe('new content');
   });
 });
 
 // ---------------------------------------------------------------------------
-// syncToStore — directory source
+// syncToStore — directory (default: rm -rf + cp)
 // ---------------------------------------------------------------------------
 
-describe('syncToStore (directory source)', () => {
-  it('recursively copies the source directory into the store path', async () => {
-    const srcDir = path.join(tmpDir, 'src', 'skill-dir');
-    const storeDir = path.join(tmpDir, 'store', 'skill-dir');
+describe('syncToStore — directory (full mirror)', () => {
+  it('copies source directory contents to store, including nested subdirectories', async () => {
+    const src = path.join(tmp.dir, 'src');
+    const store = path.join(tmp.dir, 'store');
+    await fs.mkdir(path.join(src, 'sub'), { recursive: true });
+    await fs.writeFile(path.join(src, 'script.sh'), '#!/bin/sh');
+    await fs.writeFile(path.join(src, 'sub', 'nested.ts'), 'export {}');
 
-    await fs.mkdir(path.join(srcDir, 'sub'), { recursive: true });
-    await fs.writeFile(path.join(srcDir, 'README.md'), '# Readme', 'utf-8');
-    await fs.writeFile(path.join(srcDir, 'sub', 'file.ts'), 'export {}', 'utf-8');
+    await syncToStore(src, store);
 
-    await syncToStore(srcDir, storeDir);
-
-    const readme = await fs.readFile(path.join(storeDir, 'README.md'), 'utf-8');
-    const nested = await fs.readFile(path.join(storeDir, 'sub', 'file.ts'), 'utf-8');
-    expect(readme).toBe('# Readme');
+    const content = await fs.readFile(path.join(store, 'script.sh'), 'utf8');
+    const nested = await fs.readFile(path.join(store, 'sub', 'nested.ts'), 'utf8');
+    expect(content).toBe('#!/bin/sh');
     expect(nested).toBe('export {}');
   });
 
-  it('replaces the old store directory on re-sync', async () => {
-    const srcDir = path.join(tmpDir, 'src', 'skill-dir');
-    const storeDir = path.join(tmpDir, 'store', 'skill-dir');
+  it('removes stale files in store that are absent from source', async () => {
+    const src = path.join(tmp.dir, 'src');
+    const store = path.join(tmp.dir, 'store');
+    await fs.mkdir(src);
+    await fs.mkdir(store);
+    await fs.writeFile(path.join(src, 'current.sh'), 'new');
+    await fs.writeFile(path.join(store, 'stale.sh'), 'old');
 
-    await fs.mkdir(srcDir, { recursive: true });
-    await fs.writeFile(path.join(srcDir, 'v1.md'), 'version 1', 'utf-8');
-    await syncToStore(srcDir, storeDir);
+    await syncToStore(src, store);
 
-    await fs.writeFile(path.join(srcDir, 'v2.md'), 'version 2', 'utf-8');
-    await fs.rm(path.join(srcDir, 'v1.md'));
-    await syncToStore(srcDir, storeDir);
+    const entries = await fs.readdir(store);
+    expect(entries).toContain('current.sh');
+    expect(entries).not.toContain('stale.sh');
+  });
 
-    const v2 = await fs.readFile(path.join(storeDir, 'v2.md'), 'utf-8');
-    expect(v2).toBe('version 2');
+  it('replaces existing store directory entirely', async () => {
+    const src = path.join(tmp.dir, 'src');
+    const store = path.join(tmp.dir, 'store');
+    await fs.mkdir(src);
+    await fs.mkdir(store);
+    await fs.writeFile(path.join(src, 'v2.sh'), 'v2');
+    await fs.writeFile(path.join(store, 'v1.sh'), 'v1');
 
-    const v1Exists = await fs.stat(path.join(storeDir, 'v1.md')).then(() => true).catch(
-      () => false,
-    );
-    expect(v1Exists).toBe(false);
+    await syncToStore(src, store);
+
+    const entries = await fs.readdir(store);
+    expect(entries).toContain('v2.sh');
+    expect(entries).not.toContain('v1.sh');
   });
 });
 
 // ---------------------------------------------------------------------------
-// syncToStore — update scenario
+// syncToStore — directory with preserveGlobs (non-destructive for matched files)
 // ---------------------------------------------------------------------------
 
-describe('syncToStore (update)', () => {
-  it('reflects updated source content after a second sync', async () => {
-    const srcPath = path.join(tmpDir, 'src', 'agent.md');
-    const storePath = path.join(tmpDir, 'store', 'agent.md');
+describe('syncToStore — directory with preserveGlobs', () => {
+  it('preserves guard-*.log files after re-sync', async () => {
+    const src = path.join(tmp.dir, 'src');
+    const store = path.join(tmp.dir, 'store');
+    await fs.mkdir(src);
+    await fs.mkdir(store);
+    await fs.writeFile(path.join(src, 'guard.sh'), '#!/bin/sh');
+    // guard log already present in store (written at runtime by the guard script)
+    await fs.writeFile(path.join(store, 'guard-2026-06-23.log'), 'previous run log');
 
-    await fs.mkdir(path.dirname(srcPath), { recursive: true });
-    await fs.writeFile(srcPath, 'v1', 'utf-8');
-    await syncToStore(srcPath, storePath);
+    await syncToStore(src, store, { preserveGlobs: ['guard-*.log'] });
 
-    await fs.writeFile(srcPath, 'v2', 'utf-8');
-    await syncToStore(srcPath, storePath);
+    const logContent = await fs.readFile(path.join(store, 'guard-2026-06-23.log'), 'utf8');
+    expect(logContent).toBe('previous run log');
+  });
 
-    const content = await fs.readFile(storePath, 'utf-8');
-    expect(content).toBe('v2');
+  it('copies source files into store when preserveGlobs is set', async () => {
+    const src = path.join(tmp.dir, 'src');
+    const store = path.join(tmp.dir, 'store');
+    await fs.mkdir(src);
+    await fs.mkdir(store);
+    await fs.writeFile(path.join(src, 'guard.sh'), '#!/bin/sh guard v2');
+
+    await syncToStore(src, store, { preserveGlobs: ['guard-*.log'] });
+
+    const content = await fs.readFile(path.join(store, 'guard.sh'), 'utf8');
+    expect(content).toBe('#!/bin/sh guard v2');
+  });
+
+  it('removes stale source files not in source and not matching preserveGlobs', async () => {
+    const src = path.join(tmp.dir, 'src');
+    const store = path.join(tmp.dir, 'store');
+    await fs.mkdir(src);
+    await fs.mkdir(store);
+    await fs.writeFile(path.join(src, 'current.sh'), 'new');
+    // stale.sh exists in store but not in src, and does not match guard-*.log
+    await fs.writeFile(path.join(store, 'stale.sh'), 'old');
+
+    await syncToStore(src, store, { preserveGlobs: ['guard-*.log'] });
+
+    const entries = await fs.readdir(store);
+    expect(entries).toContain('current.sh');
+    expect(entries).not.toContain('stale.sh');
+  });
+
+  it('updates an existing source file in store (overwrite)', async () => {
+    const src = path.join(tmp.dir, 'src');
+    const store = path.join(tmp.dir, 'store');
+    await fs.mkdir(src);
+    await fs.mkdir(store);
+    await fs.writeFile(path.join(src, 'guard.sh'), 'updated');
+    await fs.writeFile(path.join(store, 'guard.sh'), 'outdated');
+
+    await syncToStore(src, store, { preserveGlobs: ['guard-*.log'] });
+
+    const content = await fs.readFile(path.join(store, 'guard.sh'), 'utf8');
+    expect(content).toBe('updated');
+  });
+
+  it('preserves multiple log files matching the glob', async () => {
+    const src = path.join(tmp.dir, 'src');
+    const store = path.join(tmp.dir, 'store');
+    await fs.mkdir(src);
+    await fs.mkdir(store);
+    await fs.writeFile(path.join(src, 'guard.sh'), '#!/bin/sh');
+    await fs.writeFile(path.join(store, 'guard-2026-06-21.log'), 'run 1');
+    await fs.writeFile(path.join(store, 'guard-2026-06-22.log'), 'run 2');
+    await fs.writeFile(path.join(store, 'guard-2026-06-23.log'), 'run 3');
+
+    await syncToStore(src, store, { preserveGlobs: ['guard-*.log'] });
+
+    const entries = await fs.readdir(store);
+    expect(entries).toContain('guard-2026-06-21.log');
+    expect(entries).toContain('guard-2026-06-22.log');
+    expect(entries).toContain('guard-2026-06-23.log');
+  });
+
+  it('creates store directory if it does not exist yet', async () => {
+    const src = path.join(tmp.dir, 'src');
+    const store = path.join(tmp.dir, 'store-new');
+    await fs.mkdir(src);
+    await fs.writeFile(path.join(src, 'guard.sh'), '#!/bin/sh');
+
+    await syncToStore(src, store, { preserveGlobs: ['guard-*.log'] });
+
+    const stat = await fs.stat(path.join(store, 'guard.sh'));
+    expect(stat.isFile()).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// non-regression: default syncToStore (no preserveGlobs) still mirrors cleanly
+// ---------------------------------------------------------------------------
+
+describe('syncToStore — non-regression: default mode ignores any runtime files in store', () => {
+  it('does NOT preserve non-source files when no preserveGlobs given', async () => {
+    const src = path.join(tmp.dir, 'src');
+    const store = path.join(tmp.dir, 'store');
+    await fs.mkdir(src);
+    await fs.mkdir(store);
+    await fs.writeFile(path.join(src, 'script.sh'), 'content');
+    await fs.writeFile(path.join(store, 'guard-2026-06-23.log'), 'log content');
+
+    // Default call — no preserveGlobs
+    await syncToStore(src, store);
+
+    const entries = await fs.readdir(store);
+    expect(entries).not.toContain('guard-2026-06-23.log');
+    expect(entries).toContain('script.sh');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// syncToStore — R3: rejects symlinks in cloned content (fail-closed)
+//
+// Threat model: content cloned from an untrusted remote catalog can carry a
+// symlink (e.g. `secret -> ~/.ssh/id_rsa`). Scanners like gitleaks/trivy do
+// not follow symlinks, so such a link passes the scan gate empty-handed; if
+// syncToStore then copied it verbatim, the install symlink would re-expose
+// the linked host file. The guard must reject before any byte is written to
+// the store.
+// ---------------------------------------------------------------------------
+
+describe('syncToStore — R3: rejects symlinks in cloned content (fail-closed)', () => {
+  it('rejects an absolute symlink to a host secret, and leaves the store untouched', async () => {
+    const src = path.join(tmp.dir, 'src');
+    const store = path.join(tmp.dir, 'store');
+    const hostSecret = path.join(tmp.dir, 'host-home', '.ssh', 'id_rsa');
+    await fs.mkdir(path.dirname(hostSecret), { recursive: true });
+    await fs.writeFile(hostSecret, 'PRIVATE KEY MATERIAL');
+    await fs.mkdir(src);
+    await fs.writeFile(path.join(src, 'skill.md'), '# ok');
+    await fs.symlink(hostSecret, path.join(src, 'secret'));
+
+    await expect(syncToStore(src, store)).rejects.toThrow(SymlinkInContentError);
+    await expect(syncToStore(src, store)).rejects.toThrow(/secret/);
+
+    const storeExists = await fs.stat(store).then(() => true).catch(() => false);
+    expect(storeExists).toBe(false);
+  });
+
+  it('rejects a relative symlink escaping the checkout', async () => {
+    const src = path.join(tmp.dir, 'src');
+    const store = path.join(tmp.dir, 'store');
+    await fs.mkdir(src);
+    await fs.symlink('../../../../etc/passwd', path.join(src, 'x'));
+
+    await expect(syncToStore(src, store)).rejects.toThrow(SymlinkInContentError);
+  });
+
+  it('rejects a symlink pointing to a directory', async () => {
+    const src = path.join(tmp.dir, 'src');
+    const store = path.join(tmp.dir, 'store');
+    const otherDir = path.join(tmp.dir, 'other-dir');
+    await fs.mkdir(src);
+    await fs.mkdir(otherDir);
+    await fs.symlink(otherDir, path.join(src, 'linked-dir'));
+
+    await expect(syncToStore(src, store)).rejects.toThrow(SymlinkInContentError);
+  });
+
+  it('rejects a dangling symlink (target does not exist)', async () => {
+    const src = path.join(tmp.dir, 'src');
+    const store = path.join(tmp.dir, 'store');
+    await fs.mkdir(src);
+    await fs.symlink(path.join(tmp.dir, 'nonexistent-target'), path.join(src, 'broken'));
+
+    await expect(syncToStore(src, store)).rejects.toThrow(SymlinkInContentError);
+  });
+
+  it('rejects a symlink nested deep in a subdirectory (full-depth walk)', async () => {
+    const src = path.join(tmp.dir, 'src');
+    const store = path.join(tmp.dir, 'store');
+    const hostSecret = path.join(tmp.dir, 'host-secret-2');
+    await fs.writeFile(hostSecret, 'secret content');
+    await fs.mkdir(path.join(src, 'sub', 'inner'), { recursive: true });
+    await fs.writeFile(path.join(src, 'sub', 'ok.md'), 'ok');
+    await fs.symlink(hostSecret, path.join(src, 'sub', 'inner', 'secret'));
+
+    await expect(syncToStore(src, store)).rejects.toThrow(SymlinkInContentError);
+    await expect(syncToStore(src, store)).rejects.toThrow(/sub[/\\]inner[/\\]secret/);
+  });
+
+  it('rejects when the mono-file source itself is a symlink', async () => {
+    const realFile = path.join(tmp.dir, 'real-agent.md');
+    await fs.writeFile(realFile, '# agent');
+    await fs.mkdir(path.join(tmp.dir, 'agents'));
+    const src = path.join(tmp.dir, 'agents', 'evil.md');
+    await fs.symlink(realFile, src);
+    const store = path.join(tmp.dir, 'store.md');
+
+    await expect(syncToStore(src, store)).rejects.toThrow(SymlinkInContentError);
+  });
+
+  it('non-regression: succeeds for clean content (regular files and subdirectories)', async () => {
+    const src = path.join(tmp.dir, 'src');
+    const store = path.join(tmp.dir, 'store');
+    await fs.mkdir(path.join(src, 'sub'), { recursive: true });
+    await fs.writeFile(path.join(src, 'top.md'), 'top');
+    await fs.writeFile(path.join(src, 'sub', 'nested.md'), 'nested');
+
+    await syncToStore(src, store);
+
+    const topContent = await fs.readFile(path.join(store, 'top.md'), 'utf8');
+    const nestedContent = await fs.readFile(path.join(store, 'sub', 'nested.md'), 'utf8');
+    expect(topContent).toBe('top');
+    expect(nestedContent).toBe('nested');
   });
 });
 
@@ -152,253 +369,199 @@ describe('syncToStore (update)', () => {
 // linkOrCopy — symlink path
 // ---------------------------------------------------------------------------
 
-describe('linkOrCopy (symlink)', () => {
-  it('creates a symlink from targetPath to storePath', async () => {
-    const storePath = path.join(tmpDir, 'store', 'skill.md');
-    const targetPath = path.join(tmpDir, 'target', 'skill.md');
+describe('linkOrCopy — symlink path', () => {
+  it('creates a symlink at targetPath pointing to storePath', async () => {
+    const store = path.join(tmp.dir, 'store.sh');
+    const target = path.join(tmp.dir, 'target.sh');
+    await fs.writeFile(store, '#!/bin/sh');
 
-    await fs.mkdir(path.dirname(storePath), { recursive: true });
-    await fs.writeFile(storePath, 'content', 'utf-8');
-
-    const method = await linkOrCopy(storePath, targetPath);
+    const method = await linkOrCopy(store, target);
 
     expect(method).toBe('symlink');
-    const stat = await fs.lstat(targetPath);
+    const stat = await fs.lstat(target);
     expect(stat.isSymbolicLink()).toBe(true);
+    const link = await fs.readlink(target);
+    expect(link).toBe(store);
   });
 
-  it('reading targetPath through the symlink returns store content', async () => {
-    const storePath = path.join(tmpDir, 'store', 'skill.md');
-    const targetPath = path.join(tmpDir, 'target', 'skill.md');
+  it('reads store content through the target symlink', async () => {
+    const store = path.join(tmp.dir, 'store.sh');
+    const target = path.join(tmp.dir, 'target.sh');
+    await fs.writeFile(store, 'via symlink');
 
-    await fs.mkdir(path.dirname(storePath), { recursive: true });
-    await fs.writeFile(storePath, 'via symlink', 'utf-8');
+    await linkOrCopy(store, target);
 
-    await linkOrCopy(storePath, targetPath);
-
-    const content = await fs.readFile(targetPath, 'utf-8');
+    const content = await fs.readFile(target, 'utf8');
     expect(content).toBe('via symlink');
   });
 
   it('creates parent directories for targetPath', async () => {
-    const storePath = path.join(tmpDir, 'store', 'skill.md');
-    const targetPath = path.join(tmpDir, 'deep', 'nested', 'target', 'skill.md');
+    const store = path.join(tmp.dir, 'store.sh');
+    const target = path.join(tmp.dir, 'deep', 'nested', 'target.sh');
+    await fs.writeFile(store, 'data');
 
-    await fs.mkdir(path.dirname(storePath), { recursive: true });
-    await fs.writeFile(storePath, 'data', 'utf-8');
+    await linkOrCopy(store, target);
 
-    await linkOrCopy(storePath, targetPath);
-
-    const stat = await fs.lstat(targetPath);
+    const stat = await fs.lstat(target);
     expect(stat.isSymbolicLink()).toBe(true);
   });
 
-  it('is idempotent when the correct symlink already exists', async () => {
-    const storePath = path.join(tmpDir, 'store', 'skill.md');
-    const targetPath = path.join(tmpDir, 'target', 'skill.md');
+  it('is idempotent when symlink already points to storePath', async () => {
+    const store = path.join(tmp.dir, 'store.sh');
+    const target = path.join(tmp.dir, 'target.sh');
+    await fs.writeFile(store, '#!/bin/sh');
 
-    await fs.mkdir(path.dirname(storePath), { recursive: true });
-    await fs.writeFile(storePath, 'content', 'utf-8');
-
-    await linkOrCopy(storePath, targetPath);
-    const method = await linkOrCopy(storePath, targetPath);
+    await linkOrCopy(store, target);
+    const method = await linkOrCopy(store, target);
 
     expect(method).toBe('symlink');
-    const link = await fs.readlink(targetPath);
-    expect(link).toBe(storePath);
+    const link = await fs.readlink(target);
+    expect(link).toBe(store);
   });
 
-  it('replaces a stale symlink pointing to the wrong target', async () => {
-    const storePath = path.join(tmpDir, 'store', 'skill.md');
-    const staleTarget = path.join(tmpDir, 'other', 'old.md');
-    const targetPath = path.join(tmpDir, 'target', 'skill.md');
+  it('re-links when existing symlink points to wrong target', async () => {
+    const store = path.join(tmp.dir, 'store.sh');
+    const other = path.join(tmp.dir, 'other.sh');
+    const target = path.join(tmp.dir, 'target.sh');
+    await fs.writeFile(store, '#!/bin/sh');
+    await fs.writeFile(other, '#!/bin/sh other');
+    await fs.symlink(other, target);
 
-    await fs.mkdir(path.dirname(storePath), { recursive: true });
-    await fs.mkdir(path.dirname(staleTarget), { recursive: true });
-    await fs.mkdir(path.dirname(targetPath), { recursive: true });
-    await fs.writeFile(storePath, 'correct content', 'utf-8');
-    await fs.symlink(staleTarget, targetPath);
-
-    const method = await linkOrCopy(storePath, targetPath);
+    const method = await linkOrCopy(store, target);
 
     expect(method).toBe('symlink');
-    const link = await fs.readlink(targetPath);
-    expect(link).toBe(storePath);
+    const link = await fs.readlink(target);
+    expect(link).toBe(store);
   });
 
   it('replaces a plain file at targetPath with a symlink', async () => {
-    const storePath = path.join(tmpDir, 'store', 'skill.md');
-    const targetPath = path.join(tmpDir, 'target', 'skill.md');
+    const store = path.join(tmp.dir, 'store.sh');
+    const target = path.join(tmp.dir, 'target.sh');
+    await fs.writeFile(store, 'store content');
+    await fs.writeFile(target, 'plain file');
 
-    await fs.mkdir(path.dirname(storePath), { recursive: true });
-    await fs.mkdir(path.dirname(targetPath), { recursive: true });
-    await fs.writeFile(storePath, 'store content', 'utf-8');
-    await fs.writeFile(targetPath, 'plain file', 'utf-8');
-
-    const method = await linkOrCopy(storePath, targetPath);
+    const method = await linkOrCopy(store, target);
 
     expect(method).toBe('symlink');
-    const stat = await fs.lstat(targetPath);
+    const stat = await fs.lstat(target);
     expect(stat.isSymbolicLink()).toBe(true);
   });
 });
 
-// ---------------------------------------------------------------------------
-// linkOrCopy — copy fallback
-// ---------------------------------------------------------------------------
+describe('linkOrCopy — copy fallback', () => {
+  it('falls back to copy when symlink throws', async () => {
+    const store = path.join(tmp.dir, 'store.sh');
+    const target = path.join(tmp.dir, 'target.sh');
+    await fs.writeFile(store, 'content');
 
-describe('linkOrCopy (copy fallback)', () => {
-  it('returns "copy" when the injected symlink function throws', async () => {
-    const storePath = path.join(tmpDir, 'store', 'skill.md');
-    const targetPath = path.join(tmpDir, 'target', 'skill.md');
-
-    await fs.mkdir(path.dirname(storePath), { recursive: true });
-    await fs.writeFile(storePath, 'fallback content', 'utf-8');
-
-    const method = await linkOrCopy(storePath, targetPath, {
-      symlink: async () => {
-        throw new Error('symlink not supported on this FS');
-      },
+    const method = await linkOrCopy(store, target, {
+      symlink: () => Promise.reject(new Error('symlink not supported')),
     });
 
     expect(method).toBe('copy');
+    const content = await fs.readFile(target, 'utf8');
+    expect(content).toBe('content');
   });
 
-  it('target is a real copy (not a symlink) after fallback', async () => {
-    const storePath = path.join(tmpDir, 'store', 'skill.md');
-    const targetPath = path.join(tmpDir, 'target', 'skill.md');
+  it('target is a real copy, not a symlink, after fallback', async () => {
+    const store = path.join(tmp.dir, 'store.sh');
+    const target = path.join(tmp.dir, 'target.sh');
+    await fs.writeFile(store, 'content');
 
-    await fs.mkdir(path.dirname(storePath), { recursive: true });
-    await fs.writeFile(storePath, 'fallback content', 'utf-8');
-
-    await linkOrCopy(storePath, targetPath, {
-      symlink: async () => {
-        throw new Error('symlink not supported');
-      },
+    await linkOrCopy(store, target, {
+      symlink: () => Promise.reject(new Error('symlink not supported')),
     });
 
-    const stat = await fs.lstat(targetPath);
+    const stat = await fs.lstat(target);
     expect(stat.isSymbolicLink()).toBe(false);
   });
 
-  it('copy fallback preserves the store content at targetPath', async () => {
-    const storePath = path.join(tmpDir, 'store', 'skill.md');
-    const targetPath = path.join(tmpDir, 'target', 'skill.md');
+  it('copy fallback works recursively for a directory store', async () => {
+    const store = path.join(tmp.dir, 'store-dir');
+    const target = path.join(tmp.dir, 'target-dir');
+    await fs.mkdir(path.join(store, 'sub'), { recursive: true });
+    await fs.writeFile(path.join(store, 'README.md'), '# readme');
 
-    await fs.mkdir(path.dirname(storePath), { recursive: true });
-    await fs.writeFile(storePath, 'fallback content', 'utf-8');
-
-    await linkOrCopy(storePath, targetPath, {
-      symlink: async () => {
-        throw new Error('symlink not supported');
-      },
-    });
-
-    const content = await fs.readFile(targetPath, 'utf-8');
-    expect(content).toBe('fallback content');
-  });
-
-  it('copy fallback works for a directory store', async () => {
-    const storeDir = path.join(tmpDir, 'store', 'skill-dir');
-    const targetPath = path.join(tmpDir, 'target', 'skill-dir');
-
-    await fs.mkdir(path.join(storeDir, 'sub'), { recursive: true });
-    await fs.writeFile(path.join(storeDir, 'README.md'), '# readme', 'utf-8');
-
-    const method = await linkOrCopy(storeDir, targetPath, {
-      symlink: async () => {
-        throw new Error('no symlinks');
-      },
+    const method = await linkOrCopy(store, target, {
+      symlink: () => Promise.reject(new Error('no symlinks')),
     });
 
     expect(method).toBe('copy');
-    const readme = await fs.readFile(path.join(targetPath, 'README.md'), 'utf-8');
+    const readme = await fs.readFile(path.join(target, 'README.md'), 'utf8');
     expect(readme).toBe('# readme');
-    const stat = await fs.lstat(targetPath);
+    const stat = await fs.lstat(target);
     expect(stat.isSymbolicLink()).toBe(false);
   });
 });
 
 // ---------------------------------------------------------------------------
-// link — composed function
+// link
 // ---------------------------------------------------------------------------
 
-describe('link', () => {
-  it('returns a summary with method, store, and target', async () => {
-    const srcPath = path.join(tmpDir, 'src', 'skill.md');
-    const storePath = path.join(tmpDir, 'store', 'skill.md');
-    const targetPath = path.join(tmpDir, 'target', 'skill.md');
+describe('link — compose syncToStore + linkOrCopy', () => {
+  it('returns method, store, and target', async () => {
+    const src = path.join(tmp.dir, 'source.sh');
+    const store = path.join(tmp.dir, 'store', 'script.sh');
+    const target = path.join(tmp.dir, 'target.sh');
+    await fs.writeFile(src, '#!/bin/sh');
 
-    await fs.mkdir(path.dirname(srcPath), { recursive: true });
-    await fs.writeFile(srcPath, 'content', 'utf-8');
-
-    const result = await link(srcPath, storePath, targetPath);
+    const result = await link(src, store, target);
 
     expect(result.method).toBe('symlink');
-    expect(result.store).toBe(storePath);
-    expect(result.target).toBe(targetPath);
+    expect(result.store).toBe(store);
+    expect(result.target).toBe(target);
   });
 
-  it('store contains the source content after link', async () => {
-    const srcPath = path.join(tmpDir, 'src', 'skill.md');
-    const storePath = path.join(tmpDir, 'store', 'skill.md');
-    const targetPath = path.join(tmpDir, 'target', 'skill.md');
+  it('store contains source content after link', async () => {
+    const src = path.join(tmp.dir, 'source.sh');
+    const store = path.join(tmp.dir, 'store', 'script.sh');
+    const target = path.join(tmp.dir, 'target.sh');
+    await fs.writeFile(src, 'my script');
 
-    await fs.mkdir(path.dirname(srcPath), { recursive: true });
-    await fs.writeFile(srcPath, 'linked content', 'utf-8');
+    await link(src, store, target);
 
-    await link(srcPath, storePath, targetPath);
-
-    const stored = await fs.readFile(storePath, 'utf-8');
-    expect(stored).toBe('linked content');
+    const content = await fs.readFile(store, 'utf8');
+    expect(content).toBe('my script');
   });
 
-  it('target is a symlink to the store after link', async () => {
-    const srcPath = path.join(tmpDir, 'src', 'skill.md');
-    const storePath = path.join(tmpDir, 'store', 'skill.md');
-    const targetPath = path.join(tmpDir, 'target', 'skill.md');
+  it('target is a symlink resolving to the store after link', async () => {
+    const src = path.join(tmp.dir, 'source.sh');
+    const store = path.join(tmp.dir, 'store', 'script.sh');
+    const target = path.join(tmp.dir, 'target.sh');
+    await fs.writeFile(src, 'linked content');
 
-    await fs.mkdir(path.dirname(srcPath), { recursive: true });
-    await fs.writeFile(srcPath, 'linked content', 'utf-8');
+    await link(src, store, target);
 
-    await link(srcPath, storePath, targetPath);
-
-    const resolved = await fs.readlink(targetPath);
-    expect(resolved).toBe(storePath);
+    const resolved = await fs.readlink(target);
+    expect(resolved).toBe(store);
   });
 
   it('is stable on a second call (idempotence)', async () => {
-    const srcPath = path.join(tmpDir, 'src', 'skill.md');
-    const storePath = path.join(tmpDir, 'store', 'skill.md');
-    const targetPath = path.join(tmpDir, 'target', 'skill.md');
+    const src = path.join(tmp.dir, 'source.sh');
+    const store = path.join(tmp.dir, 'store', 'script.sh');
+    const target = path.join(tmp.dir, 'target.sh');
+    await fs.writeFile(src, 'content');
 
-    await fs.mkdir(path.dirname(srcPath), { recursive: true });
-    await fs.writeFile(srcPath, 'content', 'utf-8');
-
-    await link(srcPath, storePath, targetPath);
-    const result2 = await link(srcPath, storePath, targetPath);
+    await link(src, store, target);
+    const result2 = await link(src, store, target);
 
     expect(result2.method).toBe('symlink');
-    const resolved = await fs.readlink(targetPath);
-    expect(resolved).toBe(storePath);
+    const resolved = await fs.readlink(target);
+    expect(resolved).toBe(store);
   });
 
-  it('uses copy fallback when symlink injection throws', async () => {
-    const srcPath = path.join(tmpDir, 'src', 'skill.md');
-    const storePath = path.join(tmpDir, 'store', 'skill.md');
-    const targetPath = path.join(tmpDir, 'target', 'skill.md');
+  it('propagates opts.symlink to the linkOrCopy fallback', async () => {
+    const src = path.join(tmp.dir, 'source.sh');
+    const store = path.join(tmp.dir, 'store', 'script.sh');
+    const target = path.join(tmp.dir, 'target.sh');
+    await fs.writeFile(src, 'content');
 
-    await fs.mkdir(path.dirname(srcPath), { recursive: true });
-    await fs.writeFile(srcPath, 'content', 'utf-8');
-
-    const result = await link(srcPath, storePath, targetPath, {
-      symlink: async () => {
-        throw new Error('no symlinks');
-      },
+    const result = await link(src, store, target, {
+      symlink: () => Promise.reject(new Error('no symlinks')),
     });
 
     expect(result.method).toBe('copy');
-    const stat = await fs.lstat(targetPath);
+    const stat = await fs.lstat(target);
     expect(stat.isSymbolicLink()).toBe(false);
   });
 });

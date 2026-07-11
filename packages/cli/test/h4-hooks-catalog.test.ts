@@ -298,7 +298,7 @@ describe('buildClaudeAdapter hookSpec — hook:guard-secret install/remove lifec
     expect(report.nature).toBe('hook');
   });
 
-  it('R7: engine remove of the last hook cleans settings.json AND deletes the scriptStore', async () => {
+  it('lot2-R7: engine remove of the last hook cleans settings.json AND deletes the scriptStore', async () => {
     const checkoutDir = await makeCheckoutDir(tmp.dir);
     const adapter = await buildClaudeAdapter(env, {
       externalIds: HOOK_EXTERNAL_IDS,

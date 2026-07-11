@@ -88,8 +88,8 @@ function storePath(name: string): string {
 // planRemoveSkill — the gate
 // ---------------------------------------------------------------------------
 
-describe('R3 — opencode planRemoveSkill gate', () => {
-  it('R3: emits no unlink when the target is a real directory (user edits preserved)', async () => {
+describe('lot2-R3 — opencode planRemoveSkill gate', () => {
+  it('lot2-R3: emits no unlink when the target is a real directory (user edits preserved)', async () => {
     const srcDir = await makeSkillFixture(fixturesDir, 'drifted');
     const adapter = createOpencodeAdapter({ skillSource: () => srcDir });
     const entry: AdapterEntry = { id: 'skill:drifted', nature: 'skill', scope: 'user' };
@@ -111,7 +111,7 @@ describe('R3 — opencode planRemoveSkill gate', () => {
     expect(warnings.join('\n')).toContain('present but not managed');
   });
 
-  it('R3: emits the unlink op for a legitimate rigger symlink', async () => {
+  it('lot2-R3: emits the unlink op for a legitimate rigger symlink', async () => {
     const srcDir = await makeSkillFixture(fixturesDir, 'legit');
     const adapter = createOpencodeAdapter({ skillSource: () => srcDir });
     const entry: AdapterEntry = { id: 'skill:legit', nature: 'skill', scope: 'user' };
@@ -125,7 +125,7 @@ describe('R3 — opencode planRemoveSkill gate', () => {
     ]);
   });
 
-  it('R3: still emits the unlink op for a DANGLING symlink (cleanup preserved)', async () => {
+  it('lot2-R3: still emits the unlink op for a DANGLING symlink (cleanup preserved)', async () => {
     const srcDir = await makeSkillFixture(fixturesDir, 'dangling');
     const adapter = createOpencodeAdapter({ skillSource: () => srcDir });
     const entry: AdapterEntry = { id: 'skill:dangling', nature: 'skill', scope: 'user' };
@@ -143,7 +143,7 @@ describe('R3 — opencode planRemoveSkill gate', () => {
     ]);
   });
 
-  it('R3: emits the unlink op for a copy-fallback target (byte-identical to the store)', async () => {
+  it('lot2-R3: emits the unlink op for a copy-fallback target (byte-identical to the store)', async () => {
     const srcDir = await makeSkillFixture(fixturesDir, 'copied');
     const adapter = createOpencodeAdapter({ skillSource: () => srcDir });
     const entry: AdapterEntry = { id: 'skill:copied', nature: 'skill', scope: 'user' };
@@ -167,8 +167,8 @@ describe('R3 — opencode planRemoveSkill gate', () => {
 // engine.remove — end-to-end: nothing destroyed, entry preserved
 // ---------------------------------------------------------------------------
 
-describe('R3 — engine.remove leaves an unmanaged opencode target alone', () => {
-  it('R3: a user-rebuilt directory survives remove --yes; store and manifest entry are kept', async () => {
+describe('lot2-R3 — engine.remove leaves an unmanaged opencode target alone', () => {
+  it('lot2-R3: a user-rebuilt directory survives remove --yes; store and manifest entry are kept', async () => {
     const srcDir = await makeSkillFixture(fixturesDir, 'kept');
     const adapter = createOpencodeAdapter({ skillSource: () => srcDir });
     const entry: AdapterEntry = { id: 'skill:kept', nature: 'skill', scope: 'user' };

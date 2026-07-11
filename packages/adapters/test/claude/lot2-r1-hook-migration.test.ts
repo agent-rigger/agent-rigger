@@ -116,8 +116,8 @@ afterEach(async () => {
 // R1: changed matcher — single entry, remove cleans everything
 // ---------------------------------------------------------------------------
 
-describe('R1: hook migration on matcher change', () => {
-  it('R1: catalog v2 changes the matcher — one rigger entry remains and remove cleans everything', async () => {
+describe('lot2-R1: hook migration on matcher change', () => {
+  it('lot2-R1: catalog v2 changes the matcher — one rigger entry remains and remove cleans everything', async () => {
     // v1 install.
     await apply(makeAdapter(V1), [makeEntry()], 'user', env, manifestPath);
 
@@ -151,8 +151,8 @@ describe('R1: hook migration on matcher change', () => {
 // R1: changed command — single entry, remove cleans everything
 // ---------------------------------------------------------------------------
 
-describe('R1: hook migration on command change', () => {
-  it('R1: catalog v2 changes the command — old command retired in the same run, remove cleans everything', async () => {
+describe('lot2-R1: hook migration on command change', () => {
+  it('lot2-R1: catalog v2 changes the command — old command retired in the same run, remove cleans everything', async () => {
     await apply(makeAdapter(V1), [makeEntry()], 'user', env, manifestPath);
 
     const result = await apply(makeAdapter(V2_COMMAND), [makeEntry()], 'user', env, manifestPath);
@@ -180,8 +180,8 @@ describe('R1: hook migration on command change', () => {
 // R1: unchanged spec — idempotence preserved
 // ---------------------------------------------------------------------------
 
-describe('R1: unchanged hook spec stays a no-op', () => {
-  it('R1: re-install with the same spec is a no-op (no write, no backup, file untouched)', async () => {
+describe('lot2-R1: unchanged hook spec stays a no-op', () => {
+  it('lot2-R1: re-install with the same spec is a no-op (no write, no backup, file untouched)', async () => {
     await apply(makeAdapter(V1), [makeEntry()], 'user', env, manifestPath);
     const before = await fs.readFile(targets.claudeSettings, 'utf8');
 
@@ -198,8 +198,8 @@ describe('R1: unchanged hook spec stays a no-op', () => {
 // R1: the migration run is backed up (R8 parity on apply — T1 coverage)
 // ---------------------------------------------------------------------------
 
-describe('R1: migration run creates a backup', () => {
-  it('R1: a .bak of settings.json captures the pre-migration state', async () => {
+describe('lot2-R1: migration run creates a backup', () => {
+  it('lot2-R1: a .bak of settings.json captures the pre-migration state', async () => {
     await apply(makeAdapter(V1), [makeEntry()], 'user', env, manifestPath);
     const preMigration = await fs.readFile(targets.claudeSettings, 'utf8');
 
@@ -219,7 +219,7 @@ describe('R1: migration run creates a backup', () => {
 // ---------------------------------------------------------------------------
 
 describe('planHook — traced migration plan (D8)', () => {
-  it('R1: emits remove-hooks(old) + merge-hooks(new) in the same plan when the spec changed', async () => {
+  it('lot2-R1: emits remove-hooks(old) + merge-hooks(new) in the same plan when the spec changed', async () => {
     await fs.mkdir(path.dirname(targets.claudeSettings), { recursive: true });
     await writeJson(targets.claudeSettings, {
       hooks: {
@@ -247,7 +247,7 @@ describe('planHook — traced migration plan (D8)', () => {
     });
   });
 
-  it('R1: emits only merge-hooks when the old registration is already gone from disk', async () => {
+  it('lot2-R1: emits only merge-hooks when the old registration is already gone from disk', async () => {
     await fs.mkdir(path.dirname(targets.claudeSettings), { recursive: true });
     await writeJson(targets.claudeSettings, {});
     const entry: AdapterEntry = { ...makeEntry(), applied: { kind: 'hook', ...V1 } };
@@ -258,7 +258,7 @@ describe('planHook — traced migration plan (D8)', () => {
     expect(ops[0]?.kind).toBe('merge-hooks');
   });
 
-  it('R1: legacy entry without applied keeps the plain merge behaviour (no migration trace)', async () => {
+  it('lot2-R1: legacy entry without applied keeps the plain merge behaviour (no migration trace)', async () => {
     await fs.mkdir(path.dirname(targets.claudeSettings), { recursive: true });
     await writeJson(targets.claudeSettings, {
       hooks: {
@@ -272,7 +272,7 @@ describe('planHook — traced migration plan (D8)', () => {
     expect(ops[0]?.kind).toBe('merge-hooks');
   });
 
-  it('R1: unchanged spec with applied present stays an empty plan (idempotent)', async () => {
+  it('lot2-R1: unchanged spec with applied present stays an empty plan (idempotent)', async () => {
     await fs.mkdir(path.dirname(targets.claudeSettings), { recursive: true });
     await writeJson(targets.claudeSettings, {
       hooks: {

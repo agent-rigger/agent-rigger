@@ -830,8 +830,8 @@ const userStopEntry = () => ({
   hooks: [{ type: 'command', command: '~/bin/notify.sh' }],
 });
 
-describe('R2: hook rewrite preserves unrecognized settings.json content', () => {
-  it('R2: install then remove round-trips a user Stop entry without matcher', async () => {
+describe('lot2-R2: hook rewrite preserves unrecognized settings.json content', () => {
+  it('lot2-R2: install then remove round-trips a user Stop entry without matcher', async () => {
     const targets = resolveUserTargets(env);
     await fs.mkdir(path.dirname(targets.claudeSettings), { recursive: true });
     await writeJson(targets.claudeSettings, { hooks: { Stop: [userStopEntry()] } });
@@ -854,7 +854,7 @@ describe('R2: hook rewrite preserves unrecognized settings.json content', () => 
     expect(finalText).toBe(originalText);
   });
 
-  it('R2: applyHook fails on a non-array event value and leaves settings.json untouched', async () => {
+  it('lot2-R2: applyHook fails on a non-array event value and leaves settings.json untouched', async () => {
     const targets = resolveUserTargets(env);
     await fs.mkdir(path.dirname(targets.claudeSettings), { recursive: true });
     await writeJson(targets.claudeSettings, { hooks: { Stop: { oops: true } } });
@@ -875,7 +875,7 @@ describe('R2: hook rewrite preserves unrecognized settings.json content', () => 
     expect(finalText).toBe(originalText);
   });
 
-  it('R2: applyHook validates BEFORE syncToStore — a failing re-install never touches the scriptStore', async () => {
+  it('lot2-R2: applyHook validates BEFORE syncToStore — a failing re-install never touches the scriptStore', async () => {
     // The guard scripts in the scriptStore are executed at runtime on every
     // tool use. On a re-install the store pre-exists, so the engine's
     // createdDirs rollback does not remove it: if applyHook synced the v2
@@ -914,7 +914,7 @@ describe('R2: hook rewrite preserves unrecognized settings.json content', () => 
       .toBe('#!/bin/sh\necho guard v1');
   });
 
-  it('R2: applyHook on a FRESH install with malformed settings creates no scriptStore at all', async () => {
+  it('lot2-R2: applyHook on a FRESH install with malformed settings creates no scriptStore at all', async () => {
     const targets = resolveUserTargets(env);
     await fs.mkdir(path.dirname(targets.claudeSettings), { recursive: true });
     await writeJson(targets.claudeSettings, { hooks: { Stop: { oops: true } } });
@@ -942,7 +942,7 @@ describe('R2: hook rewrite preserves unrecognized settings.json content', () => 
     expect(storeExists).toBe(false);
   });
 
-  it('R2: applyRemoveHook fails on a non-array event value and leaves settings.json untouched', async () => {
+  it('lot2-R2: applyRemoveHook fails on a non-array event value and leaves settings.json untouched', async () => {
     const targets = resolveUserTargets(env);
     await fs.mkdir(path.dirname(targets.claudeSettings), { recursive: true });
     await writeJson(targets.claudeSettings, { hooks: { Stop: { oops: true } } });

@@ -33,6 +33,7 @@ import { stubScanner } from '@agent-rigger/core/scan';
 
 import { runCli } from '../src/cli';
 import type { CliDeps, CliPrompts } from '../src/cli';
+import { pinStdoutIsTTY } from './fixtures/tty';
 
 const TAG_NAME = 'v1.0.0';
 const SHA = 'cafebabecafebabecafebabecafebabecafebabe';
@@ -133,19 +134,15 @@ function makeDeps(fix: Fixture, prompts?: Partial<CliPrompts>): CliDeps {
 }
 
 /** Pin isTTY so the interactive picker branch is never taken by accident. */
-function setStdoutIsTTY(value: boolean | undefined): void {
-  Object.defineProperty(process.stdout, 'isTTY', { value, configurable: true });
-}
+pinStdoutIsTTY(false);
 
 let fix: Fixture;
 
 beforeEach(async () => {
-  setStdoutIsTTY(false);
   fix = await makeFixture();
 });
 
 afterEach(async () => {
-  setStdoutIsTTY(false);
   await fix.cleanupAll();
 });
 

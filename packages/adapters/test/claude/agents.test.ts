@@ -119,7 +119,7 @@ describe('auditAgent', () => {
     expect(report.nature).toBe('agent');
   });
 
-  it('R3: returns present for a plain .md byte-identical to the store (copy fallback)', async () => {
+  it('lot2-R3: returns present for a plain .md byte-identical to the store (copy fallback)', async () => {
     const entry: AdapterEntry = { id: 'agent:tech-lead', nature: 'agent', scope: 'user' };
     const home = resolveHome(env);
     const targets = resolveUserTargets(env);
@@ -136,7 +136,7 @@ describe('auditAgent', () => {
     expect(report.state).toBe('present');
   });
 
-  it('R3: returns drift for a real .md file that does not match the store', async () => {
+  it('lot2-R3: returns drift for a real .md file that does not match the store', async () => {
     const entry: AdapterEntry = { id: 'agent:tech-lead', nature: 'agent', scope: 'user' };
     const home = resolveHome(env);
     const targetPath = path.join(home, '.claude', 'agents', 'tech-lead.md');
@@ -149,7 +149,7 @@ describe('auditAgent', () => {
     expect(report.detail).toContain(targetPath);
   });
 
-  it('R3: returns drift for a symlink pointing outside the rigger store', async () => {
+  it('lot2-R3: returns drift for a symlink pointing outside the rigger store', async () => {
     const entry: AdapterEntry = { id: 'agent:my-agent', nature: 'agent', scope: 'user' };
     const home = resolveHome(env);
     const targetPath = path.join(home, '.claude', 'agents', 'my-agent.md');

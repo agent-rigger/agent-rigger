@@ -370,7 +370,7 @@ describe('runRemove — confirm:false', () => {
 // ---------------------------------------------------------------------------
 
 describe('runRemove — id absent from manifest', () => {
-  it('R5: throws NotInstalledError when the entry was never installed', async () => {
+  it('lot2-R5: throws NotInstalledError when the entry was never installed', async () => {
     const adapter = createClaudeAdapter({ denyRef: REF_DENY, agentsContent: AGENTS_CONTENT });
 
     const fn = () =>
@@ -386,7 +386,7 @@ describe('runRemove — id absent from manifest', () => {
     await expect(fn).toThrow(NotInstalledError);
   });
 
-  it('R5: error names the id and lists the entries installed in the manifest', async () => {
+  it('lot2-R5: error names the id and lists the entries installed in the manifest', async () => {
     await installGuardrail();
     const adapter = createClaudeAdapter({ denyRef: REF_DENY, agentsContent: AGENTS_CONTENT });
 
@@ -410,7 +410,7 @@ describe('runRemove — id absent from manifest', () => {
     expect(errorMessage).not.toContain('agent-rigger ls');
   });
 
-  it('R5: confirm callback is NOT called when validation fails', async () => {
+  it('lot2-R5: confirm callback is NOT called when validation fails', async () => {
     const adapter = createClaudeAdapter({ denyRef: REF_DENY, agentsContent: AGENTS_CONTENT });
     let confirmCallCount = 0;
 
@@ -441,7 +441,7 @@ describe('runRemove — id absent from manifest', () => {
 // ---------------------------------------------------------------------------
 
 describe('runRemove — pack id', () => {
-  it('R5: unknown ids raise NotInstalledError naming the id', async () => {
+  it('lot2-R5: unknown ids raise NotInstalledError naming the id', async () => {
     const adapter = createClaudeAdapter({ denyRef: REF_DENY, agentsContent: AGENTS_CONTENT });
 
     let errorMessage = '';
@@ -462,7 +462,7 @@ describe('runRemove — pack id', () => {
     expect(errorMessage.toLowerCase()).toContain('not installed');
   });
 
-  it('R5: pack ids raise NotInstalledError explaining packs are expanded at install', async () => {
+  it('lot2-R5: pack ids raise NotInstalledError explaining packs are expanded at install', async () => {
     const adapter = createClaudeAdapter({ denyRef: REF_DENY, agentsContent: AGENTS_CONTENT });
 
     let errorMessage = '';
