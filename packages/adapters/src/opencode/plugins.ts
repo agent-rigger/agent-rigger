@@ -37,7 +37,7 @@
  *   resolveOpencodeProjectTargets.
  */
 
-import { readdir } from 'node:fs/promises';
+import { lstat, readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 
 import type { AdapterEntry, AdoptionResult } from '@agent-rigger/core/adapter';
@@ -129,8 +129,15 @@ async function findInstalledFile(dir: string, name: string): Promise<string | un
  * Audit the current state of a plugin artifact on disk.
  *
  * Returns:
- * - 'present' if pluginDir contains a file whose name (any extension) matches.
- * - 'missing' otherwise.
+ * - 'present' if pluginDir contains a file whose name (any extension) matches
+ *   AND it resolves to real content (plain file, or a symlink whose target
+ *   exists).
+ * - 'missing' if no matching file exists, OR the match is a DANGLING symlink
+ *   (store deleted) — R9 (doctor): a bare `readdir` name-match sees the link's
+ *   directory entry regardless of whether it resolves, so it used to report
+ *   `present` on a dead link (the file/plugin is NOT usable). `lstat`+`stat`
+ *   mirrors the skill/agent handlers' truthful-audit contract (R4): a dead
+ *   link must be reported broken and repairable, not silently `present`.
  *
  * Read-only: no filesystem writes.
  *
@@ -149,11 +156,30 @@ export async function auditPlugin(
   const targetDir = resolveTargetDir(scope, env, cwd);
   const found = await findInstalledFile(targetDir, name);
 
-  return {
-    id: entry.id,
-    nature: 'plugin',
-    state: found === undefined ? 'missing' : 'present',
-  };
+  if (found === undefined) {
+    return { id: entry.id, nature: 'plugin', state: 'missing' };
+  }
+
+  const targetPath = path.join(targetDir, found);
+  const targetStat = await lstat(targetPath).catch(() => null);
+  if (targetStat === null) {
+    return { id: entry.id, nature: 'plugin', state: 'missing' };
+  }
+
+  if (targetStat.isSymbolicLink()) {
+    // stat() follows the link: null → the link value resolves to nothing.
+    const resolved = await stat(targetPath).catch(() => null);
+    if (resolved === null) {
+      return {
+        id: entry.id,
+        nature: 'plugin',
+        state: 'missing',
+        detail: `dangling symlink: ${targetPath}`,
+      };
+    }
+  }
+
+  return { id: entry.id, nature: 'plugin', state: 'present' };
 }
 
 // ---------------------------------------------------------------------------

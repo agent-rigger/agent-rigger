@@ -5,6 +5,7 @@ export * from './assert-never';
 export * from './backup';
 export * from './consent';
 export * from './deny';
+export * from './doctor';
 export * from './engine';
 export * from './fs-json';
 export * from './hooks';

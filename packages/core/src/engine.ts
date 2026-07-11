@@ -868,6 +868,15 @@ async function removeInner(
         const existing = findEntry(manifest, entry.id, scope, adapter.id);
         if (existing !== undefined) {
           allPurged.push(entry.id);
+          // R9 (doctor, trou A de S1): a purge is a manifest-only convergence
+          // for a target ALREADY gone from disk (hand-edited/removed hook) —
+          // but it is still the loss of a manifest entry of `entry.nature`,
+          // exactly like the `allRemoved` branch below. Omitting it here left
+          // the shared scriptStore's cleanup gate (`removedNatures`, R7) blind
+          // to the purge of the LAST hook entry: the store never re-evaluated
+          // as unreferenced and became a permanent orphan that doctor would
+          // otherwise have to keep re-detecting on every run.
+          removedNatures.add(entry.nature);
           if (entry.nature === 'hook') {
             allWarnings.push(
               `"${entry.id}": managed hook no longer present (edited or removed) — `

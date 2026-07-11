@@ -107,4 +107,11 @@ export {
   skillName as opencodeSkillName,
   SkillScanBlockedError as OpencodeSkillScanBlockedError,
 } from './opencode/skills';
+export {
+  createDanglingScanner,
+  createHygieneScanner,
+  createPhantomScanner,
+  createUntrackedScanner,
+} from './shared/doctor-scan';
+export type { HygieneScannerOptions } from './shared/doctor-scan';
 export { isStoreReferenced, storeReferenceCandidates } from './shared/store-refs';

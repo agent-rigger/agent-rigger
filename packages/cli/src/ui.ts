@@ -26,8 +26,18 @@ import {
 } from '@clack/prompts';
 
 import type { CatalogEntry } from '@agent-rigger/catalog';
-import type { Assistant, RemovalOp, Report, Scope, WriteOp } from '@agent-rigger/core';
-import { assistantRoot } from '@agent-rigger/core';
+import type {
+  Assistant,
+  Finding,
+  FindingClass,
+  RemovalOp,
+  RepairOp,
+  RepairOutcome,
+  Report,
+  Scope,
+  WriteOp,
+} from '@agent-rigger/core';
+import { assistantRoot, isReportOnly } from '@agent-rigger/core';
 import { assertNever } from '@agent-rigger/core/assert-never';
 
 // ---------------------------------------------------------------------------
@@ -683,6 +693,148 @@ export function renderReport(report: Report, opts: RenderReportOpts = {}): strin
 }
 
 // ---------------------------------------------------------------------------
+// renderDoctorReport — grouped installed-state findings (doctor R8)
+// ---------------------------------------------------------------------------
+
+/** Human label + display order for each finding class (R8 grouped report). */
+const DOCTOR_CLASS_ORDER: { class: FindingClass; label: string }[] = [
+  { class: 'untracked', label: 'Untracked artifacts' },
+  { class: 'dangling', label: 'Dangling symlinks' },
+  { class: 'phantom', label: 'Phantom stores' },
+  { class: 'manifest', label: 'Manifest issues' },
+  { class: 'lock', label: 'Run lock' },
+  { class: 'hygiene', label: 'Hygiene' },
+];
+
+/** Options for renderDoctorReport. */
+export interface RenderDoctorReportOpts {
+  /** Enable ANSI colour. Defaults to TTY auto-detection; pass false in tests. */
+  color?: boolean;
+}
+
+/**
+ * The consent tag shown after a repairable finding: `[fix]` for a `safe` op
+ * (`--yes` suffices), `[confirm]` for an `item-confirm` op (per-item
+ * confirmation, never `--yes` alone), `[report]` for a report-only finding
+ * (no repair — the summary carries the manual way out).
+ */
+function repairTag(finding: Finding, colorOn: boolean): string {
+  if (isReportOnly(finding)) return paint('[report]', ANSI.dim, colorOn);
+  const op = (finding as Extract<Finding, { repair: RepairOp }>).repair;
+  return op.consent === 'safe'
+    ? paint('[fix]', ANSI.green, colorOn)
+    : paint('[confirm]', ANSI.yellow, colorOn);
+}
+
+/**
+ * Render the installed-state findings grouped by class (R8). Pure — no I/O.
+ * Returns a "healthy" line when there are no findings. Each finding is one
+ * line: a marker, its `summary`, and a consent/report tag; report-only
+ * findings carry their manual way out inside the summary itself.
+ */
+export function renderDoctorReport(findings: Finding[], opts: RenderDoctorReportOpts = {}): string {
+  const colorOn = shouldColor(opts.color);
+
+  if (findings.length === 0) {
+    return paint('Installed state is healthy — no findings.', ANSI.green, colorOn);
+  }
+
+  const n = findings.length;
+  const word = n === 1 ? 'finding' : 'findings';
+  const lines: string[] = [`Installed-state check · ${n} ${word}`, ''];
+
+  for (const { class: cls, label } of DOCTOR_CLASS_ORDER) {
+    const group = findings.filter((f) => f.class === cls);
+    if (group.length === 0) continue;
+
+    lines.push(paint(`${label} (${group.length})`, ANSI.bold, colorOn));
+    for (const finding of group) {
+      const marker = isReportOnly(finding)
+        ? paint('~', ANSI.dim, colorOn)
+        : paint('+', ANSI.cyan, colorOn);
+      lines.push(`  ${marker} ${finding.summary}  ${repairTag(finding, colorOn)}`);
+    }
+    lines.push('');
+  }
+
+  return lines.join('\n').replace(/\n+$/, '');
+}
+
+// ---------------------------------------------------------------------------
+// renderRepairOutcomes — the --fix result list (doctor R8)
+// ---------------------------------------------------------------------------
+
+/** Options for renderRepairOutcomes. */
+export interface RenderRepairOutcomesOpts {
+  color?: boolean;
+}
+
+/** One-line description of a repair op for the outcome list. */
+function opLabel(op: RepairOp): string {
+  switch (op.kind) {
+    case 'adopt':
+      return `adopt ${op.candidateId}`;
+    case 'unlink-dangling':
+      return `unlink ${op.target}`;
+    case 'remove-store':
+      return `remove store ${op.store}`;
+    case 'break-lock':
+      return `break lock ${op.lockPath}`;
+    case 'delete-residue':
+      return `delete residue ${op.path}`;
+    case 'delete-bak':
+      return `delete backup ${op.path}`;
+    case 'backup-state':
+      return `back up ${op.path}`;
+    default:
+      return assertNever(op);
+  }
+}
+
+/**
+ * Render the `applyRepairs` outcomes (R8). Pure — no I/O. `repaired` shows in
+ * green, `skipped` (TOCTOU refusal / declined / ambiguous id) in yellow,
+ * `failed` in red. Returns an empty string when there were no outcomes (the
+ * caller prints its own "nothing to repair" line).
+ */
+export function renderRepairOutcomes(
+  outcomes: RepairOutcome[],
+  opts: RenderRepairOutcomesOpts = {},
+): string {
+  if (outcomes.length === 0) return '';
+
+  const colorOn = shouldColor(opts.color);
+  const lines: string[] = [paint('Repairs', ANSI.bold, colorOn)];
+
+  for (const outcome of outcomes) {
+    const label = opLabel(outcome.op);
+    switch (outcome.status) {
+      case 'repaired':
+        lines.push(
+          `  ${paint('[ ok  ]', ANSI.green, colorOn)}  ${label}${
+            outcome.detail === undefined ? '' : `  — ${outcome.detail}`
+          }`,
+        );
+        break;
+      case 'skipped':
+        lines.push(
+          `  ${paint('[skip ]', ANSI.yellow, colorOn)}  ${label}  — ${outcome.reason}`,
+        );
+        break;
+      case 'failed':
+        lines.push(
+          `  ${paint('[fail ]', ANSI.red, colorOn)}  ${label}  — ${outcome.error}`,
+        );
+        break;
+      default:
+        assertNever(outcome);
+    }
+  }
+
+  return lines.join('\n');
+}
+
+// ---------------------------------------------------------------------------
 // renderEntryInfo — pure single-entry detail view
 // ---------------------------------------------------------------------------
 
@@ -1117,6 +1269,30 @@ export async function confirmApply(summary: string): Promise<boolean> {
     return false;
   }
 
+  return result;
+}
+
+// ---------------------------------------------------------------------------
+// confirmDoctorRepair — per-item consent for a doctor repair (R8, ADR-0025 §2)
+// ---------------------------------------------------------------------------
+
+/**
+ * Present a single yes/no confirmation for ONE doctor repair op (the
+ * consent-driver's `confirmItem` seam, doctor-consent.ts). Returns `true` to
+ * grant, `false` to decline. A Ctrl+C cancellation throws `CancelledError`
+ * (mapped to exit 130 by cli.ts's handleError) — distinct from a deliberate
+ * "no" (which returns `false` and lets the driver skip + report the op).
+ *
+ * Only ever called in a TTY: the consent-driver never invokes `confirmItem` in
+ * a non-TTY session (it skips item-confirm ops and never prompts), so this
+ * clack prompt can never hang on non-TTY stdin (R8 "jamais de hang").
+ */
+export async function confirmDoctorRepair(message: string): Promise<boolean> {
+  const result = await confirm({ message, initialValue: false });
+  if (isCancel(result)) {
+    cancel('Operation cancelled.');
+    throw new CancelledError();
+  }
   return result;
 }
 

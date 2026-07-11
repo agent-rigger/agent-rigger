@@ -21,6 +21,13 @@
  * - release() unlinks the lockfile, best-effort and idempotent.
  *
  * The lockfile path is `<manifestPath>.lock`.
+ *
+ * Two consumers share the break-the-lock primitive (ADR-0023): normal acquisition
+ * (which breaks a lock it just judged stale) and doctor's consented lock repair
+ * (which breaks a lock a human agreed to break after `inspectRunLock`). Both go
+ * through `breakLockCas`, which re-verifies identity AND liveness at the moment of
+ * acting — never a bare unlink. `inspectRunLock` reads the lock read-only, taking
+ * nothing, so `doctor diagnose` can report on it without acquiring.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -79,6 +86,12 @@ interface LockRecord {
   startedAt: string;
 }
 
+/** The identity of a lock record, used for compare-and-swap. */
+interface LockIdentity {
+  pid: number;
+  startedAt: string | undefined;
+}
+
 export interface AcquireRunLockOptions {
   /**
    * Staleness TTL in milliseconds, measured against the lockfile mtime. A lock
@@ -103,9 +116,23 @@ const DEFAULT_TTL_MS = 15 * 60 * 1000;
 // ---------------------------------------------------------------------------
 
 /**
+ * Tri-state liveness of a pid, distinguishing the indeterminate EPERM case that
+ * `breakLockCas` and `inspectRunLock` must NOT collapse into "alive":
+ * - `'dead'`   — ESRCH (no such process) or a non-positive/invalid pid.
+ * - `'alive'`  — process.kill(pid, 0) succeeds (the process exists and we own it).
+ * - `'unknown'`— EPERM (the process exists but is owned by another user) or any
+ *                other error we cannot interpret as proof of death.
+ */
+export type Liveness = 'dead' | 'alive' | 'unknown';
+
+/**
  * True when `pid` names a live process. process.kill(pid, 0) sends no signal but
  * performs the permission/existence check: ESRCH → dead; EPERM → alive (exists,
  * owned by another user). Any other error is treated conservatively as alive.
+ *
+ * This BINARY probe drives staleness (`evaluateStale`) where EPERM must count as
+ * "alive" so a lock owned by another user is never judged stale. The refactor
+ * keeps its semantics untouched.
  */
 function defaultPidAlive(pid: number): boolean {
   if (!Number.isInteger(pid) || pid <= 0) return false;
@@ -120,8 +147,74 @@ function defaultPidAlive(pid: number): boolean {
   }
 }
 
+/**
+ * Tri-state variant of the liveness probe used by the doctor-facing surfaces
+ * (`breakLockCas`, `inspectRunLock`), which must refuse to act on an EPERM pid
+ * rather than treat it as plainly alive.
+ */
+function defaultLiveness(pid: number): Liveness {
+  if (!Number.isInteger(pid) || pid <= 0) return 'dead';
+  try {
+    process.kill(pid, 0);
+    return 'alive';
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === 'ESRCH') return 'dead';
+    // EPERM (owned by another user) or any other error → indeterminate.
+    return 'unknown';
+  }
+}
+
 function isEExist(err: unknown): boolean {
   return (err as NodeJS.ErrnoException).code === 'EEXIST';
+}
+
+// ---------------------------------------------------------------------------
+// read-only lock state
+// ---------------------------------------------------------------------------
+
+/** Raw read-only view of the lockfile: its parsed identity and mtime. */
+interface LockState {
+  /** The lockfile is present on disk (readable content and/or stat succeeded). */
+  present: boolean;
+  /** Recorded pid, or -1 when absent/unreadable/corrupt. */
+  pid: number;
+  /** Recorded startedAt, or undefined when absent/unreadable/corrupt. */
+  startedAt: string | undefined;
+  /** mtime in ms, or undefined when the file vanished before it could be stat'd. */
+  mtimeMs: number | undefined;
+}
+
+/**
+ * Read a lockfile's identity and mtime WITHOUT taking or mutating it. The content
+ * read and the stat are independent: a lock that vanished between them yields
+ * `mtimeMs === undefined` (the vanished/breakable signal), while a lock present
+ * but with corrupt content yields `pid === -1`.
+ */
+async function readLockState(lockPath: string): Promise<LockState> {
+  let pid = -1;
+  let startedAt: string | undefined;
+  let present = false;
+  try {
+    const raw = await readFile(lockPath, 'utf8');
+    present = true;
+    const parsed = JSON.parse(raw) as Partial<LockRecord>;
+    if (typeof parsed.pid === 'number') pid = parsed.pid;
+    if (typeof parsed.startedAt === 'string') startedAt = parsed.startedAt;
+  } catch {
+    // Absent or corrupt content: leave pid = -1 (treated as dead by callers).
+  }
+
+  let mtimeMs: number | undefined;
+  try {
+    mtimeMs = (await stat(lockPath)).mtimeMs;
+    present = true;
+  } catch {
+    // The lock disappeared under us — the holder released it.
+    mtimeMs = undefined;
+  }
+
+  return { present, pid, startedAt, mtimeMs };
 }
 
 // ---------------------------------------------------------------------------
@@ -145,28 +238,15 @@ async function evaluateStale(
   now: () => number,
   pidAlive: (pid: number) => boolean,
 ): Promise<{ stale: boolean; pid: number; startedAt: string | undefined }> {
-  let pid = -1;
-  let startedAt: string | undefined;
-  try {
-    const raw = await readFile(lockPath, 'utf8');
-    const parsed = JSON.parse(raw) as Partial<LockRecord>;
-    if (typeof parsed.pid === 'number') pid = parsed.pid;
-    if (typeof parsed.startedAt === 'string') startedAt = parsed.startedAt;
-  } catch {
-    // Unreadable or corrupt content: leave pid = -1 (treated as dead below).
-  }
-
-  let mtimeMs: number;
-  try {
-    mtimeMs = (await stat(lockPath)).mtimeMs;
-  } catch {
+  const st = await readLockState(lockPath);
+  if (st.mtimeMs === undefined) {
     // The lock disappeared under us — the holder released it. Breakable.
-    return { stale: true, pid, startedAt };
+    return { stale: true, pid: st.pid, startedAt: st.startedAt };
   }
 
-  const ttlExceeded = now() - mtimeMs > ttlMs;
-  const dead = pid < 0 ? true : !pidAlive(pid);
-  return { stale: ttlExceeded && dead, pid, startedAt };
+  const ttlExceeded = now() - st.mtimeMs > ttlMs;
+  const dead = st.pid < 0 ? true : !pidAlive(st.pid);
+  return { stale: ttlExceeded && dead, pid: st.pid, startedAt: st.startedAt };
 }
 
 /**
@@ -174,9 +254,7 @@ async function evaluateStale(
  * gone/unreadable. Used by the compare-and-swap after a stale lock is moved
  * aside, to confirm the moved record matches the one judged stale.
  */
-async function readLockIdentity(
-  lockPath: string,
-): Promise<{ pid: number; startedAt: string | undefined } | undefined> {
+async function readLockIdentity(lockPath: string): Promise<LockIdentity | undefined> {
   try {
     const raw = await readFile(lockPath, 'utf8');
     const parsed = JSON.parse(raw) as Partial<LockRecord>;
@@ -194,11 +272,200 @@ async function readLockIdentity(
  * startedAt). A corrupt record (pid -1, startedAt undefined) compared to itself
  * still matches — a corrupt stale lock stays breakable.
  */
-function sameIdentity(
-  a: { pid: number; startedAt: string | undefined },
-  b: { pid: number; startedAt: string | undefined },
-): boolean {
+function sameIdentity(a: LockIdentity, b: LockIdentity): boolean {
   return a.pid === b.pid && a.startedAt === b.startedAt;
+}
+
+// ---------------------------------------------------------------------------
+// inspectRunLock — read-only diagnosis (doctor R6)
+// ---------------------------------------------------------------------------
+
+/**
+ * A read-only snapshot of the lockfile, taken WITHOUT acquiring or mutating it.
+ * `doctor diagnose` builds its lock verdict from these raw signals; it never
+ * decides here whether the lock is "crash probable" vs "pid recycled" (that needs
+ * process-identity inspection, which lives in the diagnosis layer).
+ */
+export interface RunLockInspection {
+  /** The lockfile exists on disk. */
+  present: boolean;
+  /** Recorded pid, or -1 when the lock is absent/unreadable/corrupt. */
+  pid: number;
+  /** Recorded startedAt, or undefined when absent/unreadable/corrupt. */
+  startedAt: string | undefined;
+  /** mtime in ms, or undefined when absent / vanished mid-read. */
+  mtimeMs: number | undefined;
+  /** Age of the lock in ms (now - mtime), or undefined when mtime is unknown. */
+  ageMs: number | undefined;
+  /** Tri-state liveness of the recorded pid at inspection time. */
+  liveness: Liveness;
+}
+
+export interface InspectRunLockOptions {
+  /** Injectable clock (ms since epoch). Defaults to Date.now. */
+  now?: () => number;
+  /** Injectable tri-state liveness probe. Defaults to a process.kill(pid, 0) check. */
+  liveness?: (pid: number) => Liveness;
+}
+
+/**
+ * Inspect the lockfile read-only: pid, startedAt, mtime, age, and the tri-state
+ * liveness of the recorded pid. Takes NOTHING (no create, no rename, no unlink) —
+ * the only I/O is a readFile and a stat. Absent lock → `present: false`, `pid -1`,
+ * `liveness 'dead'`.
+ */
+export async function inspectRunLock(
+  lockPath: string,
+  options: InspectRunLockOptions = {},
+): Promise<RunLockInspection> {
+  const now = options.now ?? Date.now;
+  const liveness = options.liveness ?? defaultLiveness;
+
+  const st = await readLockState(lockPath);
+  if (!st.present) {
+    return {
+      present: false,
+      pid: -1,
+      startedAt: undefined,
+      mtimeMs: undefined,
+      ageMs: undefined,
+      liveness: 'dead',
+    };
+  }
+
+  const ageMs = st.mtimeMs === undefined ? undefined : Math.max(0, now() - st.mtimeMs);
+  const live: Liveness = st.pid < 0 ? 'dead' : liveness(st.pid);
+
+  return {
+    present: true,
+    pid: st.pid,
+    startedAt: st.startedAt,
+    mtimeMs: st.mtimeMs,
+    ageMs,
+    liveness: live,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// breakLockCas — atomic compare-and-swap break (shared by both consumers)
+// ---------------------------------------------------------------------------
+
+/** The outcome of a `breakLockCas` attempt. */
+export type BreakLockResult =
+  /** The observed record was moved aside (or already gone) — the caller may proceed. */
+  | { broken: true; pid: number; startedAt: string | undefined }
+  /**
+   * The break was REFUSED. `reason`:
+   * - `'identity-changed'` — a fresh run replaced the observed record in the
+   *   read→rename window (CAS mismatch); its live lock was restored. `pid` is the
+   *   fresh holder's pid.
+   * - `'pid-alive'` — the recorded pid is alive at the moment of acting, and
+   *   either no `identify` probe was supplied or it did not confirm the
+   *   process foreign (see `BreakLockCasOptions.identify`).
+   * - `'eperm'` — the recorded pid's liveness is indeterminate (owned by another
+   *   user); we refuse rather than break another user's live run.
+   */
+  | { broken: false; reason: 'identity-changed' | 'pid-alive' | 'eperm'; pid: number };
+
+export interface BreakLockCasOptions {
+  /**
+   * Tri-state liveness probe of the recorded pid, evaluated at the moment of
+   * acting. Defaults to a process.kill(pid, 0) check.
+   */
+  liveness?: (pid: number) => Liveness;
+  /**
+   * Process-identity re-check, consulted ONLY when `liveness` reports the
+   * recorded pid `'alive'`. Doctor's R6 "pid recyclé" repair passes this so a
+   * process CONFIRMED foreign — re-verified HERE, at the moment of acting,
+   * never trusted from the diagnose-time `Finding.evidence` — does not block
+   * the break: `'foreign'` lets the CAS proceed as if the pid were dead;
+   * `'rigger'` or `'unknown'` still refuse `'pid-alive'`, matching the R6
+   * refusal scenario (plausibly-rigger or indeterminate is NEVER broken).
+   * Omitted (the default) preserves the original behaviour — ANY alive pid
+   * refuses — which is what normal acquisition (no identity concept) relies
+   * on; only doctor's consented lock-break op passes this.
+   */
+  identify?: (pid: number) => Promise<'rigger' | 'foreign' | 'unknown'>;
+}
+
+/**
+ * Break a lock ATOMICALLY via rename + compare-and-swap, re-verifying identity
+ * AND liveness at the moment of acting. This is the primitive shared by normal
+ * acquisition (breaking a lock it judged stale) and doctor's consented lock
+ * repair (breaking a lock a human agreed to break) — never a bare unlink.
+ *
+ * A plain unlink+create is not safe under concurrency: two recoverers that both
+ * judged the same stale lock L would each unlink() by PATH and each create — but
+ * the second unlink(lockPath) would blindly delete the fresh lock the first just
+ * created, so both would believe they hold the lock (R7 mutual-exclusion
+ * violated). Instead we rename the observed record to a unique name: only ONE
+ * process can win the rename of a given inode, and a rename never touches a lock
+ * created AFTER it under the same path.
+ *
+ * Refuses (never touches the lock) when the recorded pid is alive or its liveness
+ * is indeterminate (EPERM) — casting a lock aside while its run is live would open
+ * two engine writers onto settings.json, protected ONLY by this lock (ADR-0023).
+ * The ONE exception is a pid alive-but-CONFIRMED-foreign (`options.identify`
+ * returns `'foreign'`, re-checked at this exact call, R6 "pid recyclé") — that
+ * is the whole point of the pid-recycled repair: without it, `break-lock`
+ * would be unreachable dead code for that finding (it would always refuse
+ * `'pid-alive'`, exactly the bug this option fixes).
+ *
+ * @param observed The identity (pid, startedAt) the caller judged breakable — the
+ *   record the CAS must confirm it moved, not a fresh holder that replaced it.
+ */
+export async function breakLockCas(
+  lockPath: string,
+  observed: LockIdentity,
+  options: BreakLockCasOptions = {},
+): Promise<BreakLockResult> {
+  const liveness = options.liveness ?? defaultLiveness;
+
+  // Re-verify liveness at the moment of acting: never move aside a lock whose
+  // recorded pid is alive (a live run) or indeterminate (EPERM, another user).
+  const live: Liveness = observed.pid < 0 ? 'dead' : liveness(observed.pid);
+  if (live === 'alive') {
+    // The pid-recycled repair's ONE way past this refusal: re-check identity
+    // HERE (never trust the finding's diagnose-time evidence) and proceed
+    // only when it is freshly confirmed foreign. No `identify` probe (normal
+    // acquisition) or a non-'foreign' verdict (rigger/unknown) refuses, same
+    // as before this option existed.
+    const identity = options.identify === undefined
+      ? undefined
+      : await options.identify(observed.pid);
+    if (identity !== 'foreign') {
+      return { broken: false, reason: 'pid-alive', pid: observed.pid };
+    }
+  } else if (live === 'unknown') {
+    return { broken: false, reason: 'eperm', pid: observed.pid };
+  }
+
+  const brokenPath = `${lockPath}.stale-${process.pid}-${randomUUID().slice(0, 8)}`;
+  try {
+    await rename(lockPath, brokenPath);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+      // The lock was already broken/released by someone else — nothing to move;
+      // the caller may proceed (the exclusive create still settles the winner).
+      return { broken: true, pid: observed.pid, startedAt: observed.startedAt };
+    }
+    throw err;
+  }
+
+  // Compare-and-swap: confirm we moved the SAME record we judged breakable. If a
+  // fresh run replaced it in the read→rename window, we just moved its live lock
+  // aside by mistake — restore it and refuse rather than let two runs proceed.
+  const brokenIdentity = await readLockIdentity(brokenPath);
+  if (brokenIdentity !== undefined && !sameIdentity(brokenIdentity, observed)) {
+    await rename(brokenPath, lockPath).catch(() => {
+      // Best-effort restore; the caller's exclusive create still guards exclusion.
+    });
+    return { broken: false, reason: 'identity-changed', pid: brokenIdentity.pid };
+  }
+
+  // Confirmed the same record (or an unreadable one) — discard the moved copy.
+  await unlink(brokenPath).catch(() => {});
+  return { broken: true, pid: observed.pid, startedAt: observed.startedAt };
 }
 
 // ---------------------------------------------------------------------------
@@ -267,45 +534,21 @@ export async function acquireRunLock(
     throw new ConcurrentRunError(lockPath, observed.pid);
   }
 
-  // Break the stale lock ATOMICALLY, then retry exactly once.
-  //
-  // A plain unlink+create is not safe under concurrency: two recoverers B and C
-  // that both judged the same stale lock L would each unlink() by PATH and each
-  // create — but C's unlink(lockPath) would blindly delete the fresh lock B just
-  // created, so both would believe they hold the lock (R7 mutual-exclusion
-  // violated). Instead we rename the observed stale lock to a unique name: only
-  // ONE process can win the rename of a given inode, and a rename never touches
-  // a lock created AFTER it under the same path.
   options.warn?.(
     `Breaking a stale run lock at "${lockPath}" (pid ${observed.pid} is not alive and the `
       + 'lock is older than the timeout). A previous run likely crashed.',
   );
 
-  const brokenPath = `${lockPath}.stale-${process.pid}-${randomUUID().slice(0, 8)}`;
-  let moved = false;
-  try {
-    await rename(lockPath, brokenPath);
-    moved = true;
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
-    // The lock was already broken/released by someone else — fall through to the
-    // exclusive create, which settles the winner via O_EXCL.
-  }
-
-  if (moved) {
-    // Compare-and-swap: confirm we moved the SAME record we judged stale. If a
-    // fresh run replaced the stale lock in the read→rename window, we just moved
-    // its live lock aside by mistake — restore it and fail fast rather than run
-    // concurrently with it.
-    const brokenIdentity = await readLockIdentity(brokenPath);
-    if (brokenIdentity !== undefined && !sameIdentity(brokenIdentity, observed)) {
-      await rename(brokenPath, lockPath).catch(() => {
-        // Best-effort restore; the create below still guards mutual exclusion.
-      });
-      throw new ConcurrentRunError(lockPath, brokenIdentity.pid);
-    }
-    // Confirmed stale (or vanished) — discard the moved-aside record.
-    await unlink(brokenPath).catch(() => {});
+  // Break the stale lock via the shared CAS primitive. In acquisition the pid was
+  // just judged dead by evaluateStale, so the act-time re-check agrees; we adapt
+  // the binary staleness probe to the tri-state one so the two verdicts cannot
+  // diverge (an EPERM pid would have been judged alive/non-stale above and never
+  // reach this point). A refusal here means a fresh run raced in — back off.
+  const broke = await breakLockCas(lockPath, observed, {
+    liveness: (pid) => (pidAlive(pid) ? 'alive' : 'dead'),
+  });
+  if (!broke.broken) {
+    throw new ConcurrentRunError(lockPath, broke.pid);
   }
 
   try {

@@ -304,6 +304,85 @@ export function pluginLedgerKey(name: string, marketplaceName: string): string {
   return `${name}@${marketplaceName}`;
 }
 
+/**
+ * Resolve the on-disk ledger key for a plugin (R9, différé obs1).
+ *
+ * Exact match wins: `<name>@<guessedMarketplaceName>` in the ledger — this is
+ * what `auditPlugin` uses, unchanged (a mismatch there is surfaced as
+ * `missing`, never assumed, obs1-R2's own "no false positive" contract for the
+ * install/check decision).
+ *
+ * `planRemovePlugin`/`adoptPlugin` call this instead: the cwd-guessed
+ * marketplace name they receive (from the catalog's `pluginSource` resolver)
+ * can go stale — the catalog re-registered the marketplace under a new name,
+ * or the plugin was hand-installed under a different registry — while the
+ * plugin itself is unambiguously identifiable in the ledger by name alone. If
+ * exactly ONE ledger key belongs to this plugin name under ANY marketplace,
+ * resolving to it is safe (unique ⇒ no ambiguity to guess wrong); two or more
+ * candidates are genuinely ambiguous and fall back to the guessed key (same as
+ * zero matches) rather than pick one silently.
+ *
+ * @param name                    Plugin name (pluginName(entry)).
+ * @param keys                    Ledger keys read via readInstalledPlugins.
+ * @param guessedMarketplaceName  The cwd-resolved marketplace name.
+ * @returns The matching ledger key, or undefined if none resolves.
+ */
+export function resolvePluginLedgerKey(
+  name: string,
+  keys: ReadonlySet<string>,
+  guessedMarketplaceName: string,
+): string | undefined {
+  const guessed = pluginLedgerKey(name, guessedMarketplaceName);
+  if (keys.has(guessed)) {
+    return guessed;
+  }
+
+  const prefix = `${name}@`;
+  const candidates = [...keys].filter((k) => k.startsWith(prefix));
+  return candidates.length === 1 ? candidates[0] : undefined;
+}
+
+/**
+ * Read the `enabledPlugins` bit for a ledger key from Claude's settings.json
+ * (R9, différé obs1). Never throws: a missing/unparsable/foreign-shape
+ * settings.json, or a key absent from the map, all resolve to `undefined`
+ * (no info to report) — this is a doctor-info probe, not a state gate
+ * (obs1-R2: the ledger alone is the truth of "installed").
+ *
+ * @param env  Injectable env (CLAUDE_CONFIG_DIR / RIGGER_HOME / HOME).
+ * @param key  Ledger key (`<name>@<marketplace>`).
+ */
+export async function readEnabledPluginsBit(
+  env: Env,
+  key: string,
+): Promise<boolean | undefined> {
+  const { settingsPath } = resolvePluginPaths(env);
+  const file = Bun.file(settingsPath);
+  if (!(await file.exists())) {
+    return undefined;
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(await file.text());
+  } catch {
+    return undefined;
+  }
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return undefined;
+  }
+
+  const enabledPlugins = (parsed as Record<string, unknown>)['enabledPlugins'];
+  if (
+    enabledPlugins === null || typeof enabledPlugins !== 'object' || Array.isArray(enabledPlugins)
+  ) {
+    return undefined;
+  }
+
+  const bit = (enabledPlugins as Record<string, unknown>)[key];
+  return typeof bit === 'boolean' ? bit : undefined;
+}
+
 // ---------------------------------------------------------------------------
 // auditPlugin
 // ---------------------------------------------------------------------------
@@ -315,7 +394,9 @@ export function pluginLedgerKey(name: string, marketplaceName: string): string {
  * - 'present' if the exact key `<name>@<marketplaceName>` exists in the ledger
  *   (installed by rigger OR by hand — provenance is adopt's concern, parity mcp;
  *   an enabledPlugins=false entry still counts present — the ledger is the truth
- *   of the install, decision gate).
+ *   of the install, decision gate). When present but disabled, `detail` carries
+ *   that as INFO (R9, différé obs1: doctor surfaces it, never repairs it — there
+ *   is no rigger-owned gate over Claude's own enable/disable toggle).
  * - 'missing' if the file/key is absent (a plan of install is proposable).
  * - 'unknown' if the ledger exists but does not parse / carries version !== 2 /
  *   `plugins` is non-object — advisory only, never triggers a reinstall.
@@ -343,11 +424,19 @@ export async function auditPlugin(
   }
 
   const key = pluginLedgerKey(pluginName(entry), marketplaceName);
-  return {
-    id: entry.id,
-    nature: 'plugin',
-    state: result.keys.has(key) ? 'present' : 'missing',
-  };
+  if (!result.keys.has(key)) {
+    return { id: entry.id, nature: 'plugin', state: 'missing' };
+  }
+
+  const enabled = await readEnabledPluginsBit(env, key);
+  return enabled === false
+    ? {
+      id: entry.id,
+      nature: 'plugin',
+      state: 'present',
+      detail: `installed but disabled (settings.json enabledPlugins["${key}"] = false)`,
+    }
+    : { id: entry.id, nature: 'plugin', state: 'present' };
 }
 
 // ---------------------------------------------------------------------------
@@ -409,6 +498,12 @@ export async function planPlugin(
  *   (same plan-warning channel as every other leave-alone op).
  * - Returns [{ kind: 'plugin-uninstall', plugin }] when the plugin is present.
  *
+ * Marketplace resolution (R9, différé obs1): unlike `auditPlugin` (exact match
+ * only — a mismatch there must surface as `missing`, never assumed), this
+ * resolves via `resolvePluginLedgerKey`'s reverse lookup — a stale cwd guess
+ * must never leave an actually-installed plugin stuck un-removable (silent
+ * no-op on a unique name match).
+ *
  * Read-only: no filesystem writes, no process spawn.
  *
  * @param entry            Artifact entry.
@@ -420,9 +515,9 @@ export async function planRemovePlugin(
   env: Env,
   marketplaceName: string,
 ): Promise<RemovalOp[]> {
-  const report = await auditPlugin(entry, env, marketplaceName);
+  const result = await readInstalledPlugins(env);
 
-  if (report.state === 'unknown') {
+  if (result.state === 'unknown') {
     return [{
       kind: 'leave-alone',
       target: pluginName(entry),
@@ -434,11 +529,12 @@ export async function planRemovePlugin(
     }];
   }
 
-  if (report.state !== 'present') {
+  const name = pluginName(entry);
+  const resolvedKey = resolvePluginLedgerKey(name, result.keys, marketplaceName);
+  if (resolvedKey === undefined) {
     return [];
   }
 
-  const name = pluginName(entry);
   return [{ kind: 'plugin-uninstall', plugin: name }];
 }
 
@@ -456,6 +552,12 @@ export async function planRemovePlugin(
  * `files` and no `applied`. Recording the entry is still what lets remove reach
  * the `claude plugin uninstall` path and check verify presence.
  *
+ * Marketplace resolution (R9, différé obs1): same reverse lookup as
+ * `planRemovePlugin` (via `resolvePluginLedgerKey`) rather than `auditPlugin`'s
+ * exact match — a plugin genuinely installed under a marketplace name the
+ * current catalog no longer guesses correctly must still be adoptable when
+ * the ledger match is unambiguous, instead of the adopt gate refusing forever.
+ *
  * Read-only: no filesystem writes, no process spawn (R1).
  *
  * @param entry            Artifact entry (id carries the plugin name).
@@ -467,8 +569,14 @@ export async function adoptPlugin(
   env: Env,
   marketplaceName: string,
 ): Promise<AdoptionResult | undefined> {
-  const report = await auditPlugin(entry, env, marketplaceName);
-  if (report.state !== 'present') {
+  const result = await readInstalledPlugins(env);
+  if (result.state === 'unknown') {
+    return undefined;
+  }
+
+  const name = pluginName(entry);
+  const resolvedKey = resolvePluginLedgerKey(name, result.keys, marketplaceName);
+  if (resolvedKey === undefined) {
     return undefined;
   }
   return { files: [] };

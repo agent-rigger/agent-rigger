@@ -56,7 +56,7 @@ import { buildAdapter } from './adapter-dispatch';
 import { detectAssistants, resolveAssistant } from './assistant-select';
 import { runCatalog } from './cmd-catalog';
 import { runCheck } from './cmd-check';
-import { runDoctor } from './cmd-doctor';
+import { runDoctor, runDoctorState } from './cmd-doctor';
 import { runInit } from './cmd-init';
 import type { CatalogProposal } from './cmd-init';
 import type { RunLsResult } from './cmd-ls';
@@ -267,6 +267,7 @@ export const KNOWN_FLAGS = new Set([
   'secret-env',
   'yes',
   'force',
+  'fix',
   'help',
   'version',
 ]);
@@ -441,7 +442,12 @@ Usage:
 
 Workflow commands:
   check                    Audit whether guardrails and context are correctly installed.
-  doctor                   List external dependencies and their status (full scan vs warn-only).
+  doctor                   Diagnose environment deps AND installed state (untracked artifacts,
+                           dangling symlinks, phantom stores, manifest issues, run lock, hygiene).
+                           Read-only: exit 0 healthy / 3 findings / 2 manifest unreadable.
+  doctor --fix             Repair the installed state under consent (safe repairs need --yes;
+                           destructive ones are confirmed per item, never under --yes).
+                           Exit 0 all repaired / 3 findings remain / 1 a repair failed.
   install                  Install selected artifacts interactively.
   install <id...>          Install specified artifact ids non-interactively.
   install <id...> --yes    Install without confirmation prompt.
@@ -495,6 +501,7 @@ Options:
                                  or prompted; see README § Assistants).
   --yes                         Skip confirmation prompt (non-interactive install only).
   --force                       Proceed despite scan findings (ad-hoc install only).
+  --fix                         Repair the installed state (doctor only; consent-driven).
   --secret-env=<ref>=<VAR>
                                  Override which env var resolves an mcp secret ref (repeatable).
   --help                        Show this help message.
@@ -1246,8 +1253,27 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
 
     // ----- doctor -----
     if (command === 'doctor') {
+      // Phase 1 (env-deps) — UNCHANGED.
       await runDoctor({ print });
-      return 0;
+
+      // Phase 2 (installed state, R8). Catalog NAMES only (never fetched) — the
+      // R2 orphan-catalog prefix check + R5 id requalification; a legacy config
+      // degrades to no configured catalogs rather than failing the command.
+      let configuredCatalogIds: string[] = [];
+      try {
+        configuredCatalogIds = (await loadCliConfig(env)).catalogs.map((c) => c.name);
+      } catch (err) {
+        if (!(err instanceof LegacyConfigError)) throw err;
+      }
+
+      return await runDoctorState({
+        env,
+        print,
+        fix: flags['fix'] === true,
+        yes: flags['yes'] === true,
+        isTTY: process.stdin.isTTY === true,
+        configuredCatalogIds,
+      });
     }
 
     // ----- install -----
