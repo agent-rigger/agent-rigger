@@ -106,6 +106,15 @@ A security model is only honest if it names what it does not do.
 anyway. It is a deliberate, explicit choice to accept a scan risk on your own judgment,
 and it is the single override of the fail-closed gate on findings.
 
+<details>
+<summary>Diagram: The trust gates</summary>
+
+![The trust gates fetched content clears before anything is written, in execution order: provenance (HEAD sha re-verified against the resolved sha, refused with exit 2), scan (gitleaks and trivy, blocking finding exits 1 or warn-only when no scanner is installed), plan confirmation, and per-command consent recorded in a ledger — with --force covering only the scan gate and never the provenance gate.](../../../assets/diagrams/trust-gates.svg)
+
+_The gates every fetched artifact clears before a byte is written. `--force` overrides only the scan gate; the provenance re-check is never bypassable. <small>Generated from packages/core/src/scan.ts, packages/catalog/src/fetch.ts, packages/core/src/consent.ts, packages/cli/src/remote-install.ts, 2026-07-12.</small>_
+
+</details>
+
 It stops there. `--force` does not override the provenance re-check: content whose sha does
 not match its resolved ref is refused regardless. So `--force` lets you install content the
 scanner objected to, on your own judgment. It never lets you install content that is not

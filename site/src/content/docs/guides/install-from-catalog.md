@@ -9,6 +9,15 @@ plan can put in front of you. For a first run end to end, see
 [getting started](/start/getting-started/). For the complete flag surface, see the
 [`install` reference](/reference/cli/install/).
 
+<details>
+<summary>Diagram: The install pipeline</summary>
+
+![Install pipeline: fetch (shallow clone at the resolved tag to sha), scan with gitleaks and trivy, resolve requires and packs, show the plan, human confirmation, back up touched files as .bak-*, apply the WriteOps, then write the manifest — with a blocking scan finding exiting 1 before any write and a refused plan exiting 0.](../../../assets/diagrams/install-pipeline.svg)
+
+_What a run does between your command and the manifest, and the two exits a decision can take: a blocking scan finding stops before any write (exit 1), and refusing the plan writes nothing (exit 0). <small>Generated from packages/cli/src/remote-install.ts, 2026-07-12.</small>_
+
+</details>
+
 ## Install interactively
 
 Run install with no ids:

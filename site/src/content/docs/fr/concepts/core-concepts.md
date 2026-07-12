@@ -104,6 +104,15 @@ d'autre ne paraisse visiblement anormal. Cet écart, c'est le
 [drift](/fr/reference/glossary/#drift) : le harness qui diverge discrètement de ce que le
 manifest affirme.
 
+<details>
+<summary>Schéma : Les trois niveaux</summary>
+
+![Les trois niveaux — catalog distant (catalog.json, tag résolu en sha), manifest local state.json, et le store sur disque avec ses symlinks vers le répertoire de chaque assistant — avec check qui compare les fichiers enregistrés par le manifest à ce qui est sur le disque.](../../../../assets/diagrams/three-levels.svg)
+
+_Les trois réponses qu'agent-rigger garde séparées — ce qui est disponible, ce qui est installé, ce qui est sur le disque — et la comparaison que `check` fait entre le manifest et le disque. <small>Généré depuis packages/core/src/{paths,manifest,linker}.ts, 2026-07-12.</small>_
+
+</details>
+
 Un contrôle qui ne regarderait qu'un seul niveau raterait les divergences des autres, donc
 `check` compare ce que le manifest enregistre à ce qui est sur le disque. Il renvoie `0`
 quand tout ce que le manifest affirme est présent et concordant, et `3` quand quelque chose

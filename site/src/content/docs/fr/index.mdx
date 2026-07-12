@@ -14,6 +14,8 @@ hero:
       variant: minimal
 ---
 
+import { CardGrid, LinkCard } from '@astrojs/starlight/components';
+
 Chaque développeur configure son assistant de code IA à la main : skills, règles de
 permission, serveurs MCP, fichiers de contexte. Laissée à chaque poste, cette
 configuration diverge. Deux coéquipiers ne se retrouvent jamais avec la même, et personne
@@ -21,6 +23,51 @@ ne peut dire qui a quoi.
 
 agent-rigger transforme cette configuration en quelque chose qu'une équipe déclare une
 fois et que chacun applique de la même manière.
+
+## Parcourir la documentation
+
+<CardGrid>
+  <LinkCard
+    title="Premiers pas"
+    href="/fr/start/getting-started/"
+    description="Un parcours de dix minutes, du poste vide au harness installé et vérifié."
+  />
+  <LinkCard
+    title="Qu'est-ce qu'agent-rigger ?"
+    href="/fr/start/what-is-agent-rigger/"
+    description="Le problème qu'il règle et le modèle sur lequel il repose, avant toute commande."
+  />
+  <LinkCard
+    title="Installation"
+    href="/fr/start/installation/"
+    description="Installez la CLI via Homebrew ou depuis les sources, et vérifiez qu'elle tourne."
+  />
+  <LinkCard
+    title="Concepts"
+    href="/fr/concepts/core-concepts/"
+    description="Harness, catalog, artifact, manifest — le vocabulaire que la doc présuppose."
+  />
+  <LinkCard
+    title="Guides — utiliser votre rig"
+    href="/fr/guides/install-from-catalog/"
+    description="Installer, vérifier, mettre à jour et retirer des artifacts du catalog d'équipe."
+  />
+  <LinkCard
+    title="Créer un catalog"
+    href="/fr/authoring/create-a-catalog/"
+    description="Décrivez le rig de votre équipe dans un dépôt git que d'autres installent."
+  />
+  <LinkCard
+    title="Référence CLI"
+    href="/fr/reference/cli/overview/"
+    description="Chaque commande, flag et exit code, une page par verbe."
+  />
+  <LinkCard
+    title="Glossaire"
+    href="/fr/reference/glossary/"
+    description="Chaque terme produit défini une fois, pour lecteurs techniques et non techniques."
+  />
+</CardGrid>
 
 ## Un catalog partagé
 

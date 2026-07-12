@@ -1,0 +1,37 @@
+%%{init: {'theme':'base','themeVariables':{'fontSize':'14px','lineColor':'#8a93a6','edgeLabelBackground':'#eef1f6','clusterBkg':'#f1f3f8','clusterBorder':'#8a93a6','titleColor':'#1f2430','primaryColor':'#475569','primaryTextColor':'#ffffff','primaryBorderColor':'#94a3b8'}}}%%
+flowchart TB
+  content["fetched content<br/>cloned checkout"]:::remote --> g1
+
+  g1{"provenance gate<br/>rev-parse HEAD == resolved sha?<br/>fetch.ts"}:::gate
+  g1 -->|"mismatch"| x1(["RefShaMismatchError → exit 2<br/>not bypassable by --force"]):::bad
+  g1 -->|"match"| g2
+
+  g2{"scan gate<br/>scanEntries — gitleaks / trivy<br/>remote-install.ts"}:::gate
+  g2 -->|"blocking finding, no --force"| x2(["ScanBlockedError → exit 1"]):::bad
+  g2 -->|"no scanner"| deg["degraded → warn-only<br/>proceed"]:::warn
+  g2 -->|"clean, or --force"| g3
+  deg --> g3
+
+  g3{"confirmation gate<br/>plan shown · human approves<br/>cmd-install.ts"}:::human
+  g3 -->|"refuse"| x3(["no write → exit 0"]):::ok
+  g3 -->|"approve"| g4
+
+  g4{"consent gate<br/>tool check commands<br/>consent.json ledger — consent.ts"}:::human
+  g4 -->|"refuse"| skip["command not run<br/>tool unverified · install continues"]:::warn
+  g4 -->|"approve / already consented"| write
+  skip --> write
+
+  write["write to disk<br/>WriteOps + writeManifest"]:::manifest
+
+  force["--force"]:::note
+  force -. "covers" .-> g2
+  force -. "does NOT cover" .-> g1
+
+  classDef remote fill:#b45309,stroke:#f59e0b,color:#fff
+  classDef manifest fill:#6d28d9,stroke:#a78bfa,color:#fff
+  classDef gate fill:#a16207,stroke:#eab308,color:#fff
+  classDef human fill:#0369a1,stroke:#38bdf8,color:#fff
+  classDef warn fill:#a16207,stroke:#eab308,color:#fff
+  classDef bad fill:#b91c1c,stroke:#f87171,color:#fff
+  classDef ok fill:#15803d,stroke:#4ade80,color:#fff
+  classDef note fill:#334155,stroke:#94a3b8,color:#fff

@@ -14,12 +14,59 @@ hero:
       variant: minimal
 ---
 
+import { CardGrid, LinkCard } from '@astrojs/starlight/components';
+
 Every developer configures their AI coding assistant by hand — skills, permission
 rules, MCP servers, context files. Left to each machine, that setup diverges: no two
 teammates end up with the same one, and no one can say who has what.
 
 agent-rigger turns that setup into something a team declares once and everyone applies
 the same way.
+
+## Browse the documentation
+
+<CardGrid>
+  <LinkCard
+    title="Getting started"
+    href="/start/getting-started/"
+    description="A ten-minute path from an empty machine to an installed, audited harness."
+  />
+  <LinkCard
+    title="What is agent-rigger?"
+    href="/start/what-is-agent-rigger/"
+    description="The problem it solves and the model it rests on, before any command."
+  />
+  <LinkCard
+    title="Installation"
+    href="/start/installation/"
+    description="Install the CLI with Homebrew or from source, and verify it runs."
+  />
+  <LinkCard
+    title="Concepts"
+    href="/concepts/core-concepts/"
+    description="Harness, catalog, artifact, manifest — the vocabulary the docs assume."
+  />
+  <LinkCard
+    title="Guides — use your rig"
+    href="/guides/install-from-catalog/"
+    description="Install, check, update, and remove artifacts from a team catalog."
+  />
+  <LinkCard
+    title="Author a catalog"
+    href="/authoring/create-a-catalog/"
+    description="Describe your team's rig in a git repository others can install from."
+  />
+  <LinkCard
+    title="CLI reference"
+    href="/reference/cli/overview/"
+    description="Every command, flag, and exit code, one page per verb."
+  />
+  <LinkCard
+    title="Glossary"
+    href="/reference/glossary/"
+    description="Each product term defined once, for technical and non-technical readers alike."
+  />
+</CardGrid>
 
 ## One shared catalog
 

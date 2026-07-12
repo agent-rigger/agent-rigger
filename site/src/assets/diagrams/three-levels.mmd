@@ -1,0 +1,39 @@
+%%{init: {'theme':'base','themeVariables':{'fontSize':'14px','lineColor':'#8a93a6','edgeLabelBackground':'#eef1f6','clusterBkg':'#f1f3f8','clusterBorder':'#8a93a6','titleColor':'#1f2430','primaryColor':'#475569','primaryTextColor':'#ffffff','primaryBorderColor':'#94a3b8'}}}%%
+flowchart TB
+  subgraph L1["1 · What is available — remote catalog (git repo)"]
+    catalog["catalog.json<br/>entries · packs"]
+    tagsha["tag → sha<br/>resolveVersion"]
+  end
+  subgraph L2["2 · What is installed — manifest"]
+    state["~/.config/agent-rigger/state.json<br/>id · nature · ref+sha · files · applied payload<br/>readManifest / writeManifest"]
+  end
+  subgraph L3["3 · What is on disk — store + symlinks"]
+    store["store<br/>~/.config/agent-rigger/skills/…<br/>syncToStore"]
+    link["symlink → store<br/>linkOrCopy"]
+  end
+  subgraph L4["Assistant directories"]
+    claude["~/.claude/…<br/>resolveUserTargets"]
+    opencode["~/.config/opencode/…<br/>resolveOpencodeUserTargets"]
+  end
+
+  tagsha -.->|"pins version"| catalog
+  catalog -->|"install at pinned tag→sha"| state
+  state -->|"records on-disk files"| store
+  store --> link
+  link --> claude
+  link --> opencode
+
+  check{{"check · detectDrift<br/>manifest.ts"}}
+  state -. "recorded files" .-> check
+  check -. "still on disk?" .-> link
+
+  class catalog,tagsha remote
+  class state manifest
+  class store,link disk
+  class claude,opencode assistant
+  class check gate
+  classDef remote fill:#b45309,stroke:#f59e0b,color:#fff
+  classDef manifest fill:#6d28d9,stroke:#a78bfa,color:#fff
+  classDef disk fill:#0f766e,stroke:#2dd4bf,color:#fff
+  classDef assistant fill:#1d4ed8,stroke:#60a5fa,color:#fff
+  classDef gate fill:#a16207,stroke:#eab308,color:#fff

@@ -1,0 +1,19 @@
+/* Collapsible diagram blocks: `<details>` wrapping a diagram in doc content.
+   Starlight does not style native `<details>`, so give it a discreet frame that
+   tracks the light/dark theme through Starlight's --sl-* custom properties. */
+.sl-markdown-content details {
+	border: 1px solid var(--sl-color-gray-5);
+	border-radius: 0.5rem;
+	padding: 0.5rem 1rem;
+	background: var(--sl-color-gray-6);
+}
+
+.sl-markdown-content details > summary {
+	cursor: pointer;
+	font-weight: 600;
+	color: var(--sl-color-white);
+}
+
+.sl-markdown-content details[open] > summary {
+	margin-bottom: 0.75rem;
+}

@@ -1,0 +1,27 @@
+---
+// Override of Starlight's `SocialIcons` header component: renders a locale-aware
+// "Docs" link in the topbar, then defers to the default social icons.
+import Default from '@astrojs/starlight/components/SocialIcons.astro';
+
+const { locale } = Astro.locals.starlightRoute;
+const docsHref = locale ? `/${locale}/start/getting-started/` : '/start/getting-started/';
+---
+
+<a class="docs-topbar-link" href={docsHref}>Docs</a>
+<Default><slot /></Default>
+
+<style>
+	.docs-topbar-link {
+		color: var(--sl-color-text-accent);
+		font-size: var(--sl-text-sm);
+		font-weight: 600;
+		text-decoration: none;
+		white-space: nowrap;
+		padding-inline: 0.25rem;
+		align-self: center;
+	}
+	.docs-topbar-link:hover,
+	.docs-topbar-link:focus-visible {
+		color: var(--sl-color-white);
+	}
+</style>

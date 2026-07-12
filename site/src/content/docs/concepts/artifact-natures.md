@@ -114,6 +114,17 @@ Claude Code only. The full set of events a hook can bind to lives in the
 [catalog schema](/reference/catalog-schema/), the canonical list that stays in step with
 what the assistant supports.
 
+## Where each nature lands
+
+<details>
+<summary>Diagram: Where each nature lands</summary>
+
+![Where each of the eight natures lands per assistant. Claude Code: skill and agent to store plus symlink, guardrail and hook to settings.json, context to a CLAUDE.md import block plus AGENTS.md, plugin and mcp delegated to the native CLI, tool presence-checked only. opencode: skill and plugin to store plus symlink, agent written as translated frontmatter, guardrail and mcp merged into opencode.json, context to AGENTS.md, hook unsupported, tool presence-checked only.](../../../assets/diagrams/nature-targets.svg)
+
+_The write mechanism each nature uses, per assistant — hook is Claude Code only, and tool is only checked for presence, never installed. The exhaustive per-scope paths belong in the reference. <small>Generated from packages/adapters/src/{claude,opencode}/, 2026-07-12.</small>_
+
+</details>
+
 ## Next
 
 - Read the [catalog schema](/reference/catalog-schema/) for the fields each nature declares.

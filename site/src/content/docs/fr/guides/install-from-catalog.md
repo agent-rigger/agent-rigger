@@ -9,6 +9,15 @@ décision que le plan peut vous soumettre. Pour un premier passage de bout en bo
 [prise en main](/fr/start/getting-started/). Pour la liste complète des flags, voyez la
 [référence `install`](/fr/reference/cli/install/).
 
+<details>
+<summary>Schéma : Le pipeline d'install</summary>
+
+![Pipeline d'install : fetch (clone shallow au tag résolu en sha), scan avec gitleaks et trivy, resolve des requires et des packs, affichage du plan, confirmation humaine, sauvegarde des fichiers touchés en .bak-*, application des WriteOps, puis écriture du manifest — avec un finding de scan bloquant qui sort en exit 1 avant toute écriture et un plan refusé qui sort en exit 0.](../../../../assets/diagrams/install-pipeline.svg)
+
+_Ce qu'un passage fait entre votre commande et le manifest, et les deux sorties qu'une décision peut prendre : un finding de scan bloquant s'arrête avant toute écriture (exit 1), et refuser le plan n'écrit rien (exit 0). <small>Généré depuis packages/cli/src/remote-install.ts, 2026-07-12.</small>_
+
+</details>
+
 ## Installer en interactif
 
 Lancez install sans id :

@@ -118,6 +118,17 @@ s'applique à Claude Code uniquement. L'ensemble complet des events auxquels un 
 lier vit dans le [schéma de catalog](/fr/reference/catalog-schema/), la liste canonique qui
 reste alignée sur ce que l'assistant prend en charge.
 
+## Où chaque nature atterrit
+
+<details>
+<summary>Schéma : Où chaque nature atterrit</summary>
+
+![Où chaque des huit natures atterrit par assistant. Claude Code : skill et agent en store plus symlink, guardrail et hook dans settings.json, context en bloc d'import CLAUDE.md plus AGENTS.md, plugin et mcp délégués au CLI natif, tool vérifié en présence seulement. opencode : skill et plugin en store plus symlink, agent écrit en frontmatter traduit, guardrail et mcp fusionnés dans opencode.json, context en AGENTS.md, hook non supporté, tool vérifié en présence seulement.](../../../../assets/diagrams/nature-targets.svg)
+
+_Le mécanisme d'écriture qu'utilise chaque nature, par assistant — hook est réservé à Claude Code, et tool n'est que vérifié en présence, jamais installé. Les chemins exhaustifs par scope relèvent de la référence. <small>Généré depuis packages/adapters/src/{claude,opencode}/, 2026-07-12.</small>_
+
+</details>
+
 ## Suite
 
 - Lisez le [schéma de catalog](/fr/reference/catalog-schema/) pour les champs que chaque nature

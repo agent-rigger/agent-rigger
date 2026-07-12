@@ -98,6 +98,15 @@ new commit. Any one of these leaves the [harness](/reference/glossary/#harness) 
 nothing else looks visibly wrong. That gap is [drift](/reference/glossary/#drift): the
 harness quietly diverging from what the manifest claims.
 
+<details>
+<summary>Diagram: The three levels</summary>
+
+![The three levels — remote catalog (catalog.json, tag resolved to a sha), local manifest state.json, and the on-disk store with its symlinks into each assistant's directory — with check comparing the files the manifest records against what is on disk.](../../../assets/diagrams/three-levels.svg)
+
+_The three separate answers agent-rigger keeps apart — what is available, what is installed, what is on disk — and the comparison `check` runs between the manifest and the disk. <small>Generated from packages/core/src/{paths,manifest,linker}.ts, 2026-07-12.</small>_
+
+</details>
+
 A check that looked at only one level would miss the divergences in the others, so `check`
 compares what the manifest records against what is on disk. It reports `0` when everything
 the manifest claims is present and matching, and `3` when something is missing or has

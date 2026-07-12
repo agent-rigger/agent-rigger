@@ -107,6 +107,15 @@ Un modèle de sécurité n'est honnête que s'il nomme ce qu'il ne fait pas.
 installe quand même. C'est un choix délibéré et explicite d'accepter un risque de scan en
 connaissance de cause, et c'est l'unique dérogation à la porte fail-closed sur les findings.
 
+<details>
+<summary>Schéma : Les portes de confiance</summary>
+
+![Les portes de confiance que le contenu récupéré franchit avant toute écriture, dans l'ordre d'exécution : provenance (sha du HEAD re-vérifié contre le sha résolu, refus en exit 2), scan (gitleaks et trivy, finding bloquant en exit 1 ou warn-only quand aucun scanner n'est installé), confirmation du plan, et consent par commande enregistré dans un ledger — avec --force qui ne couvre que la porte de scan, jamais la porte de provenance.](../../../../assets/diagrams/trust-gates.svg)
+
+_Les portes que chaque artifact récupéré franchit avant qu'un octet soit écrit. `--force` n'outrepasse que la porte de scan ; la re-vérification de provenance n'est jamais contournable. <small>Généré depuis packages/core/src/scan.ts, packages/catalog/src/fetch.ts, packages/core/src/consent.ts, packages/cli/src/remote-install.ts, 2026-07-12.</small>_
+
+</details>
+
 Cela s'arrête là. `--force` ne déroge pas à la re-vérification de provenance : un contenu dont
 le sha ne correspond pas à son ref résolu est refusé quoi qu'il arrive. Ainsi `--force` vous
 laisse installer un contenu auquel le scanner s'est opposé, sous votre responsabilité. Il ne

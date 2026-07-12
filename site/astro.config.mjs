@@ -12,6 +12,11 @@ export default defineConfig({
       social: [
         { icon: 'github', label: 'GitHub', href: 'https://github.com/agent-rigger/agent-rigger' },
       ],
+      components: {
+        // Add a locale-aware "Docs" link to the header, alongside the social icons.
+        SocialIcons: './src/components/SocialIcons.astro',
+      },
+      customCss: ['./src/styles/custom.css'],
       defaultLocale: 'root',
       locales: {
         root: { label: 'English', lang: 'en' },

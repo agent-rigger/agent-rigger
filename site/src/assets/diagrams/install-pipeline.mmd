@@ -1,0 +1,27 @@
+%%{init: {'theme':'base','themeVariables':{'fontSize':'14px','lineColor':'#8a93a6','edgeLabelBackground':'#eef1f6','clusterBkg':'#f1f3f8','clusterBorder':'#8a93a6','titleColor':'#1f2430','primaryColor':'#475569','primaryTextColor':'#ffffff','primaryBorderColor':'#94a3b8'}}}%%
+flowchart TB
+  start(["agent-rigger install"]):::process --> fetch
+  fetch["fetch<br/>resolveVersion tag→sha<br/>withRemoteCheckout — shallow clone"]:::remote
+  fetch --> resolve["resolve<br/>requires · packs — resolver"]:::process
+  resolve --> scan["scan<br/>scanEntries — gitleaks / trivy<br/>catalog.json + every resolved entry"]:::process
+  scan --> verdict{"scan verdict"}:::gate
+  verdict -->|"blocking finding, no --force"| exitScan(["ScanBlockedError<br/>→ exit 1 · nothing written"]):::bad
+  verdict -->|"no scanner installed"| warn["warn-only<br/>proceed"]:::warn
+  verdict -->|"clean, or --force"| plan
+  warn --> plan
+  plan["plan (dry-run)<br/>WriteOps preview"]:::process
+  plan --> confirm{"confirm?<br/>human"}:::human
+  confirm -->|"refuse"| exitRefuse(["no write<br/>→ exit 0"]):::ok
+  confirm -->|"approve / --yes"| backup["backup<br/>.bak-* of touched files"]:::process
+  backup --> apply["apply<br/>WriteOps"]:::process
+  apply --> manifest["manifest<br/>writeManifest → state.json"]:::manifest
+  manifest --> done(["installed"]):::ok
+
+  classDef remote fill:#b45309,stroke:#f59e0b,color:#fff
+  classDef process fill:#475569,stroke:#94a3b8,color:#fff
+  classDef manifest fill:#6d28d9,stroke:#a78bfa,color:#fff
+  classDef gate fill:#a16207,stroke:#eab308,color:#fff
+  classDef human fill:#0369a1,stroke:#38bdf8,color:#fff
+  classDef warn fill:#a16207,stroke:#eab308,color:#fff
+  classDef bad fill:#b91c1c,stroke:#f87171,color:#fff
+  classDef ok fill:#15803d,stroke:#4ade80,color:#fff

@@ -1,0 +1,51 @@
+%%{init: {'theme':'base','themeVariables':{'fontSize':'14px','lineColor':'#8a93a6','edgeLabelBackground':'#eef1f6','clusterBkg':'#f1f3f8','clusterBorder':'#8a93a6','titleColor':'#1f2430','primaryColor':'#475569','primaryTextColor':'#ffffff','primaryBorderColor':'#94a3b8'}}}%%
+flowchart LR
+  subgraph N["The 8 natures"]
+    skill["skill"]:::nature
+    agent["agent"]:::nature
+    guardrail["guardrail"]:::nature
+    context["context"]:::nature
+    plugin["plugin"]:::nature
+    mcp["mcp"]:::nature
+    hook["hook"]:::nature
+    tool["tool"]:::nature
+  end
+
+  subgraph C["Claude Code — packages/adapters/src/claude"]
+    c_store["store + symlink"]:::claude
+    c_settings["settings.json"]:::claude
+    c_md["CLAUDE.md import + AGENTS.md"]:::claude
+    c_deleg["delegate CLI<br/>plugin install · mcp add-json"]:::claude
+  end
+
+  subgraph O["opencode — packages/adapters/src/opencode"]
+    o_store["store + symlink"]:::opencode
+    o_json["opencode.json<br/>permission · mcp key"]:::opencode
+    o_agents["AGENTS.md"]:::opencode
+    o_wtext["write-text<br/>translated frontmatter"]:::opencode
+    o_unsup["unsupported"]:::unsup
+  end
+
+  skill --> c_store
+  agent --> c_store
+  guardrail --> c_settings
+  hook --> c_settings
+  context --> c_md
+  plugin --> c_deleg
+  mcp --> c_deleg
+  tool --> c_none["presence-check only<br/>never installed"]:::none
+
+  skill --> o_store
+  plugin --> o_store
+  guardrail --> o_json
+  mcp --> o_json
+  context --> o_agents
+  agent --> o_wtext
+  hook --> o_unsup
+  tool --> o_none["presence-check only<br/>never installed"]:::none
+
+  classDef nature fill:#475569,stroke:#94a3b8,color:#fff
+  classDef claude fill:#1d4ed8,stroke:#60a5fa,color:#fff
+  classDef opencode fill:#0f766e,stroke:#2dd4bf,color:#fff
+  classDef unsup fill:#b91c1c,stroke:#f87171,color:#fff
+  classDef none fill:#334155,stroke:#94a3b8,color:#fff
