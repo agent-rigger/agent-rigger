@@ -1,0 +1,66 @@
+name: Deploy site
+
+# Build the Starlight docs site and publish it to the org-root mirror repo.
+# GitHub serves an org root only from a repo named <org>.github.io, so the site
+# is built here (the source of truth) and pushed cross-repo to
+# agent-rigger/agent-rigger.github.io, which Pages serves at
+# https://agent-rigger.github.io/. The mirror is a pure build artifact.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "site/**"
+      - ".github/workflows/deploy-site.yml"
+  workflow_dispatch:
+
+# Read-only here: the cross-repo publish authenticates with the deploy key
+# (PAGES_DEPLOY_KEY), never GITHUB_TOKEN — the job needs no write scope.
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-site-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    name: Build & publish to agent-rigger.github.io
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+
+      - name: Install (frozen)
+        working-directory: site
+        run: bun install --frozen-lockfile
+
+      - name: Build site
+        working-directory: site
+        run: bun run build
+
+      # GitHub Pages runs Jekyll by default, which skips paths starting with '_'
+      # (Astro emits assets under _astro/). .nojekyll serves the output verbatim.
+      # peaceiris also adds it by default; kept explicit so the guarantee is local.
+      - name: Disable Jekyll
+        run: touch site/dist/.nojekyll
+
+      - name: Publish to org-root mirror
+        # SHA-pinned (not a major tag): this third-party action receives a
+        # long-lived deploy key, so the repo's tag-major convention (built for
+        # the ephemeral GITHUB_TOKEN) does not transfer. The trailing comment
+        # names the version the SHA resolves to, keeping the pin auditable.
+        uses: peaceiris/actions-gh-pages@84c30a85c19949d7eee79c4ff27748b70285e453 # v4.1.0
+        with:
+          deploy_key: ${{ secrets.PAGES_DEPLOY_KEY }}
+          external_repository: agent-rigger/agent-rigger.github.io
+          publish_branch: main
+          publish_dir: ./site/dist
+          # The mirror is a build artifact: replace its whole tree each deploy
+          # (single orphan commit) so removed pages don't linger and the README
+          # is overwritten — expected.
+          force_orphan: true

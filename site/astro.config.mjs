@@ -3,6 +3,10 @@ import { defineConfig } from 'astro/config';
 import starlightLinksValidator from 'starlight-links-validator';
 
 export default defineConfig({
+  // Org-root deployment (site-deploy-github-pages): served at the domain root by
+  // the agent-rigger.github.io mirror, so no `base` path. Setting `site` lets the
+  // sitemap integration emit absolute URLs (the missing-`site` build WARN is gone).
+  site: 'https://agent-rigger.github.io',
   integrations: [
     starlight({
       title: 'agent-rigger',
