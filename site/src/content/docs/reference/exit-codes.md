@@ -29,9 +29,10 @@ Nothing was written on the refusal path.
 precondition it cannot supply for you. Nothing is written. The pre-flight rejections also fetch
 nothing: an unknown flag or command, an [unqualified id](/reference/glossary/#qualified-id), an
 invalid `--scope`/`--assistant`, a [non-interactive](/reference/glossary/#tty--non-interactive)
-session with no `--yes`, or no [catalog](/reference/glossary/#catalog) configured for an install.
-Two other `2` conditions surface after a fetch (a ref/sha provenance mismatch, an unresolved
-required MCP secret under `--yes`), but still write nothing.
+session with no `--yes`, an `install` with no ids on a non-interactive session (its picker needs a
+TTY, so `--yes` alone does not help), or no [catalog](/reference/glossary/#catalog) configured for
+an install. Two other `2` conditions surface after a fetch (a ref/sha provenance mismatch, an
+unresolved required MCP secret under `--yes`), but still write nothing.
 
 ### 1: retry or fix the environment
 
@@ -73,6 +74,7 @@ condition rather than the internal error name.
 | Invalid `opencode.json`                  | `2`   |
 | Malformed `--secret-env` value           | `2`   |
 | Required MCP secret unresolved (non-TTY) | `2`   |
+| Install with no ids on a non-TTY session | `2`   |
 | Remote fetch or clone failed             | `1`   |
 | Security scan blocked the install        | `1`   |
 | Authentication failed (init)             | `1`   |
@@ -91,9 +93,10 @@ not a provenance check.
 ## In CI and scripts
 
 Non-interactive runs must pass [`--yes`](/reference/glossary/#yes) for any command that would
-confirm, or they exit `2` before touching the network. `2` means the invocation was wrong; `1` means
-the environment failed a valid request. Only `check` and `doctor` produce `3`; for every other
-command, any non-zero code is a failure.
+confirm, or they exit `2` before touching the network — `install` also needs explicit ids, since its
+picker cannot open without a TTY. `2` means the invocation was wrong; `1` means the environment
+failed a valid request. Only `check` and `doctor` produce `3`; for every other command, any non-zero
+code is a failure.
 
 For the non-interactive guard, a drift gate, and colour control, see
 [In CI and scripts](/guides/ci-and-scripts/).

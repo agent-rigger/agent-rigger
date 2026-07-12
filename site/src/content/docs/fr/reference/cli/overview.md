@@ -78,7 +78,9 @@ réponse : une exécution qui l'atteindrait échoue en fail-closed plutôt que d
 Ce contrôle s'exécute en tête de commande, avant toute récupération de catalog ou accès réseau, et
 sort en `2`. Passez [`--yes`](/fr/reference/glossary/#yes) pour pré-approuver les confirmations
 sûres. `--yes` ne couvre jamais un acte destructeur (voir [consent](/fr/reference/glossary/#consent)).
-Le garde-fou se fonde sur `stdin` : rediriger `stdin`, même seul, suffit à le déclencher.
+Le garde-fou se fonde sur `stdin` : rediriger `stdin`, même seul, suffit à le déclencher. `install`
+porte en plus sa propre garde : sans id, son sélecteur a lui aussi besoin d'un TTY, si bien que
+`--yes` seul ne la satisfait pas — voir [install](/fr/reference/cli/install).
 
 ## Résolution de l'assistant
 
