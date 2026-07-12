@@ -929,7 +929,13 @@ async function resolveEffectiveCatalog(
  *   and a HEAD-fallback landing back on the already-installed commit is not.
  *   A catalog whose version cannot be resolved degrades gracefully (its
  *   installed entries → 'current').
- * - Packs and any non-manifest-tracked entry fall through to 'install'.
+ * - Packs derive their status from their installable members (b1b4-R3): a
+ *   member 'install' → pack 'install'; else a member 'update' → pack 'update';
+ *   else 'current'. Tool members are excluded from the aggregate — they are
+ *   never manifest-tracked (install = M5) — so a tool (and an all-tool pack)
+ *   still falls through to 'install' until M5. A member that is itself a pack
+ *   contributes its own synthesized status (recursion, memoized, with a cycle
+ *   guard — a member on the current path is ignored, so cycles terminate).
  */
 async function computeArtifactStatuses(
   effective: CatalogEntry[],
@@ -967,26 +973,95 @@ async function computeArtifactStatuses(
     }),
   );
 
-  return effective.map((e) => {
-    const slash = e.id.indexOf('/');
-    const prefix = slash === -1 ? '' : e.id.slice(0, slash);
-    const remote = remoteByName.get(prefix) ?? null;
+  // Remote version for an entry's catalog (keyed by id prefix), or null when
+  // that catalog's version could not be resolved (graceful degradation).
+  const remoteFor = (id: string): Awaited<ReturnType<typeof resolveVersion>> | null => {
+    const slash = id.indexOf('/');
+    const prefix = slash === -1 ? '' : id.slice(0, slash);
+    return remoteByName.get(prefix) ?? null;
+  };
+
+  // Pass 1: classify every non-pack entry (install / update / current). This
+  // is the member-status source for the pack synthesis in pass 2.
+  const classifyArtifact = (e: CatalogEntry): StatusedEntry => {
+    const remote = remoteFor(e.id);
     const installed = installedById.get(e.id);
     if (installed === undefined) {
       // Surface the to-be-installed version when the remote resolved.
       return remote === null
-        ? { id: e.id, status: 'install' as const }
-        : { id: e.id, status: 'install' as const, remoteRef: remote.ref };
+        ? { id: e.id, status: 'install' }
+        : { id: e.id, status: 'install', remoteRef: remote.ref };
     }
     if (remote !== null && isUpdateAvailable(installed.ref, installed.sha, remote)) {
-      return {
-        id: e.id,
-        status: 'update' as const,
-        installedRef: installed.ref,
-        remoteRef: remote.ref,
-      };
+      return { id: e.id, status: 'update', installedRef: installed.ref, remoteRef: remote.ref };
     }
-    return { id: e.id, status: 'current' as const, installedRef: installed.ref };
+    return { id: e.id, status: 'current', installedRef: installed.ref };
+  };
+
+  const artifactStatusById = new Map<string, StatusedEntry>();
+  for (const e of effective) {
+    if (e.kind !== 'pack') artifactStatusById.set(e.id, classifyArtifact(e));
+  }
+
+  // Pass 2: synthesize each pack from its members (b1b4-R3, D3). Members are
+  // already qualified in the effective catalog (qualify.ts). An artifact member
+  // contributes its pass-1 status; a member that is itself a pack contributes
+  // its OWN synthesized status (recursion, so nested drift surfaces). Tool
+  // members are excluded — mirror of the install-time filter (cmd-install.ts):
+  // the manifest never tracks them, so they can't drive a pack 'current'. A
+  // member absent from the effective catalog is ignored (inconsistent data,
+  // same tolerance as the legacy picker). `ancestors` guards cycles (governance.ts
+  // DFS pattern): a member already on the current path contributes nothing, so
+  // a pack cycle terminates. Memoized by id (a DAG resolves each pack once). An
+  // empty aggregate (all-tool / member-less pack) keeps the 'install'
+  // fall-through — nothing trackable could ever make it 'current'.
+  const effectiveById = new Map(effective.map((e) => [e.id, e] as const));
+  const packStatusCache = new Map<string, StatusedEntry['status']>();
+  const aggregatePackStatus = (packId: string, ancestors: Set<string>): StatusedEntry['status'] => {
+    const cached = packStatusCache.get(packId);
+    if (cached !== undefined) return cached;
+
+    const entry = effectiveById.get(packId);
+    const members = entry !== undefined && entry.kind === 'pack' ? entry.members : [];
+    const nextAncestors = new Set(ancestors).add(packId);
+
+    const memberStatuses: StatusedEntry['status'][] = [];
+    for (const mid of members) {
+      if (nextAncestors.has(mid)) continue; // member is an ancestor on the path → cycle, skip
+      const m = effectiveById.get(mid);
+      if (m === undefined) continue; // absent from the effective catalog → ignore
+      if (m.kind === 'pack') {
+        memberStatuses.push(aggregatePackStatus(mid, nextAncestors));
+      } else if (m.nature !== 'tool') {
+        const s = artifactStatusById.get(m.id);
+        if (s !== undefined) memberStatuses.push(s.status);
+      }
+      // tool members are excluded from the aggregate
+    }
+
+    const status: StatusedEntry['status'] = memberStatuses.length === 0
+        || memberStatuses.includes('install')
+      ? 'install'
+      : memberStatuses.includes('update')
+      ? 'update'
+      : 'current';
+    packStatusCache.set(packId, status);
+    return status;
+  };
+
+  // Assemble in effective order, preserving the picker's display order. A pack
+  // carries kind:'pack' (member-oriented labels) and, when 'install', the
+  // catalog's remote ref so the picker can still show the target version.
+  return effective.map((e): StatusedEntry => {
+    if (e.kind !== 'pack') return artifactStatusById.get(e.id) as StatusedEntry;
+    const status = aggregatePackStatus(e.id, new Set());
+    if (status === 'install') {
+      const remote = remoteFor(e.id);
+      return remote === null
+        ? { id: e.id, status: 'install', kind: 'pack' }
+        : { id: e.id, status: 'install', kind: 'pack', remoteRef: remote.ref };
+    }
+    return { id: e.id, status, kind: 'pack' };
   });
 }
 

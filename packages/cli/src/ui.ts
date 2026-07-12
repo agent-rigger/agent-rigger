@@ -1030,6 +1030,13 @@ export interface StatusedEntry {
   installedRef?: string;
   /** Target/remote version (present for install/update). */
   remoteRef?: string;
+  /**
+   * Present (`'pack'`) when the entry is a pack (b1b4-R3). A pack has no
+   * version of its own — its status is synthesized from its installable
+   * members — so its picker labels are member-oriented, not version pairs
+   * (which would render `undefined`). Absent for ordinary artifacts.
+   */
+  kind?: 'pack';
 }
 
 /** A single picker option: stable `value` (the artifact id) + display `label`. */
@@ -1066,13 +1073,19 @@ export function buildStatusOptions(entries: StatusedEntry[]): Record<string, Sta
   if (update.length > 0) {
     options['To update'] = update.map((e) => ({
       value: e.id,
-      label: `${e.id} (${e.installedRef} → ${e.remoteRef})`,
+      // b1b4-R3: a pack has no version pair of its own — the synthesized status
+      // reflects member state, so the label is member-oriented, not
+      // `(installedRef → remoteRef)` (which would render `undefined`).
+      label: e.kind === 'pack'
+        ? `${e.id} (members outdated)`
+        : `${e.id} (${e.installedRef} → ${e.remoteRef})`,
     }));
   }
   if (current.length > 0) {
     options['Up to date (check to reinstall)'] = current.map((e) => ({
       value: e.id,
-      label: `${e.id} (✓ ${e.installedRef})`,
+      // b1b4-R3: same rationale — a pack has no installedRef of its own.
+      label: e.kind === 'pack' ? `${e.id} (✓ members current)` : `${e.id} (✓ ${e.installedRef})`,
     }));
   }
   return options;

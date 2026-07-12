@@ -1316,6 +1316,35 @@ describe('buildStatusOptions', () => {
     const opts = buildStatusOptions([{ id: 'a', status: 'install', remoteRef: 'v1' }]);
     expect(Object.keys(opts)).toEqual(['To install']);
   });
+
+  // b1b4-R3: a pack has no version of its own, so update/current labels are
+  // member-oriented — the (installedRef → remoteRef) / (✓ installedRef)
+  // templates would render `undefined`.
+  it('b1b4-R3: pack "To update" label is member-oriented, not a version pair', () => {
+    const entries: StatusedEntry[] = [{ id: 'jr/pack:demo', status: 'update', kind: 'pack' }];
+    const opts = buildStatusOptions(entries);
+    expect(opts['To update']).toEqual([
+      { value: 'jr/pack:demo', label: 'jr/pack:demo (members outdated)' },
+    ]);
+  });
+
+  it('b1b4-R3: pack "Up to date" label is member-oriented, not a version', () => {
+    const entries: StatusedEntry[] = [{ id: 'jr/pack:demo', status: 'current', kind: 'pack' }];
+    const opts = buildStatusOptions(entries);
+    expect(opts['Up to date (check to reinstall)']).toEqual([
+      { value: 'jr/pack:demo', label: 'jr/pack:demo (✓ members current)' },
+    ]);
+  });
+
+  it('b1b4-R3: pack "To install" label keeps the target version when remoteRef is known', () => {
+    const entries: StatusedEntry[] = [
+      { id: 'jr/pack:demo', status: 'install', kind: 'pack', remoteRef: 'v1.0.0' },
+    ];
+    const opts = buildStatusOptions(entries);
+    expect(opts['To install']).toEqual([
+      { value: 'jr/pack:demo', label: 'jr/pack:demo (→ v1.0.0)' },
+    ]);
+  });
 });
 
 // ---------------------------------------------------------------------------
