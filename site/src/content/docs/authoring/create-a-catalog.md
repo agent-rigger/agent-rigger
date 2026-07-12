@@ -306,10 +306,11 @@ Select artifacts to install (required items are always included):
 
 Recommended ids arrive checked and are theirs to uncheck; ids listed under `required` (this catalog
 declares none) cannot be unchecked. Running either command with `--yes` skips the picker entirely
-and installs required plus recommended without asking. Note that plain `agent-rigger install` uses a
-different, status-based picker that does not pre-check by recommendation — the pre-selection is a
-property of the `init` / `catalog add` proposal flow. The full `meta` shape is in the
-[catalog schema reference](/reference/catalog-schema/).
+and installs required plus recommended without asking. The opinion reaches plain `agent-rigger
+install` too: its different, status-based picker pre-checks only `required` plus `recommended` in
+the "To install" group once a catalog declares one, leaving the rest of that group listed but
+unchecked; a catalog with no opinion keeps the whole group pre-checked, as before. The full `meta`
+shape is in the [catalog schema reference](/reference/catalog-schema/).
 
 ## Clean up
 

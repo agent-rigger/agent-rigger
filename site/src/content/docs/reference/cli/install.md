@@ -94,6 +94,13 @@ mismatch (`RefShaMismatchError`), a path-traversal id, or an unsatisfied cross-c
 
 ## Interactive vs non-interactive
 
+Interactive mode (no ids) needs a TTY: on a non-interactive session its picker cannot open, so the
+run is rejected immediately, before any network access, even under `--yes`:
+
+```
+[error] interactive picker requires a TTY — pass explicit ids to install non-interactively
+```
+
 In a non-interactive session, id and ad-hoc installs require `--yes`; without it the run exits `2`
 before any network access (`[error] non-interactive session — pass --yes to confirm non-interactively`).
 Under `--yes`, a required MCP secret with no `--secret-env` mapping and no ambient value is a
@@ -101,12 +108,12 @@ fail-closed error (exit `2`), since no prompt is possible.
 
 ## Exit codes
 
-| Code  | Condition                                                                                                                                                                                                             |
-| ----- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `0`   | Installed, or nothing to install / selection declined.                                                                                                                                                                |
-| `2`   | Bad or unqualified id, unknown entry, dependency cycle, unsatisfied cross-catalog require, provenance mismatch, no catalog configured, non-TTY without `--yes`, malformed `--secret-env`, unresolved required secret. |
-| `1`   | Fetch or clone failed, scan blocked (no `--force`), another run holds the lock, plugin or skill install failed.                                                                                                       |
-| `130` | A prompt was cancelled with Ctrl+C.                                                                                                                                                                                   |
+| Code  | Condition                                                                                                                                                                                                                                          |
+| ----- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`   | Installed, or nothing to install / selection declined.                                                                                                                                                                                             |
+| `2`   | Bad or unqualified id, unknown entry, dependency cycle, unsatisfied cross-catalog require, provenance mismatch, no catalog configured, no ids on a non-TTY session, non-TTY without `--yes`, malformed `--secret-env`, unresolved required secret. |
+| `1`   | Fetch or clone failed, scan blocked (no `--force`), another run holds the lock, plugin or skill install failed.                                                                                                                                    |
+| `130` | A prompt was cancelled with Ctrl+C.                                                                                                                                                                                                                |
 
 See [exit codes](/reference/exit-codes) for the shared contract.
 

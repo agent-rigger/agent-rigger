@@ -1030,6 +1030,13 @@ export interface StatusedEntry {
   installedRef?: string;
   /** Target/remote version (present for install/update). */
   remoteRef?: string;
+  /**
+   * Present (`'pack'`) when the entry is a pack (b1b4-R3). A pack has no
+   * version of its own — its status is synthesized from its installable
+   * members — so its picker labels are member-oriented, not version pairs
+   * (which would render `undefined`). Absent for ordinary artifacts.
+   */
+  kind?: 'pack';
 }
 
 /** A single picker option: stable `value` (the artifact id) + display `label`. */
@@ -1066,32 +1073,92 @@ export function buildStatusOptions(entries: StatusedEntry[]): Record<string, Sta
   if (update.length > 0) {
     options['To update'] = update.map((e) => ({
       value: e.id,
-      label: `${e.id} (${e.installedRef} → ${e.remoteRef})`,
+      // b1b4-R3: a pack has no version pair of its own — the synthesized status
+      // reflects member state, so the label is member-oriented, not
+      // `(installedRef → remoteRef)` (which would render `undefined`).
+      label: e.kind === 'pack'
+        ? `${e.id} (members outdated)`
+        : `${e.id} (${e.installedRef} → ${e.remoteRef})`,
     }));
   }
   if (current.length > 0) {
     options['Up to date (check to reinstall)'] = current.map((e) => ({
       value: e.id,
-      label: `${e.id} (✓ ${e.installedRef})`,
+      // b1b4-R3: same rationale — a pack has no installedRef of its own.
+      label: e.kind === 'pack' ? `${e.id} (✓ members current)` : `${e.id} (✓ ${e.installedRef})`,
     }));
   }
   return options;
 }
 
 /**
+ * Options relaying each catalog's `meta` opinion into the picker's pre-checked
+ * set (b1b4-R4). Per-catalog rule: a catalog "declares an opinion" only when
+ * its `recommended` list is non-empty (MetaSchema defaults to []), so
+ * membership in {@link StatusInitialValuesOpts.optingPrefixes} — not the mere
+ * presence of a meta block — is what flips a catalog off the historical "check
+ * every install" default. The caller (handleInstall) builds both sets.
+ */
+export interface StatusInitialValuesOpts {
+  /**
+   * Qualified install ids to pre-check FOR OPTING CATALOGS (the union of each
+   * opting catalog's `required ∪ recommended`, qualified — R4a amendment). An
+   * install entry of an opting catalog is pre-checked only if it is in here;
+   * a non-opting catalog ignores this set (historical "check all install").
+   */
+  preChecked: Set<string>;
+  /** Source names (id prefixes) whose recommended list is non-empty. */
+  optingPrefixes: Set<string>;
+}
+
+/**
+ * Compute the picker's initially-checked ids (pure, testable) (b1b4-R4).
+ *
+ * - update  → always checked (updating an artifact the user already installed
+ *             never depends on the catalog's opinion).
+ * - install → checked when the id's catalog declares no opinion (its prefix is
+ *             absent from `optingPrefixes` — historical "check all install"),
+ *             otherwise only when the id is in `preChecked` (that catalog's
+ *             required ∪ recommended).
+ * - current → never checked (no implicit reinstall, even if recommended).
+ *
+ * Without `opts` the historical default is reproduced exactly: install ∪ update.
+ */
+export function buildStatusInitialValues(
+  entries: StatusedEntry[],
+  opts?: StatusInitialValuesOpts,
+): string[] {
+  return entries
+    .filter((e) => {
+      if (e.status === 'update') return true;
+      if (e.status !== 'install') return false; // current → never pre-checked
+      if (opts === undefined) return true; // historical default: every install
+      const slash = e.id.indexOf('/');
+      const prefix = slash === -1 ? '' : e.id.slice(0, slash);
+      // A catalog with no declared opinion keeps its historical pre-check;
+      // one that opts in pre-checks only its required/recommended install entries.
+      return opts.optingPrefixes.has(prefix) ? opts.preChecked.has(e.id) : true;
+    })
+    .map((e) => e.id);
+}
+
+/**
  * Status-aware grouped picker (groupMultiselect).
  *
  * Three groups, only rendered when non-empty (see {@link buildStatusOptions}).
- * Pre-checked set = install ∪ update. The "current" group lets the user opt into
- * a reinstall by checking an item. Cancellation (isCancel) throws CancelledError
- * (R2) — handleError maps it to exit 130.
+ * The pre-checked set is {@link buildStatusInitialValues} (install ∪ update by
+ * default; narrowed by a catalog's `meta.recommended` opinion when `opts` is
+ * given, b1b4-R4). The "current" group lets the user opt into a reinstall by
+ * checking an item. Cancellation (isCancel) throws CancelledError (R2) —
+ * handleError maps it to exit 130.
  */
-export async function selectArtifactsByStatus(entries: StatusedEntry[]): Promise<string[]> {
+export async function selectArtifactsByStatus(
+  entries: StatusedEntry[],
+  opts?: StatusInitialValuesOpts,
+): Promise<string[]> {
   const options = buildStatusOptions(entries);
 
-  const initialValues = entries
-    .filter((e) => e.status === 'install' || e.status === 'update')
-    .map((e) => e.id);
+  const initialValues = buildStatusInitialValues(entries, opts);
 
   const result = await groupMultiselect<string>({
     message:

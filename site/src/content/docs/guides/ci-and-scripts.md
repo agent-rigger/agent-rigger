@@ -19,7 +19,8 @@ access, so a misconfigured job fails fast instead of hanging on a prompt it cann
 ```
 
 `--yes` pre-approves the safe confirmations only. It never covers a destructive doctor repair, which
-is asked per item and is never granted in bulk.
+is asked per item and is never granted in bulk. `install` also needs explicit ids in a
+non-interactive run: with none, its picker requires a TTY, so `--yes` by itself is not enough.
 
 ## Branch on the exit code, not the output
 
@@ -58,8 +59,14 @@ resolve catalog status. Give the job git credentials for your catalog.
 
 A non-interactive install must name the [qualified ids](/reference/glossary/#qualified-id) to
 install. The no-ids form falls back to the interactive scope selector and grouped picker, which are
-TTY-only — under `--yes` without a TTY they have no answer and the command hangs, so always pin the
-ids in a script:
+TTY-only, so a non-interactive run with no ids is rejected immediately, before any network access,
+checkout, or scan:
+
+```
+[error] interactive picker requires a TTY — pass explicit ids to install non-interactively
+```
+
+Always pin the ids in a script:
 
 ```
 agent-rigger install example/skill:hello-rigger example/agent:demo --yes

@@ -20,7 +20,9 @@ invite à laquelle il ne peut répondre :
 ```
 
 `--yes` pré-approuve les seules confirmations sûres. Il ne couvre jamais une réparation destructrice
-de doctor, qui est demandée item par item et n'est jamais accordée en bloc.
+de doctor, qui est demandée item par item et n'est jamais accordée en bloc. `install` a en plus
+besoin d'ids explicites en session non-interactive : sans id, son sélecteur requiert un TTY, si bien
+que `--yes` seul ne suffit pas.
 
 ## Testez l'exit code, pas la sortie
 
@@ -61,8 +63,14 @@ catalog.
 
 Une install non-interactive doit nommer les [qualified ids](/fr/reference/glossary/#qualified-id) à
 installer. La forme sans id se rabat sur le sélecteur de scope interactif et le sélecteur groupé,
-réservés au TTY : sous `--yes` sans TTY, ils n'ont aucune réponse et la commande se bloque. Épinglez
-donc toujours les ids dans un script :
+réservés au TTY, si bien qu'une exécution non-interactive sans id est rejetée immédiatement, avant
+tout accès réseau, checkout ou scan :
+
+```
+[error] interactive picker requires a TTY — pass explicit ids to install non-interactively
+```
+
+Épinglez donc toujours les ids dans un script :
 
 ```
 agent-rigger install example/skill:hello-rigger example/agent:demo --yes

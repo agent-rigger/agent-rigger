@@ -29,10 +29,11 @@ présent sortent tous en `0`. Rien n'a été écrit sur le chemin du refus.
 malformé, ou une précondition manquante qu'il ne peut fournir à votre place. Rien n'est écrit. Les
 rejets avant toute exécution ne récupèrent rien non plus : un flag ou une commande inconnus, un
 [id non qualifié](/fr/reference/glossary/#qualified-id), un `--scope`/`--assistant` invalide, une
-session [non-interactive](/fr/reference/glossary/#tty--non-interactive) sans `--yes`, ou aucun
-[catalog](/fr/reference/glossary/#catalog) configuré pour une install. Deux autres conditions de `2`
-surviennent après une récupération (une incohérence de provenance ref/sha, un secret MCP required
-non résolu sous `--yes`), mais n'écrivent toujours rien.
+session [non-interactive](/fr/reference/glossary/#tty--non-interactive) sans `--yes`, une `install`
+sans id en session non-interactive (son sélecteur a besoin d'un TTY, `--yes` seul n'y change rien),
+ou aucun [catalog](/fr/reference/glossary/#catalog) configuré pour une install. Deux autres
+conditions de `2` surviennent après une récupération (une incohérence de provenance ref/sha, un
+secret MCP required non résolu sous `--yes`), mais n'écrivent toujours rien.
 
 ### 1 : réessayez ou corrigez l'environnement
 
@@ -76,6 +77,7 @@ condition observable plutôt que le nom d'erreur interne.
 | `opencode.json` invalide                    | `2`   |
 | Valeur `--secret-env` malformée             | `2`   |
 | Secret MCP required non résolu (non-TTY)    | `2`   |
+| Install sans id en session non-TTY          | `2`   |
 | Échec de récupération ou de clone distant   | `1`   |
 | Le scan de sécurité a bloqué l'install      | `1`   |
 | Échec de l'authentification (init)          | `1`   |
@@ -94,7 +96,8 @@ finding de scan, pas un contrôle de provenance.
 ## En CI et scripts
 
 Les exécutions non-interactives doivent passer [`--yes`](/fr/reference/glossary/#yes) pour toute
-commande qui confirmerait, sinon elles sortent en `2` avant de toucher le réseau. `2` signifie que
+commande qui confirmerait, sinon elles sortent en `2` avant de toucher le réseau — `install` a en
+plus besoin d'ids explicites, car son sélecteur ne peut pas s'ouvrir sans TTY. `2` signifie que
 l'invocation était erronée ; `1` signifie que l'environnement a fait échouer une requête valide.
 Seuls `check` et `doctor` produisent `3` ; pour toute autre commande, tout code non nul est un échec.
 

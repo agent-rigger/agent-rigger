@@ -314,9 +314,10 @@ Select artifacts to install (required items are always included):
 Les ids recommandés arrivent cochés, et le coéquipier reste libre de les décocher ; les ids listés sous `required`
 (ce catalog n'en déclare aucun) ne peuvent pas être décochés. Lancer l'une ou l'autre commande avec
 `--yes` saute entièrement le sélecteur et installe les required plus les recommended sans rien
-demander. Notez que `agent-rigger install` tout court utilise un sélecteur différent, fondé sur le
-statut, qui ne pré-coche pas selon la recommandation : la pré-sélection est une propriété du flux de
-proposition de `init` / `catalog add`. La forme complète de `meta` est dans la
+demander. L'opinion atteint aussi `agent-rigger install` tout court : son sélecteur différent, fondé
+sur le statut, pré-coche uniquement `required` plus `recommended` dans le groupe « À installer » dès
+qu'un catalog en déclare, laissant le reste de ce groupe listé mais décoché ; un catalog sans opinion
+garde tout le groupe pré-coché, comme avant. La forme complète de `meta` est dans la
 [référence du schéma de catalog](/fr/reference/catalog-schema/).
 
 ## Nettoyer

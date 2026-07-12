@@ -95,6 +95,14 @@ non satisfait. Chacun de ces cas refuse l'install et sort en `2`, forcé ou non.
 
 ## Interactif vs non-interactif
 
+Le mode interactif (sans ids) a besoin d'un TTY : en session non-interactive son sélecteur ne peut
+pas s'ouvrir, l'exécution est donc rejetée immédiatement, avant tout accès réseau, même sous
+`--yes` :
+
+```
+[error] interactive picker requires a TTY — pass explicit ids to install non-interactively
+```
+
 Dans une session non-interactive, les installs par id et ad-hoc exigent `--yes` ; sans lui,
 l'exécution sort en `2` avant tout accès réseau (`[error] non-interactive session — pass --yes to confirm non-interactively`).
 Sous `--yes`, un secret MCP required sans correspondance `--secret-env` ni valeur ambiante est une
@@ -102,12 +110,12 @@ erreur fail-closed (sort en `2`), puisqu'aucune invite n'est possible.
 
 ## Codes de sortie
 
-| Code  | Condition                                                                                                                                                                                                                               |
-| ----- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `0`   | Installé, ou rien à installer / sélection refusée.                                                                                                                                                                                      |
-| `2`   | Id erroné ou non qualifié, entrée inconnue, cycle de dépendances, `require` cross-catalog non satisfait, incohérence de provenance, aucun catalog configuré, non-TTY sans `--yes`, `--secret-env` malformé, secret required non résolu. |
-| `1`   | Échec de récupération ou de clone, scan bloqué (sans `--force`), une autre exécution détient le verrou, échec d'install de plugin ou de skill.                                                                                          |
-| `130` | Une invite a été annulée par Ctrl+C.                                                                                                                                                                                                    |
+| Code  | Condition                                                                                                                                                                                                                                                            |
+| ----- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`   | Installé, ou rien à installer / sélection refusée.                                                                                                                                                                                                                   |
+| `2`   | Id erroné ou non qualifié, entrée inconnue, cycle de dépendances, `require` cross-catalog non satisfait, incohérence de provenance, aucun catalog configuré, aucun id en session non-TTY, non-TTY sans `--yes`, `--secret-env` malformé, secret required non résolu. |
+| `1`   | Échec de récupération ou de clone, scan bloqué (sans `--force`), une autre exécution détient le verrou, échec d'install de plugin ou de skill.                                                                                                                       |
+| `130` | Une invite a été annulée par Ctrl+C.                                                                                                                                                                                                                                 |
 
 Voir [codes de sortie](/fr/reference/exit-codes) pour le contrat commun.
 

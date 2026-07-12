@@ -32,20 +32,26 @@ grouped picker that classifies every entry against what you already have:
 - **To install**: entries not yet installed.
 - **To update**: entries installed at an older version, shown as `old → new`.
 - **Up to date (check to reinstall)**: entries already current. Left unchecked; tick one only to
-  force a reinstall.
+  force a reinstall — a [pack](/reference/glossary/#pack) whose members are all current lands here
+  too, and ticking it reinstalls every member.
 
-The to-install and to-update rows come pre-checked. Space on a group header toggles the whole group
-at once. Confirm your selection, review the [plan](/reference/glossary/#plan-dry-run), then approve
-it to write. When every entry is already current for the chosen scope, install skips the picker and
-tells you so:
+To-update rows always come pre-checked. To-install rows do too, unless the catalog declares
+[`recommended`](/reference/glossary/#recommended): once it does, only its `required` and
+`recommended` entries start checked in that group, and the rest are listed unchecked. Space on a
+group header toggles the whole group at once — the way to check all of "To install" regardless of
+the catalog's opinion. Confirm your selection, review the [plan](/reference/glossary/#plan-dry-run),
+then approve it to write. When every entry is already current for the chosen scope, install skips
+the picker and tells you so:
 
 ```
 ✓ Everything already up-to-date for scope "user" (N artifact(s) installed). Use `agent-rigger remove` to uninstall.
 ```
 
-A [pack](/reference/glossary/#pack) is never recorded as installed — it is expanded into its members
-at install time — so a catalog that defines packs always keeps at least one "To install" row and
-shows the picker even when every member artifact is current.
+A [pack](/reference/glossary/#pack) itself is never recorded as installed — it expands into its
+members at install time — but its row here follows those members: current when every one of them
+is, `To update` when one has drifted, `To install` when one is missing. A pack made only of
+[tools](/reference/glossary/#tool) is the exception: tool installs aren't tracked yet, so that row
+keeps showing "To install" regardless.
 
 ## Install specific artifacts in one command
 

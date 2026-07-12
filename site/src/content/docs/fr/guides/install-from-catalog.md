@@ -33,10 +33,14 @@ puis affiche un sélecteur groupé qui classe chaque entrée par rapport à ce q
 - **À mettre à jour** : les entrées installées dans une version plus ancienne, présentées sous la
   forme `old → new`.
 - **À jour (cocher pour réinstaller)** : les entrées déjà à jour. Laissées décochées ; n'en cochez
-  une que pour forcer une réinstallation.
+  une que pour forcer une réinstallation — un [pack](/fr/reference/glossary/#pack) dont tous les
+  membres sont à jour atterrit ici aussi, et le cocher réinstalle chacun de ses membres.
 
-Les lignes à installer et à mettre à jour sont pré-cochées. La touche Espace sur un en-tête de groupe
-bascule tout le groupe d'un coup. Confirmez votre sélection, examinez le
+Les lignes à mettre à jour sont toujours pré-cochées. Les lignes à installer le sont aussi, sauf si le
+catalog déclare [`recommended`](/fr/reference/glossary/#recommended) : dès qu'il le fait, seules ses
+entrées `required` et `recommended` démarrent cochées dans ce groupe, le reste étant listé décoché. La
+touche Espace sur un en-tête de groupe bascule tout le groupe d'un coup — c'est le moyen de tout cocher
+dans « À installer » quelle que soit l'opinion du catalog. Confirmez votre sélection, examinez le
 [plan](/fr/reference/glossary/#plan-dry-run), puis approuvez-le pour écrire. Quand chaque entrée est
 déjà à jour pour le scope choisi, install saute le sélecteur et vous le signale :
 
@@ -44,9 +48,11 @@ déjà à jour pour le scope choisi, install saute le sélecteur et vous le sign
 ✓ Everything already up-to-date for scope "user" (N artifact(s) installed). Use `agent-rigger remove` to uninstall.
 ```
 
-Un [pack](/fr/reference/glossary/#pack) n'est jamais enregistré comme installé : il est développé en
-ses membres au moment de l'install. Un catalog qui définit des packs garde donc toujours au moins une
-ligne « À installer » et affiche le sélecteur même quand chaque artifact membre est à jour.
+Un [pack](/fr/reference/glossary/#pack) lui-même n'est jamais enregistré comme installé : il se
+développe en ses membres au moment de l'install. Mais sa ligne ici suit ces membres : à jour quand
+chacun d'eux l'est, « À mettre à jour » quand l'un a divergé, « À installer » quand l'un manque.
+Exception : un pack composé uniquement de [tools](/fr/reference/glossary/#tool), dont l'install n'est
+pas encore trackée — sa ligne reste « À installer » quoi qu'il arrive.
 
 ## Installer des artifacts précis en une seule commande
 
