@@ -1,0 +1,61 @@
+---
+title: agent-rigger
+description: Le « harness package manager » pour les équipes : décrivez une fois la configuration de vos assistants de code IA dans un catalog versionné, puis installez-la, vérifiez-la et mettez-la à jour de façon reproductible sur chaque poste.
+template: splash
+hero:
+  title: Le « harness package manager » pour les équipes
+  tagline: Décrivez une fois la configuration des assistants IA de votre équipe. Chacun l'installe, la vérifie et la met à jour avec une seule commande, de façon reproductible et en voyant chaque changement avant qu'il ne soit écrit.
+  actions:
+    - text: Commencer
+      link: /fr/start/getting-started/
+      icon: right-arrow
+    - text: Qu'est-ce qu'agent-rigger ?
+      link: /fr/start/what-is-agent-rigger/
+      variant: minimal
+---
+
+Chaque développeur configure son assistant de code IA à la main : skills, règles de
+permission, serveurs MCP, fichiers de contexte. Laissée à chaque poste, cette
+configuration diverge. Deux coéquipiers ne se retrouvent jamais avec la même, et personne
+ne peut dire qui a quoi.
+
+agent-rigger transforme cette configuration en quelque chose qu'une équipe déclare une
+fois et que chacun applique de la même manière.
+
+## Un catalog partagé
+
+Votre équipe décrit son [harness](/fr/reference/glossary/#harness) (les skills,
+sous-agents, guardrails et le contexte qui façonnent l'assistant) dans un
+[catalog](/fr/reference/glossary/#catalog) : un simple dépôt git, versionné comme
+n'importe quel autre code. Le binaire de l'outil ne porte aucun contenu propre ;
+les partis pris résident dans le catalog de votre équipe, pas dans agent-rigger.
+
+## Installer, vérifier, mettre à jour
+
+Une commande installe la configuration déclarée, une autre vérifie qu'elle est toujours
+correctement en place, une troisième l'amène à la dernière version du catalog. La même
+source produit le même résultat sur chaque poste, pour Claude Code comme pour opencode.
+
+## Des changements consentis et réversibles
+
+Rien n'est écrit avant que vous ne voyiez un [plan](/fr/reference/glossary/#plan-dry-run)
+des changements exacts et ne les confirmiez. Le contenu distant est
+[scanné](/fr/reference/glossary/#scan--scanner) avant de toucher le disque, et chaque
+install consigne ce qu'elle a modifié pour pouvoir être défaite précisément.
+
+## Commandes clés
+
+```sh
+# one-time: point rigger at your team's catalog
+agent-rigger init
+
+# see what's available, install it, and audit the result
+agent-rigger ls
+agent-rigger install
+agent-rigger check
+
+# bring every installed artifact up to the catalog's latest version
+agent-rigger update
+```
+
+[Commencer le tutoriel de 10 minutes →](/fr/start/getting-started/)
