@@ -186,7 +186,7 @@ so a single parse reports every invalid entry at once rather than stopping at th
 
 A complete, valid `catalog.json` with both kinds:
 
-```json
+```json title="catalog.json"
 {
   "meta": {
     "name": "agent-rigger-catalog-example",
@@ -234,7 +234,7 @@ A complete, valid `catalog.json` with both kinds:
 
 A valid mcp artifact entry, with a strict environment reference and a secret declaration:
 
-```json
+```json title="entry in catalog.json" {10}
 {
   "kind": "artifact",
   "id": "mcp:github",

@@ -59,7 +59,7 @@ fichier que l'outil lit pour savoir ce que votre catalog propose. Il a deux part
 `meta` qui nomme le catalog, et une liste `entries` de choses installables. Écrivez la plus petite
 version valide, une entrée [skill](/fr/reference/glossary/#skill) :
 
-```sh
+```sh "myteam"
 cat > catalog.json <<'JSON'
 {
   "meta": {
@@ -267,7 +267,7 @@ proposition qu'un coéquipier voit la première fois qu'il branche votre catalog
 `agent-rigger init` ou `agent-rigger catalog add`. L'id arrive déjà sélectionné, et il peut toujours
 le décocher. Ajoutez le champ, puis committez et taggez une nouvelle release :
 
-```sh
+```sh ins={5}
 cat > catalog.json <<'JSON'
 {
   "meta": {

@@ -57,7 +57,7 @@ the tool reads to know what your catalog offers. It has two parts: a `meta` head
 catalog, and an `entries` list of installable things. Write the smallest valid version, one
 [skill](/reference/glossary/#skill) entry:
 
-```sh
+```sh "myteam"
 cat > catalog.json <<'JSON'
 {
   "meta": {
@@ -260,7 +260,7 @@ teammate sees the first time they wire up your catalog — when they run `agent-
 `agent-rigger catalog add`. The id arrives already selected, and they can still uncheck it. Add the
 field, then commit and tag a new release:
 
-```sh
+```sh ins={5}
 cat > catalog.json <<'JSON'
 {
   "meta": {

@@ -44,7 +44,7 @@ qu'il a [drifté](/fr/reference/glossary/#drift), `2` que l'audit n'a pas pu s'e
 indicatives catalog et update ne changent jamais le code. Un verrou qui fait échouer le build sur le
 drift :
 
-```sh
+```sh {4}
 agent-rigger check
 case $? in
   0) echo "harness in sync" ;;

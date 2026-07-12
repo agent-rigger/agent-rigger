@@ -42,7 +42,7 @@ Only `check` and `doctor` return `3`. For every other command, any non-zero code
 [drifted](/reference/glossary/#drift), `2` means the audit could not run. Its advisory catalog and
 update sections never change the code. A gate that fails the build on drift:
 
-```sh
+```sh {4}
 agent-rigger check
 case $? in
   0) echo "harness in sync" ;;

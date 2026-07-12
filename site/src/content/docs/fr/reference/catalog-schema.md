@@ -190,7 +190,7 @@ coup au lieu de s'arrêter à la première.
 
 Un `catalog.json` complet et valide, avec les deux kinds :
 
-```json
+```json title="catalog.json"
 {
   "meta": {
     "name": "agent-rigger-catalog-example",
@@ -239,7 +239,7 @@ Un `catalog.json` complet et valide, avec les deux kinds :
 Une entrée artifact mcp valide, avec une référence d'environnement stricte et une déclaration de
 secret :
 
-```json
+```json title="entrée dans catalog.json" {10}
 {
   "kind": "artifact",
   "id": "mcp:github",
