@@ -18,7 +18,7 @@
  */
 
 import type { CatalogEntry } from '@agent-rigger/catalog';
-import { qualifyRef } from '@agent-rigger/catalog';
+import { partitionMetaIds } from '@agent-rigger/catalog';
 
 /** The governance-relevant slice of a catalog's `meta` block. */
 export interface CatalogGovernanceMeta {
@@ -69,8 +69,16 @@ export function auditableGovernanceIds(
         for (const member of members) visit(member);
       }
     };
-    for (const seed of [...(meta.required ?? []), ...(meta.recommended ?? [])]) {
-      visit(qualifyRef(source, seed));
+    // governance-id-forge: seed only this source's OWN ids — a foreign
+    // pre-qualified id in its meta can't forge a governance obligation on
+    // another catalog's artifacts (silent discard; the opinion is advisory).
+    for (
+      const seed of partitionMetaIds(source, [
+        ...(meta.required ?? []),
+        ...(meta.recommended ?? []),
+      ]).own
+    ) {
+      visit(seed);
     }
   }
 

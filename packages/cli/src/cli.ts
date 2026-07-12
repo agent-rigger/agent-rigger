@@ -42,8 +42,8 @@ import {
   foldCatalogs,
   isUpdateAvailable,
   localId,
+  partitionMetaIds,
   qualifyEntries,
-  qualifyRef,
   RefShaMismatchError,
   RemoteFetchError,
   resolveVersion,
@@ -566,6 +566,18 @@ export interface CliPrompts {
    * When absent and NOT in a TTY, `runInit` receives no `proposeInstall` (config-only).
    */
   proposeInstall?: (catalog: CatalogProposal) => Promise<string[]>;
+  /**
+   * Optional post-init defaults picker (injectable for tests, governance-id-forge).
+   *
+   * Threaded into the real `runInteractiveProposeInstall` so a test can observe
+   * the `{required, recommended}` sets it builds from `catalog.meta` (foreign
+   * ids excluded) without driving real clack. When absent, the real
+   * clack-backed `selectArtifactsWithDefaults` is used.
+   */
+  selectArtifactsWithDefaults?: (
+    entries: CatalogEntry[],
+    defaults: { required: Set<string>; recommended: Set<string> },
+  ) => Promise<string[]>;
   /**
    * Optional target-assistant(s) picker (injectable for tests, R1/E7).
    *
@@ -1100,17 +1112,24 @@ async function runInteractiveProposeInstall(
     tmpFactory: TmpDirFactory;
     scanner?: import('@agent-rigger/core/scan').Scanner;
     print: (msg: string) => void;
+    /** Injectable picker (tests); defaults to the real clack-backed ui export. */
+    selectWithDefaults?: (
+      entries: CatalogEntry[],
+      defaults: { required: Set<string>; recommended: Set<string> },
+    ) => Promise<string[]>;
   },
 ): Promise<string[]> {
-  const { selectArtifactsWithDefaults } = await import('./ui');
-  const { scope, env, runner, tmpFactory, scanner, print } = opts;
+  const { scope, env, runner, tmpFactory, scanner, print, selectWithDefaults } = opts;
+  const selectArtifactsWithDefaults = selectWithDefaults
+    ?? (await import('./ui')).selectArtifactsWithDefaults;
 
   // Qualify meta.required/recommended with the source name so that they
-  // match the qualified entries in the picker (ADR-0017).
+  // match the qualified entries in the picker (ADR-0017). governance-id-forge:
+  // own ids only — a foreign pre-qualified id in this catalog's meta can't forge
+  // a pre-check on another catalog's artifacts (advisory → silent discard).
   const sourceName = catalog.sourceName;
-  const qualify = (id: string): string => qualifyRef(sourceName, id);
-  const required = new Set((catalog.meta.required ?? []).map(qualify));
-  const recommended = new Set((catalog.meta.recommended ?? []).map(qualify));
+  const required = new Set(partitionMetaIds(sourceName, catalog.meta.required ?? []).own);
+  const recommended = new Set(partitionMetaIds(sourceName, catalog.meta.recommended ?? []).own);
 
   // catalog.entries are already qualified (fetchCatalogFn returns qualified entries).
   const selectedIds = await selectArtifactsWithDefaults(catalog.entries, {
@@ -1464,10 +1483,23 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
         // over the interactive TTY picker.
         proposeInstallFn = async (catalog: CatalogProposal): Promise<string[]> => {
           const sourceName = catalog.sourceName;
-          const qualify = (id: string): string => qualifyRef(sourceName, id);
 
-          const required = (catalog.meta.required ?? []).map(qualify);
-          const recommended = (catalog.meta.recommended ?? []).map(qualify);
+          // governance-id-forge: split own vs foreign meta ids. A foreign id in
+          // meta.required is a floor this catalog cannot honor — fail closed with
+          // an actionable message (same class as a phantom required's
+          // UnknownEntryError, which runInit also catches non-fatally). Foreign
+          // recommended is advisory → silently dropped (keeps only .own).
+          const requiredParts = partitionMetaIds(sourceName, catalog.meta.required ?? []);
+          if (requiredParts.foreign.length > 0) {
+            print(
+              `[error] catalog "${sourceName}" declares foreign id(s) in meta.required: `
+                + `${requiredParts.foreign.join(', ')} — a catalog's required floor may only `
+                + `reference its own artifacts (bare or "${sourceName}/…"-qualified).`,
+            );
+            throw new Error(`foreign id in catalog "${sourceName}" meta.required`);
+          }
+          const required = requiredParts.own;
+          const recommended = partitionMetaIds(sourceName, catalog.meta.recommended ?? []).own;
 
           // Build defaults selection: required(all) ∪ (recommended ∩ entries).
           //
@@ -1550,6 +1582,9 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
             tmpFactory,
             print,
             ...(deps.remote?.scanner === undefined ? {} : { scanner: deps.remote.scanner }),
+            ...(prompts.selectArtifactsWithDefaults === undefined
+              ? {}
+              : { selectWithDefaults: prompts.selectArtifactsWithDefaults }),
           });
         };
       }
@@ -2375,10 +2410,10 @@ async function handleInstall(opts: HandleInstallOpts): Promise<number> {
       const recs = meta.recommended ?? [];
       if (recs.length === 0) continue;
       optingPrefixes.add(sourceName);
-      const ownPrefix = sourceName + '/';
-      for (const id of [...(meta.required ?? []), ...recs]) {
-        if (id.includes('/') && !id.startsWith(ownPrefix)) continue; // foreign id → ignore
-        preChecked.add(qualifyRef(sourceName, id));
+      // governance-id-forge: own ids only (foreign pre-qualified ids in another
+      // catalog's meta can't forge a pre-check here). required ∪ recommended.
+      for (const id of partitionMetaIds(sourceName, [...(meta.required ?? []), ...recs]).own) {
+        preChecked.add(id);
       }
     }
     selectedIds = await statusPicker(statuses, { preChecked, optingPrefixes });

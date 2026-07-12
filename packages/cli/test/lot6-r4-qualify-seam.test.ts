@@ -132,7 +132,8 @@ describe('lot6-R4: governance qualifies meta.required/recommended via the coutur
       targets: ['claude'],
       scopes: ['user'],
     },
-    // Already-qualified seed referencing a DIFFERENT catalog — must be left intact.
+    // Already-qualified seed referencing a DIFFERENT catalog — present in the
+    // effective catalog, but jr may not forge it into its own audit (govid).
     {
       kind: 'artifact',
       id: 'othercat/guardrail:shared',
@@ -151,12 +152,30 @@ describe('lot6-R4: governance qualifies meta.required/recommended via the coutur
     expect(ids.has('jr/context:main')).toBe(true);
   });
 
-  it('leaves an already-qualified cross-catalog seed intact (not double-prefixed)', () => {
+  it("drops an already-qualified cross-catalog seed (govid: a catalog's opinion covers only its own ids)", () => {
+    // govid (decision 2026-07-12): a catalog's meta may reference only its OWN
+    // ids (bare or self-qualified). jr declaring othercat/guardrail:shared can
+    // no longer forge it into jr's governance audit — the lot6 cross-catalog
+    // floor capability is retired (partitionMetaIds discards the foreign seed).
     const meta: Map<string, CatalogGovernanceMeta> = new Map([
       ['jr', { required: ['othercat/guardrail:shared'] }],
     ]);
     const ids = auditableGovernanceIds(EFFECTIVE, meta);
-    expect(ids.has('othercat/guardrail:shared')).toBe(true);
+    expect(ids.has('othercat/guardrail:shared')).toBe(false);
+    // Discarded, never double-prefixed either.
     expect(ids.has('jr/othercat/guardrail:shared')).toBe(false);
+  });
+
+  it('keeps a self-qualified own seed unchanged in the audit (never double-prefixed)', () => {
+    // The mechanical property the retired cross-catalog assert really protected:
+    // a seed jr declares already prefixed by ITS OWN name stays as-is in the
+    // auditable set — qualifyRef leaves it intact, so it is never re-prefixed to
+    // jr/jr/… (govid, no-double-prefix at the governance site).
+    const meta: Map<string, CatalogGovernanceMeta> = new Map([
+      ['jr', { required: ['jr/guardrail:main'] }],
+    ]);
+    const ids = auditableGovernanceIds(EFFECTIVE, meta);
+    expect(ids.has('jr/guardrail:main')).toBe(true);
+    expect(ids.has('jr/jr/guardrail:main')).toBe(false);
   });
 });

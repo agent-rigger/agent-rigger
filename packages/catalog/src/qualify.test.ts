@@ -18,7 +18,7 @@
 
 import { describe, expect, it } from 'bun:test';
 
-import { qualifyEntries } from './qualify';
+import { partitionMetaIds, qualifyEntries } from './qualify';
 import type { CatalogEntry } from './schema';
 
 // ---------------------------------------------------------------------------
@@ -180,5 +180,48 @@ describe('qualifyEntries — edge cases', () => {
     const originalMembers = [...original.members];
     qualifyEntries('mycat', [original]);
     expect(original.members).toEqual(originalMembers);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// partitionMetaIds — own vs foreign meta ids (governance-id-forge)
+// ---------------------------------------------------------------------------
+
+describe('partitionMetaIds', () => {
+  it('qualifies a bare id as own', () => {
+    expect(partitionMetaIds('mycat', ['skill:a'])).toEqual({
+      own: ['mycat/skill:a'],
+      foreign: [],
+    });
+  });
+
+  it('keeps an id already qualified by its own prefix as own', () => {
+    expect(partitionMetaIds('mycat', ['mycat/skill:a'])).toEqual({
+      own: ['mycat/skill:a'],
+      foreign: [],
+    });
+  });
+
+  it('classifies an id qualified by another catalog as foreign', () => {
+    expect(partitionMetaIds('mycat', ['othercat/skill:a'])).toEqual({
+      own: [],
+      foreign: ['othercat/skill:a'],
+    });
+  });
+
+  it('does not sub-prefix false-match (cat does not own cat2/…)', () => {
+    expect(partitionMetaIds('cat', ['cat2/skill:a'])).toEqual({
+      own: [],
+      foreign: ['cat2/skill:a'],
+    });
+  });
+
+  it('partitions a mixed list, preserving order within each bucket', () => {
+    expect(
+      partitionMetaIds('cat', ['skill:a', 'catB/skill:x', 'cat/skill:b', 'cat2/skill:y']),
+    ).toEqual({
+      own: ['cat/skill:a', 'cat/skill:b'],
+      foreign: ['catB/skill:x', 'cat2/skill:y'],
+    });
   });
 });

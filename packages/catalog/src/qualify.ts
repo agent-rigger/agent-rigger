@@ -59,6 +59,40 @@ function qualifyRefs(name: string, refs: string[]): string[] {
   return refs.map((ref) => qualifyRef(name, ref));
 }
 
+/** Result of {@link partitionMetaIds}: a source's own ids vs foreign ones. */
+export interface OwnMetaIds {
+  /** Ids the source may declare — bare or self-qualified — returned qualified. */
+  own: string[];
+  /** Ids qualified by ANOTHER catalog's prefix — not this source's to declare. */
+  foreign: string[];
+}
+
+/**
+ * Partition a source's `meta.required` / `meta.recommended` ids into those it
+ * may legitimately declare (`own`) and those pointing into ANOTHER catalog
+ * (`foreign`). A bare id is qualified with `name`; an id already prefixed by
+ * `name/` is kept; any other `/`-qualified id is foreign.
+ *
+ * `qualifyRef` alone leaves a pre-qualified id intact, so a catalog could forge
+ * a governance obligation or a pre-check under another catalog's prefix. This
+ * is the single seam that distinguishes own from foreign (governance-id-forge).
+ * The comparison uses `name + '/'` so a sub-prefix never false-matches — source
+ * `cat` does not own `cat2/skill:x`.
+ */
+export function partitionMetaIds(name: string, ids: readonly string[]): OwnMetaIds {
+  const ownPrefix = name + '/';
+  const own: string[] = [];
+  const foreign: string[] = [];
+  for (const id of ids) {
+    if (id.includes('/') && !id.startsWith(ownPrefix)) {
+      foreign.push(id);
+    } else {
+      own.push(qualifyRef(name, id));
+    }
+  }
+  return { own, foreign };
+}
+
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
