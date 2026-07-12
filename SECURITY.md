@@ -29,10 +29,16 @@ advisory unless you prefer to stay anonymous.
 agent-rigger installs harness configuration fetched from a **remote catalog**.
 Two properties are central to its security posture:
 
-- **Fetched content is scanned before it lands on disk.** Remote `external`
-  artifacts are scanned with gitleaks and/or trivy (fail-closed: with no scanner
-  installed, a remote install is blocked unless `--force` is passed). All fetched
-  content is scanned uniformly — there is no trusted built-in exception.
+- **Fetched content is scanned before it lands on disk.** Everything fetched
+  from a remote catalog, `catalog.json` included, is scanned with gitleaks
+  and/or trivy: there is no trusted built-in exception. A blocking finding
+  stops the install unless `--force` is passed (fail-closed on findings).
+  A missing scanner is the one deliberate exception to that posture: with
+  neither gitleaks nor trivy installed, the scan is degraded, the install
+  proceeds with a warning telling you the content was not scanned, and
+  `rigger doctor` reports the warn-only mode. On such a host, content that was
+  never scanned can reach your machine. Installing gitleaks or trivy restores
+  the real scan.
 - **The scan covers secrets and misconfiguration, not arbitrary behaviour.** It
   catches leaked credentials and misconfigurations, **not** behavioural analysis
   of a malicious script. You are responsible for the catalogs you configure and

@@ -179,9 +179,11 @@ and the `permission` descriptor instead.
   catalog URL). agent-rigger shells out to `git ls-remote` and `git clone`.
 - **gitleaks and/or trivy** — required to **install** `external` artifacts from a
   remote catalog: their content is scanned for secrets/misconfigurations before
-  it lands on disk. With no scanner installed, a remote install is blocked
-  (fail-closed) unless you pass `--force`. All fetched content is scanned
-  uniformly — there is no trusted built-in exception.
+  it lands on disk. A blocking finding stops the install unless you pass
+  `--force` (fail-closed on findings). With no scanner installed, the scan is
+  degraded instead: the install proceeds with a warning that the content was
+  not scanned, and `rigger doctor` reports the warn-only mode — no `--force`
+  needed for this case.
 - **`glab` or `gh`** — required if the catalog references GitLab or GitHub
   resources. `init` probes ambient auth first; it asks for the method only if
   the probe fails.
