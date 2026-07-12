@@ -85,6 +85,7 @@ import {
   renderEntryInfo,
   shouldColor,
   type StatusedEntry,
+  type StatusInitialValuesOpts,
 } from './ui';
 
 import pkg from '../package.json';
@@ -543,8 +544,14 @@ export interface CliPrompts {
    * version, short-circuits when nothing is actionable, and renders the grouped
    * picker. When absent (legacy / injected-prompt tests), the flow falls back to
    * the flat `selectArtifacts` picker with scope asked afterwards.
+   *
+   * `opts` (b1b4-R4, optional) relays each catalog's `meta.recommended` opinion
+   * into the pre-checked set. Absent → historical default (install ∪ update).
    */
-  selectArtifactsByStatus?: (entries: StatusedEntry[]) => Promise<string[]>;
+  selectArtifactsByStatus?: (
+    entries: StatusedEntry[],
+    opts?: StatusInitialValuesOpts,
+  ) => Promise<string[]>;
   /** `assistant` (R5, optional — defaults to 'claude') picks the picker's root labels. */
   selectScope: (assistant?: Assistant) => Promise<'user' | 'project'>;
   confirmApply: (planText: string) => Promise<boolean>;
@@ -2347,7 +2354,22 @@ async function handleInstall(opts: HandleInstallOpts): Promise<number> {
       );
       return 0;
     }
-    selectedIds = await statusPicker(statuses);
+    // b1b4-R4: relay each catalog's meta.recommended opinion into the picker's
+    // pre-check. metaBySource carries bare ids per source (no new fetch); a
+    // source "declares an opinion" only when its recommended list is non-empty
+    // (MetaSchema defaults to []). Qualify each id with its source name (mirror
+    // of the qualifyRef sites). Per-catalog: a source with no opinion is absent
+    // from optingPrefixes, so buildStatusInitialValues keeps its historical
+    // pre-check for that source's entries.
+    const recommended = new Set<string>();
+    const optingPrefixes = new Set<string>();
+    for (const [sourceName, meta] of effectiveFull.metaBySource) {
+      const recs = meta.recommended ?? [];
+      if (recs.length === 0) continue;
+      optingPrefixes.add(sourceName);
+      for (const id of recs) recommended.add(qualifyRef(sourceName, id));
+    }
+    selectedIds = await statusPicker(statuses, { recommended, optingPrefixes });
     if (selectedIds.length === 0) {
       print('No artifacts selected — nothing to install.');
       return 0;
@@ -3055,7 +3077,7 @@ async function importUiPrompts(): Promise<CliPrompts> {
   const ui = await import('./ui');
   return {
     selectArtifacts: (entries) => ui.selectArtifacts(entries),
-    selectArtifactsByStatus: (entries) => ui.selectArtifactsByStatus(entries),
+    selectArtifactsByStatus: (entries, opts) => ui.selectArtifactsByStatus(entries, opts),
     selectScope: (assistant) => ui.selectScope(assistant),
     confirmApply: (planText) => ui.confirmApply(planText),
     askUrl: async () => {

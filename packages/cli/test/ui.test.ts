@@ -17,6 +17,7 @@ import { manifestAppliedDrift, untrackedHostDiff } from '@agent-rigger/core';
 import type { RemovalOp, Report, WriteOp } from '@agent-rigger/core';
 import {
   abbreviatePath,
+  buildStatusInitialValues,
   buildStatusOptions,
   confirmApply,
   confirmToolChecks,
@@ -1343,6 +1344,67 @@ describe('buildStatusOptions', () => {
     const opts = buildStatusOptions(entries);
     expect(opts['To install']).toEqual([
       { value: 'jr/pack:demo', label: 'jr/pack:demo (→ v1.0.0)' },
+    ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// buildStatusInitialValues — pre-checked set, with optional recommended opinion
+// ---------------------------------------------------------------------------
+
+const optsFor = (recommended: string[], opting: string[]) => ({
+  recommended: new Set(recommended),
+  optingPrefixes: new Set(opting),
+});
+
+describe('buildStatusInitialValues (b1b4-R4)', () => {
+  it('b1b4-R4: sans opts → install ∪ update pré-cochés, current jamais (défaut historique)', () => {
+    const entries: StatusedEntry[] = [
+      { id: 'cat/skill:a', status: 'install' },
+      { id: 'cat/skill:c', status: 'update', installedRef: 'v1', remoteRef: 'v2' },
+      { id: 'cat/skill:d', status: 'current', installedRef: 'v1' },
+    ];
+    expect(buildStatusInitialValues(entries)).toEqual(['cat/skill:a', 'cat/skill:c']);
+  });
+
+  it('b1b4-R4: catalogue qui opte → install recommandé coché, non-recommandé décoché', () => {
+    const entries: StatusedEntry[] = [
+      { id: 'cat/skill:a', status: 'install' },
+      { id: 'cat/skill:b', status: 'install' },
+    ];
+    expect(buildStatusInitialValues(entries, optsFor(['cat/skill:a'], ['cat']))).toEqual([
+      'cat/skill:a',
+    ]);
+  });
+
+  it('b1b4-R4: update toujours coché, même quand son catalogue opte et ne le recommande pas', () => {
+    const entries: StatusedEntry[] = [
+      { id: 'cat/skill:c', status: 'update', installedRef: 'v1', remoteRef: 'v2' },
+    ];
+    expect(buildStatusInitialValues(entries, optsFor([], ['cat']))).toEqual(['cat/skill:c']);
+  });
+
+  it('b1b4-R4: current jamais coché, même recommandé (pas de réinstallation implicite)', () => {
+    const entries: StatusedEntry[] = [
+      { id: 'cat/skill:a', status: 'current', installedRef: 'v1' },
+    ];
+    // Load-bearing: naively unioning `recommended` into the checked set would
+    // pre-check this recommended-but-current entry.
+    expect(buildStatusInitialValues(entries, optsFor(['cat/skill:a'], ['cat']))).toEqual([]);
+  });
+
+  it('b1b4-R4: multi-préfixe — catB sans opinion garde tout son install coché', () => {
+    const entries: StatusedEntry[] = [
+      { id: 'catA/skill:a', status: 'install' },
+      { id: 'catA/skill:b', status: 'install' },
+      { id: 'catB/skill:a', status: 'install' },
+      { id: 'catB/skill:b', status: 'install' },
+    ];
+    // Only catA declares an opinion → catB keeps the historical "all install".
+    expect(buildStatusInitialValues(entries, optsFor(['catA/skill:a'], ['catA']))).toEqual([
+      'catA/skill:a',
+      'catB/skill:a',
+      'catB/skill:b',
     ]);
   });
 });
