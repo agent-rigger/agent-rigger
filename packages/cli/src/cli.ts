@@ -2059,6 +2059,22 @@ async function handleInstall(opts: HandleInstallOpts): Promise<number> {
   // is T6 — this is plumbing only.
   const secretOverrides = parseSecretEnvFlags(secretEnvFlags);
 
+  // b1b4-R1: fail-fast the interactive picker on a non-TTY stdin with no ids,
+  // BEFORE the confirm gate below. --yes satisfies assertConfirmableOrYes, but
+  // the interactive branch then drives selectScope/the clack status picker,
+  // which never resolves on a non-TTY stdin (proven hang, ADR-0024). Placed
+  // ahead of the gate on purpose: the no-ids case must produce "pass explicit
+  // ids" even without --yes — the gate's "pass --yes" message would otherwise
+  // route the user straight into that hang. Guarded by deps.prompts ===
+  // undefined for parity with the confirm gate below: injected prompts answer
+  // synchronously, so nothing hangs and the guard must not reject them.
+  if (deps.prompts === undefined && ids.length === 0 && process.stdin.isTTY !== true) {
+    print(
+      '[error] interactive picker requires a TTY — pass explicit ids to install non-interactively',
+    );
+    return 2;
+  }
+
   // R4 (ADR-0018, ADR-0024): fail-closed before any catalog resolution,
   // network fetch, checkout or scan — but after the flag-level validation
   // above (a malformed --secret-env is a more specific "impossible request"
