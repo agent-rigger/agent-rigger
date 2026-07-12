@@ -1,0 +1,160 @@
+---
+title: Install from a catalog
+description: Install artifacts from a configured catalog interactively or by qualified id, choose the scope, and act on the plan's scan and tool-check prompts.
+---
+
+You have a catalog configured and you want its artifacts on this machine. This guide covers the
+interactive picker, one-command installs by id, choosing the scope, and the two decision points the
+plan can put in front of you. For a first run end to end, see
+[getting started](/start/getting-started/). For the complete flag surface, see the
+[`install` reference](/reference/cli/install/).
+
+## Install interactively
+
+Run install with no ids:
+
+```
+agent-rigger install
+```
+
+It asks for the [scope](/reference/glossary/#scope) (unless you passed `--scope`), then shows a
+grouped picker that classifies every entry against what you already have:
+
+- **To install**: entries not yet installed.
+- **To update**: entries installed at an older version, shown as `old → new`.
+- **Up to date (check to reinstall)**: entries already current. Left unchecked; tick one only to
+  force a reinstall.
+
+The to-install and to-update rows come pre-checked. Space on a group header toggles the whole group
+at once. Confirm your selection, review the [plan](/reference/glossary/#plan-dry-run), then approve
+it to write. When every entry is already current for the chosen scope, install skips the picker and
+tells you so:
+
+```
+✓ Everything already up-to-date for scope "user" (N artifact(s) installed). Use `agent-rigger remove` to uninstall.
+```
+
+A [pack](/reference/glossary/#pack) is never recorded as installed — it is expanded into its members
+at install time — so a catalog that defines packs always keeps at least one "To install" row and
+shows the picker even when every member artifact is current.
+
+## Install specific artifacts in one command
+
+When you already know what you want, pass [qualified ids](/reference/glossary/#qualified-id) in the
+form `<catalog>/<nature>:<name>`:
+
+```
+agent-rigger install example/skill:hello-rigger example/agent:demo --yes
+```
+
+`--yes` skips the confirmation prompt. Find the exact ids with `agent-rigger ls`, whose first column
+is the qualified id:
+
+```
+Catalog (7 entries):
+  [available]  example/skill:hello-rigger  skill
+  [available]  example/agent:demo          agent
+  [available]  example/guardrail:demo      guardrail
+  [available]  example/pack:demo           pack       (2 members)
+```
+
+A bare id is rejected before any network access:
+
+```
+[error] unqualified id "skill:hello-rigger" — use `<catalog>/skill:hello-rigger` (see `agent-rigger ls`)
+```
+
+So is a prefix that names no configured catalog:
+
+```
+[error] catalog "<prefix>" not configured — see `agent-rigger catalog ls`
+```
+
+Without `--yes`, the command shows the plan and waits for your confirmation:
+
+```
+--- Plan ---
+Plan · 2 changes · scope: user (~/.claude)
+
++ example/skill:hello-rigger   ~/.claude/skills/hello-rigger
+  link  ~/.claude/skills/hello-rigger → store
+
++ example/agent:demo   ~/.claude/agents/demo.md
+  link  ~/.claude/agents/demo.md → store
+
+Σ  2 links
+```
+
+## Choose where it lands
+
+Pass `--scope`:
+
+- `--scope user` (the default): machine-wide, under your home directory.
+- `--scope project`: the current repository only.
+
+If you install into a project that is a git repository, the plan warns you before writing so you can
+decide whether those files belong in version control:
+
+```
+[warning] This directory is a git repo — files written here will appear
+          in version control. Commit or .gitignore them intentionally.
+```
+
+## When the plan raises a scan warning
+
+Catalog content is [untrusted](/reference/glossary/#untrusted-content) and
+[scanned](/reference/glossary/#scan--scanner) before it reaches disk. Two outcomes need a decision.
+
+No scanner installed: the scan cannot run, so install proceeds and warns.
+
+```
+[warning] content not scanned — install gitleaks or trivy then re-run for a full scan; see `rigger doctor`
+```
+
+If you want the content scanned, install gitleaks or trivy, then re-run.
+
+A scanner found something: with a scanner present and a real finding, install stops and writes
+nothing.
+
+```
+Security scan blocked installation. Findings:
+  - <finding>
+
+Re-run with --force to install anyway.
+```
+
+Read the finding first. If it is a false positive you accept, re-run with `--force` (see below).
+
+## When the plan lists a tool presence-check
+
+If your selection pulls in a [tool](/reference/glossary/#tool), the plan lists its `check` command
+under its own block so you can read the command before anything runs:
+
+```
+--- Tool presence-checks (run after you confirm) ---
+  <id>  →  <check command>
+```
+
+Confirming the plan is a separate decision from agreeing to run that command. After you confirm, a
+second prompt asks for [consent](/reference/glossary/#consent):
+
+```
+Run the following tool presence-checks?
+```
+
+Granting it records the decision in the consent ledger, so the same command under the same id is
+never asked again. Under `--yes`, confirming the plan carries this consent. Refuse it and no command
+runs: the tool is reported as unverified and the install still completes.
+
+## When `--force` is legitimate
+
+[`--force`](/reference/glossary/#--force) overrides a blocking scan finding and installs anyway.
+Reach for it only after you have read the finding and judged it safe. It widens nothing else:
+
+- It does not bypass a provenance check. A `ref`/`sha` mismatch still refuses the install (exit
+  `2`).
+- It does not create a missing catalog or resolve an unknown id. Those you correct, you do not force
+  them.
+
+For what each step does and why the content is treated as hostile, see
+[trust and security](/concepts/trust-and-security/).

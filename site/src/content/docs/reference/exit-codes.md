@@ -91,16 +91,9 @@ not a provenance check.
 ## In CI and scripts
 
 Non-interactive runs must pass [`--yes`](/reference/glossary/#--yes) for any command that would
-confirm, or they exit `2` before touching the network. A typical gate:
+confirm, or they exit `2` before touching the network. `2` means the invocation was wrong; `1` means
+the environment failed a valid request. Only `check` and `doctor` produce `3`; for every other
+command, any non-zero code is a failure.
 
-```sh
-agent-rigger check
-case $? in
-  0) echo "harness in sync" ;;
-  3) echo "drift or missing entries; see report"; exit 1 ;;
-  *) echo "check itself failed"; exit 1 ;;
-esac
-```
-
-`2` means the invocation was wrong; `1` means the environment failed a valid request. Only `check`
-and `doctor` produce `3`; for every other command, any non-zero code is a failure.
+For the non-interactive guard, a drift gate, and colour control, see
+[In CI and scripts](/guides/ci-and-scripts/).

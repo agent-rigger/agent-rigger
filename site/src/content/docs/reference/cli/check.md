@@ -69,10 +69,10 @@ See [exit codes](/reference/exit-codes) for the shared contract.
 
 ## In CI
 
-`check` is the audit gate for a pipeline: `0` means the harness is in sync, `3` means it has
-drifted, and `2` means the audit could not run. It writes nothing to the harness and never executes
-a catalog-declared command, but it does reach the network (read-only git fetch and `ls-remote`) to
-resolve catalog status.
+`check` writes nothing to the harness and never executes a catalog-declared command, but it does
+reach the network (read-only git fetch and `ls-remote`) to resolve catalog status.
+
+To gate a pipeline on drift, see [In CI and scripts](/guides/ci-and-scripts/).
 
 ## Example
 
