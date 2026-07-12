@@ -1352,8 +1352,8 @@ describe('buildStatusOptions', () => {
 // buildStatusInitialValues — pre-checked set, with optional recommended opinion
 // ---------------------------------------------------------------------------
 
-const optsFor = (recommended: string[], opting: string[]) => ({
-  recommended: new Set(recommended),
+const optsFor = (preChecked: string[], opting: string[]) => ({
+  preChecked: new Set(preChecked),
   optingPrefixes: new Set(opting),
 });
 

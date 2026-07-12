@@ -1092,16 +1092,21 @@ export function buildStatusOptions(entries: StatusedEntry[]): Record<string, Sta
 }
 
 /**
- * Options relaying a catalog's `meta.recommended` opinion into the picker's
- * pre-checked set (b1b4-R4). Per-catalog rule: a catalog "declares an opinion"
- * only when its recommended list is non-empty (MetaSchema defaults to []), so
+ * Options relaying each catalog's `meta` opinion into the picker's pre-checked
+ * set (b1b4-R4). Per-catalog rule: a catalog "declares an opinion" only when
+ * its `recommended` list is non-empty (MetaSchema defaults to []), so
  * membership in {@link StatusInitialValuesOpts.optingPrefixes} — not the mere
- * presence of the meta block — is what flips a catalog off the historical
- * "check every install" default.
+ * presence of a meta block — is what flips a catalog off the historical "check
+ * every install" default. The caller (handleInstall) builds both sets.
  */
 export interface StatusInitialValuesOpts {
-  /** Qualified ids recommended by any configured catalog (union across sources). */
-  recommended: Set<string>;
+  /**
+   * Qualified install ids to pre-check FOR OPTING CATALOGS (the union of each
+   * opting catalog's `required ∪ recommended`, qualified — R4a amendment). An
+   * install entry of an opting catalog is pre-checked only if it is in here;
+   * a non-opting catalog ignores this set (historical "check all install").
+   */
+  preChecked: Set<string>;
   /** Source names (id prefixes) whose recommended list is non-empty. */
   optingPrefixes: Set<string>;
 }
@@ -1113,7 +1118,8 @@ export interface StatusInitialValuesOpts {
  *             never depends on the catalog's opinion).
  * - install → checked when the id's catalog declares no opinion (its prefix is
  *             absent from `optingPrefixes` — historical "check all install"),
- *             otherwise only when the id is in `recommended`.
+ *             otherwise only when the id is in `preChecked` (that catalog's
+ *             required ∪ recommended).
  * - current → never checked (no implicit reinstall, even if recommended).
  *
  * Without `opts` the historical default is reproduced exactly: install ∪ update.
@@ -1130,8 +1136,8 @@ export function buildStatusInitialValues(
       const slash = e.id.indexOf('/');
       const prefix = slash === -1 ? '' : e.id.slice(0, slash);
       // A catalog with no declared opinion keeps its historical pre-check;
-      // one that opts in pre-checks only its recommended install entries.
-      return opts.optingPrefixes.has(prefix) ? opts.recommended.has(e.id) : true;
+      // one that opts in pre-checks only its required/recommended install entries.
+      return opts.optingPrefixes.has(prefix) ? opts.preChecked.has(e.id) : true;
     })
     .map((e) => e.id);
 }

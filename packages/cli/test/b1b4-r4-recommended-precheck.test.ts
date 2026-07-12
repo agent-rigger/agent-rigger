@@ -58,8 +58,19 @@ function skill(local: string): CatalogEntry {
   };
 }
 
+function pack(local: string, members: string[]): CatalogEntry {
+  return {
+    kind: 'pack',
+    id: `pack:${local}`,
+    members,
+    targets: ['claude'],
+    scopes: ['user', 'project'],
+  };
+}
+
 interface CatalogSpec {
   name: string;
+  required?: string[];
   recommended?: string[];
   entries: CatalogEntry[];
 }
@@ -149,6 +160,7 @@ async function makeIso(specs: CatalogSpec[]): Promise<Iso> {
         JSON.stringify({
           meta: {
             name: spec.name,
+            ...(spec.required === undefined ? {} : { required: spec.required }),
             ...(spec.recommended === undefined ? {} : { recommended: spec.recommended }),
           },
           entries: spec.entries,
@@ -230,7 +242,7 @@ describe('b1b4-R4: recommandé pré-coché, non-recommandé décoché', () => {
 
     try {
       expect(c.called).toBe(true);
-      expect(c.opts?.recommended).toEqual(new Set(['cat/skill:a']));
+      expect(c.opts?.preChecked).toEqual(new Set(['cat/skill:a']));
       expect(c.opts?.optingPrefixes).toEqual(new Set(['cat']));
       // Resulting pre-check: skill:a checked, skill:b listed but unchecked.
       expect(prechecked(c)).toEqual(['cat/skill:a']);
@@ -325,12 +337,85 @@ describe('b1b4-R4: multi-catalogue règle par catalogue', () => {
     try {
       expect(c.called).toBe(true);
       // Qualification is per-source; catB (no opinion) is absent from optingPrefixes.
-      expect(c.opts?.recommended).toEqual(new Set(['catA/skill:a']));
+      expect(c.opts?.preChecked).toEqual(new Set(['catA/skill:a']));
       expect(c.opts?.optingPrefixes).toEqual(new Set(['catA']));
       // catA: only recommended pre-checked; catB (no opinion): all install pre-checked.
       expect(new Set(prechecked(c))).toEqual(
         new Set(['catA/skill:a', 'catB/skill:a', 'catB/skill:b']),
       );
+    } finally {
+      await iso.cleanup();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Scenario 6: required ∪ recommended pre-checked for an opting catalog (R4a)
+// ---------------------------------------------------------------------------
+
+describe('b1b4-R4: required ∪ recommended (amendement T6)', () => {
+  it('b1b4-R4: required ∪ recommended — pack:secu et pack:baseline pré-cochés, skill:z décoché', async () => {
+    // The real jr catalog shape: required=[pack:secu], recommended=[pack:baseline].
+    // The catalog opts in (recommended non-empty), so its pre-check covers the
+    // UNION required ∪ recommended — required must not fall out.
+    const iso = await makeIso([
+      {
+        name: 'jr',
+        required: ['pack:secu'],
+        recommended: ['pack:baseline'],
+        entries: [
+          skill('s'),
+          skill('b'),
+          skill('z'),
+          pack('secu', ['skill:s']),
+          pack('baseline', ['skill:b']),
+        ],
+      },
+    ]);
+    await iso.seedManifest([]); // everything uninstalled → all actionable
+    const c = await runPicker(iso);
+
+    try {
+      expect(c.called).toBe(true);
+      expect(c.opts?.preChecked).toEqual(new Set(['jr/pack:secu', 'jr/pack:baseline']));
+      expect(c.opts?.optingPrefixes).toEqual(new Set(['jr']));
+      const checked = new Set(prechecked(c));
+      // required AND recommended pre-checked; the neither-required-nor-recommended
+      // skill:z is listed but unchecked.
+      expect(checked.has('jr/pack:secu')).toBe(true);
+      expect(checked.has('jr/pack:baseline')).toBe(true);
+      expect(checked.has('jr/skill:z')).toBe(false);
+    } finally {
+      await iso.cleanup();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Scenario 7: foreign id in meta is ignored (R4b — cross-catalog leak closed)
+// ---------------------------------------------------------------------------
+
+describe('b1b4-R4: id étranger ignoré (amendement T6)', () => {
+  it('b1b4-R4: id étranger ignoré — catA optant recommande catB/skill:x, catB optant → non pré-coché', async () => {
+    // catA opts in but its only recommendation is a FOREIGN, pre-qualified id
+    // pointing into catB. qualifyRef leaves an already-'/'-qualified id intact,
+    // so without the guard catA would forge a pre-check inside catB. catB opts
+    // in too and recommends only skill:y — so catB/skill:x must NOT be checked.
+    const iso = await makeIso([
+      { name: 'catA', recommended: ['catB/skill:x'], entries: [skill('a')] },
+      { name: 'catB', recommended: ['skill:y'], entries: [skill('x'), skill('y')] },
+    ]);
+    await iso.seedManifest([]);
+    const c = await runPicker(iso);
+
+    try {
+      expect(c.called).toBe(true);
+      // The foreign id never enters preChecked; only catB's own recommendation does.
+      expect(c.opts?.preChecked.has('catB/skill:x')).toBe(false);
+      expect(c.opts?.preChecked).toEqual(new Set(['catB/skill:y']));
+      expect(c.opts?.optingPrefixes).toEqual(new Set(['catA', 'catB']));
+      // Load-bearing: the leak would pre-check catB/skill:x via catA's opinion.
+      expect(prechecked(c)).not.toContain('catB/skill:x');
     } finally {
       await iso.cleanup();
     }

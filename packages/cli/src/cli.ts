@@ -2348,28 +2348,40 @@ async function handleInstall(opts: HandleInstallOpts): Promise<number> {
     );
     const actionable = statuses.filter((s) => s.status !== 'current');
     if (actionable.length === 0) {
+      // b1b4-R3 (WEAK fix): count only manifest-tracked artifacts — a
+      // synthesized pack ('current' via its members) is not itself installed,
+      // so counting it would overstate "N artifact(s) installed".
+      const installedCount = statuses.filter((s) => s.kind !== 'pack').length;
       print(
         `✓ Everything already up-to-date for scope "${interactiveScope}" `
-          + `(${statuses.length} artifact(s) installed). Use \`agent-rigger remove\` to uninstall.`,
+          + `(${installedCount} artifact(s) installed). Use \`agent-rigger remove\` to uninstall.`,
       );
       return 0;
     }
-    // b1b4-R4: relay each catalog's meta.recommended opinion into the picker's
-    // pre-check. metaBySource carries bare ids per source (no new fetch); a
-    // source "declares an opinion" only when its recommended list is non-empty
-    // (MetaSchema defaults to []). Qualify each id with its source name (mirror
-    // of the qualifyRef sites). Per-catalog: a source with no opinion is absent
-    // from optingPrefixes, so buildStatusInitialValues keeps its historical
-    // pre-check for that source's entries.
-    const recommended = new Set<string>();
+    // b1b4-R4: relay each catalog's meta opinion into the picker's pre-check.
+    // metaBySource carries bare ids per source (no new fetch). A source
+    // "declares an opinion" only when its recommended list is non-empty
+    // (MetaSchema defaults to []) — a required-only catalog is NOT opting and
+    // keeps the historical "check all install" (required included). For an
+    // opting catalog the pre-check covers required ∪ recommended (R4a
+    // amendment: required must not fall out). Anti-leak (R4b amendment): admit
+    // an id only if it belongs to THIS source — bare (qualifyRef prefixes it)
+    // or already qualified by its own prefix; a foreign pre-qualified id is
+    // ignored, closing the cross-catalog forge at the entry point (governance.ts
+    // shares the pattern but is out of this diff — tracked in the report).
+    const preChecked = new Set<string>();
     const optingPrefixes = new Set<string>();
     for (const [sourceName, meta] of effectiveFull.metaBySource) {
       const recs = meta.recommended ?? [];
       if (recs.length === 0) continue;
       optingPrefixes.add(sourceName);
-      for (const id of recs) recommended.add(qualifyRef(sourceName, id));
+      const ownPrefix = sourceName + '/';
+      for (const id of [...(meta.required ?? []), ...recs]) {
+        if (id.includes('/') && !id.startsWith(ownPrefix)) continue; // foreign id → ignore
+        preChecked.add(qualifyRef(sourceName, id));
+      }
     }
-    selectedIds = await statusPicker(statuses, { recommended, optingPrefixes });
+    selectedIds = await statusPicker(statuses, { preChecked, optingPrefixes });
     if (selectedIds.length === 0) {
       print('No artifacts selected — nothing to install.');
       return 0;

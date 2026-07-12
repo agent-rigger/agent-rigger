@@ -283,7 +283,12 @@ describe('b1b4-R3: raccourci "Everything already up-to-date" atteignable', () =>
       // The pack synthesized to 'current', so nothing is actionable → the
       // short-circuit fires and the picker is never called (the B3 symptom).
       expect(captured.called).toBe(false);
-      expect(cap.lines.join('\n')).toMatch(/up-to-date/i);
+      const out = cap.lines.join('\n');
+      expect(out).toMatch(/up-to-date/i);
+      // b1b4-R3 (WEAK fix): the "installed" count must exclude synthesized packs
+      // — 2 skills are installed, pack:demo is not a manifest artifact. Counting
+      // the pack would print "3 artifact(s) installed" and overstate the state.
+      expect(out).toContain('(2 artifact(s) installed)');
     } finally {
       await iso.cleanup();
     }
@@ -683,6 +688,42 @@ describe('b1b4-R3: diamant', () => {
       expect(statusOf(captured2, 'principal/pack:shared')?.status).toBe('update');
       expect(statusOf(captured2, 'principal/pack:x')?.status).toBe('update');
       expect(statusOf(captured2, 'principal/pack:y')?.status).toBe('update');
+    } finally {
+      await iso.cleanup();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Scenario 12: aggregate priority — install outranks update
+// ---------------------------------------------------------------------------
+
+describe("b1b4-R3: priorité de l'agrégat install > update", () => {
+  it('b1b4-R3: pack mixte — un membre install ET un membre update → pack install', async () => {
+    // pack:mixed = [skill:i (uninstalled → install), skill:u (installed older →
+    // update)]. install must outrank update in the aggregate: the pack can't be
+    // "just an update" while one member is not installed at all.
+    const iso = await makeIso([
+      skill('i'),
+      skill('u'),
+      pack('mixed', ['skill:i', 'skill:u']),
+    ]);
+    // skill:u installed at an older sha (→ update); skill:i left uninstalled.
+    await iso.seedManifest([{ id: 'principal/skill:u', ref: 'v0.9.0', sha: OLD_SHA }]);
+    const captured = { value: null as StatusedEntry[] | null, called: false };
+
+    try {
+      await runCli(['install'], {
+        print: () => {},
+        env: iso.env,
+        prompts: makePrompts(captured),
+        remote: { run: iso.makeRunner(), tmpFactory: iso.makeTmpFactory(), scanner: stubScanner },
+      });
+
+      expect(captured.called).toBe(true);
+      // Load-bearing: inverting the aggregate branches (update before install)
+      // would classify this pack 'update'.
+      expect(statusOf(captured, 'principal/pack:mixed')?.status).toBe('install');
     } finally {
       await iso.cleanup();
     }
