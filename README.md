@@ -188,32 +188,46 @@ and the `permission` descriptor instead.
 
 ---
 
-## Installation (M0)
+## Installation
 
-M0 does not distribute a pre-built binary. Clone the repository and run from
-source:
+### Homebrew (macOS / Linux)
+
+```sh
+brew tap agent-rigger/tap
+brew install agent-rigger
+```
+
+Installs the `agent-rigger` binary and the shorter `rigger` alias.
+
+### Pre-built binaries
+
+Every [GitHub Release](https://github.com/agent-rigger/agent-rigger/releases)
+attaches standalone binaries for five targets (Linux x64/arm64, macOS
+x64/arm64, Windows x64) plus a `SHA256SUMS.txt` to verify the download.
+
+### From source
+
+Requires [Bun](https://bun.sh) >= 1.3.
 
 ```sh
 git clone https://github.com/agent-rigger/agent-rigger.git
 cd agent-rigger
 bun install
+bun run build
+# produces packages/cli/dist/agent-rigger
 ```
 
-Run directly from source:
+Or run directly without building:
 
 ```sh
 bun run packages/cli/src/cli.ts <command>
 ```
 
-**Build a local binary:**
+Caveat: a local build reports `--version` as `0.0.0`. The real version is
+stamped from the git tag at release time only.
 
-```sh
-bun run build
-# produces packages/cli/dist/agent-rigger
-```
-
-Note: the CLI ships no content of its own — every artifact comes from a
-configured catalog fetched at runtime. The compiled binary is therefore
+Note: the CLI ships no content of its own. Every artifact comes from a
+configured catalog fetched at runtime, so the compiled binary is
 self-contained (nothing to bundle).
 
 ### Try it in isolation (sandbox)

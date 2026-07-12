@@ -42,7 +42,7 @@ This is a Bun workspace. Source lives under `packages/`:
 | Package                  | Responsibility                              |
 | ------------------------ | ------------------------------------------- |
 | `@agent-rigger/core`     | Plan/apply engine, manifest, rollback       |
-| `@agent-rigger/adapters` | Per-target adapters (Claude Code at M0)     |
+| `@agent-rigger/adapters` | Per-assistant adapters (claude, opencode)   |
 | `@agent-rigger/catalog`  | Catalog model, merge, remote fetch          |
 | `@agent-rigger/cli`      | Command-line interface and command handlers |
 
