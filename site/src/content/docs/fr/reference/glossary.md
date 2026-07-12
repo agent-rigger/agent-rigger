@@ -119,7 +119,7 @@ serveur est stockée telle quelle ; tout secret qu'elle contient est écrit comm
 #### tool
 
 Un programme en ligne de commande tiers que le harness suppose présent (par exemple `gh`, `glab`,
-`terraform`). Une entrée tool liste comment l'installer par plateforme et une commande `check` pour
+`terraform`). Une entrée tool liste comment l'installer par gestionnaire de paquets et une commande `check` pour
 le détecter. La détection de présence fonctionne aujourd'hui ; réaliser l'installation elle-même
 n'est pas encore livré.
 
@@ -240,7 +240,7 @@ place.
 L'endroit où un artifact est installé. Le scope `user` est à l'échelle du poste (sous votre
 répertoire home, p. ex. `~/.claude/`) ; le scope `project` est limité au dépôt courant (p. ex.
 `.claude/`, et `AGENTS.md` à la racine du dépôt). Chaque artifact déclare les scopes qu'il supporte ;
-`install` en choisit un avec `--user` ou `--project`.
+`install` en choisit un avec `--scope user` ou `--scope project`.
 
 #### plan (dry-run)
 
@@ -309,8 +309,9 @@ délibéré, car les scanners sont des dépendances optionnelles.
 L'autorisation explicite, item par item, que l'outil demande avant un acte pouvant détruire des
 données ou élargir ce que l'assistant a le droit de faire. Deux mécanismes distincts portent ce nom. L'exécution d'une commande `check`
 du catalog est mémoïsée : le consentement d'exécution accordé est consigné dans un ledger
-(`~/.config/agent-rigger/consent.json`), indexé par la commande exacte, si bien qu'une commande
-inchangée n'est jamais redemandée (une commande modifiée l'est toujours). Les réparations
+(`~/.config/agent-rigger/consent.json`), indexé par le couple de l'id d'entrée et de la commande
+exacte, si bien qu'une commande inchangée sous le même id n'est jamais redemandée (modifier l'un ou
+l'autre la redemande toujours). Les réparations
 destructrices de [doctor](#doctor) (supprimer un `.bak`, retirer un store, casser un verrou) font
 l'inverse : confirmées item par item à chaque exécution, jamais mémoïsées, jamais couvertes par un
 `--yes` global.

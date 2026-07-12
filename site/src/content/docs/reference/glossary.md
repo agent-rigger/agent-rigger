@@ -110,7 +110,7 @@ is stored as-is; any secret in it is written as an
 #### tool
 
 A third-party command-line program the harness expects to be present (for example `gh`, `glab`,
-`terraform`). A tool entry lists how to install it per platform and a `check` command to detect it.
+`terraform`). A tool entry lists how to install it per package manager and a `check` command to detect it.
 Presence checking works today; performing the install itself is not yet delivered.
 
 #### hook
@@ -209,10 +209,12 @@ and precisely; `check` verifies it is still in place.
 
 #### store
 
-The managed local copy of an installed skill or agent — the one physical copy each assistant sees
-through a [symlink](#symlink). A skill's store is a directory under
-`~/.config/agent-rigger/skills/<name>/`; an agent's is a single Markdown file under
-`~/.config/agent-rigger/agents/<name>.md`.
+The managed local copy of an installed artifact — the one physical copy each assistant reaches
+instead of duplicating it. A skill's store is a directory under
+`~/.config/agent-rigger/skills/<name>/` and an agent's is a single Markdown file under
+`~/.config/agent-rigger/agents/<name>.md`, each exposed through a [symlink](#symlink). Hook scripts
+also live in a store — the shared directory `~/.config/agent-rigger/hooks/`, into which every hook
+script is copied (not symlinked) and from which `settings.json` runs it.
 
 #### symlink
 
@@ -226,7 +228,7 @@ scope), `<cwd>/.claude/skills/<name>` (project scope), or `~/.config/opencode/sk
 Where an artifact is installed. `user` scope is machine-wide (under your home directory, e.g.
 `~/.claude/`); `project` scope is limited to the current repository (e.g. `.claude/`, and
 `AGENTS.md` at the repo root). Each artifact declares which scopes it supports; `install` picks one
-with `--user` or `--project`.
+with `--scope user` or `--scope project`.
 
 #### plan (dry-run)
 
@@ -295,8 +297,9 @@ scanners are optional dependencies.
 Explicit, per-item permission the tool asks for before an act that could destroy data or widen what
 the assistant is allowed to do.
 Two separate mechanisms carry the name. Running a catalog `check` command is memoized: granted
-execution consent is recorded in a ledger (`~/.config/agent-rigger/consent.json`) keyed by the exact
-command, so an unchanged command is never re-prompted (a changed one always is). Destructive
+execution consent is recorded in a ledger (`~/.config/agent-rigger/consent.json`) keyed by the pair
+of the entry id and the exact command, so an unchanged command under the same id is never re-prompted
+(changing either the command or the id always re-prompts). Destructive
 [doctor](#doctor) repairs (deleting a `.bak`, removing a store, breaking a lock) are the opposite:
 they are confirmed per item on every run, never memoized, and never covered by a blanket `--yes`.
 
@@ -401,9 +404,10 @@ use in scripts and CI. It never covers a destructive act (see [consent](#consent
 
 #### exit code
 
-The numeric status a command returns so a script can react. Verified values include `0` (success —
-for `check`, everything present and matching), `3` (`check` found something missing or drifted), and
-`2` (the command errored).
+The numeric status a command returns so a script can react. Every command returns one of five
+codes: `0` (success or a deliberate no-op), `1` (runtime or environment failure), `2` (the command
+was wrong), `3` (`check` or `doctor` found something), and `130` (interrupted with Ctrl+C). See
+[exit codes](/reference/exit-codes) for the authoritative contract.
 
 #### NO_COLOR
 
