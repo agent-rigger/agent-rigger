@@ -133,10 +133,16 @@ describe('doctor-R6: refus sur vivant et sur EPERM', () => {
   it('doctor-R6: an alive pid whose identity cannot be confirmed is refused, never treated as foreign', async () => {
     await withTmpDir(async (_dir, manifestPath) => {
       const lockPath = `${manifestPath}.lock`;
-      await writeLock(lockPath, 1234, new Date().toISOString());
+      // 99999999 exceeds every platform's pid ceiling (Linux PID_MAX_LIMIT is
+      // 4194304; macOS caps far lower), so /proc/<pid>/comm can never exist.
+      // With 1234 this test was CI-flaky: on a Linux runner that pid can be a
+      // live container process, defaultIdentify() then reads its real comm and
+      // classifies it 'foreign' — the exact misread this test forbids. An
+      // impossible pid keeps the intent (exercise the REAL default identify,
+      // no injection) while making its 'unknown' fallback deterministic on
+      // /proc-less (macOS) and /proc-ful (Linux CI) platforms alike.
+      await writeLock(lockPath, 99999999, new Date().toISOString());
 
-      // Default identify() falls back to 'unknown' off /proc-less platforms —
-      // exercised directly here without injecting identify at all.
       const scanner = createLockScanner({ liveness: () => 'alive' });
       const findings = await scanner(ctxFor(manifestPath));
 
