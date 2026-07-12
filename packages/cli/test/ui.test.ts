@@ -13,6 +13,7 @@
 import { describe, expect, it } from 'bun:test';
 
 import type { CatalogEntry } from '@agent-rigger/catalog';
+import { manifestAppliedDrift, untrackedHostDiff } from '@agent-rigger/core';
 import type { RemovalOp, Report, WriteOp } from '@agent-rigger/core';
 import {
   abbreviatePath,
@@ -20,6 +21,7 @@ import {
   confirmApply,
   confirmToolChecks,
   renderCatalogList,
+  renderDoctorReport,
   renderEntryInfo,
   renderPlan,
   renderRemovalPlan,
@@ -1313,5 +1315,40 @@ describe('buildStatusOptions', () => {
   it('omits empty groups', () => {
     const opts = buildStatusOptions([{ id: 'a', status: 'install', remoteRef: 'v1' }]);
     expect(Object.keys(opts)).toEqual(['To install']);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// renderDoctorReport — detail line (host-diff findings name their element,
+// catalog and manual ways out in `detail`; the report must surface it)
+// ---------------------------------------------------------------------------
+
+describe('renderDoctorReport — detail line', () => {
+  it('renders a finding detail as an indented line under its summary', () => {
+    const finding = untrackedHostDiff({
+      nature: 'guardrail',
+      scope: 'user',
+      assistant: 'claude',
+      detail: 'guardrail "secu" from catalog "principal" is present at the host '
+        + 'byte-identical to the canon but tracked by no manifest entry — adopt it '
+        + '(reinstall to record it) or remove it by hand.',
+    });
+    const out = renderDoctorReport([finding], { color: false });
+    expect(out).toContain('guardrail present at the host, not tracked by the manifest.');
+    expect(out).toContain('guardrail "secu" from catalog "principal"');
+    expect(out).toContain('or remove it by hand.');
+  });
+
+  it('renders findings without a detail unchanged — one line per finding', () => {
+    const finding = manifestAppliedDrift({
+      entryId: 'principal/guardrail:secu',
+      nature: 'guardrail',
+      scope: 'user',
+    });
+    const out = renderDoctorReport([finding], { color: false });
+    const findingLines = out.split('\n').filter((l) =>
+      l.trim() !== '' && !l.startsWith('Installed')
+    );
+    expect(findingLines).toHaveLength(2); // group label + the single finding line
   });
 });

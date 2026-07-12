@@ -730,7 +730,10 @@ function repairTag(finding: Finding, colorOn: boolean): string {
  * Render the installed-state findings grouped by class (R8). Pure — no I/O.
  * Returns a "healthy" line when there are no findings. Each finding is one
  * line: a marker, its `summary`, and a consent/report tag; report-only
- * findings carry their manual way out inside the summary itself.
+ * findings carry their manual way out inside the summary itself — except
+ * host-diff findings, whose generic summary is completed by a `detail`
+ * naming the element, its catalog and the manual ways out, rendered as an
+ * indented dim line right under the summary.
  */
 export function renderDoctorReport(findings: Finding[], opts: RenderDoctorReportOpts = {}): string {
   const colorOn = shouldColor(opts.color);
@@ -753,6 +756,9 @@ export function renderDoctorReport(findings: Finding[], opts: RenderDoctorReport
         ? paint('~', ANSI.dim, colorOn)
         : paint('+', ANSI.cyan, colorOn);
       lines.push(`  ${marker} ${finding.summary}  ${repairTag(finding, colorOn)}`);
+      if ('detail' in finding && typeof finding.detail === 'string' && finding.detail !== '') {
+        lines.push(paint(`      ${finding.detail}`, ANSI.dim, colorOn));
+      }
     }
     lines.push('');
   }
