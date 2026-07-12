@@ -1,0 +1,60 @@
+---
+title: agent-rigger
+description: The harness package manager for teams — describe your AI coding assistants' setup once in a versioned catalog, then install, check, and update it reproducibly on every machine.
+template: splash
+hero:
+  title: The harness package manager for teams
+  tagline: Describe your team's AI-assistant setup once. Everyone installs, checks, and updates it with a single command — reproducibly, and with every change shown before it is written.
+  actions:
+    - text: Get started
+      link: /start/getting-started/
+      icon: right-arrow
+    - text: What is agent-rigger?
+      link: /start/what-is-agent-rigger/
+      variant: minimal
+---
+
+Every developer configures their AI coding assistant by hand — skills, permission
+rules, MCP servers, context files. Left to each machine, that setup diverges: no two
+teammates end up with the same one, and no one can say who has what.
+
+agent-rigger turns that setup into something a team declares once and everyone applies
+the same way.
+
+## One shared catalog
+
+Your team describes its [harness](/reference/glossary/#harness) — the skills,
+sub-agents, guardrails, and context that shape the assistant — in a
+[catalog](/reference/glossary/#catalog): a plain git repository, versioned like any
+other code. The tool binary carries no content of its own; the opinion lives in your
+team's catalog, not in agent-rigger.
+
+## Install, check, update
+
+One command installs the declared setup, another audits whether it is still correctly
+in place, a third brings it up to the catalog's latest version. The same source
+produces the same result on every machine, for Claude Code and opencode alike.
+
+## Consented, reversible changes
+
+Nothing is written before you see a [plan](/reference/glossary/#plan-dry-run) of the
+exact changes and confirm them. Remote content is
+[scanned](/reference/glossary/#scan--scanner) before it touches disk, and every install
+records what it changed so it can be undone precisely.
+
+## Key commands
+
+```sh
+# one-time: point rigger at your team's catalog
+agent-rigger init
+
+# see what's available, install it, and audit the result
+agent-rigger ls
+agent-rigger install
+agent-rigger check
+
+# bring every installed artifact up to the catalog's latest version
+agent-rigger update
+```
+
+[Start the 10-minute tutorial →](/start/getting-started/)
