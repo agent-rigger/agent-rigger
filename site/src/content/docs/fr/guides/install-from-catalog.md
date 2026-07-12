@@ -152,7 +152,7 @@ même.
 
 ## Quand `--force` est légitime
 
-[`--force`](/fr/reference/glossary/#--force) outrepasse un finding de scan bloquant et installe quand
+[`--force`](/fr/reference/glossary/#force) outrepasse un finding de scan bloquant et installe quand
 même. N'y recourez qu'après avoir lu le finding et l'avoir jugé sans danger. Il n'élargit rien
 d'autre :
 

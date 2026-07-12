@@ -1,6 +1,6 @@
 ---
 title: Qu'est-ce qu'agent-rigger ?
-description: Le problème que résout agent-rigger : la configuration des assistants IA d'une équipe qui dérive d'un poste à l'autre, et comment il garde cette configuration partagée, versionnée et reproductible.
+description: "Le problème que résout agent-rigger : la configuration des assistants IA d'une équipe qui dérive d'un poste à l'autre, et comment il garde cette configuration partagée, versionnée et reproductible."
 ---
 
 Un assistant de code IA ne vaut que la configuration qui l'entoure : les skills

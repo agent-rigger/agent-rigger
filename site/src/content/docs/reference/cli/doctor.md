@@ -59,11 +59,11 @@ disk-only scan. Combinable with `--fix`.
 Applies the repairs the findings carry. The [consent](/reference/glossary/#consent) required depends
 on the act performed:
 
-| Tag                        | Grant rule                                                                                   | Acts                                                                                                                           |
-| -------------------------- | -------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| `[fix]` (safe)             | [`--yes`](/reference/glossary/#--yes) grants it; in a TTY without `--yes` each is confirmed. | Adopting a skill, agent, or plugin entry; deleting orphaned staging or lock-break debris; backing up a malformed `state.json`. |
-| `[confirm]` (item-confirm) | `--yes` is never sufficient. Confirmed per item in a TTY; skipped in a non-TTY.              | Removing a dangling symlink; deleting a phantom store; breaking a run-lock; deleting an aged backup.                           |
-| `[report]` (report-only)   | No repair.                                                                                   | The manual way out is in the finding's summary.                                                                                |
+| Tag                        | Grant rule                                                                                 | Acts                                                                                                                           |
+| -------------------------- | ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------ |
+| `[fix]` (safe)             | [`--yes`](/reference/glossary/#yes) grants it; in a TTY without `--yes` each is confirmed. | Adopting a skill, agent, or plugin entry; deleting orphaned staging or lock-break debris; backing up a malformed `state.json`. |
+| `[confirm]` (item-confirm) | `--yes` is never sufficient. Confirmed per item in a TTY; skipped in a non-TTY.            | Removing a dangling symlink; deleting a phantom store; breaking a run-lock; deleting an aged backup.                           |
+| `[report]` (report-only)   | No repair.                                                                                 | The manual way out is in the finding's summary.                                                                                |
 
 No destructive act ever runs under a blanket `--yes`. Breaking a run-lock re-verifies the lock's
 identity and liveness at the moment it acts. A non-TTY `--fix` without `--yes` exits `2` before any

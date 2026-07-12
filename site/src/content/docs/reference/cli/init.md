@@ -1,6 +1,6 @@
 ---
 title: init
-description: Run the first-launch wizard: probe catalog access, record the configuration, offer a first install.
+description: "Run the first-launch wizard: probe catalog access, record the configuration, offer a first install."
 ---
 
 ## Synopsis

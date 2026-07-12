@@ -1,6 +1,6 @@
 ---
 title: init
-description: Première configuration guidée : sonder l'accès au catalog, enregistrer la configuration, proposer une première install.
+description: "Première configuration guidée : sonder l'accès au catalog, enregistrer la configuration, proposer une première install."
 ---
 
 ## Synopsis

@@ -58,7 +58,7 @@ Avant d'écraser ou de restaurer un fichier, remove écrit une copie
 Sur un [TTY](/fr/reference/glossary/#tty--non-interactive), remove affiche le plan et demande
 confirmation. Un refus ne supprime rien et rapporte `[aborted] Removal cancelled by user.` Une purge
 pure (uniquement des entrées déjà absentes) ne modifie que le manifest et avance sans invite. Une
-session non-interactive sans [`--yes`](/fr/reference/glossary/#--yes) sort `2` avant toute mutation.
+session non-interactive sans [`--yes`](/fr/reference/glossary/#yes) sort `2` avant toute mutation.
 
 ## Flags
 

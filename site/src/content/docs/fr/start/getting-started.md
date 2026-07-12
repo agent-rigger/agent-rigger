@@ -1,6 +1,6 @@
 ---
 title: Premiers pas
-description: Installez votre premier rig en une dizaine de minutes : ajoutez le catalog d'exemple public, listez ce qu'il propose, installez un pack et vérifiez le résultat, le tout dans un sandbox jetable.
+description: "Installez votre premier rig en une dizaine de minutes : ajoutez le catalog d'exemple public, listez ce qu'il propose, installez un pack et vérifiez le résultat, le tout dans un sandbox jetable."
 ---
 
 Ce tutoriel vous mène d'un agent-rigger fraîchement installé à un rig fonctionnel en une

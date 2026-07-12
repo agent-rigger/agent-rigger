@@ -88,12 +88,12 @@ condition observable plutôt que le nom d'erreur interne.
 
 Une incohérence de provenance est `2`, pas `1` : le [ref](/fr/reference/glossary/#ref) et le
 [sha](/fr/reference/glossary/#sha) enregistrés ne concordent plus, la requête est donc refusée avant
-toute écriture. [`--force`](/fr/reference/glossary/#--force) ne change jamais cela : il outrepasse un
+toute écriture. [`--force`](/fr/reference/glossary/#force) ne change jamais cela : il outrepasse un
 finding de scan, pas un contrôle de provenance.
 
 ## En CI et scripts
 
-Les exécutions non-interactives doivent passer [`--yes`](/fr/reference/glossary/#--yes) pour toute
+Les exécutions non-interactives doivent passer [`--yes`](/fr/reference/glossary/#yes) pour toute
 commande qui confirmerait, sinon elles sortent en `2` avant de toucher le réseau. `2` signifie que
 l'invocation était erronée ; `1` signifie que l'environnement a fait échouer une requête valide.
 Seuls `check` et `doctor` produisent `3` ; pour toute autre commande, tout code non nul est un échec.

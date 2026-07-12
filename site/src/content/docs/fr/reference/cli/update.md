@@ -60,7 +60,7 @@ update ne redemande donc jamais un secret déjà résolu au moment de l'install.
 ## Interactif vs non-interactif
 
 Sur un [TTY](/fr/reference/glossary/#tty--non-interactive), update affiche le plan et demande
-confirmation. En session non-interactive sans [`--yes`](/fr/reference/glossary/#--yes), il sort `2`
+confirmation. En session non-interactive sans [`--yes`](/fr/reference/glossary/#yes), il sort `2`
 avant toute récupération, faute de pouvoir demander.
 
 ## Codes de sortie

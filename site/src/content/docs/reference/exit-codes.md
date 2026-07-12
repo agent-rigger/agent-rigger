@@ -85,12 +85,12 @@ condition rather than the internal error name.
 
 A provenance mismatch is `2`, not `1`: the recorded [ref](/reference/glossary/#ref) and
 [sha](/reference/glossary/#sha) no longer agree, so the request is refused before anything is
-written. [`--force`](/reference/glossary/#--force) never changes this: it overrides a scan finding,
+written. [`--force`](/reference/glossary/#force) never changes this: it overrides a scan finding,
 not a provenance check.
 
 ## In CI and scripts
 
-Non-interactive runs must pass [`--yes`](/reference/glossary/#--yes) for any command that would
+Non-interactive runs must pass [`--yes`](/reference/glossary/#yes) for any command that would
 confirm, or they exit `2` before touching the network. `2` means the invocation was wrong; `1` means
 the environment failed a valid request. Only `check` and `doctor` produce `3`; for every other
 command, any non-zero code is a failure.

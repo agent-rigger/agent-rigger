@@ -148,7 +148,7 @@ runs: the tool is reported as unverified and the install still completes.
 
 ## When `--force` is legitimate
 
-[`--force`](/reference/glossary/#--force) overrides a blocking scan finding and installs anyway.
+[`--force`](/reference/glossary/#force) overrides a blocking scan finding and installs anyway.
 Reach for it only after you have read the finding and judged it safe. It widens nothing else:
 
 - It does not bypass a provenance check. A `ref`/`sha` mismatch still refuses the install (exit

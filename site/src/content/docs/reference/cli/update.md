@@ -60,7 +60,7 @@ never re-prompts for a secret it already resolved at install time.
 ## Interactive vs non-interactive
 
 In a [TTY](/reference/glossary/#tty--non-interactive), update prints the plan and asks to confirm.
-In a non-interactive session without [`--yes`](/reference/glossary/#--yes), it exits `2` before any
+In a non-interactive session without [`--yes`](/reference/glossary/#yes), it exits `2` before any
 fetch, since it cannot ask.
 
 ## Exit codes

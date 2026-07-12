@@ -103,7 +103,7 @@ Un modèle de sécurité n'est honnête que s'il nomme ce qu'il ne fait pas.
 
 ## Ce que `--force` couvre, et ne couvre pas
 
-[`--force`](/fr/reference/glossary/#--force) outrepasse un finding de sécurité bloquant et
+[`--force`](/fr/reference/glossary/#force) outrepasse un finding de sécurité bloquant et
 installe quand même. C'est un choix délibéré et explicite d'accepter un risque de scan en
 connaissance de cause, et c'est l'unique dérogation à la porte fail-closed sur les findings.
 

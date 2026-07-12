@@ -61,11 +61,11 @@ commande et nomme la source fautive plutôt que de se dégrader en un scan disqu
 Applique les réparations que portent les findings. Le [consent](/fr/reference/glossary/#consent) requis
 dépend de l'acte réalisé :
 
-| Tag                        | Règle d'octroi                                                                                    | Actes                                                                                                                                        |
-| -------------------------- | ------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| `[fix]` (sûr)              | [`--yes`](/fr/reference/glossary/#--yes) l'octroie ; sur un TTY sans `--yes` chacun est confirmé. | Adopter une entrée skill, agent ou plugin ; supprimer un débris de staging orphelin ou de lock-break ; sauvegarder un `state.json` malformé. |
-| `[confirm]` (item-confirm) | `--yes` n'est jamais suffisant. Confirmé par item sur un TTY ; sauté hors TTY.                    | Retirer un symlink dangling ; supprimer un store phantom ; casser un run-lock ; supprimer un backup vieilli.                                 |
-| `[report]` (report-only)   | Pas de réparation.                                                                                | La marche à suivre manuelle figure dans le résumé du finding.                                                                                |
+| Tag                        | Règle d'octroi                                                                                  | Actes                                                                                                                                        |
+| -------------------------- | ----------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `[fix]` (sûr)              | [`--yes`](/fr/reference/glossary/#yes) l'octroie ; sur un TTY sans `--yes` chacun est confirmé. | Adopter une entrée skill, agent ou plugin ; supprimer un débris de staging orphelin ou de lock-break ; sauvegarder un `state.json` malformé. |
+| `[confirm]` (item-confirm) | `--yes` n'est jamais suffisant. Confirmé par item sur un TTY ; sauté hors TTY.                  | Retirer un symlink dangling ; supprimer un store phantom ; casser un run-lock ; supprimer un backup vieilli.                                 |
+| `[report]` (report-only)   | Pas de réparation.                                                                              | La marche à suivre manuelle figure dans le résumé du finding.                                                                                |
 
 Aucun acte destructeur n'est couvert par un `--yes` global. Casser un run-lock revérifie l'identité
 et la vivacité du verrou au moment d'agir. Un `--fix` hors TTY sans `--yes` sort `2` avant toute

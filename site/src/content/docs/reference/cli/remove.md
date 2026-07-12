@@ -57,7 +57,7 @@ Before overwriting or restoring a file, remove writes a
 In a [TTY](/reference/glossary/#tty--non-interactive), remove prints the plan and asks to confirm.
 Declining removes nothing and reports `[aborted] Removal cancelled by user.` A pure purge (only
 already-absent entries) mutates the manifest alone and proceeds without a prompt. A non-interactive
-session without [`--yes`](/reference/glossary/#--yes) exits `2` before any mutation.
+session without [`--yes`](/reference/glossary/#yes) exits `2` before any mutation.
 
 ## Flags
 

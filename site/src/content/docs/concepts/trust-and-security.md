@@ -102,7 +102,7 @@ A security model is only honest if it names what it does not do.
 
 ## What `--force` does, and does not, cover
 
-[`--force`](/reference/glossary/#--force) overrides a blocking security finding and installs
+[`--force`](/reference/glossary/#force) overrides a blocking security finding and installs
 anyway. It is a deliberate, explicit choice to accept a scan risk on your own judgment,
 and it is the single override of the fail-closed gate on findings.
 

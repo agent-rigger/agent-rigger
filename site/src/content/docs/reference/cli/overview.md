@@ -74,7 +74,7 @@ so a run that would reach it fails closed instead of hanging:
 ```
 
 This check runs at the head of the command, before any catalog fetch or network access, and exits
-`2`. Pass [`--yes`](/reference/glossary/#--yes) to pre-approve the safe confirmations. `--yes`
+`2`. Pass [`--yes`](/reference/glossary/#yes) to pre-approve the safe confirmations. `--yes`
 never covers a destructive act (see [consent](/reference/glossary/#consent)). The guard keys on
 `stdin`: redirecting only `stdin` away from a terminal is enough to trigger it.
 
