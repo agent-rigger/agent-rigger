@@ -25,21 +25,24 @@
  *  - fetchCatalog: clone argv verified
  */
 
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { describe, expect, it, mock } from 'bun:test';
 
 import {
+  type CatalogCanon,
   CatalogParseError,
   fetchCatalog,
+  fetchCatalogCanon,
   InvalidRemoteRefError,
   InvalidRemoteUrlError,
   isUpdateAvailable,
   listRemoteTags,
   readCatalogDir,
   RemoteFetchError,
+  type ResolvedVersion,
   resolveVersion,
   type TmpDirFactory,
   withRemoteCheckout,
@@ -1770,5 +1773,327 @@ describe('isUpdateAvailable — non-semver installed ref (installedSha unknown, 
     // installed is a raw sha (non-semver) — falls back to ref/sha comparison
     const remote = { ref: 'v1.0.0', sha: SHA_B, isTag: true };
     expect(isUpdateAvailable(SHA_A, '', remote)).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// fetchCatalogCanon — canon reading inside withRemoteCheckout (T1, D1/D2)
+//
+// The canon reads the per-nature content files that catalog.json only points
+// at: guardrails/<name>/deny.json + allow.json (claude form) and
+// contexts/<name>/AGENTS.md. Same path resolution as the install builder
+// (adapter-builder.ts), same missing-file semantics (deny strict, allow/AGENTS
+// tolerant). mcp config stays inline in the entry — no file to read.
+// ---------------------------------------------------------------------------
+
+const CANON_URL = 'https://example.com/catalog.git';
+const CANON_VERSION: ResolvedVersion = { ref: 'v1.0.0', sha: FIXED_SHA, isTag: true };
+
+const MCP_CONFIG = { command: 'npx', args: ['-y', 'some-mcp-server'] };
+
+/** Claude-targeted guardrail entry → deny.json + allow.json under guardrails/secu/. */
+const GUARDRAIL_ENTRY = {
+  kind: 'artifact',
+  id: 'guardrail:secu',
+  nature: 'guardrail',
+  targets: ['claude'],
+  scopes: ['user'],
+};
+
+/** Context entry → contexts/house/AGENTS.md. */
+const CONTEXT_ENTRY = {
+  kind: 'artifact',
+  id: 'context:house',
+  nature: 'context',
+  targets: ['claude'],
+  scopes: ['user'],
+};
+
+/** Mcp entry → config inline in catalog.json, no checkout file of its own. */
+const MCP_ENTRY = {
+  kind: 'artifact',
+  id: 'mcp:github',
+  nature: 'mcp',
+  targets: ['claude'],
+  scopes: ['user'],
+  config: MCP_CONFIG,
+};
+
+/**
+ * Builds a content-dir fixture: writes catalog.json plus the per-nature content
+ * files at install-parity paths (guardrails/<name>/{deny,allow}.json,
+ * contexts/<name>/AGENTS.md), then returns a TmpDirFactory yielding that dir.
+ *
+ * The fake clone runner (makeCloneRunner) never writes anything, so the files
+ * placed here ARE the checkout content fetchCatalogCanon reads. `cleanupSpy`
+ * removes the dir — a canon that survives it proves the content was read in
+ * memory before the `finally`.
+ */
+async function makeContentDirFactory(files: {
+  catalog?: string;
+  guardrails?: Record<string, { deny?: string; allow?: string; permission?: string }>;
+  contexts?: Record<string, string>;
+}): Promise<{
+  factory: TmpDirFactory;
+  cleanupSpy: ReturnType<typeof mock>;
+  dirPath: () => string;
+}> {
+  const dir = await mkdtemp(join(tmpdir(), 'fetchcanon-test-'));
+
+  if (files.catalog !== undefined) {
+    await writeFile(join(dir, 'catalog.json'), files.catalog, 'utf8');
+  }
+
+  for (const [name, g] of Object.entries(files.guardrails ?? {})) {
+    const gdir = join(dir, 'guardrails', name);
+    await mkdir(gdir, { recursive: true });
+    if (g.deny !== undefined) await writeFile(join(gdir, 'deny.json'), g.deny, 'utf8');
+    if (g.allow !== undefined) await writeFile(join(gdir, 'allow.json'), g.allow, 'utf8');
+    if (g.permission !== undefined) {
+      await writeFile(join(gdir, 'permission.json'), g.permission, 'utf8');
+    }
+  }
+
+  for (const [name, content] of Object.entries(files.contexts ?? {})) {
+    const cdir = join(dir, 'contexts', name);
+    await mkdir(cdir, { recursive: true });
+    await writeFile(join(cdir, 'AGENTS.md'), content, 'utf8');
+  }
+
+  const cleanupSpy = mock(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  return {
+    factory: async () => ({ path: dir, cleanup: cleanupSpy as () => Promise<void> }),
+    cleanupSpy,
+    dirPath: () => dir,
+  };
+}
+
+describe('fetchCatalogCanon — full canon: metadata, entries, guardrail + context content, mcp inline', () => {
+  const FILES = {
+    catalog: wrapCatalog([GUARDRAIL_ENTRY, CONTEXT_ENTRY, MCP_ENTRY]),
+    guardrails: {
+      secu: {
+        deny: JSON.stringify({ deny: ['Bash(rm -rf /)'] }),
+        allow: JSON.stringify({ allow: ['Read(*)'] }),
+      },
+    },
+    contexts: { house: '# House rules\nBe careful.\n' },
+  };
+
+  it('carries the configured catalog name', async () => {
+    const { factory } = await makeContentDirFactory(FILES);
+    const canon: CatalogCanon = await fetchCatalogCanon(
+      'my-cat',
+      CANON_URL,
+      CANON_VERSION,
+      makeCloneRunner(),
+      {
+        tmpFactory: factory,
+      },
+    );
+    expect(canon.name).toBe('my-cat');
+  });
+
+  it('carries the resolved version verbatim', async () => {
+    const { factory } = await makeContentDirFactory(FILES);
+    const canon = await fetchCatalogCanon('my-cat', CANON_URL, CANON_VERSION, makeCloneRunner(), {
+      tmpFactory: factory,
+    });
+    expect(canon.version).toEqual(CANON_VERSION);
+  });
+
+  it('carries meta from catalog.json', async () => {
+    const { factory } = await makeContentDirFactory(FILES);
+    const canon = await fetchCatalogCanon('my-cat', CANON_URL, CANON_VERSION, makeCloneRunner(), {
+      tmpFactory: factory,
+    });
+    expect(canon.meta.name).toBe('test-catalog');
+  });
+
+  it('carries all entries', async () => {
+    const { factory } = await makeContentDirFactory(FILES);
+    const canon = await fetchCatalogCanon('my-cat', CANON_URL, CANON_VERSION, makeCloneRunner(), {
+      tmpFactory: factory,
+    });
+    expect(canon.entries).toHaveLength(3);
+  });
+
+  it('reads guardrail deny + allow keyed by entry id', async () => {
+    const { factory } = await makeContentDirFactory(FILES);
+    const canon = await fetchCatalogCanon('my-cat', CANON_URL, CANON_VERSION, makeCloneRunner(), {
+      tmpFactory: factory,
+    });
+    expect(canon.guardrails.get('guardrail:secu')).toEqual({
+      deny: ['Bash(rm -rf /)'],
+      allow: ['Read(*)'],
+    });
+  });
+
+  it('reads context AGENTS.md keyed by entry id', async () => {
+    const { factory } = await makeContentDirFactory(FILES);
+    const canon = await fetchCatalogCanon('my-cat', CANON_URL, CANON_VERSION, makeCloneRunner(), {
+      tmpFactory: factory,
+    });
+    expect(canon.contexts.get('context:house')).toBe('# House rules\nBe careful.\n');
+  });
+
+  it('keeps mcp config inline in entries', async () => {
+    const { factory } = await makeContentDirFactory(FILES);
+    const canon = await fetchCatalogCanon('my-cat', CANON_URL, CANON_VERSION, makeCloneRunner(), {
+      tmpFactory: factory,
+    });
+    const mcp = canon.entries.find((e) => e.id === 'mcp:github');
+    expect(mcp).toMatchObject({ kind: 'artifact', config: MCP_CONFIG });
+  });
+
+  it('content survives checkout cleanup (read in memory before finally)', async () => {
+    const { factory, cleanupSpy } = await makeContentDirFactory(FILES);
+    const canon = await fetchCatalogCanon('my-cat', CANON_URL, CANON_VERSION, makeCloneRunner(), {
+      tmpFactory: factory,
+    });
+    expect(cleanupSpy).toHaveBeenCalledTimes(1);
+    expect(canon.guardrails.get('guardrail:secu')?.deny).toEqual(['Bash(rm -rf /)']);
+    expect(canon.contexts.get('context:house')).toContain('House rules');
+  });
+});
+
+describe('fetchCatalogCanon — guardrail without allow.json → allow defaults to []', () => {
+  it('returns deny rules with an empty allow list', async () => {
+    const { factory } = await makeContentDirFactory({
+      catalog: wrapCatalog([GUARDRAIL_ENTRY]),
+      guardrails: { secu: { deny: JSON.stringify({ deny: ['Bash(x)'] }) } },
+    });
+    const canon = await fetchCatalogCanon('c', CANON_URL, CANON_VERSION, makeCloneRunner(), {
+      tmpFactory: factory,
+    });
+    expect(canon.guardrails.get('guardrail:secu')).toEqual({ deny: ['Bash(x)'], allow: [] });
+  });
+});
+
+describe('fetchCatalogCanon — context without AGENTS.md → empty string (install parity)', () => {
+  it('returns an empty string for the context entry', async () => {
+    const { factory } = await makeContentDirFactory({
+      catalog: wrapCatalog([CONTEXT_ENTRY]),
+    });
+    const canon = await fetchCatalogCanon('c', CANON_URL, CANON_VERSION, makeCloneRunner(), {
+      tmpFactory: factory,
+    });
+    expect(canon.contexts.get('context:house')).toBe('');
+  });
+});
+
+describe('fetchCatalogCanon — mcp config stays inline (no separate file read)', () => {
+  it('preserves the mcp config verbatim and adds no guardrail/context entries', async () => {
+    const { factory } = await makeContentDirFactory({ catalog: wrapCatalog([MCP_ENTRY]) });
+    const canon = await fetchCatalogCanon('c', CANON_URL, CANON_VERSION, makeCloneRunner(), {
+      tmpFactory: factory,
+    });
+    expect(canon.entries).toMatchObject([{ id: 'mcp:github', config: MCP_CONFIG }]);
+    expect(canon.guardrails.size).toBe(0);
+    expect(canon.contexts.size).toBe(0);
+  });
+});
+
+describe('fetchCatalogCanon — claude guardrail with absent/empty deny.json fails closed (install parity)', () => {
+  it('throws CatalogParseError when deny.json is absent for a claude guardrail', async () => {
+    const { factory } = await makeContentDirFactory({
+      catalog: wrapCatalog([GUARDRAIL_ENTRY]),
+      guardrails: { secu: { allow: JSON.stringify({ allow: [] }) } },
+    });
+    await expect(
+      fetchCatalogCanon('c', CANON_URL, CANON_VERSION, makeCloneRunner(), { tmpFactory: factory }),
+    ).rejects.toBeInstanceOf(CatalogParseError);
+  });
+
+  it('throws CatalogParseError when the deny array is empty', async () => {
+    const { factory } = await makeContentDirFactory({
+      catalog: wrapCatalog([GUARDRAIL_ENTRY]),
+      guardrails: { secu: { deny: JSON.stringify({ deny: [] }) } },
+    });
+    await expect(
+      fetchCatalogCanon('c', CANON_URL, CANON_VERSION, makeCloneRunner(), { tmpFactory: factory }),
+    ).rejects.toBeInstanceOf(CatalogParseError);
+  });
+});
+
+describe('fetchCatalogCanon — opencode guardrail reads permission.json (native descriptor)', () => {
+  const OC_PERMISSION = { read: { '.env': 'deny' }, bash: { 'rm -rf *': 'deny' } } as const;
+  const OPENCODE_GUARDRAIL = { ...GUARDRAIL_ENTRY, id: 'guardrail:oc', targets: ['opencode'] };
+
+  it('populates guardrailPermissions by entry id, not the claude deny/allow map', async () => {
+    const { factory } = await makeContentDirFactory({
+      catalog: wrapCatalog([OPENCODE_GUARDRAIL]),
+      guardrails: { oc: { permission: JSON.stringify({ permission: OC_PERMISSION }) } },
+    });
+    const canon = await fetchCatalogCanon('c', CANON_URL, CANON_VERSION, makeCloneRunner(), {
+      tmpFactory: factory,
+    });
+    expect(canon.guardrails.size).toBe(0);
+    expect(canon.guardrailPermissions.get('guardrail:oc')).toEqual(OC_PERMISSION);
+  });
+
+  it('throws CatalogParseError when permission.json is absent (install parity, fail-closed)', async () => {
+    const { factory } = await makeContentDirFactory({
+      catalog: wrapCatalog([OPENCODE_GUARDRAIL]),
+    });
+    await expect(
+      fetchCatalogCanon('c', CANON_URL, CANON_VERSION, makeCloneRunner(), { tmpFactory: factory }),
+    ).rejects.toBeInstanceOf(CatalogParseError);
+  });
+
+  it('throws CatalogParseError when the permission object is empty', async () => {
+    const { factory } = await makeContentDirFactory({
+      catalog: wrapCatalog([OPENCODE_GUARDRAIL]),
+      guardrails: { oc: { permission: JSON.stringify({ permission: {} }) } },
+    });
+    await expect(
+      fetchCatalogCanon('c', CANON_URL, CANON_VERSION, makeCloneRunner(), { tmpFactory: factory }),
+    ).rejects.toBeInstanceOf(CatalogParseError);
+  });
+
+  it('a guardrail targeting BOTH assistants populates both canon maps', async () => {
+    const bothGuardrail = {
+      ...GUARDRAIL_ENTRY,
+      id: 'guardrail:both',
+      targets: ['claude', 'opencode'],
+    };
+    const { factory } = await makeContentDirFactory({
+      catalog: wrapCatalog([bothGuardrail]),
+      guardrails: {
+        both: {
+          deny: JSON.stringify({ deny: ['Bash(rm -rf /)'] }),
+          allow: JSON.stringify({ allow: [] }),
+          permission: JSON.stringify({ permission: OC_PERMISSION }),
+        },
+      },
+    });
+    const canon = await fetchCatalogCanon('c', CANON_URL, CANON_VERSION, makeCloneRunner(), {
+      tmpFactory: factory,
+    });
+    expect(canon.guardrails.get('guardrail:both')).toEqual({ deny: ['Bash(rm -rf /)'], allow: [] });
+    expect(canon.guardrailPermissions.get('guardrail:both')).toEqual(OC_PERMISSION);
+  });
+});
+
+describe('fetchCatalogCanon — clone failure fails closed with cleanup (fail-closed, D1)', () => {
+  it('throws RemoteFetchError and still runs cleanup when clone fails', async () => {
+    const { factory, cleanupSpy } = await makeContentDirFactory({
+      catalog: wrapCatalog([MCP_ENTRY]),
+    });
+    await expect(
+      fetchCatalogCanon(
+        'c',
+        CANON_URL,
+        CANON_VERSION,
+        makeFailCloneRunner('fatal: repo not found'),
+        {
+          tmpFactory: factory,
+        },
+      ),
+    ).rejects.toBeInstanceOf(RemoteFetchError);
+    expect(cleanupSpy).toHaveBeenCalledTimes(1);
   });
 });

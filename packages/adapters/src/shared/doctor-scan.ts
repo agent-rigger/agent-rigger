@@ -65,27 +65,41 @@
 import { lstat, readdir, readlink, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 
+import { parse as parseJsonc, type ParseError } from 'jsonc-parser';
+
+import { localId } from '@agent-rigger/catalog';
+import type { CatalogCanon, CatalogEntry } from '@agent-rigger/catalog';
 import {
   danglingTracked,
   danglingUntracked,
   hygieneBak,
   hygieneResidue,
+  manifestAppliedDrift,
   phantomProbable,
   untrackedAdoptable,
   untrackedDrift,
+  untrackedHostDiff,
 } from '@agent-rigger/core';
 import type { DoctorContext, DoctorScanner, Finding } from '@agent-rigger/core';
 import type { Adapter, AdapterEntry } from '@agent-rigger/core/adapter';
 import { readManifest } from '@agent-rigger/core/manifest';
 import {
+  resolveHome,
   resolveOpencodeProjectTargets,
   resolveOpencodeUserTargets,
   resolveProjectTargets,
   resolveUserTargets,
 } from '@agent-rigger/core/paths';
 import type { Env } from '@agent-rigger/core/paths';
-import type { Assistant, Nature, Scope } from '@agent-rigger/core/types';
+import type {
+  Assistant,
+  ManifestEntry,
+  Nature,
+  OpencodePermission,
+  Scope,
+} from '@agent-rigger/core/types';
 
 import { isStoreReferenced, storeReferenceCandidates } from './store-refs';
 
@@ -317,6 +331,476 @@ export function createUntrackedScanner(adapter: Adapter, assistant: Assistant): 
           );
         }
         // 'missing' (dangling, R3) or 'unknown' — not R1's concern, skip.
+      }
+    }
+
+    return findings;
+  };
+}
+
+// ---------------------------------------------------------------------------
+// D4 — applied-drift scanner (per-assistant Scanner, offline — no catalog)
+// ---------------------------------------------------------------------------
+
+/**
+ * Read the live mcp server map from the host config for `assistant` at `scope`.
+ * Absent/invalid → {} (tolerant, never throws) — mirrors `claude/mcp.ts`'s
+ * `readClaudeMcpServers` and `opencode/mcp.ts`'s `extractMcp`, re-derived here
+ * rather than imported for the same reason `hooksStoreDir`/`store-refs.ts`
+ * re-derive their adapters' private path helpers (this file's established
+ * posture): the reader is the mcp handler's own private detail, and the scanner
+ * needs only the map keyed by server name. Shared by the D4 applied-drift check
+ * (`appliedEntryDrifts`) and the D2/D3 host-diff check (`hostDiffForMcp`).
+ */
+async function readLiveMcpServers(
+  assistant: Assistant,
+  scope: Scope,
+  env: Env,
+  cwd: string,
+): Promise<Record<string, unknown>> {
+  const [configPath, key] = assistant === 'claude'
+    ? [
+      scope === 'project'
+        ? path.join(cwd, '.mcp.json')
+        : path.join(resolveHome(env), '.claude.json'),
+      'mcpServers',
+    ]
+    : [
+      scope === 'project'
+        ? resolveOpencodeProjectTargets(cwd).opencodeJson
+        : resolveOpencodeUserTargets(env).opencodeJson,
+      'mcp',
+    ];
+
+  const text = await Bun.file(configPath).text().catch(() => '');
+  if (text === '') return {};
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return {};
+  }
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+  const servers = (parsed as Record<string, unknown>)[key];
+  if (servers === null || typeof servers !== 'object' || Array.isArray(servers)) return {};
+  return servers as Record<string, unknown>;
+}
+
+/**
+ * `true` when a manifest entry's recorded `applied` payload (ADR-0016) no
+ * longer matches the live host config — the D4 drift verdict per nature:
+ *
+ * - guardrail / opencode-permission / context / hook → delegated to
+ *   `adapter.audit`, which reconstructs the canon from `entry.applied` (B-iii)
+ *   and compares it to the live config. `drift`/`missing` → drift; `present` →
+ *   silence. For guardrail this is a SUBSET check by design: a posted rule that
+ *   vanished is `missing` (drift), a user rule ADDED on top keeps the applied
+ *   set a subset (`present`, silence — the user's territory).
+ * - claude-mcp / opencode-mcp → a DEEP-COMPARE local to the scanner
+ *   (`isDeepStrictEqual`, the same gate `adoptMcp` uses): `applied.config` vs
+ *   the live descriptor for the same server name. Absent or divergent → drift.
+ *   `adapter.audit` is insufficient for mcp — it is key-only (present iff the
+ *   server NAME is declared), blind to a content drift under the same name.
+ */
+async function appliedEntryDrifts(
+  adapter: Adapter,
+  entry: ManifestEntry,
+  applied: NonNullable<ManifestEntry['applied']>,
+  env: Env,
+  cwd: string,
+): Promise<boolean> {
+  if (applied.kind === 'claude-mcp' || applied.kind === 'opencode-mcp') {
+    const assistant: Assistant = applied.kind === 'claude-mcp' ? 'claude' : 'opencode';
+    const servers = await readLiveMcpServers(assistant, entry.scope, env, cwd);
+    const live = servers[applied.server];
+    return live === undefined || !isDeepStrictEqual(live, applied.config);
+  }
+
+  const adapterEntry: AdapterEntry = {
+    id: entry.id,
+    nature: entry.nature,
+    scope: entry.scope,
+    applied,
+  };
+  const report = await adapter.audit(adapterEntry, entry.scope, env);
+  return report.state === 'drift' || report.state === 'missing';
+}
+
+/**
+ * Build the D4 applied-drift scanner for one assistant's `Adapter`. The CLI
+ * (T4) assembles one instance per configured assistant, grouped right after the
+ * R2 manifest-audit (same `manifest` class). Purely OFFLINE: the reference is
+ * the manifest's own `applied` payload, never a fetched catalog — so this
+ * scanner runs UNCONDITIONALLY, with or without `--remote` (D4 vs the catalog
+ * differential's `--remote` gate).
+ *
+ * For every manifest entry of THIS assistant (`entry.assistant ?? 'claude'`)
+ * carrying an `applied` payload:
+ * - `link` (skill/agent/plugin symlink installs) is EXCLUDED — its integrity is
+ *   already covered by R2's `files[]` check and R1's untracked scan; there is
+ *   no live host-config referent to confront here.
+ * - every other kind → `manifestAppliedDrift` (report-only, no `repair`) iff
+ *   `appliedEntryDrifts` — the report explains the two ways out (reinstall to
+ *   re-post, or `remove` to stop tracking).
+ *
+ * Legacy entries with no `applied` payload (installed before B-iii) are
+ * silently skipped: there is nothing to confront.
+ */
+export function createAppliedDriftScanner(
+  adapter: Adapter,
+  assistant: Assistant,
+): DoctorScanner {
+  return async (ctx: DoctorContext): Promise<Finding[]> => {
+    const cwd = process.cwd();
+    const manifest = await readManifest(ctx.manifestPath);
+
+    const findings: Finding[] = [];
+
+    for (const entry of manifest.artifacts) {
+      if ((entry.assistant ?? 'claude') !== assistant) continue;
+      const applied = entry.applied;
+      if (applied === undefined) continue;
+      if (applied.kind === 'link') continue; // R2 files[] / R1 untracked own this
+
+      if (await appliedEntryDrifts(adapter, entry, applied, ctx.env, cwd)) {
+        findings.push(
+          manifestAppliedDrift({ entryId: entry.id, nature: entry.nature, scope: entry.scope }),
+        );
+      }
+    }
+
+    return findings;
+  };
+}
+
+// ---------------------------------------------------------------------------
+// D2 + D3 — host-diff scanner (per-assistant Scanner, --remote — needs canons)
+// ---------------------------------------------------------------------------
+
+/**
+ * `true` when a manifest entry of this assistant already claims the canon
+ * element identified by `localKey` (its un-qualified `nature:name`) at `scope`.
+ * The catalog id and the manifest id may carry different catalog prefixes (or
+ * none), so both are reduced through `localId` before comparison — the same
+ * qualify/de-qualify seam the resolver uses. A tracked element is never a
+ * host-diff: its integrity is R2/D4 territory, not this scanner's (D2/D3
+ * "élément canon déjà tracé au manifest → pas un host-diff").
+ */
+function manifestTracksElement(
+  manifest: Awaited<ReturnType<typeof readManifest>>,
+  nature: Nature,
+  scope: Scope,
+  assistant: Assistant,
+  localKey: string,
+): boolean {
+  return manifest.artifacts.some(
+    (entry) =>
+      entry.nature === nature
+      && entry.scope === scope
+      && (entry.assistant ?? 'claude') === assistant
+      && localId(entry.id) === localKey,
+  );
+}
+
+/**
+ * D2 verdict for the CONTEXT nature: the host coincides EXACTLY with the canon
+ * iff `adapter.audit` — fed a synthetic `applied` payload carrying the canon
+ * block — reports `present`. `auditContext` compares the whole AGENTS.md file
+ * BYTE-EXACT (`currentAgents === agentsContent`, claude/context.ts:156), so its
+ * `present` verdict already means byte-identical coincidence — routing context
+ * through the real gate is safe (the posture `createUntrackedScanner` takes).
+ *
+ * NOT reused for guardrail: `auditGuardrail`'s `present` is a SUBSET verdict
+ * (canon ⊆ host — `computeMissingDeny`, core/deny.ts:27), which a host that is a
+ * SUPERSET of the canon (extra user-authored rules) also satisfies. That would
+ * mislabel user rules as a byte-identical host-diff, violating D2's "coïncide
+ * exactement" bar and its zero-false-positive rationale. Guardrail compares the
+ * canon and host deny/allow sets EXACTLY instead (`guardrailHostCoincides`).
+ *
+ * Any other verdict is a divergence, and a divergence for context is SILENCE
+ * (D2 rationale — zero false positive: a modified block is user territory).
+ */
+async function hostCoincidesWithCanon(
+  adapter: Adapter,
+  synthetic: AdapterEntry,
+  scope: Scope,
+  env: Env,
+): Promise<boolean> {
+  const report = await adapter.audit(synthetic, scope, env);
+  return report.state === 'present';
+}
+
+/** `true` iff `a` and `b` hold the same rules as SETS (order- and duplicate-insensitive). */
+function sameRuleSet(a: string[], b: string[]): boolean {
+  const setA = new Set(a);
+  const setB = new Set(b);
+  return setA.size === setB.size && [...setA].every((rule) => setB.has(rule));
+}
+
+/**
+ * Read the live claude `permissions.deny` / `permissions.allow` for `scope`,
+ * tolerant to an absent/invalid settings.json ({deny: [], allow: []}). Mirrors
+ * `claude/guardrails.ts`'s private `extractDeny`/`extractAllow`, re-derived here
+ * for the same reason `readLiveMcpServers` re-derives the mcp reader — the
+ * scanner needs the raw host rule sets to compare them EXACTLY against the
+ * canon, which `adapter.audit` (a one-directional subset check) cannot express.
+ */
+async function readHostGuardrailRules(
+  scope: Scope,
+  env: Env,
+  cwd: string,
+): Promise<{ deny: string[]; allow: string[] }> {
+  const settingsPath = scope === 'project'
+    ? resolveProjectTargets(cwd).claudeSettings
+    : resolveUserTargets(env).claudeSettings;
+  const text = await Bun.file(settingsPath).text().catch(() => '');
+  if (text === '') return { deny: [], allow: [] };
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return { deny: [], allow: [] };
+  }
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return { deny: [], allow: [] };
+  }
+  const perms = (parsed as Record<string, unknown>)['permissions'];
+  if (perms === null || typeof perms !== 'object' || Array.isArray(perms)) {
+    return { deny: [], allow: [] };
+  }
+  const pick = (key: string): string[] => {
+    const value = (perms as Record<string, unknown>)[key];
+    return Array.isArray(value) ? value.filter((x): x is string => typeof x === 'string') : [];
+  };
+  return { deny: pick('deny'), allow: pick('allow') };
+}
+
+/**
+ * D2 verdict for the GUARDRAIL nature: the host coincides EXACTLY with the canon
+ * iff the live claude deny AND allow rule sets equal the canon's deny/allow sets
+ * exactly. Unlike `auditGuardrail`'s subset `present`, this rejects a host that
+ * is a SUPERSET of the canon (extra user rules) — a content deviation is user
+ * territory, never a byte-identical host-diff (D2 "coïncide exactement", zero
+ * false positive).
+ */
+async function guardrailHostCoincides(
+  rules: { deny: string[]; allow: string[] },
+  scope: Scope,
+  env: Env,
+  cwd: string,
+): Promise<boolean> {
+  const host = await readHostGuardrailRules(scope, env, cwd);
+  return sameRuleSet(host.deny, rules.deny) && sameRuleSet(host.allow, rules.allow);
+}
+
+/**
+ * Read the live opencode `permission` object for `scope`, tolerant to an
+ * absent/invalid opencode.json ({}). Mirrors the opencode guardrail audit's own
+ * reader (`opencode-json-io.ts`'s `readOpencodeJson` + `guardrails.ts`'s private
+ * `extractPermission`), re-derived here for the same reason `readLiveMcpServers`
+ * and `readHostGuardrailRules` re-derive their adapters' private readers (this
+ * file's established posture — adapters → core only, never a cross-adapter
+ * import). opencode.json is JSONC (comments + trailing commas), so it is parsed
+ * jsonc-tolerantly exactly like the real audit, not with strict JSON.parse: a
+ * legitimately commented config must not read as `{}` and mask a real
+ * coincidence.
+ */
+async function readHostOpencodePermission(
+  scope: Scope,
+  env: Env,
+  cwd: string,
+): Promise<OpencodePermission> {
+  const configPath = scope === 'project'
+    ? resolveOpencodeProjectTargets(cwd).opencodeJson
+    : resolveOpencodeUserTargets(env).opencodeJson;
+  const text = await Bun.file(configPath).text().catch(() => '');
+  if (text.trim() === '') return {};
+  const errors: ParseError[] = [];
+  const parsed: unknown = parseJsonc(text, errors, {
+    allowTrailingComma: true,
+    disallowComments: false,
+  });
+  if (errors.length > 0 || parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return {};
+  }
+  const perm = (parsed as Record<string, unknown>)['permission'];
+  if (perm === null || typeof perm !== 'object' || Array.isArray(perm)) {
+    return {};
+  }
+  return perm as OpencodePermission;
+}
+
+/**
+ * D2 verdict for the opencode GUARDRAIL nature: the host coincides EXACTLY with
+ * the canon iff the live opencode `permission` object DEEP-EQUALS the canon
+ * descriptor (`isDeepStrictEqual`, the same exact-content gate mcp uses). A host
+ * that is a SUPERSET (extra user leaves) or a SUBSET (a canon leaf missing) is
+ * not deep-equal → silence — a content deviation is user territory, never a
+ * byte-identical host-diff (D2 "coïncide exactement", zero false positive). This
+ * is the opencode analogue of `guardrailHostCoincides`'s exact-set posture for
+ * claude, honouring D2's "les deux assistants" requirement.
+ */
+async function opencodePermissionHostCoincides(
+  permission: OpencodePermission,
+  scope: Scope,
+  env: Env,
+  cwd: string,
+): Promise<boolean> {
+  const host = await readHostOpencodePermission(scope, env, cwd);
+  return isDeepStrictEqual(host, permission);
+}
+
+/**
+ * D2/D3 verdict for one canon entry at one scope, or `undefined` for silence.
+ *
+ * - guardrail / context: coincidence (host byte-identical to canon) →
+ *   `untrackedHostDiff` (D2); divergence → silence. The guardrail canon is
+ *   assistant-specific: claude reads deny/allow (`canon.guardrails`, exact set
+ *   equality), opencode reads the native `permission` descriptor
+ *   (`canon.guardrailPermissions`, exact deep-equal). A guardrail whose canon is
+ *   absent for THIS assistant (e.g. a claude-only entry seen by the opencode
+ *   scanner, or vice versa) → skipped, not a finding.
+ * - mcp: a live server under the SAME name whose descriptor deep-equals the
+ *   canon `config` → the D2 coincidence finding; a same-name server that
+ *   DIVERGES → the D3 finding, whose detail states "diverges from the canon,
+ *   never adopted" and names the two manual ways out (reinstall with consent, or
+ *   remove by hand); no homonym → silence (user content, D3). The comparison is
+ *   against the inline catalog `config` verbatim — a catalog that renders
+ *   secrets (${VAR}) would compare its unrendered form, a documented
+ *   approximation acceptable here because a real secret drift still surfaces as
+ *   a divergence, never a false coincidence.
+ */
+async function hostDiffForEntry(
+  adapter: Adapter,
+  assistant: Assistant,
+  canon: CatalogCanon,
+  entry: Extract<CatalogEntry, { kind: 'artifact' }>,
+  scope: Scope,
+  localKey: string,
+  env: Env,
+  cwd: string,
+): Promise<Finding | undefined> {
+  if (entry.nature === 'guardrail') {
+    if (assistant === 'opencode') {
+      // The opencode guardrail canon is a native `permission` descriptor, not
+      // deny/allow — confront the live opencode.json permission by exact deep-equal.
+      const permission = canon.guardrailPermissions.get(entry.id);
+      if (permission === undefined) return undefined; // claude-only guardrail, no opencode canon
+      if (!(await opencodePermissionHostCoincides(permission, scope, env, cwd))) return undefined;
+      return untrackedHostDiff({
+        nature: 'guardrail',
+        scope,
+        assistant,
+        detail: `guardrail "${localKey}" from catalog "${canon.name}" is present at the host `
+          + 'byte-identical to the canon but tracked by no manifest entry — adopt it '
+          + '(reinstall to record it) or remove it by hand.',
+      });
+    }
+    const rules = canon.guardrails.get(entry.id);
+    if (rules === undefined) return undefined; // opencode-only guardrail, no claude canon
+    if (!(await guardrailHostCoincides(rules, scope, env, cwd))) return undefined;
+    return untrackedHostDiff({
+      nature: 'guardrail',
+      scope,
+      assistant,
+      detail: `guardrail "${localKey}" from catalog "${canon.name}" is present at the host `
+        + 'byte-identical to the canon but tracked by no manifest entry — adopt it '
+        + '(reinstall to record it) or remove it by hand.',
+    });
+  }
+
+  if (entry.nature === 'context') {
+    const block = canon.contexts.get(entry.id);
+    if (block === undefined) return undefined;
+    const synthetic: AdapterEntry = {
+      id: entry.id,
+      nature: 'context',
+      scope,
+      applied: { kind: 'context', block },
+    };
+    if (!(await hostCoincidesWithCanon(adapter, synthetic, scope, env))) return undefined;
+    return untrackedHostDiff({
+      nature: 'context',
+      scope,
+      assistant,
+      detail: `context "${localKey}" from catalog "${canon.name}" is present at the host `
+        + 'byte-identical to the canon but tracked by no manifest entry — adopt it '
+        + '(reinstall to record it) or remove it by hand.',
+    });
+  }
+
+  if (entry.nature === 'mcp') {
+    if (entry.config === undefined) return undefined;
+    const server = localKey.replace(/^mcp:/, '');
+    const servers = await readLiveMcpServers(assistant, scope, env, cwd);
+    if (!Object.prototype.hasOwnProperty.call(servers, server)) return undefined; // no homonym
+    if (isDeepStrictEqual(servers[server], entry.config)) {
+      return untrackedHostDiff({
+        nature: 'mcp',
+        scope,
+        assistant,
+        detail: `mcp server "${server}" from catalog "${canon.name}" is present at the host `
+          + 'byte-identical to the canon but tracked by no manifest entry — adopt it '
+          + '(reinstall to record it) or remove it by hand.',
+      });
+    }
+    return untrackedHostDiff({
+      nature: 'mcp',
+      scope,
+      assistant,
+      detail: `mcp server "${server}" from catalog "${canon.name}" is present at the host `
+        + 'under the same name but diverges from the canon, and no manifest entry tracks it — '
+        + 'it was never adopted by rigger: reinstall it with consent to adopt the canon config, '
+        + 'or remove it by hand.',
+    });
+  }
+
+  // Every other nature leaves a disk signature — R1 untracked / R2 owns it.
+  return undefined;
+}
+
+/**
+ * Build the D2/D3 host-diff scanner for one assistant's `Adapter`, closed over
+ * the fetched catalog canons (`--remote` only — without the flag the CLI never
+ * constructs this scanner, so these signature-less natures stay silently out of
+ * scope, exactly as offline v1). Per canon entry that TARGETS this assistant and
+ * is NOT already tracked by the manifest, at each supported scope, delegate the
+ * verdict to `hostDiffForEntry`.
+ *
+ * Report-only by construction: `untrackedHostDiff` carries no `repair` field, so
+ * the consent-driver and the `--fix` exit contract are untouched (design §5).
+ */
+export function createHostDiffScanner(
+  adapter: Adapter,
+  assistant: Assistant,
+  canons: CatalogCanon[],
+): DoctorScanner {
+  return async (ctx: DoctorContext): Promise<Finding[]> => {
+    const cwd = process.cwd();
+    const manifest = await readManifest(ctx.manifestPath);
+
+    const findings: Finding[] = [];
+
+    for (const canon of canons) {
+      for (const entry of canon.entries) {
+        if (entry.kind !== 'artifact') continue;
+        if (!entry.targets.includes(assistant)) continue;
+
+        const localKey = localId(entry.id);
+        for (const scope of entry.scopes) {
+          if (manifestTracksElement(manifest, entry.nature, scope, assistant, localKey)) continue;
+          const finding = await hostDiffForEntry(
+            adapter,
+            assistant,
+            canon,
+            entry,
+            scope,
+            localKey,
+            ctx.env,
+            cwd,
+          );
+          if (finding !== undefined) findings.push(finding);
+        }
       }
     }
 

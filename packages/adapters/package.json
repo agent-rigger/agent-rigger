@@ -10,6 +10,7 @@
     "./claude/guardrails": "./src/claude/guardrails.ts"
   },
   "dependencies": {
+    "@agent-rigger/catalog": "workspace:*",
     "@agent-rigger/core": "workspace:*",
     "jsonc-parser": "3.3.1"
   }

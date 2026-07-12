@@ -1,5 +1,10 @@
 import { join } from 'node:path';
 
+import { assertSafeArtifactName } from '@agent-rigger/core/artifact-name';
+import { readJson, readText } from '@agent-rigger/core/fs-json';
+import type { OpencodePermission } from '@agent-rigger/core/types';
+
+import { localId } from './qualify';
 import { type CatalogEntry, CatalogEntrySchema, type CatalogMeta, MetaSchema } from './schema';
 import type { CommandRunner } from './tool-check';
 
@@ -675,6 +680,190 @@ export async function fetchCatalog(
     const sha = (revParseResult.stdout ?? '').trim();
 
     return { meta, entries, sha };
+  });
+}
+
+// ---------------------------------------------------------------------------
+// fetchCatalogCanon — the differential canon (doctor --remote, D1/D2)
+//
+// catalog.json only carries metadata for guardrail and context natures; their
+// canonical *content* lives in per-nature files of the checkout
+// (guardrails/<name>/deny.json + allow.json, contexts/<name>/AGENTS.md — the
+// exact paths the install builder resolves, adapter-builder.ts). Only mcp is
+// inline (entry.config). fetchCatalog(/withRemoteCheckout) tears the checkout
+// down before returning, so the canon reads those files INSIDE the checkout and
+// keeps the result in memory — same canon semantics as the install, by
+// construction, with no persisted clone (ADR-0012).
+// ---------------------------------------------------------------------------
+
+/**
+ * The in-memory canon of a single configured catalog, read under `--remote`.
+ *
+ * `guardrails`, `guardrailPermissions` and `contexts` are keyed by catalog entry
+ * id (raw, un-qualified — the ids as they appear in the fetched catalog.json). A
+ * guardrail entry targeting BOTH assistants populates BOTH guardrail maps. mcp
+ * server config stays inline in `entries` (never a file of its own). The checkout
+ * that produced this is already gone by the time the value is returned.
+ */
+export interface CatalogCanon {
+  /** The configured catalog name — the catalog id doctor knows it by. */
+  name: string;
+  /** The validated catalog.json meta block. */
+  meta: CatalogMeta;
+  /** The resolved version fetched (ref/sha/isTag), carried through verbatim. */
+  version: ResolvedVersion;
+  /** All validated entries; mcp entries keep their `config` inline. */
+  entries: CatalogEntry[];
+  /** Claude guardrail deny/allow rules, by entry id (claude-targeted guardrails). */
+  guardrails: Map<string, { deny: string[]; allow: string[] }>;
+  /**
+   * Native opencode `permission` descriptors, by entry id (opencode-targeted
+   * guardrails). The opencode guardrail canon lives in `permission.json`, not
+   * deny/allow — read here so the host-diff scanner can confront it exactly (D2,
+   * both assistants), instead of the claude-only shape the `guardrails` map holds.
+   */
+  guardrailPermissions: Map<string, OpencodePermission>;
+  /** Context AGENTS.md content, by entry id. */
+  contexts: Map<string, string>;
+}
+
+/**
+ * Read the canonical deny rules from a guardrail's deny.json in the checkout.
+ *
+ * Mirrors adapters' loadCanonicalDeny (kept independent here to avoid a package
+ * inversion — catalog does not depend on adapters): a claude guardrail declares
+ * a non-empty deny list, so an absent file, a missing/non-array `deny` field, or
+ * an empty array is a broken catalog and fails closed (CatalogParseError → the
+ * caller's fail-closed exit under `--remote`). Malformed JSON keeps throwing
+ * InvalidJsonError from readJson.
+ */
+async function readCanonDeny(denyJsonPath: string): Promise<string[]> {
+  const raw = await readJson(denyJsonPath);
+  const deny = raw['deny'];
+  const rules = Array.isArray(deny) ? deny.filter((x): x is string => typeof x === 'string') : [];
+  if (rules.length === 0) {
+    throw new CatalogParseError(
+      `guardrail canon: deny.json is absent or empty at ${denyJsonPath} — a claude guardrail requires a non-empty deny list`,
+      [`deny.json absent or empty at ${denyJsonPath}`],
+    );
+  }
+  return rules;
+}
+
+/**
+ * Read the canonical allow rules from a guardrail's allow.json in the checkout.
+ *
+ * Mirrors adapters' loadCanonicalAllow: an absent or empty allow artifact is
+ * valid and yields []. Malformed JSON keeps throwing InvalidJsonError.
+ */
+async function readCanonAllow(allowJsonPath: string): Promise<string[]> {
+  const raw = await readJson(allowJsonPath);
+  const allow = raw['allow'];
+  if (!Array.isArray(allow)) {
+    return [];
+  }
+  return allow.filter((x): x is string => typeof x === 'string');
+}
+
+/**
+ * Read the canonical native opencode `permission` descriptor from a guardrail's
+ * permission.json in the checkout.
+ *
+ * Mirrors adapters' loadCanonicalOpencodePermission (kept independent here to
+ * avoid a package inversion — catalog does not depend on adapters): a native
+ * opencode guardrail REQUIRES a hand-authored, non-empty `permission` object
+ * (ADR-0020 "Option A" — there is never a fallback to Claude-rule translation),
+ * so an absent file, a missing/non-object/array `permission` field, or an empty
+ * object is a broken catalog and fails closed (CatalogParseError → the caller's
+ * fail-closed exit under `--remote`), exactly as the claude deny.json path.
+ * Malformed JSON keeps throwing InvalidJsonError from readJson.
+ */
+async function readCanonPermission(permissionJsonPath: string): Promise<OpencodePermission> {
+  const raw = await readJson(permissionJsonPath);
+  const permission = raw['permission'];
+  if (
+    permission === null
+    || typeof permission !== 'object'
+    || Array.isArray(permission)
+    || Object.keys(permission).length === 0
+  ) {
+    throw new CatalogParseError(
+      `guardrail canon: permission.json is absent or empty at ${permissionJsonPath} — a native `
+        + 'opencode guardrail requires a non-empty "permission" object',
+      [`permission.json absent or empty at ${permissionJsonPath}`],
+    );
+  }
+  return permission as OpencodePermission;
+}
+
+/**
+ * Fetches the differential canon of one configured catalog.
+ *
+ * Clones `url` at `version` (shallow, cleanup guaranteed by `withRemoteCheckout`),
+ * validates catalog.json, then reads the per-nature content files WHILE the
+ * checkout is still on disk:
+ *  - guardrail (claude-targeted): guardrails/<name>/deny.json + allow.json.
+ *  - guardrail (opencode-targeted): guardrails/<name>/permission.json (the native
+ *    opencode descriptor, ADR-0020 "Option A" — same path the install builder,
+ *    opencode-adapter-builder.ts, loads). A guardrail targeting BOTH assistants
+ *    reads BOTH forms.
+ *  - context: contexts/<name>/AGENTS.md (absent → '', install parity).
+ *  - mcp: config stays inline in the entry — no file read.
+ * Names are derived from the entry id (prefix stripped) and guarded by
+ * `assertSafeArtifactName` before any path join, exactly as the install builder.
+ *
+ * `version` is carried into the returned canon verbatim; provenance (the on-disk
+ * sha matching the resolved one) is enforced by `opts.expectedSha` when the
+ * caller supplies it — see `withRemoteCheckout`.
+ *
+ * Throws RemoteFetchError / RefShaMismatchError on clone/provenance failure,
+ * CatalogParseError on an invalid catalog.json or a broken guardrail canon,
+ * InvalidJsonError on malformed content JSON, and
+ * InvalidRemoteUrlError / InvalidRemoteRefError for unsafe inputs.
+ */
+export async function fetchCatalogCanon(
+  name: string,
+  url: string,
+  version: ResolvedVersion,
+  run: CommandRunner,
+  opts: { tmpFactory: TmpDirFactory; expectedSha?: string },
+): Promise<CatalogCanon> {
+  return withRemoteCheckout(url, version.ref, version.isTag, run, opts, async (dir) => {
+    const { meta, entries } = await readCatalogDir(dir);
+
+    const guardrails = new Map<string, { deny: string[]; allow: string[] }>();
+    const guardrailPermissions = new Map<string, OpencodePermission>();
+    const contexts = new Map<string, string>();
+
+    for (const entry of entries) {
+      if (entry.kind !== 'artifact') continue;
+
+      if (entry.nature === 'guardrail') {
+        const local = localId(entry.id).replace(/^guardrail:/, '');
+        assertSafeArtifactName(local, entry.id);
+        const guardrailDir = join(dir, 'guardrails', local);
+        // A guardrail may target both assistants — read each form independently.
+        if (entry.targets.includes('claude')) {
+          const [deny, allow] = await Promise.all([
+            readCanonDeny(join(guardrailDir, 'deny.json')),
+            readCanonAllow(join(guardrailDir, 'allow.json')),
+          ]);
+          guardrails.set(entry.id, { deny, allow });
+        }
+        if (entry.targets.includes('opencode')) {
+          guardrailPermissions.set(
+            entry.id,
+            await readCanonPermission(join(guardrailDir, 'permission.json')),
+          );
+        }
+      } else if (entry.nature === 'context') {
+        const local = localId(entry.id).replace(/^context:/, '');
+        assertSafeArtifactName(local, entry.id);
+        contexts.set(entry.id, await readText(join(dir, 'contexts', local, 'AGENTS.md')));
+      }
+    }
+
+    return { name, meta, version, entries, guardrails, guardrailPermissions, contexts };
   });
 }
 

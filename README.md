@@ -283,6 +283,103 @@ Example output when everything is present:
   [tools ok] All tools present.
 ```
 
+### `doctor` — diagnose environment and installed state
+
+Where `check` audits the entries the manifest expects, `doctor` is the wider
+health check. It runs in **two phases**, in order:
+
+1. **Environment dependencies.** Lists the external tools agent-rigger relies on
+   (`gitleaks`, `trivy`, `glab`, `git`) with their availability, so you know
+   whether remote installs run in **full scan** or **warn-only** mode before you
+   install anything.
+2. **Installed state.** Scans the actual filesystem and manifest for problems
+   `check` does not look at — untracked artifacts, dangling symlinks, phantom
+   stores, manifest issues, a stale run lock, and `.bak` hygiene — and reports
+   them grouped by class.
+
+```
+agent-rigger doctor                 # read-only diagnosis
+agent-rigger doctor --fix           # diagnose, then repair under consent
+agent-rigger doctor --remote        # also read configured catalog content
+agent-rigger doctor --remote --fix  # both (combinable)
+```
+
+Example environment phase:
+
+```
+--- agent-rigger doctor ---
+
+✓ gitleaks (/opt/homebrew/bin/gitleaks)
+✓ trivy (/opt/homebrew/bin/trivy)
+✓ glab (/opt/homebrew/bin/glab)
+✓ git (/usr/bin/git)
+
+mode : full scan
+```
+
+Example installed-state phase with findings:
+
+```
+Installed-state check · 2 findings
+
+Untracked artifacts (1)
+  + skill "spec-workflow" is untracked but conforms to its store — adoptable.  [fix]
+
+Manifest issues (1)
+  ~ "jr/guardrail:claude"'s recorded applied payload no longer matches the live config.  [report]
+```
+
+When there is nothing to report, the phase prints
+`Installed state is healthy — no findings.`
+
+**`--fix` — repair under consent.** Without `--fix`, `doctor` is strictly
+read-only: it never writes. With `--fix` it repairs the findings it can, driven
+by consent tags shown in the report:
+
+- `[fix]` — a **safe** repair (e.g. adopt a conforming artifact, unlink a
+  dangling symlink). Applied non-interactively when you pass `--yes`.
+- `[confirm]` — a **destructive** repair (e.g. delete residue, break a lock).
+  Confirmed **per item**, never applied under `--yes` alone.
+- `[report]` — a **report-only** finding. It carries no repair; the summary
+  states the manual way out (reinstall, or `remove`). `--fix` never touches it.
+
+In a non-interactive session (no TTY), `--fix` applies the safe repairs and
+leaves every `[confirm]` and `[report]` finding untouched — it never prompts.
+
+**`--remote` — the catalog differential.** Some natures leave no disk signature
+that distinguishes a rigger-installed element from user-typed content: a
+guardrail deny rule, a context block, and an mcp server are the same bytes
+either way. Telling them apart needs a reference to compare against, which means
+fetching the catalog. Under `--remote`, `doctor` shallow-clones **every**
+configured catalog read-only (ephemeral, cleaned up afterwards — same fetch as
+`ls`), reads its canonical content, and surfaces two extra findings:
+
+- **host-diff** — an element present in the host config, absent from the
+  manifest, whose content is **byte-identical** to the catalog canon (proven
+  rigger content that was never tracked). Content that only resembles the canon
+  is treated as your own and stays silent — zero false positives.
+- **divergent mcp** — a host mcp server under the **same name** as a catalog
+  server but with different content, never adopted. The finding names the two
+  ways out (consented reinstall, or manual removal).
+
+Both are **report-only** (no repair). `--remote` is **fail-closed**: any fetch
+error (network, auth, ref/sha mismatch) aborts with the offending catalog named
+and exit 1 — it never degrades silently to a disk-only scan (a CI passing
+`--remote` must never believe it got the differential without getting it). It
+combines with `--fix`; the only cross-effect is adoption resolution — when two
+configured catalogs offer the same nature+name, `--fix` prompts for the catalog
+in a TTY, and skips + reports in a non-TTY rather than guess.
+
+Exit codes:
+
+| Code | Meaning                                                                        |
+| ---- | ------------------------------------------------------------------------------ |
+| 0    | Healthy — no findings (with `--fix`: everything was repaired)                  |
+| 3    | One or more findings (with `--fix`: findings remain — irreparable or refused)  |
+| 2    | `state.json` is malformed — cannot diagnose the installed state                |
+| 1    | A repair failed (`--fix`), or a catalog fetch failed (`--remote`, fail-closed) |
+| 130  | Interrupted (Ctrl-C at a confirmation prompt)                                  |
+
 ### `install` — install selected artifacts
 
 Opens an interactive selection of the built-in catalog, resolves dependencies

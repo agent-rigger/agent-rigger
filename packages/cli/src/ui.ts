@@ -1297,6 +1297,36 @@ export async function confirmDoctorRepair(message: string): Promise<boolean> {
 }
 
 // ---------------------------------------------------------------------------
+// chooseAdoptionCatalog — pick the owning catalog of an ambiguous adopt (D5)
+// ---------------------------------------------------------------------------
+
+/**
+ * Ask which of several configured catalogs an ambiguous adoption candidate
+ * belongs to (D5, doctor --remote). Returns the chosen catalog name; the caller
+ * qualifies the id with it (`<name>/<candidateId>`). A Ctrl+C cancellation
+ * throws `CancelledError` (mapped to exit 130 by cli.ts's handleError).
+ *
+ * Only ever called in a TTY with two or more offering catalogs: the adoption
+ * resolver falls back to `ambiguous` (skip + report) in a non-TTY session and
+ * never invokes this prompt, so this clack select can never hang on non-TTY
+ * stdin (same "jamais de hang" bound as `confirmDoctorRepair`).
+ */
+export async function chooseAdoptionCatalog(
+  candidateId: string,
+  catalogNames: string[],
+): Promise<string> {
+  const result = await select<string>({
+    message: `"${candidateId}" is offered by more than one catalog — which one adopted it?`,
+    options: catalogNames.map((name) => ({ value: name, label: name })),
+  });
+  if (isCancel(result)) {
+    cancel('Operation cancelled.');
+    throw new CancelledError();
+  }
+  return result;
+}
+
+// ---------------------------------------------------------------------------
 // confirmToolChecks — granular batch consent for tool presence-checks
 // ---------------------------------------------------------------------------
 

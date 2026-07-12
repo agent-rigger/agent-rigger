@@ -36,6 +36,7 @@ import { ConcurrentRunError } from '@agent-rigger/core/run-lock';
 import type { Scanner } from '@agent-rigger/core/scan';
 
 import {
+  type CatalogCanon,
   type CatalogEntry,
   fetchCatalog,
   foldCatalogs,
@@ -66,7 +67,7 @@ import { runUpdate } from './cmd-update';
 import { LegacyConfigError, loadConfig } from './config';
 import { auditableGovernanceIds, type CatalogGovernanceMeta } from './governance';
 import { PreflightAuthError } from './preflight-auth';
-import { defaultTmpFactory, fetchRemoteCatalog } from './remote';
+import { defaultTmpFactory, fetchRemoteCatalog, fetchRemoteCatalogCanon } from './remote';
 import {
   ForeignRequireUnsatisfiedError,
   runRemoteInstall,
@@ -268,6 +269,7 @@ export const KNOWN_FLAGS = new Set([
   'yes',
   'force',
   'fix',
+  'remote',
   'help',
   'version',
 ]);
@@ -448,6 +450,9 @@ Workflow commands:
   doctor --fix             Repair the installed state under consent (safe repairs need --yes;
                            destructive ones are confirmed per item, never under --yes).
                            Exit 0 all repaired / 3 findings remain / 1 a repair failed.
+  doctor --remote          Also read every configured catalog's content (read-only fetch) to
+                           surface host-diff and divergent-mcp findings. Fail-closed on any
+                           fetch error (exit 1). Combinable with --fix.
   install                  Install selected artifacts interactively.
   install <id...>          Install specified artifact ids non-interactively.
   install <id...> --yes    Install without confirmation prompt.
@@ -502,6 +507,8 @@ Options:
   --yes                         Skip confirmation prompt (non-interactive install only).
   --force                       Proceed despite scan findings (ad-hoc install only).
   --fix                         Repair the installed state (doctor only; consent-driven).
+  --remote                      Read configured catalog content for the differential (doctor
+                                only; read-only, fail-closed).
   --secret-env=<ref>=<VAR>
                                  Override which env var resolves an mcp secret ref (repeatable).
   --help                        Show this help message.
@@ -1256,14 +1263,51 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
       // Phase 1 (env-deps) — UNCHANGED.
       await runDoctor({ print });
 
-      // Phase 2 (installed state, R8). Catalog NAMES only (never fetched) — the
-      // R2 orphan-catalog prefix check + R5 id requalification; a legacy config
-      // degrades to no configured catalogs rather than failing the command.
-      let configuredCatalogIds: string[] = [];
+      // Phase 2 (installed state, R8). Catalog NAMES only by default (never
+      // fetched) — the R2 orphan-catalog prefix check + R5 id requalification; a
+      // legacy config degrades to no configured catalogs rather than failing the
+      // command. The full {name,url} list is kept for the --remote fetch below.
+      let configuredCatalogs: { name: string; url: string }[] = [];
       try {
-        configuredCatalogIds = (await loadCliConfig(env)).catalogs.map((c) => c.name);
+        configuredCatalogs = (await loadCliConfig(env)).catalogs;
       } catch (err) {
         if (!(err instanceof LegacyConfigError)) throw err;
+      }
+      const configuredCatalogIds = configuredCatalogs.map((c) => c.name);
+
+      // D1 (--remote): read-only fetch of EVERY configured catalog's content,
+      // sequential, fail-closed. Without the flag, nothing here runs — no
+      // network access at all (the v1 invariant). Any fetch error propagates to
+      // handleError (RemoteFetchError → exit 1, RefShaMismatchError → exit 2);
+      // the message is augmented in place with the configured catalog name so a
+      // fail-closed exit names the offending source (name + url), never
+      // degrading silently to a disk-only scan.
+      let catalogCanons: CatalogCanon[] | undefined;
+      if (flags['remote'] === true) {
+        const canons: CatalogCanon[] = [];
+        for (const cat of configuredCatalogs) {
+          try {
+            canons.push(
+              await fetchRemoteCatalogCanon({
+                name: cat.name,
+                url: cat.url,
+                ...(deps.remote?.run === undefined ? {} : { run: deps.remote.run }),
+                ...(deps.remote?.tmpFactory === undefined
+                  ? {}
+                  : { tmpFactory: deps.remote.tmpFactory }),
+              }),
+            );
+          } catch (err) {
+            if (err instanceof RemoteFetchError) {
+              // Preserve the subclass (and its exit-code mapping) while naming
+              // the configured catalog the url belongs to.
+              (err as { message: string }).message =
+                `catalog "${cat.name}" (${cat.url}): ${err.message}`;
+            }
+            throw err;
+          }
+        }
+        catalogCanons = canons;
       }
 
       return await runDoctorState({
@@ -1273,6 +1317,7 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
         yes: flags['yes'] === true,
         isTTY: process.stdin.isTTY === true,
         configuredCatalogIds,
+        ...(catalogCanons === undefined ? {} : { catalogCanons }),
       });
     }
 

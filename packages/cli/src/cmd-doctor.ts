@@ -53,8 +53,12 @@ import {
   type RunLock,
 } from '@agent-rigger/core/run-lock';
 
+import { type CatalogCanon, localId, qualifyRef } from '@agent-rigger/catalog';
+
 import {
+  createAppliedDriftScanner,
   createDanglingScanner,
+  createHostDiffScanner,
   createHygieneScanner,
   createPhantomScanner,
   createUntrackedScanner,
@@ -65,6 +69,7 @@ import { buildAdapter } from './adapter-dispatch';
 import { driveConsent } from './doctor-consent';
 import {
   ANSI,
+  chooseAdoptionCatalog as defaultChooseAdoptionCatalog,
   confirmDoctorRepair,
   paint,
   renderDoctorReport,
@@ -191,6 +196,14 @@ export async function runDoctor(opts: RunDoctorOpts): Promise<void> {
 /** The assistants whose on-disk conventions doctor scans (R1 "les deux assistants"). */
 const SCANNED_ASSISTANTS: Assistant[] = ['claude', 'opencode'];
 
+/**
+ * Prompt an ambiguous adoption's owning catalog (D5). Given the unqualified
+ * candidate and the names of the catalogs that all offer it, returns the chosen
+ * name. Same injection family as `confirmItem`: a clack `select` by default, a
+ * fake in tests — and, like `confirmItem`, only ever invoked in a TTY.
+ */
+type ChooseAdoptionCatalog = (candidateId: string, catalogNames: string[]) => Promise<string>;
+
 export interface RunDoctorStateOpts {
   /** Injectable environment for path resolution. */
   env: Env;
@@ -208,6 +221,13 @@ export interface RunDoctorStateOpts {
    * module never duplicates the config plumbing.
    */
   configuredCatalogIds: string[];
+  /**
+   * The differential canon of every configured catalog, fetched by the CLI
+   * under `--remote` (D1). When present, the host-diff scanners (D2+D3) are
+   * assembled per assistant. Absent (undefined) means no `--remote` — the run
+   * stays byte-identical to v1 (no host-diff, no network access).
+   */
+  catalogCanons?: CatalogCanon[];
   /** Enable ANSI colour. Defaults to TTY auto-detection; pass false in tests. */
   color?: boolean;
 
@@ -221,6 +241,14 @@ export interface RunDoctorStateOpts {
   adapters?: Map<Assistant, Adapter>;
   /** Per-item confirmation prompt (TTY only). Defaults to a clack confirm. */
   confirmItem?: (message: string) => Promise<boolean>;
+  /**
+   * Catalog-choice prompt for an ambiguous adoption (D5, TTY only). Reached only
+   * under `--remote` (`catalogCanons` present) when a candidate's nature+name is
+   * offered by more than one catalog. Defaults to a clack select; a fake in
+   * tests. Never invoked in a non-TTY session (the resolver returns `ambiguous`
+   * there — skip + report).
+   */
+  chooseAdoptionCatalog?: ChooseAdoptionCatalog;
   /** Acquire the fresh state-repair run-lock. Defaults to `acquireRunLock`. */
   acquireLock?: (manifestPath: string) => Promise<RunLock>;
   /** Break a lock pre-acquire (2 temps). Defaults to `breakLockCas`. */
@@ -248,27 +276,73 @@ function manifestPathFor(env: Env): string {
   return resolveUserTargets(env).stateJson;
 }
 
+/** The catalog knowledge `resolveAdoptionId` requalifies a candidate against. */
+interface AdoptionResolverCtx {
+  /** Configured catalog ids — the v1 prefix check for an already-qualified id. */
+  configuredCatalogIds: string[];
+  /**
+   * The fetched catalog canons (D5, `--remote`). Absent (undefined/empty) keeps
+   * the v1 posture: an unqualified candidate resolves `none` (adopt under
+   * defaults). Present: an unqualified candidate is searched by content.
+   */
+  canons?: CatalogCanon[];
+  /** Whether stdin is a TTY — gates the ambiguity prompt vs `ambiguous`. */
+  isTTY: boolean;
+  /** The catalog-choice prompt (TTY only) — see {@link ChooseAdoptionCatalog}. */
+  chooseCatalog: ChooseAdoptionCatalog;
+}
+
 /**
- * Requalify an adopt op's `candidateId` against the configured catalogs WITHOUT
- * fetching any catalog content (doctor never executes a catalog — same posture
- * as `diagnose`). A qualified id whose prefix is configured resolves `unique`;
- * everything else (the scanner's unqualified `<nature>:<name>` ids, or an
- * unknown catalog prefix) resolves `none` → adoption under defaults
- * (`v0.0.0`/empty sha), surfaced by R2's missing-sha audit next run. Never
- * guesses — the `ambiguous` branch (which would need catalog content) is
- * unreachable here by design, which is the safe direction (R5 "aucun → adoption
- * sous defaults").
+ * Requalify an adopt op's `candidateId` against the configured catalogs.
+ *
+ * An ALREADY-QUALIFIED id (`<prefix>/…`) resolves by prefix, exactly as v1: a
+ * configured prefix → `unique`, otherwise → `none` (adopt under defaults,
+ * `v0.0.0`/empty sha, surfaced by R2's missing-sha audit next run).
+ *
+ * An UNQUALIFIED candidate (the scanner's `<nature>:<name>` id) depends on
+ * whether catalog content is available (D5):
+ *   - no canons (`doctor` without `--remote`) → `none`, byte-identical to v1:
+ *     the `ambiguous` branch was "unreachable here by design" precisely because
+ *     it needs catalog content.
+ *   - with canons: search each canon's entries for the same nature+name.
+ *     0 matches → `none`; 1 match → `unique` under that catalog's qualified id;
+ *     >1 match → in a TTY, prompt for the owning catalog and resolve `unique`
+ *     under the chosen id; in a non-TTY, `ambiguous` — the interpreter skips +
+ *     reports (never guess: adopting under the wrong id would arm update/remove
+ *     on the wrong canonical, R5 "requalification ambiguë").
  */
 async function resolveAdoptionId(
   candidateId: string,
-  configuredCatalogIds: string[],
+  ctx: AdoptionResolverCtx,
 ): Promise<{ kind: 'unique'; id: string } | { kind: 'ambiguous' } | { kind: 'none' }> {
   const slash = candidateId.indexOf('/');
   if (slash !== -1) {
     const prefix = candidateId.slice(0, slash);
-    if (configuredCatalogIds.includes(prefix)) return { kind: 'unique', id: candidateId };
+    return ctx.configuredCatalogIds.includes(prefix)
+      ? { kind: 'unique', id: candidateId }
+      : { kind: 'none' };
   }
-  return { kind: 'none' };
+
+  // Unqualified. Without catalog content, keep the v1 defaults posture.
+  const canons = ctx.canons;
+  if (canons === undefined || canons.length === 0) return { kind: 'none' };
+
+  // With content: the catalogs whose entries offer this exact nature+name. Canon
+  // entry ids are raw/unqualified, so `localId` is the nature+name to compare.
+  const offeringNames = canons
+    .filter((canon) =>
+      canon.entries.some((entry) => entry.kind === 'artifact' && localId(entry.id) === candidateId)
+    )
+    .map((canon) => canon.name);
+
+  const [first, ...rest] = offeringNames;
+  if (first === undefined) return { kind: 'none' };
+  if (rest.length === 0) return { kind: 'unique', id: qualifyRef(first, candidateId) };
+
+  // Two or more catalogs offer it: prompt in a TTY, else ambiguous (skip+report).
+  if (!ctx.isTTY) return { kind: 'ambiguous' };
+  const chosen = await ctx.chooseCatalog(candidateId, offeringNames);
+  return { kind: 'unique', id: qualifyRef(chosen, candidateId) };
 }
 
 /**
@@ -304,7 +378,15 @@ async function runStateRepairs(
   stateOps: RepairOp[],
   adapters: Map<Assistant, Adapter>,
   lock: RunLock,
-  cfg: { env: Env; manifestPath: string; configuredCatalogIds: string[]; now?: () => number },
+  cfg: {
+    env: Env;
+    manifestPath: string;
+    configuredCatalogIds: string[];
+    canons?: CatalogCanon[];
+    isTTY: boolean;
+    chooseCatalog: ChooseAdoptionCatalog;
+    now?: () => number;
+  },
 ): Promise<RepairOutcome[]> {
   const byAssistant = new Map<Assistant, RepairOp[]>();
   for (const op of stateOps) {
@@ -332,7 +414,13 @@ async function runStateRepairs(
     const deps: ApplyRepairsDeps = {
       env: cfg.env,
       manifestPath: cfg.manifestPath,
-      resolveAdoptionId: (candidateId) => resolveAdoptionId(candidateId, cfg.configuredCatalogIds),
+      resolveAdoptionId: (candidateId) =>
+        resolveAdoptionId(candidateId, {
+          configuredCatalogIds: cfg.configuredCatalogIds,
+          ...(cfg.canons === undefined ? {} : { canons: cfg.canons }),
+          isTTY: cfg.isTTY,
+          chooseCatalog: cfg.chooseCatalog,
+        }),
       enumerateStoreReferents: (store) => enumerateStoreReferents(store, cfg.env, cfg.manifestPath),
       stateBackupGuard,
       ...(cfg.now === undefined ? {} : { now: cfg.now }),
@@ -342,19 +430,37 @@ async function runStateRepairs(
   return outcomes;
 }
 
-/** Assemble the real `DoctorScanner[]` — lock FIRST (diagnose ordering contract). */
+/**
+ * Assemble the real `DoctorScanner[]` — lock FIRST (diagnose ordering contract).
+ *
+ * `canons` (D1, `--remote`) adds one host-diff scanner per scanned assistant,
+ * grouped right after untracked (same "untracked" class — untracked host-diff
+ * D2 + divergent mcp D3). When `canons` is undefined (no `--remote`), no
+ * host-diff scanner exists in the run and the pipeline is byte-identical to v1.
+ */
 function assembleScanners(
   adapters: Map<Assistant, Adapter>,
   now: (() => number) | undefined,
+  canons?: CatalogCanon[],
 ): DoctorScanner[] {
-  const untracked = SCANNED_ASSISTANTS
-    .filter((assistant) => adapters.has(assistant))
+  const scanned = SCANNED_ASSISTANTS.filter((assistant) => adapters.has(assistant));
+  const appliedDrift = scanned
+    .map((assistant) => createAppliedDriftScanner(adapters.get(assistant) as Adapter, assistant));
+  const untracked = scanned
     .map((assistant) => createUntrackedScanner(adapters.get(assistant) as Adapter, assistant));
+  const hostDiff = canons === undefined
+    ? []
+    : scanned
+      .map((assistant) =>
+        createHostDiffScanner(adapters.get(assistant) as Adapter, assistant, canons)
+      );
 
   return [
     createLockScanner(),
     manifestAuditScanner,
+    ...appliedDrift,
     ...untracked,
+    ...hostDiff,
     createDanglingScanner(),
     createPhantomScanner(),
     createHygieneScanner(now === undefined ? {} : { now }),
@@ -413,7 +519,7 @@ export async function runDoctorState(opts: RunDoctorStateOpts): Promise<number> 
     }
   }
 
-  const scanners = opts.scanners ?? assembleScanners(adapters, opts.now);
+  const scanners = opts.scanners ?? assembleScanners(adapters, opts.now, opts.catalogCanons);
 
   const ctx: DoctorContext = { env, manifestPath, configuredCatalogIds };
   const report = await diagnose(scanners, ctx);
@@ -493,6 +599,9 @@ export async function runDoctorState(opts: RunDoctorStateOpts): Promise<number> 
         env,
         manifestPath,
         configuredCatalogIds,
+        ...(opts.catalogCanons === undefined ? {} : { canons: opts.catalogCanons }),
+        isTTY,
+        chooseCatalog: opts.chooseAdoptionCatalog ?? defaultChooseAdoptionCatalog,
         ...(opts.now === undefined ? {} : { now: opts.now }),
       });
     } finally {

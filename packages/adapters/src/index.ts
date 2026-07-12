@@ -108,7 +108,9 @@ export {
   SkillScanBlockedError as OpencodeSkillScanBlockedError,
 } from './opencode/skills';
 export {
+  createAppliedDriftScanner,
   createDanglingScanner,
+  createHostDiffScanner,
   createHygieneScanner,
   createPhantomScanner,
   createUntrackedScanner,

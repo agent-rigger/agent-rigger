@@ -18,6 +18,7 @@
       "name": "@agent-rigger/adapters",
       "version": "0.0.0",
       "dependencies": {
+        "@agent-rigger/catalog": "workspace:*",
         "@agent-rigger/core": "workspace:*",
         "jsonc-parser": "3.3.1",
       },
