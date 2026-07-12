@@ -63,7 +63,7 @@ import type { CatalogProposal } from './cmd-init';
 import type { RunLsResult } from './cmd-ls';
 import { RESOURCE_NATURE_MAP, runLs } from './cmd-ls';
 import { NotInstalledError, runRemove } from './cmd-remove';
-import { runUpdate } from './cmd-update';
+import { NO_UPDATE_CANDIDATES_MSG, runUpdate } from './cmd-update';
 import { LegacyConfigError, loadConfig } from './config';
 import { auditableGovernanceIds, type CatalogGovernanceMeta } from './governance';
 import { PreflightAuthError } from './preflight-auth';
@@ -2599,6 +2599,13 @@ async function handleUpdate(opts: HandleUpdateOpts): Promise<number> {
     const { readManifest } = await import('@agent-rigger/core/manifest');
     const manifest = await readManifest(manifestPath);
 
+    // b1b4-R2: track whether ANY catalog yielded a candidate. The per-catalog
+    // `continue` below is silent by design; the no-op signal is raised once
+    // after the loop only when nothing was installed anywhere for this
+    // scope+assistant — never per-catalog (that would report "nothing here"
+    // while another catalog still has work).
+    let hadCandidates = false;
+
     for (const catalog of config.catalogs) {
       const prefix = catalog.name + '/';
       const catalogIds = manifest.artifacts
@@ -2616,6 +2623,7 @@ async function handleUpdate(opts: HandleUpdateOpts): Promise<number> {
       // catalog's url/version and failing resolution (UnknownEntryError).
       // The loop always drives explicit ids.
       if (catalogIds.length === 0) continue;
+      hadCandidates = true;
 
       const updateOpts = {
         ids: catalogIds,
@@ -2634,6 +2642,11 @@ async function handleUpdate(opts: HandleUpdateOpts): Promise<number> {
       const result = await runUpdate(updateOpts);
       print(result.output);
     }
+
+    // b1b4-R2: no catalog had a candidate → nothing installed anywhere for
+    // this scope+assistant. Signal the no-op once (same string as runUpdate's
+    // defensive branch, via the shared constant). Exit code unchanged (0).
+    if (!hadCandidates) print(NO_UPDATE_CANDIDATES_MSG);
 
     return 0;
   }

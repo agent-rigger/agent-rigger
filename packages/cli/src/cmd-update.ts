@@ -58,6 +58,15 @@ import { buildAdapter } from './adapter-dispatch';
 import { partitionForeignRequires, scanEntries } from './remote-install';
 import { ANSI, paint, shouldColor } from './ui';
 
+/**
+ * Printed once when `update` (no ids) finds nothing to update across every
+ * configured catalog for the resolved scope + assistant (b1b4-R2). Exported so
+ * the CLI no-ids call site (cli.ts handleUpdate) and this module's defensive
+ * `candidateIds.length === 0` branch share a single source of truth — the R2
+ * test asserts the exact, unique occurrence against this constant.
+ */
+export const NO_UPDATE_CANDIDATES_MSG = 'No external artifacts to update.';
+
 // ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
@@ -189,8 +198,7 @@ export async function runUpdate(opts: RunUpdateOptions): Promise<UpdateResult> {
     : ids;
 
   if (candidateIds.length === 0) {
-    const output = 'No external artifacts to update.';
-    return { output, updated: [], upToDate: [], skipped: [] };
+    return { output: NO_UPDATE_CANDIDATES_MSG, updated: [], upToDate: [], skipped: [] };
   }
 
   // Step 1 — resolveVersion once. Any network error aborts here (nothing removed).
