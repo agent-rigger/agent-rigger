@@ -44,6 +44,9 @@ export default defineConfig({
             { slug: 'concepts/core-concepts' },
             { slug: 'concepts/artifact-natures' },
             { slug: 'concepts/trust-and-security' },
+            { slug: 'concepts/one-source-many-assistants' },
+            { slug: 'concepts/safety-and-reversibility' },
+            { slug: 'concepts/versioning-and-provenance' },
           ],
         },
         {

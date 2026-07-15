@@ -43,6 +43,13 @@ The module that translates one canonical artifact into the exact shape a given a
 where the file goes, what format it takes. Adding support for a new assistant means adding an
 adapter, not rewriting the artifacts.
 
+#### canonical form
+
+The single authored shape each [artifact](#artifact) exists in before any assistant sees it — the
+one source an [adapter](#adapter) renders into an assistant's native format at install. Because
+only this form is authored and versioned, an artifact is never written twice for two assistants.
+See [one source, many assistants](/concepts/one-source-many-assistants/).
+
 #### delegate-first
 
 The rule that when an assistant can install an artifact through its own native mechanism,
@@ -467,6 +474,7 @@ temporary files or backups). With `--fix` it repairs the safe ones; anything des
 - [artifact](#artifact)
 - [assistant](#assistant)
 - [backup (.bak)](#backup-bak)
+- [canonical form](#canonical-form)
 - [catalog](#catalog)
 - [catalog entry](#catalog-entry)
 - [catalog source](#catalog-source)
