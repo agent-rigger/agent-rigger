@@ -242,13 +242,23 @@ jobs:
               continue
             fi
             # normalize.sh is the SINGLE definition of the volatile fields (D4) — the
-            # same script that produced the tracked golden. Compare like-for-like.
+            # same script that produced the tracked golden. The comparison is
+            # DIRECTIONAL on the unique-line set: a VHS .txt stacks one snapshot per
+            # redraw, and redraw count/instants are machine-dependent (CI captures
+            # transient frames or fewer duplicates than the recording machine — three
+            # distinct manifestations across runs). Every golden line must still be
+            # produced; extra replay lines are sampling noise. Trade-off in ADR-0026:
+            # pure additions are not flagged, changed or vanished lines are.
             docs/tapes/lib/normalize.sh < "docs/tapes/.out/${flux}.txt" \
               > "docs/tapes/.out/${flux}.norm.txt"
-            if diff -u "docs/tapes/golden/${flux}.txt" "docs/tapes/.out/${flux}.norm.txt"; then
-              echo "${flux}: golden matches the current binary"
+            missing="$(comm -13 \
+              <(sort -u "docs/tapes/.out/${flux}.norm.txt") \
+              <(sort -u "docs/tapes/golden/${flux}.txt"))"
+            if [ -z "$missing" ]; then
+              echo "${flux}: every golden line is still produced by the current binary"
             else
-              echo "::error::${flux} drifted from its golden — regenerate the recording (docs/tapes/README.md) or fix the regression"
+              echo "::error::${flux} drifted — golden lines no longer produced (regenerate per docs/tapes/README.md or fix the regression):"
+              printf '%s\n' "$missing"
               status=1
             fi
             echo "::endgroup::"

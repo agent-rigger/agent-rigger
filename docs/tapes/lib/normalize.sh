@@ -28,18 +28,36 @@
 #          breaks stay legible; a real double-blank in output would be flattened,
 #          but CLI output never relies on blank-line COUNT to carry meaning.
 #
+#   3. Recorder ARTEFACTS — a line that is exactly a bare ">" (PS2 echo of a
+#      dropped keystroke, machine-dependent) is removed.
+#
 # Deliberately NOT normalised: messages, command order, exit codes, artefact names
 # and content wraps stay verbatim — that is the drift a recording exists to expose.
+#
+# Comparison semantics note: a VHS `.txt` stacks one full-screen snapshot per
+# redraw, and the redraw COUNT and SAMPLING INSTANTS are machine-dependent (a CI
+# runner can capture transient UI frames the recording machine never saw, or
+# fewer duplicate snapshots). Byte-diffing two normalised captures is therefore
+# unstable by construction; the freshness workflow compares DIRECTIONALLY on the
+# unique-line set — every golden line must still be produced, extra CI lines are
+# sampling noise. Trade-off (documented in ADR-0026): pure additions (a new
+# catalog entry) are not flagged; changed or vanished lines are.
 #
 # perl (present on macOS and on the Linux CI runner) is used for \b and lazy
 # quantifiers that BSD/GNU sed handle inconsistently; it runs in byte mode, so the
 # rule is matched by ─'s UTF-8 bytes (E2 94 80). Substitutions are ordered: rstrip
 # and tmp-path tokens run before the generic "(abs path)" rule so already tokenised
 # values (starting with '<') are never re-matched. Blank runs collapse last.
-perl -pe '
+perl -ne '
   # Geometry — trailing whitespace and terminal-width rules.
   s/[ \t]+$//;
   s/(?:\xe2\x94\x80){4,}/<RULE>/g;
+
+  # Recorder artefact — a line that is EXACTLY a bare ">" is the PS2 continuation
+  # prompt echoed when the recorder drops a keystroke (TypingSpeed under ttyd);
+  # it appears or not depending on the machine, never carries session content,
+  # and "> anything" (real output) is untouched. Dropped entirely.
+  next if /^>$/;
 
   # 1. Throwaway RIGGER_HOME from setup.sh: /tmp/rigger-rec.XXXXXX (macOS may
   #    surface it realpath-ed under /private).
@@ -62,4 +80,6 @@ perl -pe '
   # 5. Full 40-char git shas. Semver tags (vX.Y.Z) are NOT hex-40, so a version
   #    change stays visible as real drift.
   s{\b[0-9a-f]{40}\b}{<SHA>}g;
+
+  print;
 ' | cat -s

@@ -176,3 +176,16 @@ test('(c) a short ─ run (<4) is content, not a rule, and is left intact', asyn
   expect(out).toContain('─── three dashes');
   expect(out).not.toContain('<RULE>');
 });
+
+test('(d) a bare ">" line is a PS2 recorder artefact and is dropped', async () => {
+  // The recorder occasionally drops a keystroke under ttyd and bash echoes a PS2
+  // continuation prompt — a machine-dependent artefact, never session content.
+  const out = await normalize('$ rigger doctor\n>\nmode : full scan\n');
+  expect(out).not.toMatch(/^>$/m);
+  expect(out).toContain('mode : full scan');
+});
+
+test('(d) a line starting with "> " is real output and is kept', async () => {
+  const out = await normalize('> quoted content survives\n');
+  expect(out).toContain('> quoted content survives');
+});

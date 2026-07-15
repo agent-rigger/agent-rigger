@@ -11,9 +11,14 @@ The `.txt`, run through [`lib/normalize.sh`](lib/normalize.sh) to erase volatile
 paths, resolved binary paths, backup timestamps, git shas — semver tags preserved), is committed as
 the **golden** in [`golden/`](golden). The CI workflow
 [`.github/workflows/recordings-freshness.yml`](../../.github/workflows/recordings-freshness.yml)
-re-plays the tapes on every push to `main` that touches `packages/**`, `docs/tapes/**` or `bun.lock`,
-normalises the fresh `.txt`, and diffs it against the golden. A mismatch reds the check on `main` —
-the signal that a recording no longer matches the current binary or catalog.
+re-plays the tapes on every push to `main` that touches `packages/**`, `docs/tapes/**`, `bun.lock`
+or the workflow itself, plus a weekly cron (the catalog lives in its own repo and drifts silently).
+The comparison is **directional on the unique-line set**: every golden line must still be produced
+by the replay; extra replay lines are ignored. A VHS `.txt` stacks one full-screen snapshot per
+redraw, and redraw count and sampling instants are machine-dependent — a runner captures transient
+frames or duplicate counts the recording machine never saw, so a byte-diff is unstable by
+construction. Trade-off (ADR-0026): a changed or vanished line reds the check; a pure addition (a
+new catalog entry) does not — the film goes slightly dated, never lying.
 
 Pixels are **not** compared: VHS renders are non-deterministic across machines, so only the
 normalised `.txt` is the contract. The maintainer regenerates the `.gif` locally (below); CI never
