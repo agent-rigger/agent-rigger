@@ -189,11 +189,25 @@ jobs:
       #     PAT as the credential. Scoped to this one repo URL, never github.com at
       #     large; the tapes still type the public URL, so no secret is ever filmed.
       - name: Authenticate the private jr catalog (read-only)
+        env:
+          # The secret rides an env var and the URL is built in bash — NEVER inline
+          # a secret into the run script text with an Actions expression: any space,
+          # quote or newline in the value restructures the shell line itself (this
+          # exact failure produced a mangled 'github.com@github.com' rewrite here).
+          JR_TOKEN: ${{ secrets.JR_CATALOG_READ_TOKEN }}
         run: |
           set -euo pipefail
+          # Strip CR/LF/spaces a copy-paste may have smuggled into the secret.
+          tok="${JR_TOKEN//[$'\r\n\t ']/}"
+          # Diagnostic without exposure: a fine-grained PAT is github_pat_ + ~82 chars.
+          echo "token length after sanitising: ${#tok}"
+          if [ "${#tok}" -lt 40 ]; then
+            echo "::error::JR_CATALOG_READ_TOKEN looks empty or truncated (${#tok} chars) — re-set the secret"
+            exit 1
+          fi
           cfg="${RUNNER_TEMP}/git-config-jr"
           git config --file "$cfg" \
-            url."https://x-access-token:${{ secrets.JR_CATALOG_READ_TOKEN }}@github.com/jrobic/jr-agent-rigger-catalog".insteadOf \
+            url."https://x-access-token:${tok}@github.com/jrobic/jr-agent-rigger-catalog".insteadOf \
             "https://github.com/jrobic/jr-agent-rigger-catalog"
           echo "GIT_CONFIG_GLOBAL=$cfg" >> "$GITHUB_ENV"
           # Prove the rewrite actually grants read BEFORE any tape runs — a cheaper,
