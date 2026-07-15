@@ -205,6 +205,18 @@ jobs:
             echo "::error::JR_CATALOG_READ_TOKEN looks empty or truncated (${#tok} chars) — re-set the secret"
             exit 1
           fi
+          # A/B discriminator: try the credentialed URL DIRECTLY first. If this leg
+          # fails, the token itself is refused server-side (scoping/expiry) and no
+          # rewrite mechanics can help; if it passes but the rewritten form fails,
+          # the insteadOf application is the culprit. Actions masks the secret in
+          # logs and git redacts credentials in its own errors.
+          if git ls-remote \
+              "https://x-access-token:${tok}@github.com/jrobic/jr-agent-rigger-catalog.git" HEAD >/dev/null; then
+            echo "direct credentialed access: OK"
+          else
+            echo "::error::direct credentialed ls-remote FAILED — the token itself is refused (check scoping/expiry), not the rewrite"
+            exit 1
+          fi
           cfg="${RUNNER_TEMP}/git-config-jr"
           git config --file "$cfg" \
             url."https://x-access-token:${tok}@github.com/jrobic/jr-agent-rigger-catalog".insteadOf \
