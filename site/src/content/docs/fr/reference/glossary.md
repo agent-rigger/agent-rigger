@@ -405,7 +405,15 @@ Le petit bloc de métadonnées en tête d'un fichier Markdown, entre des barriè
 
 Une variable d'environnement qui remplace le répertoire home utilisé par l'outil pour tous les chemins
 de scope user. Elle est prioritaire sur `HOME`, et constitue l'unique levier pour exécuter l'outil
-contre un répertoire isolé (par exemple pour l'essayer dans un sandbox).
+contre un répertoire isolé (par exemple pour l'essayer dans un [sandbox](#sandbox)).
+
+#### sandbox
+
+L'environnement jetable que met en place `scripts/sandbox` (livré dans le dépôt) pour exécuter de
+vraies commandes rigger sans toucher ni votre configuration réelle ni vos vrais projets : un
+[`RIGGER_HOME`](#rigger_home) jetable plus un répertoire de projet jetable, tous deux sous `/tmp`,
+remis à zéro par `rigger_reset` et démontés par `rigger_exit`. Voir
+[l'essayer dans un sandbox](/fr/start/sandbox/).
 
 #### TTY / non-interactive
 
@@ -489,6 +497,7 @@ sûrs ; tout ce qui est destructeur demande d'abord le [consent](#consent).
 - [rig](#rig)
 - [RIGGER_HOME](#rigger_home)
 - [run-lock](#run-lock)
+- [sandbox](#sandbox)
 - [scan / scanner](#scan--scanner)
 - [scope](#scope)
 - [secret by environment reference](#secret-by-environment-reference-var)
