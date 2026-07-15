@@ -1,0 +1,165 @@
+name: Recordings freshness
+
+# Re-plays the versioned tapes headless and compares their NORMALISED .txt captures
+# to the tracked goldens (design D1, requirement R7). A drift → red check on main =
+# the signal a maintainer needs that a published recording no longer matches the
+# current binary or catalog. Pixels (the .gif renders) are NOT compared: VHS output
+# is non-deterministic across machines (font rasterisation, ttyd/ffmpeg versions), so
+# only golden/<flux>.txt — the normalised session text — is the contract. The gifs
+# the tapes emit under site/src/assets/recordings/ are overwritten and discarded here
+# (contents: read, no commit); `git diff` is deliberately NOT the mechanism.
+#
+# Scope: the three filmed flows (doctor-fix, scan-blocked, install-picker). The
+# getting-started flow and docs/demo.gif are excluded — blocked by the ttyd
+# output-volume throttle on the 24-artifact install (measured; not the scanner
+# spawns). See docs/tapes/README.md and ADR-0026.
+#
+# Network: github.com must be reachable — install-picker and the doctor-fix staging
+# clone the real jr catalog. A network failure reds the run for a non-CLI reason;
+# re-run manually (workflow_dispatch).
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "packages/**"
+      - "docs/tapes/**"
+      - "bun.lock"
+      # Self-test: a bump of a pinned dep version/checksum below must re-run.
+      - ".github/workflows/recordings-freshness.yml"
+  schedule:
+    # Weekly safety net (Mon 06:00 UTC). The jr catalog lives in a SEPARATE repo,
+    # cloned at runtime — its drift triggers no push here, yet a changed catalog can
+    # make a published recording lie. R7 scenario 2 forbids a path with no signal, so
+    # this cron re-checks the goldens against the live catalog on a schedule.
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+# No secret is used anywhere in this job (no push, no cross-repo publish).
+permissions:
+  contents: read
+
+concurrency:
+  group: recordings-freshness-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # gitleaks is pinned + checksum-verified: the scan-blocked golden freezes this
+  # version's RuleID + Description text, so a version drift must fail loudly, not
+  # silently reshape the finding. (linux_x64 asset, checksums.txt of v8.30.1.)
+  GITLEAKS_VERSION: "8.30.1"
+  GITLEAKS_SHA256: "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb"
+  # trivy + glab versions do not appear in any golden (doctor prints only
+  # "✓ <name> (<path>)", the path normalised away, and trivy finds nothing in the
+  # trapped fixture — the golden's findings are gitleaks'). They are still pinned AND
+  # checksum-verified, same pattern as gitleaks: no mutable installer runs as root.
+  TRIVY_VERSION: "0.72.0"
+  TRIVY_SHA256: "bbb64b9695866ce4a7a8f5c9592002c5961cab378577fa3f8a040df362b9b2ea"
+  GLAB_VERSION: "1.107.0"
+  GLAB_SHA256: "eb42f56eb1a789cf4f22aa5960ff0ef60cf1e7fc1295327501f9f59030d5ae2c"
+
+jobs:
+  freshness:
+    name: Replay tapes · compare goldens
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+
+      - name: Install (frozen)
+        run: bun install --frozen-lockfile
+
+      - name: Build CLI (setup.sh shim target)
+        # The `rigger` shim in docs/tapes/lib/setup.sh points at this binary (R7).
+        run: bun run build
+
+      # --- Ratified deps (R7 / D3): doctor phase 1 must show all four ✓
+      #     (git · glab · gitleaks · trivy), or the doctor-fix golden's phase-1 parity
+      #     breaks. Each install is fail-closed: a download/checksum/run failure reds
+      #     the job — no silent fallback. git is preinstalled on ubuntu-latest.
+      - name: Install gitleaks (pinned + checksum)
+        run: |
+          set -euo pipefail
+          url="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl -sSfL "$url" -o /tmp/gitleaks.tar.gz
+          echo "${GITLEAKS_SHA256}  /tmp/gitleaks.tar.gz" | sha256sum -c -
+          tar -xzf /tmp/gitleaks.tar.gz -C /tmp gitleaks
+          sudo install -m 0755 /tmp/gitleaks /usr/local/bin/gitleaks
+          gitleaks version
+
+      - name: Install trivy (pinned + checksum)
+        run: |
+          set -euo pipefail
+          url="https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
+          curl -sSfL "$url" -o /tmp/trivy.tar.gz
+          echo "${TRIVY_SHA256}  /tmp/trivy.tar.gz" | sha256sum -c -
+          tar -xzf /tmp/trivy.tar.gz -C /tmp trivy
+          sudo install -m 0755 /tmp/trivy /usr/local/bin/trivy
+          trivy --version
+
+      - name: Install glab (pinned + checksum)
+        run: |
+          set -euo pipefail
+          url="https://gitlab.com/gitlab-org/cli/-/releases/v${GLAB_VERSION}/downloads/glab_${GLAB_VERSION}_linux_amd64.tar.gz"
+          curl -sSfL "$url" -o /tmp/glab.tar.gz
+          echo "${GLAB_SHA256}  /tmp/glab.tar.gz" | sha256sum -c -
+          mkdir -p /tmp/glab && tar -xzf /tmp/glab.tar.gz -C /tmp/glab
+          glab_bin="$(find /tmp/glab -type f -name glab | head -1)"
+          sudo install -m 0755 "$glab_bin" /usr/local/bin/glab
+          glab --version
+
+      - name: Verify all four doctor deps are on PATH
+        # Fail fast with a clear message before a confusing golden diff if an install
+        # above silently produced nothing.
+        run: |
+          set -euo pipefail
+          for dep in git glab gitleaks trivy; do
+            command -v "$dep" >/dev/null || { echo "::error::missing dep on PATH: $dep"; exit 1; }
+          done
+
+      # --- R3 scenario 2: the trapped fixture must still trip gitleaks on THIS pinned
+      #     version before the scan-blocked tape is replayed — else a silent
+      #     pass-through would film an install that succeeds where the page shows a block.
+      - name: Validate trapped-catalog fixture still trips gitleaks
+        run: bash docs/tapes/fixtures/trapped-catalog/validate.sh
+
+      # --- VHS: SHA-pinned action (hygiene; the trailing comment names the resolved
+      #     version, keeping the pin auditable) + pinned vhs binary. ttyd/ffmpeg are
+      #     resolved latest by the action — ratified: they affect only pixels, never
+      #     the .txt compared here, and this job holds no secret.
+      - name: Setup VHS
+        uses: charmbracelet/vhs-action@59641cdc7fadf3978db65eb8c6937ea2752f4ec3 # v2.1.0
+        with:
+          version: v0.11.0
+
+      - name: Replay tapes and compare normalised goldens
+        run: |
+          set -uo pipefail
+          mkdir -p docs/tapes/.out
+          status=0
+          for flux in doctor-fix scan-blocked install-picker; do
+            echo "::group::$flux"
+            if ! vhs "docs/tapes/${flux}.tape"; then
+              echo "::error::${flux}: vhs replay failed"
+              status=1
+              echo "::endgroup::"
+              continue
+            fi
+            # normalize.sh is the SINGLE definition of the volatile fields (D4) — the
+            # same script that produced the tracked golden. Compare like-for-like.
+            docs/tapes/lib/normalize.sh < "docs/tapes/.out/${flux}.txt" \
+              > "docs/tapes/.out/${flux}.norm.txt"
+            if diff -u "docs/tapes/golden/${flux}.txt" "docs/tapes/.out/${flux}.norm.txt"; then
+              echo "${flux}: golden matches the current binary"
+            else
+              echo "::error::${flux} drifted from its golden — regenerate the recording (docs/tapes/README.md) or fix the regression"
+              status=1
+            fi
+            echo "::endgroup::"
+          done
+          exit "$status"

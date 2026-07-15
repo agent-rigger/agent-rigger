@@ -25,7 +25,7 @@
 # text is fixed by this version). Runs under a throwaway $RIGGER_HOME sourced
 # from docs/tapes/lib/setup.sh — the real ~/.claude is never touched (R5).
 
-Output docs/tapes/.out/scan-blocked.gif
+Output site/src/assets/recordings/scan-blocked.gif
 Output docs/tapes/.out/scan-blocked.txt
 
 Set Shell bash
