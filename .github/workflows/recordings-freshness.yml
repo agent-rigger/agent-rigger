@@ -188,47 +188,43 @@ jobs:
       #     (actions/checkout uses it); GitHub ignores it and takes the fine-grained
       #     PAT as the credential. Scoped to this one repo URL, never github.com at
       #     large; the tapes still type the public URL, so no secret is ever filmed.
-      - name: Authenticate the private jr catalog (read-only)
-        env:
-          # The secret rides an env var and the URL is built in bash — NEVER inline
-          # a secret into the run script text with an Actions expression: any space,
-          # quote or newline in the value restructures the shell line itself (this
-          # exact failure produced a mangled 'github.com@github.com' rewrite here).
-          JR_TOKEN: ${{ secrets.JR_CATALOG_READ_TOKEN }}
+      # The PAT is confined to this first-party action (same pattern as the repo's
+      # other secret-holding steps): one authenticated fetch of the private catalog
+      # into a local mirror. The token never enters the tapes' git chain — the
+      # rewrite below maps the public URL to the mirror, so replays are local,
+      # deterministic and network-free for the catalog. fetch-depth 0 + tags: the
+      # CLI resolves the highest semver tag (resolveVersion), a shallow tagless
+      # mirror would change the filmed labels.
+      - name: Mirror the private jr catalog (read-only PAT)
+        uses: actions/checkout@v5
+        with:
+          repository: jrobic/jr-agent-rigger-catalog
+          token: ${{ secrets.JR_CATALOG_READ_TOKEN }}
+          path: .jr-catalog-mirror
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+
+      - name: Route the public catalog URL to the local mirror
         run: |
           set -euo pipefail
-          # Strip CR/LF/spaces a copy-paste may have smuggled into the secret.
-          tok="${JR_TOKEN//[$'\r\n\t ']/}"
-          # Diagnostic without exposure: a fine-grained PAT is github_pat_ + ~82 chars.
-          echo "token length after sanitising: ${#tok}"
-          if [ "${#tok}" -lt 40 ]; then
-            echo "::error::JR_CATALOG_READ_TOKEN looks empty or truncated (${#tok} chars) — re-set the secret"
-            exit 1
-          fi
-          # A/B discriminator: try the credentialed URL DIRECTLY first. If this leg
-          # fails, the token itself is refused server-side (scoping/expiry) and no
-          # rewrite mechanics can help; if it passes but the rewritten form fails,
-          # the insteadOf application is the culprit. Actions masks the secret in
-          # logs and git redacts credentials in its own errors.
-          if git ls-remote \
-              "https://x-access-token:${tok}@github.com/jrobic/jr-agent-rigger-catalog.git" HEAD >/dev/null; then
-            echo "direct credentialed access: OK"
-          else
-            echo "::error::direct credentialed ls-remote FAILED — the token itself is refused (check scoping/expiry), not the rewrite"
-            exit 1
-          fi
+          mirror="${GITHUB_WORKSPACE}/.jr-catalog-mirror"
           cfg="${RUNNER_TEMP}/git-config-jr"
+          # Two insteadOf values on one key: the '.git' form must match as the
+          # longest prefix, otherwise the suffix would survive the rewrite and
+          # point at a nonexistent '<mirror>.git' path.
           git config --file "$cfg" \
-            url."https://x-access-token:${tok}@github.com/jrobic/jr-agent-rigger-catalog".insteadOf \
-            "https://github.com/jrobic/jr-agent-rigger-catalog"
+            url."$mirror".insteadOf "https://github.com/jrobic/jr-agent-rigger-catalog.git"
+          git config --file "$cfg" --add \
+            url."$mirror".insteadOf "https://github.com/jrobic/jr-agent-rigger-catalog"
           echo "GIT_CONFIG_GLOBAL=$cfg" >> "$GITHUB_ENV"
-          # Prove the rewrite actually grants read BEFORE any tape runs — a cheaper,
-          # unambiguous red than a mid-replay "Repository not found".
+          # Prove the route BEFORE any tape runs — the tapes type the public URL,
+          # git must transparently resolve it to the mirror.
           if GIT_CONFIG_GLOBAL="$cfg" git ls-remote \
               https://github.com/jrobic/jr-agent-rigger-catalog.git HEAD >/dev/null; then
-            echo "rewrite auth: OK"
+            echo "local mirror route: OK"
           else
-            echo "::error::jr catalog auth failed — the PAT rewrite did not grant read access"
+            echo "::error::catalog mirror route failed — the insteadOf rewrite did not resolve to the local mirror"
             exit 1
           fi
 
