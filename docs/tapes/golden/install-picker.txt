@@ -1,0 +1,2496 @@
+>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+────────────────────────────────────────────────────────────────────────────────
+>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+────────────────────────────────────────────────────────────────────────────────
+>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+────────────────────────────────────────────────────────────────────────────────
+>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+────────────────────────────────────────────────────────────────────────────────
+>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+────────────────────────────────────────────────────────────────────────────────
+>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+────────────────────────────────────────────────────────────────────────────────
+>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+────────────────────────────────────────────────────────────────────────────────
+>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+────────────────────────────────────────────────────────────────────────────────
+$
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+────────────────────────────────────────────────────────────────────────────────
+$
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+────────────────────────────────────────────────────────────────────────────────
+$ rigger install
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+────────────────────────────────────────────────────────────────────────────────
+$ rigger install
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+────────────────────────────────────────────────────────────────────────────────
+$ rigger install
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+────────────────────────────────────────────────────────────────────────────────
+$ rigger install
+│
+◆  Select installation scope:
+│  ● user  (~/.claude/)
+│  ○ project  (cwd/.claude/)
+│  ↑/↓ to navigate • Enter: confirm
+└
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+────────────────────────────────────────────────────────────────────────────────
+$ rigger install
+│
+◆  Select installation scope:
+│  ● user  (~/.claude/)
+│  ○ project  (cwd/.claude/)
+│  ↑/↓ to navigate • Enter: confirm
+└
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+────────────────────────────────────────────────────────────────────────────────
+$ rigger install
+│
+◇  Select installation scope:
+│  user  (~/.claude/)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+────────────────────────────────────────────────────────────────────────────────
+$ rigger install
+│
+◇  Select installation scope:
+│  user  (~/.claude/)
+│
+◆  Select artifacts to install / update (Space on a group header toggles the whole group):
+│
+│  ◻ To install
+│  │ ◻ jr/hook:guard-command (→ v0.2.2)
+│  │ ◻ jr/hook:guard-secret (→ v0.2.2)
+│  │ ◻ jr/hook:guard-write-secret (→ v0.2.2)
+│  │ ◻ jr/hook:guard-prompt (→ v0.2.2)
+│  │ ◻ jr/guardrail:claude (→ v0.2.2)
+│  │ ◻ jr/context:claude (→ v0.2.2)
+│  │ ◻ jr/agent:pm (→ v0.2.2)
+│  │ ◻ jr/agent:tech-lead (→ v0.2.2)
+│  │ ◻ jr/agent:senior-fullstack (→ v0.2.2)
+│  │ ◻ jr/agent:db-postgres (→ v0.2.2)
+│  │ ◻ jr/agent:reviewer (→ v0.2.2)
+│  │ ◻ jr/agent:tdd-coach (→ v0.2.2)
+│  │ ◻ jr/agent:refactoring-specialist (→ v0.2.2)
+│  │ ◻ jr/agent:committer (→ v0.2.2)
+│  │ ◻ jr/agent:devops-engineer (→ v0.2.2)
+│  │ ◻ jr/skill:spec-workflow (→ v0.2.2)
+│  │ ◻ jr/skill:grill-with-docs (→ v0.2.2)
+│  │ ◻ jr/skill:diagnose (→ v0.2.2)
+│  │ ◻ jr/skill:testing (→ v0.2.2)
+│  │ ◻ jr/skill:solid-principles (→ v0.2.2)
+│  │ ◻ jr/skill:kiss-dry-yagni (→ v0.2.2)
+│  │ ◻ jr/skill:typescript-coding-standards (→ v0.2.2)
+│  │ ◻ jr/skill:security (→ v0.2.2)
+│  │ ◻ jr/skill:documentation (→ v0.2.2)
+│  │ ◻ jr/skill:git-workflow (→ v0.2.2)
+│  │ ◻ jr/skill:workflow-analysis (→ v0.2.2)
+│  │ ◻ jr/skill:react-architecture (→ v0.2.2)
+│  │ ◻ jr/skill:react-coding-standards (→ v0.2.2)
+│  │ ◻ jr/skill:react-security (→ v0.2.2)
+│  │ ◻ jr/skill:react-testing (→ v0.2.2)
+│  │ ◻ jr/skill:react-tooling (→ v0.2.2)
+│  │ ◻ jr/skill:react-quality-tools (→ v0.2.2)
+│  │ ◻ jr/skill:nestjs-standards (→ v0.2.2)
+│  │ ◼ jr/pack:secu (→ v0.2.2)
+│  │ ◻ jr/pack:spec-workflow (→ v0.2.2)
+│  │ ◻ jr/pack:standards (→ v0.2.2)
+│  │ ◻ jr/pack:agents-extra (→ v0.2.2)
+│  │ ◻ jr/pack:stack-react-nest (→ v0.2.2)
+│  └ ◼ jr/pack:baseline (→ v0.2.2)
+│  ↑/↓ to navigate • Space: select • Enter: confirm
+└
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+────────────────────────────────────────────────────────────────────────────────
+$ rigger install
+│
+◇  Select installation scope:
+│  user  (~/.claude/)
+│
+◆  Select artifacts to install / update (Space on a group header toggles the whole group):
+│
+│  ◻ To install
+│  │ ◻ jr/hook:guard-command (→ v0.2.2)
+│  │ ◻ jr/hook:guard-secret (→ v0.2.2)
+│  │ ◻ jr/hook:guard-write-secret (→ v0.2.2)
+│  │ ◻ jr/hook:guard-prompt (→ v0.2.2)
+│  │ ◻ jr/guardrail:claude (→ v0.2.2)
+│  │ ◻ jr/context:claude (→ v0.2.2)
+│  │ ◻ jr/agent:pm (→ v0.2.2)
+│  │ ◻ jr/agent:tech-lead (→ v0.2.2)
+│  │ ◻ jr/agent:senior-fullstack (→ v0.2.2)
+│  │ ◻ jr/agent:db-postgres (→ v0.2.2)
+│  │ ◻ jr/agent:reviewer (→ v0.2.2)
+│  │ ◻ jr/agent:tdd-coach (→ v0.2.2)
+│  │ ◻ jr/agent:refactoring-specialist (→ v0.2.2)
+│  │ ◻ jr/agent:committer (→ v0.2.2)
+│  │ ◻ jr/agent:devops-engineer (→ v0.2.2)
+│  │ ◻ jr/skill:spec-workflow (→ v0.2.2)
+│  │ ◻ jr/skill:grill-with-docs (→ v0.2.2)
+│  │ ◻ jr/skill:diagnose (→ v0.2.2)
+│  │ ◻ jr/skill:testing (→ v0.2.2)
+│  │ ◻ jr/skill:solid-principles (→ v0.2.2)
+│  │ ◻ jr/skill:kiss-dry-yagni (→ v0.2.2)
+│  │ ◻ jr/skill:typescript-coding-standards (→ v0.2.2)
+│  │ ◻ jr/skill:security (→ v0.2.2)
+│  │ ◻ jr/skill:documentation (→ v0.2.2)
+│  │ ◻ jr/skill:git-workflow (→ v0.2.2)
+│  │ ◻ jr/skill:workflow-analysis (→ v0.2.2)
+│  │ ◻ jr/skill:react-architecture (→ v0.2.2)
+│  │ ◻ jr/skill:react-coding-standards (→ v0.2.2)
+│  │ ◻ jr/skill:react-security (→ v0.2.2)
+│  │ ◻ jr/skill:react-testing (→ v0.2.2)
+│  │ ◻ jr/skill:react-tooling (→ v0.2.2)
+│  │ ◻ jr/skill:react-quality-tools (→ v0.2.2)
+│  │ ◻ jr/skill:nestjs-standards (→ v0.2.2)
+│  │ ◼ jr/pack:secu (→ v0.2.2)
+│  │ ◻ jr/pack:spec-workflow (→ v0.2.2)
+│  │ ◻ jr/pack:standards (→ v0.2.2)
+│  │ ◻ jr/pack:agents-extra (→ v0.2.2)
+│  │ ◻ jr/pack:stack-react-nest (→ v0.2.2)
+│  └ ◼ jr/pack:baseline (→ v0.2.2)
+│  ↑/↓ to navigate • Space: select • Enter: confirm
+└
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+────────────────────────────────────────────────────────────────────────────────
+$ rigger install
+│
+◇  Select installation scope:
+│  user  (~/.claude/)
+│
+◆  Select artifacts to install / update (Space on a group header toggles the whole group):
+│
+│  ◻ To install
+│  │ ◻ jr/hook:guard-command (→ v0.2.2)
+│  │ ◻ jr/hook:guard-secret (→ v0.2.2)
+│  │ ◻ jr/hook:guard-write-secret (→ v0.2.2)
+│  │ ◻ jr/hook:guard-prompt (→ v0.2.2)
+│  │ ◻ jr/guardrail:claude (→ v0.2.2)
+│  │ ◻ jr/context:claude (→ v0.2.2)
+│  │ ◻ jr/agent:pm (→ v0.2.2)
+│  │ ◻ jr/agent:tech-lead (→ v0.2.2)
+│  │ ◻ jr/agent:senior-fullstack (→ v0.2.2)
+│  │ ◻ jr/agent:db-postgres (→ v0.2.2)
+│  │ ◻ jr/agent:reviewer (→ v0.2.2)
+│  │ ◻ jr/agent:tdd-coach (→ v0.2.2)
+│  │ ◻ jr/agent:refactoring-specialist (→ v0.2.2)
+│  │ ◻ jr/agent:committer (→ v0.2.2)
+│  │ ◻ jr/agent:devops-engineer (→ v0.2.2)
+│  │ ◻ jr/skill:spec-workflow (→ v0.2.2)
+│  │ ◻ jr/skill:grill-with-docs (→ v0.2.2)
+│  │ ◻ jr/skill:diagnose (→ v0.2.2)
+│  │ ◻ jr/skill:testing (→ v0.2.2)
+│  │ ◻ jr/skill:solid-principles (→ v0.2.2)
+│  │ ◻ jr/skill:kiss-dry-yagni (→ v0.2.2)
+│  │ ◻ jr/skill:typescript-coding-standards (→ v0.2.2)
+│  │ ◻ jr/skill:security (→ v0.2.2)
+│  │ ◻ jr/skill:documentation (→ v0.2.2)
+│  │ ◻ jr/skill:git-workflow (→ v0.2.2)
+│  │ ◻ jr/skill:workflow-analysis (→ v0.2.2)
+│  │ ◻ jr/skill:react-architecture (→ v0.2.2)
+│  │ ◻ jr/skill:react-coding-standards (→ v0.2.2)
+│  │ ◻ jr/skill:react-security (→ v0.2.2)
+│  │ ◻ jr/skill:react-testing (→ v0.2.2)
+│  │ ◻ jr/skill:react-tooling (→ v0.2.2)
+│  │ ◻ jr/skill:react-quality-tools (→ v0.2.2)
+│  │ ◻ jr/skill:nestjs-standards (→ v0.2.2)
+│  │ ◼ jr/pack:secu (→ v0.2.2)
+│  │ ◻ jr/pack:spec-workflow (→ v0.2.2)
+│  │ ◻ jr/pack:standards (→ v0.2.2)
+│  │ ◻ jr/pack:agents-extra (→ v0.2.2)
+│  │ ◻ jr/pack:stack-react-nest (→ v0.2.2)
+│  └ ◼ jr/pack:baseline (→ v0.2.2)
+│  ↑/↓ to navigate • Space: select • Enter: confirm
+└
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+────────────────────────────────────────────────────────────────────────────────
+$ rigger install
+│
+◇  Select installation scope:
+│  user  (~/.claude/)
+│
+◆  Select artifacts to install / update (Space on a group header toggles the whole group):
+│
+│  ◻ To install
+│  │ ◻ jr/hook:guard-command (→ v0.2.2)
+│  │ ◻ jr/hook:guard-secret (→ v0.2.2)
+│  │ ◻ jr/hook:guard-write-secret (→ v0.2.2)
+│  │ ◻ jr/hook:guard-prompt (→ v0.2.2)
+│  │ ◻ jr/guardrail:claude (→ v0.2.2)
+│  │ ◻ jr/context:claude (→ v0.2.2)
+│  │ ◻ jr/agent:pm (→ v0.2.2)
+│  │ ◻ jr/agent:tech-lead (→ v0.2.2)
+│  │ ◻ jr/agent:senior-fullstack (→ v0.2.2)
+│  │ ◻ jr/agent:db-postgres (→ v0.2.2)
+│  │ ◻ jr/agent:reviewer (→ v0.2.2)
+│  │ ◻ jr/agent:tdd-coach (→ v0.2.2)
+│  │ ◻ jr/agent:refactoring-specialist (→ v0.2.2)
+│  │ ◻ jr/agent:committer (→ v0.2.2)
+│  │ ◻ jr/agent:devops-engineer (→ v0.2.2)
+│  │ ◻ jr/skill:spec-workflow (→ v0.2.2)
+│  │ ◻ jr/skill:grill-with-docs (→ v0.2.2)
+│  │ ◻ jr/skill:diagnose (→ v0.2.2)
+│  │ ◻ jr/skill:testing (→ v0.2.2)
+│  │ ◻ jr/skill:solid-principles (→ v0.2.2)
+│  │ ◻ jr/skill:kiss-dry-yagni (→ v0.2.2)
+│  │ ◻ jr/skill:typescript-coding-standards (→ v0.2.2)
+│  │ ◻ jr/skill:security (→ v0.2.2)
+│  │ ◻ jr/skill:documentation (→ v0.2.2)
+│  │ ◻ jr/skill:git-workflow (→ v0.2.2)
+│  │ ◻ jr/skill:workflow-analysis (→ v0.2.2)
+│  │ ◻ jr/skill:react-architecture (→ v0.2.2)
+│  │ ◻ jr/skill:react-coding-standards (→ v0.2.2)
+│  │ ◻ jr/skill:react-security (→ v0.2.2)
+│  │ ◻ jr/skill:react-testing (→ v0.2.2)
+│  │ ◻ jr/skill:react-tooling (→ v0.2.2)
+│  │ ◻ jr/skill:react-quality-tools (→ v0.2.2)
+│  │ ◻ jr/skill:nestjs-standards (→ v0.2.2)
+│  │ ◼ jr/pack:secu (→ v0.2.2)
+│  │ ◻ jr/pack:spec-workflow (→ v0.2.2)
+│  │ ◻ jr/pack:standards (→ v0.2.2)
+│  │ ◻ jr/pack:agents-extra (→ v0.2.2)
+│  │ ◻ jr/pack:stack-react-nest (→ v0.2.2)
+│  └ ◼ jr/pack:baseline (→ v0.2.2)
+│  ↑/↓ to navigate • Space: select • Enter: confirm
+└
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+────────────────────────────────────────────────────────────────────────────────
+$ rigger install
+│
+◇  Select installation scope:
+│  user  (~/.claude/)
+│
+◆  Select artifacts to install / update (Space on a group header toggles the whole group):
+│
+│  ◻ To install
+│  │ ◻ jr/hook:guard-command (→ v0.2.2)
+│  │ ◻ jr/hook:guard-secret (→ v0.2.2)
+│  │ ◻ jr/hook:guard-write-secret (→ v0.2.2)
+│  │ ◻ jr/hook:guard-prompt (→ v0.2.2)
+│  │ ◻ jr/guardrail:claude (→ v0.2.2)
+│  │ ◻ jr/context:claude (→ v0.2.2)
+│  │ ◻ jr/agent:pm (→ v0.2.2)
+│  │ ◻ jr/agent:tech-lead (→ v0.2.2)
+│  │ ◻ jr/agent:senior-fullstack (→ v0.2.2)
+│  │ ◻ jr/agent:db-postgres (→ v0.2.2)
+│  │ ◻ jr/agent:reviewer (→ v0.2.2)
+│  │ ◼ jr/agent:tdd-coach (→ v0.2.2)
+│  │ ◻ jr/agent:refactoring-specialist (→ v0.2.2)
+│  │ ◻ jr/agent:committer (→ v0.2.2)
+│  │ ◻ jr/agent:devops-engineer (→ v0.2.2)
+│  │ ◻ jr/skill:spec-workflow (→ v0.2.2)
+│  │ ◻ jr/skill:grill-with-docs (→ v0.2.2)
+│  │ ◻ jr/skill:diagnose (→ v0.2.2)
+│  │ ◻ jr/skill:testing (→ v0.2.2)
+│  │ ◻ jr/skill:solid-principles (→ v0.2.2)
+│  │ ◻ jr/skill:kiss-dry-yagni (→ v0.2.2)
+│  │ ◻ jr/skill:typescript-coding-standards (→ v0.2.2)
+│  │ ◻ jr/skill:security (→ v0.2.2)
+│  │ ◻ jr/skill:documentation (→ v0.2.2)
+│  │ ◻ jr/skill:git-workflow (→ v0.2.2)
+│  │ ◻ jr/skill:workflow-analysis (→ v0.2.2)
+│  │ ◻ jr/skill:react-architecture (→ v0.2.2)
+│  │ ◻ jr/skill:react-coding-standards (→ v0.2.2)
+│  │ ◻ jr/skill:react-security (→ v0.2.2)
+│  │ ◻ jr/skill:react-testing (→ v0.2.2)
+│  │ ◻ jr/skill:react-tooling (→ v0.2.2)
+│  │ ◻ jr/skill:react-quality-tools (→ v0.2.2)
+│  │ ◻ jr/skill:nestjs-standards (→ v0.2.2)
+│  │ ◼ jr/pack:secu (→ v0.2.2)
+│  │ ◻ jr/pack:spec-workflow (→ v0.2.2)
+│  │ ◻ jr/pack:standards (→ v0.2.2)
+│  │ ◻ jr/pack:agents-extra (→ v0.2.2)
+│  │ ◻ jr/pack:stack-react-nest (→ v0.2.2)
+│  └ ◼ jr/pack:baseline (→ v0.2.2)
+│  ↑/↓ to navigate • Space: select • Enter: confirm
+└
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+────────────────────────────────────────────────────────────────────────────────
+$ rigger install
+│
+◇  Select installation scope:
+│  user  (~/.claude/)
+│
+◆  Select artifacts to install / update (Space on a group header toggles the whole group):
+│
+│  ◻ To install
+│  │ ◻ jr/hook:guard-command (→ v0.2.2)
+│  │ ◻ jr/hook:guard-secret (→ v0.2.2)
+│  │ ◻ jr/hook:guard-write-secret (→ v0.2.2)
+│  │ ◻ jr/hook:guard-prompt (→ v0.2.2)
+│  │ ◻ jr/guardrail:claude (→ v0.2.2)
+│  │ ◻ jr/context:claude (→ v0.2.2)
+│  │ ◻ jr/agent:pm (→ v0.2.2)
+│  │ ◻ jr/agent:tech-lead (→ v0.2.2)
+│  │ ◻ jr/agent:senior-fullstack (→ v0.2.2)
+│  │ ◻ jr/agent:db-postgres (→ v0.2.2)
+│  │ ◻ jr/agent:reviewer (→ v0.2.2)
+│  │ ◼ jr/agent:tdd-coach (→ v0.2.2)
+│  │ ◻ jr/agent:refactoring-specialist (→ v0.2.2)
+│  │ ◻ jr/agent:committer (→ v0.2.2)
+│  │ ◻ jr/agent:devops-engineer (→ v0.2.2)
+│  │ ◻ jr/skill:spec-workflow (→ v0.2.2)
+│  │ ◻ jr/skill:grill-with-docs (→ v0.2.2)
+│  │ ◻ jr/skill:diagnose (→ v0.2.2)
+│  │ ◻ jr/skill:testing (→ v0.2.2)
+│  │ ◻ jr/skill:solid-principles (→ v0.2.2)
+│  │ ◻ jr/skill:kiss-dry-yagni (→ v0.2.2)
+│  │ ◻ jr/skill:typescript-coding-standards (→ v0.2.2)
+│  │ ◻ jr/skill:security (→ v0.2.2)
+│  │ ◻ jr/skill:documentation (→ v0.2.2)
+│  │ ◻ jr/skill:git-workflow (→ v0.2.2)
+│  │ ◻ jr/skill:workflow-analysis (→ v0.2.2)
+│  │ ◻ jr/skill:react-architecture (→ v0.2.2)
+│  │ ◻ jr/skill:react-coding-standards (→ v0.2.2)
+│  │ ◻ jr/skill:react-security (→ v0.2.2)
+│  │ ◻ jr/skill:react-testing (→ v0.2.2)
+│  │ ◻ jr/skill:react-tooling (→ v0.2.2)
+│  │ ◻ jr/skill:react-quality-tools (→ v0.2.2)
+│  │ ◻ jr/skill:nestjs-standards (→ v0.2.2)
+│  │ ◼ jr/pack:secu (→ v0.2.2)
+│  │ ◻ jr/pack:spec-workflow (→ v0.2.2)
+│  │ ◻ jr/pack:standards (→ v0.2.2)
+│  │ ◻ jr/pack:agents-extra (→ v0.2.2)
+│  │ ◻ jr/pack:stack-react-nest (→ v0.2.2)
+│  └ ◼ jr/pack:baseline (→ v0.2.2)
+│  ↑/↓ to navigate • Space: select • Enter: confirm
+└
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+────────────────────────────────────────────────────────────────────────────────
+$ rigger install
+│
+◇  Select installation scope:
+│  user  (~/.claude/)
+│
+◆  Select artifacts to install / update (Space on a group header toggles the whole group):
+│
+│  ◻ To install
+│  │ ◻ jr/hook:guard-command (→ v0.2.2)
+│  │ ◻ jr/hook:guard-secret (→ v0.2.2)
+│  │ ◻ jr/hook:guard-write-secret (→ v0.2.2)
+│  │ ◻ jr/hook:guard-prompt (→ v0.2.2)
+│  │ ◻ jr/guardrail:claude (→ v0.2.2)
+│  │ ◻ jr/context:claude (→ v0.2.2)
+│  │ ◻ jr/agent:pm (→ v0.2.2)
+│  │ ◻ jr/agent:tech-lead (→ v0.2.2)
+│  │ ◻ jr/agent:senior-fullstack (→ v0.2.2)
+│  │ ◻ jr/agent:db-postgres (→ v0.2.2)
+│  │ ◻ jr/agent:reviewer (→ v0.2.2)
+│  │ ◼ jr/agent:tdd-coach (→ v0.2.2)
+│  │ ◻ jr/agent:refactoring-specialist (→ v0.2.2)
+│  │ ◻ jr/agent:committer (→ v0.2.2)
+│  │ ◻ jr/agent:devops-engineer (→ v0.2.2)
+│  │ ◻ jr/skill:spec-workflow (→ v0.2.2)
+│  │ ◻ jr/skill:grill-with-docs (→ v0.2.2)
+│  │ ◻ jr/skill:diagnose (→ v0.2.2)
+│  │ ◻ jr/skill:testing (→ v0.2.2)
+│  │ ◻ jr/skill:solid-principles (→ v0.2.2)
+│  │ ◻ jr/skill:kiss-dry-yagni (→ v0.2.2)
+│  │ ◻ jr/skill:typescript-coding-standards (→ v0.2.2)
+│  │ ◻ jr/skill:security (→ v0.2.2)
+│  │ ◻ jr/skill:documentation (→ v0.2.2)
+│  │ ◻ jr/skill:git-workflow (→ v0.2.2)
+│  │ ◻ jr/skill:workflow-analysis (→ v0.2.2)
+│  │ ◻ jr/skill:react-architecture (→ v0.2.2)
+│  │ ◻ jr/skill:react-coding-standards (→ v0.2.2)
+│  │ ◻ jr/skill:react-security (→ v0.2.2)
+│  │ ◻ jr/skill:react-testing (→ v0.2.2)
+│  │ ◻ jr/skill:react-tooling (→ v0.2.2)
+│  │ ◻ jr/skill:react-quality-tools (→ v0.2.2)
+│  │ ◻ jr/skill:nestjs-standards (→ v0.2.2)
+│  │ ◼ jr/pack:secu (→ v0.2.2)
+│  │ ◻ jr/pack:spec-workflow (→ v0.2.2)
+│  │ ◻ jr/pack:standards (→ v0.2.2)
+│  │ ◻ jr/pack:agents-extra (→ v0.2.2)
+│  │ ◻ jr/pack:stack-react-nest (→ v0.2.2)
+│  └ ◼ jr/pack:baseline (→ v0.2.2)
+│  ↑/↓ to navigate • Space: select • Enter: confirm
+└
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+────────────────────────────────────────────────────────────────────────────────
+$ rigger install
+│
+◇  Select installation scope:
+│  user  (~/.claude/)
+│
+◆  Select artifacts to install / update (Space on a group header toggles the whole group):
+│
+│  ◻ To install
+│  │ ◻ jr/hook:guard-command (→ v0.2.2)
+│  │ ◻ jr/hook:guard-secret (→ v0.2.2)
+│  │ ◻ jr/hook:guard-write-secret (→ v0.2.2)
+│  │ ◻ jr/hook:guard-prompt (→ v0.2.2)
+│  │ ◻ jr/guardrail:claude (→ v0.2.2)
+│  │ ◻ jr/context:claude (→ v0.2.2)
+│  │ ◻ jr/agent:pm (→ v0.2.2)
+│  │ ◻ jr/agent:tech-lead (→ v0.2.2)
+│  │ ◻ jr/agent:senior-fullstack (→ v0.2.2)
+│  │ ◻ jr/agent:db-postgres (→ v0.2.2)
+│  │ ◻ jr/agent:reviewer (→ v0.2.2)
+│  │ ◼ jr/agent:tdd-coach (→ v0.2.2)
+│  │ ◻ jr/agent:refactoring-specialist (→ v0.2.2)
+│  │ ◻ jr/agent:committer (→ v0.2.2)
+│  │ ◻ jr/agent:devops-engineer (→ v0.2.2)
+│  │ ◻ jr/skill:spec-workflow (→ v0.2.2)
+│  │ ◻ jr/skill:grill-with-docs (→ v0.2.2)
+│  │ ◻ jr/skill:diagnose (→ v0.2.2)
+│  │ ◻ jr/skill:testing (→ v0.2.2)
+│  │ ◻ jr/skill:solid-principles (→ v0.2.2)
+│  │ ◻ jr/skill:kiss-dry-yagni (→ v0.2.2)
+│  │ ◻ jr/skill:typescript-coding-standards (→ v0.2.2)
+│  │ ◻ jr/skill:security (→ v0.2.2)
+│  │ ◻ jr/skill:documentation (→ v0.2.2)
+│  │ ◻ jr/skill:git-workflow (→ v0.2.2)
+│  │ ◻ jr/skill:workflow-analysis (→ v0.2.2)
+│  │ ◻ jr/skill:react-architecture (→ v0.2.2)
+│  │ ◻ jr/skill:react-coding-standards (→ v0.2.2)
+│  │ ◻ jr/skill:react-security (→ v0.2.2)
+│  │ ◻ jr/skill:react-testing (→ v0.2.2)
+│  │ ◻ jr/skill:react-tooling (→ v0.2.2)
+│  │ ◻ jr/skill:react-quality-tools (→ v0.2.2)
+│  │ ◻ jr/skill:nestjs-standards (→ v0.2.2)
+│  │ ◼ jr/pack:secu (→ v0.2.2)
+│  │ ◻ jr/pack:spec-workflow (→ v0.2.2)
+│  │ ◻ jr/pack:standards (→ v0.2.2)
+│  │ ◻ jr/pack:agents-extra (→ v0.2.2)
+│  │ ◻ jr/pack:stack-react-nest (→ v0.2.2)
+│  └ ◼ jr/pack:baseline (→ v0.2.2)
+│  ↑/↓ to navigate • Space: select • Enter: confirm
+└
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+────────────────────────────────────────────────────────────────────────────────
+$ rigger install
+│
+◇  Select installation scope:
+│  user  (~/.claude/)
+│
+◆  Select artifacts to install / update (Space on a group header toggles the whole group):
+│
+│  ◻ To install
+│  │ ◻ jr/hook:guard-command (→ v0.2.2)
+│  │ ◻ jr/hook:guard-secret (→ v0.2.2)
+│  │ ◻ jr/hook:guard-write-secret (→ v0.2.2)
+│  │ ◻ jr/hook:guard-prompt (→ v0.2.2)
+│  │ ◻ jr/guardrail:claude (→ v0.2.2)
+│  │ ◻ jr/context:claude (→ v0.2.2)
+│  │ ◻ jr/agent:pm (→ v0.2.2)
+│  │ ◻ jr/agent:tech-lead (→ v0.2.2)
+│  │ ◻ jr/agent:senior-fullstack (→ v0.2.2)
+│  │ ◻ jr/agent:db-postgres (→ v0.2.2)
+│  │ ◻ jr/agent:reviewer (→ v0.2.2)
+│  │ ◼ jr/agent:tdd-coach (→ v0.2.2)
+│  │ ◻ jr/agent:refactoring-specialist (→ v0.2.2)
+│  │ ◻ jr/agent:committer (→ v0.2.2)
+│  │ ◻ jr/agent:devops-engineer (→ v0.2.2)
+│  │ ◻ jr/skill:spec-workflow (→ v0.2.2)
+│  │ ◻ jr/skill:grill-with-docs (→ v0.2.2)
+│  │ ◻ jr/skill:diagnose (→ v0.2.2)
+│  │ ◻ jr/skill:testing (→ v0.2.2)
+│  │ ◻ jr/skill:solid-principles (→ v0.2.2)
+│  │ ◻ jr/skill:kiss-dry-yagni (→ v0.2.2)
+│  │ ◻ jr/skill:typescript-coding-standards (→ v0.2.2)
+│  │ ◻ jr/skill:security (→ v0.2.2)
+│  │ ◻ jr/skill:documentation (→ v0.2.2)
+│  │ ◻ jr/skill:git-workflow (→ v0.2.2)
+│  │ ◻ jr/skill:workflow-analysis (→ v0.2.2)
+│  │ ◻ jr/skill:react-architecture (→ v0.2.2)
+│  │ ◻ jr/skill:react-coding-standards (→ v0.2.2)
+│  │ ◻ jr/skill:react-security (→ v0.2.2)
+│  │ ◻ jr/skill:react-testing (→ v0.2.2)
+│  │ ◻ jr/skill:react-tooling (→ v0.2.2)
+│  │ ◻ jr/skill:react-quality-tools (→ v0.2.2)
+│  │ ◻ jr/skill:nestjs-standards (→ v0.2.2)
+│  │ ◻ jr/pack:secu (→ v0.2.2)
+│  │ ◻ jr/pack:spec-workflow (→ v0.2.2)
+│  │ ◻ jr/pack:standards (→ v0.2.2)
+│  │ ◻ jr/pack:agents-extra (→ v0.2.2)
+│  │ ◻ jr/pack:stack-react-nest (→ v0.2.2)
+│  └ ◼ jr/pack:baseline (→ v0.2.2)
+│  ↑/↓ to navigate • Space: select • Enter: confirm
+└
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+────────────────────────────────────────────────────────────────────────────────
+$ rigger install
+│
+◇  Select installation scope:
+│  user  (~/.claude/)
+│
+◆  Select artifacts to install / update (Space on a group header toggles the whole group):
+│
+│  ◻ To install
+│  │ ◻ jr/hook:guard-command (→ v0.2.2)
+│  │ ◻ jr/hook:guard-secret (→ v0.2.2)
+│  │ ◻ jr/hook:guard-write-secret (→ v0.2.2)
+│  │ ◻ jr/hook:guard-prompt (→ v0.2.2)
+│  │ ◻ jr/guardrail:claude (→ v0.2.2)
+│  │ ◻ jr/context:claude (→ v0.2.2)
+│  │ ◻ jr/agent:pm (→ v0.2.2)
+│  │ ◻ jr/agent:tech-lead (→ v0.2.2)
+│  │ ◻ jr/agent:senior-fullstack (→ v0.2.2)
+│  │ ◻ jr/agent:db-postgres (→ v0.2.2)
+│  │ ◻ jr/agent:reviewer (→ v0.2.2)
+│  │ ◼ jr/agent:tdd-coach (→ v0.2.2)
+│  │ ◻ jr/agent:refactoring-specialist (→ v0.2.2)
+│  │ ◻ jr/agent:committer (→ v0.2.2)
+│  │ ◻ jr/agent:devops-engineer (→ v0.2.2)
+│  │ ◻ jr/skill:spec-workflow (→ v0.2.2)
+│  │ ◻ jr/skill:grill-with-docs (→ v0.2.2)
+│  │ ◻ jr/skill:diagnose (→ v0.2.2)
+│  │ ◻ jr/skill:testing (→ v0.2.2)
+│  │ ◻ jr/skill:solid-principles (→ v0.2.2)
+│  │ ◻ jr/skill:kiss-dry-yagni (→ v0.2.2)
+│  │ ◻ jr/skill:typescript-coding-standards (→ v0.2.2)
+│  │ ◻ jr/skill:security (→ v0.2.2)
+│  │ ◻ jr/skill:documentation (→ v0.2.2)
+│  │ ◻ jr/skill:git-workflow (→ v0.2.2)
+│  │ ◻ jr/skill:workflow-analysis (→ v0.2.2)
+│  │ ◻ jr/skill:react-architecture (→ v0.2.2)
+│  │ ◻ jr/skill:react-coding-standards (→ v0.2.2)
+│  │ ◻ jr/skill:react-security (→ v0.2.2)
+│  │ ◻ jr/skill:react-testing (→ v0.2.2)
+│  │ ◻ jr/skill:react-tooling (→ v0.2.2)
+│  │ ◻ jr/skill:react-quality-tools (→ v0.2.2)
+│  │ ◻ jr/skill:nestjs-standards (→ v0.2.2)
+│  │ ◻ jr/pack:secu (→ v0.2.2)
+│  │ ◻ jr/pack:spec-workflow (→ v0.2.2)
+│  │ ◻ jr/pack:standards (→ v0.2.2)
+│  │ ◻ jr/pack:agents-extra (→ v0.2.2)
+│  │ ◻ jr/pack:stack-react-nest (→ v0.2.2)
+│  └ ◼ jr/pack:baseline (→ v0.2.2)
+│  ↑/↓ to navigate • Space: select • Enter: confirm
+└
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+────────────────────────────────────────────────────────────────────────────────
+$ rigger install
+│
+◇  Select installation scope:
+│  user  (~/.claude/)
+│
+◆  Select artifacts to install / update (Space on a group header toggles the whole group):
+│
+│  ◻ To install
+│  │ ◻ jr/hook:guard-command (→ v0.2.2)
+│  │ ◻ jr/hook:guard-secret (→ v0.2.2)
+│  │ ◻ jr/hook:guard-write-secret (→ v0.2.2)
+│  │ ◻ jr/hook:guard-prompt (→ v0.2.2)
+│  │ ◻ jr/guardrail:claude (→ v0.2.2)
+│  │ ◻ jr/context:claude (→ v0.2.2)
+│  │ ◻ jr/agent:pm (→ v0.2.2)
+│  │ ◻ jr/agent:tech-lead (→ v0.2.2)
+│  │ ◻ jr/agent:senior-fullstack (→ v0.2.2)
+│  │ ◻ jr/agent:db-postgres (→ v0.2.2)
+│  │ ◻ jr/agent:reviewer (→ v0.2.2)
+│  │ ◼ jr/agent:tdd-coach (→ v0.2.2)
+│  │ ◻ jr/agent:refactoring-specialist (→ v0.2.2)
+│  │ ◻ jr/agent:committer (→ v0.2.2)
+│  │ ◻ jr/agent:devops-engineer (→ v0.2.2)
+│  │ ◻ jr/skill:spec-workflow (→ v0.2.2)
+│  │ ◻ jr/skill:grill-with-docs (→ v0.2.2)
+│  │ ◻ jr/skill:diagnose (→ v0.2.2)
+│  │ ◻ jr/skill:testing (→ v0.2.2)
+│  │ ◻ jr/skill:solid-principles (→ v0.2.2)
+│  │ ◻ jr/skill:kiss-dry-yagni (→ v0.2.2)
+│  │ ◻ jr/skill:typescript-coding-standards (→ v0.2.2)
+│  │ ◻ jr/skill:security (→ v0.2.2)
+│  │ ◻ jr/skill:documentation (→ v0.2.2)
+│  │ ◻ jr/skill:git-workflow (→ v0.2.2)
+│  │ ◻ jr/skill:workflow-analysis (→ v0.2.2)
+│  │ ◻ jr/skill:react-architecture (→ v0.2.2)
+│  │ ◻ jr/skill:react-coding-standards (→ v0.2.2)
+│  │ ◻ jr/skill:react-security (→ v0.2.2)
+│  │ ◻ jr/skill:react-testing (→ v0.2.2)
+│  │ ◻ jr/skill:react-tooling (→ v0.2.2)
+│  │ ◻ jr/skill:react-quality-tools (→ v0.2.2)
+│  │ ◻ jr/skill:nestjs-standards (→ v0.2.2)
+│  │ ◻ jr/pack:secu (→ v0.2.2)
+│  │ ◻ jr/pack:spec-workflow (→ v0.2.2)
+│  │ ◻ jr/pack:standards (→ v0.2.2)
+│  │ ◻ jr/pack:agents-extra (→ v0.2.2)
+│  │ ◻ jr/pack:stack-react-nest (→ v0.2.2)
+│  └ ◼ jr/pack:baseline (→ v0.2.2)
+│  ↑/↓ to navigate • Space: select • Enter: confirm
+└
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+────────────────────────────────────────────────────────────────────────────────
+$ rigger install
+│
+◇  Select installation scope:
+│  user  (~/.claude/)
+│
+◆  Select artifacts to install / update (Space on a group header toggles the whole group):
+│
+│  ◻ To install
+│  │ ◻ jr/hook:guard-command (→ v0.2.2)
+│  │ ◻ jr/hook:guard-secret (→ v0.2.2)
+│  │ ◻ jr/hook:guard-write-secret (→ v0.2.2)
+│  │ ◻ jr/hook:guard-prompt (→ v0.2.2)
+│  │ ◻ jr/guardrail:claude (→ v0.2.2)
+│  │ ◻ jr/context:claude (→ v0.2.2)
+│  │ ◻ jr/agent:pm (→ v0.2.2)
+│  │ ◻ jr/agent:tech-lead (→ v0.2.2)
+│  │ ◻ jr/agent:senior-fullstack (→ v0.2.2)
+│  │ ◻ jr/agent:db-postgres (→ v0.2.2)
+│  │ ◻ jr/agent:reviewer (→ v0.2.2)
+│  │ ◼ jr/agent:tdd-coach (→ v0.2.2)
+│  │ ◻ jr/agent:refactoring-specialist (→ v0.2.2)
+│  │ ◻ jr/agent:committer (→ v0.2.2)
+│  │ ◻ jr/agent:devops-engineer (→ v0.2.2)
+│  │ ◻ jr/skill:spec-workflow (→ v0.2.2)
+│  │ ◻ jr/skill:grill-with-docs (→ v0.2.2)
+│  │ ◻ jr/skill:diagnose (→ v0.2.2)
+│  │ ◻ jr/skill:testing (→ v0.2.2)
+│  │ ◻ jr/skill:solid-principles (→ v0.2.2)
+│  │ ◻ jr/skill:kiss-dry-yagni (→ v0.2.2)
+│  │ ◻ jr/skill:typescript-coding-standards (→ v0.2.2)
+│  │ ◻ jr/skill:security (→ v0.2.2)
+│  │ ◻ jr/skill:documentation (→ v0.2.2)
+│  │ ◻ jr/skill:git-workflow (→ v0.2.2)
+│  │ ◻ jr/skill:workflow-analysis (→ v0.2.2)
+│  │ ◻ jr/skill:react-architecture (→ v0.2.2)
+│  │ ◻ jr/skill:react-coding-standards (→ v0.2.2)
+│  │ ◻ jr/skill:react-security (→ v0.2.2)
+│  │ ◻ jr/skill:react-testing (→ v0.2.2)
+│  │ ◻ jr/skill:react-tooling (→ v0.2.2)
+│  │ ◻ jr/skill:react-quality-tools (→ v0.2.2)
+│  │ ◻ jr/skill:nestjs-standards (→ v0.2.2)
+│  │ ◻ jr/pack:secu (→ v0.2.2)
+│  │ ◻ jr/pack:spec-workflow (→ v0.2.2)
+│  │ ◻ jr/pack:standards (→ v0.2.2)
+│  │ ◻ jr/pack:agents-extra (→ v0.2.2)
+│  │ ◻ jr/pack:stack-react-nest (→ v0.2.2)
+│  └ ◼ jr/pack:baseline (→ v0.2.2)
+│  ↑/↓ to navigate • Space: select • Enter: confirm
+└
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+────────────────────────────────────────────────────────────────────────────────
+$ rigger install
+│
+◇  Select installation scope:
+│  user  (~/.claude/)
+│
+◆  Select artifacts to install / update (Space on a group header toggles the whole group):
+│
+│  ◻ To install
+│  │ ◻ jr/hook:guard-command (→ v0.2.2)
+│  │ ◻ jr/hook:guard-secret (→ v0.2.2)
+│  │ ◻ jr/hook:guard-write-secret (→ v0.2.2)
+│  │ ◻ jr/hook:guard-prompt (→ v0.2.2)
+│  │ ◻ jr/guardrail:claude (→ v0.2.2)
+│  │ ◻ jr/context:claude (→ v0.2.2)
+│  │ ◻ jr/agent:pm (→ v0.2.2)
+│  │ ◻ jr/agent:tech-lead (→ v0.2.2)
+│  │ ◻ jr/agent:senior-fullstack (→ v0.2.2)
+│  │ ◻ jr/agent:db-postgres (→ v0.2.2)
+│  │ ◻ jr/agent:reviewer (→ v0.2.2)
+│  │ ◼ jr/agent:tdd-coach (→ v0.2.2)
+│  │ ◻ jr/agent:refactoring-specialist (→ v0.2.2)
+│  │ ◻ jr/agent:committer (→ v0.2.2)
+│  │ ◻ jr/agent:devops-engineer (→ v0.2.2)
+│  │ ◻ jr/skill:spec-workflow (→ v0.2.2)
+│  │ ◻ jr/skill:grill-with-docs (→ v0.2.2)
+│  │ ◻ jr/skill:diagnose (→ v0.2.2)
+│  │ ◻ jr/skill:testing (→ v0.2.2)
+│  │ ◻ jr/skill:solid-principles (→ v0.2.2)
+│  │ ◻ jr/skill:kiss-dry-yagni (→ v0.2.2)
+│  │ ◻ jr/skill:typescript-coding-standards (→ v0.2.2)
+│  │ ◻ jr/skill:security (→ v0.2.2)
+│  │ ◻ jr/skill:documentation (→ v0.2.2)
+│  │ ◻ jr/skill:git-workflow (→ v0.2.2)
+│  │ ◻ jr/skill:workflow-analysis (→ v0.2.2)
+│  │ ◻ jr/skill:react-architecture (→ v0.2.2)
+│  │ ◻ jr/skill:react-coding-standards (→ v0.2.2)
+│  │ ◻ jr/skill:react-security (→ v0.2.2)
+│  │ ◻ jr/skill:react-testing (→ v0.2.2)
+│  │ ◻ jr/skill:react-tooling (→ v0.2.2)
+│  │ ◻ jr/skill:react-quality-tools (→ v0.2.2)
+│  │ ◻ jr/skill:nestjs-standards (→ v0.2.2)
+│  │ ◻ jr/pack:secu (→ v0.2.2)
+│  │ ◻ jr/pack:spec-workflow (→ v0.2.2)
+│  │ ◻ jr/pack:standards (→ v0.2.2)
+│  │ ◻ jr/pack:agents-extra (→ v0.2.2)
+│  │ ◻ jr/pack:stack-react-nest (→ v0.2.2)
+│  └ ◻ jr/pack:baseline (→ v0.2.2)
+│  ↑/↓ to navigate • Space: select • Enter: confirm
+└
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+────────────────────────────────────────────────────────────────────────────────
+$ rigger install
+│
+◇  Select installation scope:
+│  user  (~/.claude/)
+│
+◆  Select artifacts to install / update (Space on a group header toggles the whole group):
+│
+│  ◻ To install
+│  │ ◻ jr/hook:guard-command (→ v0.2.2)
+│  │ ◻ jr/hook:guard-secret (→ v0.2.2)
+│  │ ◻ jr/hook:guard-write-secret (→ v0.2.2)
+│  │ ◻ jr/hook:guard-prompt (→ v0.2.2)
+│  │ ◻ jr/guardrail:claude (→ v0.2.2)
+│  │ ◻ jr/context:claude (→ v0.2.2)
+│  │ ◻ jr/agent:pm (→ v0.2.2)
+│  │ ◻ jr/agent:tech-lead (→ v0.2.2)
+│  │ ◻ jr/agent:senior-fullstack (→ v0.2.2)
+│  │ ◻ jr/agent:db-postgres (→ v0.2.2)
+│  │ ◻ jr/agent:reviewer (→ v0.2.2)
+│  │ ◼ jr/agent:tdd-coach (→ v0.2.2)
+│  │ ◻ jr/agent:refactoring-specialist (→ v0.2.2)
+│  │ ◻ jr/agent:committer (→ v0.2.2)
+│  │ ◻ jr/agent:devops-engineer (→ v0.2.2)
+│  │ ◻ jr/skill:spec-workflow (→ v0.2.2)
+│  │ ◻ jr/skill:grill-with-docs (→ v0.2.2)
+│  │ ◻ jr/skill:diagnose (→ v0.2.2)
+│  │ ◻ jr/skill:testing (→ v0.2.2)
+│  │ ◻ jr/skill:solid-principles (→ v0.2.2)
+│  │ ◻ jr/skill:kiss-dry-yagni (→ v0.2.2)
+│  │ ◻ jr/skill:typescript-coding-standards (→ v0.2.2)
+│  │ ◻ jr/skill:security (→ v0.2.2)
+│  │ ◻ jr/skill:documentation (→ v0.2.2)
+│  │ ◻ jr/skill:git-workflow (→ v0.2.2)
+│  │ ◻ jr/skill:workflow-analysis (→ v0.2.2)
+│  │ ◻ jr/skill:react-architecture (→ v0.2.2)
+│  │ ◻ jr/skill:react-coding-standards (→ v0.2.2)
+│  │ ◻ jr/skill:react-security (→ v0.2.2)
+│  │ ◻ jr/skill:react-testing (→ v0.2.2)
+│  │ ◻ jr/skill:react-tooling (→ v0.2.2)
+│  │ ◻ jr/skill:react-quality-tools (→ v0.2.2)
+│  │ ◻ jr/skill:nestjs-standards (→ v0.2.2)
+│  │ ◻ jr/pack:secu (→ v0.2.2)
+│  │ ◻ jr/pack:spec-workflow (→ v0.2.2)
+│  │ ◻ jr/pack:standards (→ v0.2.2)
+│  │ ◻ jr/pack:agents-extra (→ v0.2.2)
+│  │ ◻ jr/pack:stack-react-nest (→ v0.2.2)
+│  └ ◻ jr/pack:baseline (→ v0.2.2)
+│  ↑/↓ to navigate • Space: select • Enter: confirm
+└
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+────────────────────────────────────────────────────────────────────────────────
+$ rigger install
+│
+◇  Select installation scope:
+│  user  (~/.claude/)
+│
+◇  Select artifacts to install / update (Space on a group header toggles the whole group):
+│  jr/agent:tdd-coach (→ v0.2.2)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+────────────────────────────────────────────────────────────────────────────────
+$ rigger install
+│
+◇  Select installation scope:
+│  user  (~/.claude/)
+│
+◇  Select artifacts to install / update (Space on a group header toggles the whole group):
+│  jr/agent:tdd-coach (→ v0.2.2)
+│
+◆  Apply the following plan?
+│
+│  Plan · 1 change · scope: user (~/.claude)
+│
+│  + jr/agent:tdd-coach   ~/.claude/agents/tdd-coach.md
+│    link  ~/.claude/agents/tdd-coach.md → store
+│
+│  Σ  1 link
+│  ○ Yes / ● No
+└
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+────────────────────────────────────────────────────────────────────────────────
+$ rigger install
+│
+◇  Select installation scope:
+│  user  (~/.claude/)
+│
+◇  Select artifacts to install / update (Space on a group header toggles the whole group):
+│  jr/agent:tdd-coach (→ v0.2.2)
+│
+◆  Apply the following plan?
+│
+│  Plan · 1 change · scope: user (~/.claude)
+│
+│  + jr/agent:tdd-coach   ~/.claude/agents/tdd-coach.md
+│    link  ~/.claude/agents/tdd-coach.md → store
+│
+│  Σ  1 link
+│  ○ Yes / ● No
+└
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+────────────────────────────────────────────────────────────────────────────────
+$ rigger install
+│
+◇  Select installation scope:
+│  user  (~/.claude/)
+│
+◇  Select artifacts to install / update (Space on a group header toggles the whole group):
+│  jr/agent:tdd-coach (→ v0.2.2)
+│
+◇  Apply the following plan?
+│
+│  Plan · 1 change · scope: user (~/.claude)
+│
+│  + jr/agent:tdd-coach   ~/.claude/agents/tdd-coach.md
+│    link  ~/.claude/agents/tdd-coach.md → store
+│
+│  Σ  1 link
+│  Yes
+--- Plan ---
+Plan · 1 change · scope: user (~/.claude)
+
++ jr/agent:tdd-coach   ~/.claude/agents/tdd-coach.md
+  link  ~/.claude/agents/tdd-coach.md → store
+
+Σ  1 link
+
+--- Result ---
+  [ok] Applied 1 file(s).
+    + <RIGGER_HOME>/.claude/agents/tdd-coach.md
+$
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+────────────────────────────────────────────────────────────────────────────────
+$ rigger install
+│
+◇  Select installation scope:
+│  user  (~/.claude/)
+│
+◇  Select artifacts to install / update (Space on a group header toggles the whole group):
+│  jr/agent:tdd-coach (→ v0.2.2)
+│
+◇  Apply the following plan?
+│
+│  Plan · 1 change · scope: user (~/.claude)
+│
+│  + jr/agent:tdd-coach   ~/.claude/agents/tdd-coach.md
+│    link  ~/.claude/agents/tdd-coach.md → store
+│
+│  Σ  1 link
+│  Yes
+--- Plan ---
+Plan · 1 change · scope: user (~/.claude)
+
++ jr/agent:tdd-coach   ~/.claude/agents/tdd-coach.md
+  link  ~/.claude/agents/tdd-coach.md → store
+
+Σ  1 link
+
+--- Result ---
+  [ok] Applied 1 file(s).
+    + <RIGGER_HOME>/.claude/agents/tdd-coach.md
+$
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+────────────────────────────────────────────────────────────────────────────────
+$ rigger install
+│
+◇  Select installation scope:
+│  user  (~/.claude/)
+│
+◇  Select artifacts to install / update (Space on a group header toggles the whole group):
+│  jr/agent:tdd-coach (→ v0.2.2)
+│
+◇  Apply the following plan?
+│
+│  Plan · 1 change · scope: user (~/.claude)
+│
+│  + jr/agent:tdd-coach   ~/.claude/agents/tdd-coach.md
+│    link  ~/.claude/agents/tdd-coach.md → store
+│
+│  Σ  1 link
+│  Yes
+--- Plan ---
+Plan · 1 change · scope: user (~/.claude)
+
++ jr/agent:tdd-coach   ~/.claude/agents/tdd-coach.md
+  link  ~/.claude/agents/tdd-coach.md → store
+
+Σ  1 link
+
+--- Result ---
+  [ok] Applied 1 file(s).
+    + <RIGGER_HOME>/.claude/agents/tdd-coach.md
+$
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+────────────────────────────────────────────────────────────────────────────────

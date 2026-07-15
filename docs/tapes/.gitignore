@@ -1,0 +1,5 @@
+# Raw VHS output (design D1): the untracked scratch dir where each tape writes its
+# `.gif` + `.txt` before normalize.sh distils the `.txt` into a tracked golden.
+# Pixel renders are non-deterministic across machines and must never be committed;
+# only golden/<flux>.txt (normalised) and site/src/assets/recordings/<flux>.gif are.
+.out/

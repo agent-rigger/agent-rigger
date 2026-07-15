@@ -44,6 +44,20 @@ test('setup.sh: no rigger invocation precedes the RIGGER_HOME export (R5 S2 orde
   expect(invocationBeforeExport).toBe(false);
 });
 
+test('setup.sh: exports a deterministic PS1 after the RIGGER_HOME guard (no cwd leak in goldens)', () => {
+  // Without a fixed prompt every filmed frame carries the operator's default PS1
+  // (cwd, host, git branch…) and every golden .txt leaks a machine-specific path,
+  // producing a spurious per-machine diff in the freshness workflow (D1) and the
+  // R6 verdict. The prompt must be the bare `$ `, set after the export so it never
+  // precedes the isolation guard.
+  expect(setup).toMatch(/^\s*export PS1='\$ '\s*$/m);
+  const lines = setup.split('\n');
+  const homeIdx = lines.findIndex((l) => /^\s*export RIGGER_HOME\b/.test(l));
+  const ps1Idx = lines.findIndex((l) => /^\s*export PS1=/.test(l));
+  expect(homeIdx).toBeGreaterThanOrEqual(0);
+  expect(ps1Idx).toBeGreaterThan(homeIdx);
+});
+
 test('setup.sh: defines a rigger shim and a teardown trap on the temp home', () => {
   expect(setup).toMatch(/rigger\s*\(\s*\)\s*\{/);
   // Teardown removes the throwaway home so an interrupted take leaves only /tmp

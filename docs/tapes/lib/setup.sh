@@ -24,6 +24,13 @@ RIGGER_HOME="$(mktemp -d /tmp/rigger-rec.XXXXXX)" || exit 1
 [ -n "$RIGGER_HOME" ] && [ -d "$RIGGER_HOME" ] || exit 1
 export RIGGER_HOME
 
+# Deterministic prompt for every filmed frame. Without it the interactive prompt
+# carries the operator's default PS1 (cwd, host, git branch…) and every golden
+# would leak a machine-specific path — a spurious, per-machine diff in the .txt
+# the freshness workflow (D1) and the R6 verdict compare. A bare `$ ` is the same
+# on every machine. Set here (once, in the shared setup) so no tape re-invents it.
+export PS1='$ '
+
 # Repo root resolved from this file's own location, not a machine-specific path:
 # setup.sh lives at <root>/docs/tapes/lib/, so three levels up is the repo root.
 # BASH_SOURCE[0] is the sourced path even when $0 is the interactive shell.
