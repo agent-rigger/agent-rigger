@@ -57,6 +57,13 @@ env:
   TRIVY_SHA256: "bbb64b9695866ce4a7a8f5c9592002c5961cab378577fa3f8a040df362b9b2ea"
   GLAB_VERSION: "1.107.0"
   GLAB_SHA256: "eb42f56eb1a789cf4f22aa5960ff0ef60cf1e7fc1295327501f9f59030d5ae2c"
+  # VHS render stack, pinned + checksum-verified from each project's own published
+  # sums (vhs: charmbracelet checksums.txt; ttyd: tsl0922 SHA256SUMS). These drive
+  # only the pixels — the compared golden is the ANSI-free .txt, render-independent.
+  VHS_VERSION: "0.11.0"
+  VHS_SHA256: "99cb634587eaae0473c1ea377db80c3a048c27f99fe0a7febb1a1e8cb7ee5009"
+  TTYD_VERSION: "1.7.7"
+  TTYD_SHA256: "8a217c968aba172e0dbf3f34447218dc015bc4d5e59bf51db2f2cd12b7be4f55"
 
 jobs:
   freshness:
@@ -128,14 +135,42 @@ jobs:
       - name: Validate trapped-catalog fixture still trips gitleaks
         run: bash docs/tapes/fixtures/trapped-catalog/validate.sh
 
-      # --- VHS: SHA-pinned action (hygiene; the trailing comment names the resolved
-      #     version, keeping the pin auditable) + pinned vhs binary. ttyd/ffmpeg are
-      #     resolved latest by the action — ratified: they affect only pixels, never
-      #     the .txt compared here, and this job holds no secret.
-      - name: Setup VHS
-        uses: charmbracelet/vhs-action@59641cdc7fadf3978db65eb8c6937ea2752f4ec3 # v2.1.0
-        with:
-          version: v0.11.0
+      # --- VHS render stack installed explicitly. charmbracelet/vhs-action is NOT
+      #     used: it is frozen (May 2024) and resolves ttyd/ffmpeg "latest" through an
+      #     install path that now fails ("Failed to install ffmpeg"). Same posture as
+      #     the scanner deps: ffmpeg + fonts from the distro image (pixels only), ttyd
+      #     and vhs pinned + checksum-verified against each project's published sums.
+      - name: Install ffmpeg + fonts (distro)
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg fonts-jetbrains-mono
+
+      - name: Install ttyd (pinned + checksum)
+        run: |
+          set -euo pipefail
+          url="https://github.com/tsl0922/ttyd/releases/download/${TTYD_VERSION}/ttyd.x86_64"
+          curl -sSfL "$url" -o /tmp/ttyd
+          echo "${TTYD_SHA256}  /tmp/ttyd" | sha256sum -c -
+          sudo install -m 0755 /tmp/ttyd /usr/local/bin/ttyd
+          ttyd --version
+
+      - name: Install vhs (pinned + checksum)
+        run: |
+          set -euo pipefail
+          url="https://github.com/charmbracelet/vhs/releases/download/v${VHS_VERSION}/vhs_${VHS_VERSION}_Linux_x86_64.tar.gz"
+          curl -sSfL "$url" -o /tmp/vhs.tar.gz
+          echo "${VHS_SHA256}  /tmp/vhs.tar.gz" | sha256sum -c -
+          tar -xzf /tmp/vhs.tar.gz -C /tmp "vhs_${VHS_VERSION}_Linux_x86_64/vhs"
+          sudo install -m 0755 "/tmp/vhs_${VHS_VERSION}_Linux_x86_64/vhs" /usr/local/bin/vhs
+          vhs --version
+
+      - name: Verify the render stack is on PATH
+        run: |
+          set -euo pipefail
+          for dep in vhs ttyd ffmpeg; do
+            command -v "$dep" >/dev/null || { echo "::error::missing render dep on PATH: $dep"; exit 1; }
+          done
 
       - name: Replay tapes and compare normalised goldens
         run: |
