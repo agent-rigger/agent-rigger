@@ -53,8 +53,19 @@ Installs the `agent-rigger` binary and the shorter `rigger` alias.
 ### Pre-built binaries
 
 Every [GitHub Release](https://github.com/agent-rigger/agent-rigger/releases)
-attaches standalone binaries for five targets (Linux x64/arm64, macOS
-x64/arm64, Windows x64) plus a `SHA256SUMS.txt` to verify the download.
+attaches standalone binaries plus a `SHA256SUMS.txt` to verify the download.
+
+| Platform    | Binary | Homebrew | CI-tested |
+| ----------- | :----: | :------: | :-------: |
+| Linux x64   |   ✅   |    ✅    |    ✅     |
+| Linux arm64 |   ✅   |    ✅    |     —     |
+| macOS arm64 |   ✅   |    ✅    |     —     |
+| macOS x64   |   ✅   |    ✅    |     —     |
+| Windows x64 |   ✅   |    —     |     —     |
+
+Only Linux x64 is exercised in CI today; the other binaries are cross-compiled
+and shipped as-is. On Windows, symlink-based installs (skills, agents, plugins)
+fall back to plain file copies when symlinks are unavailable.
 
 ### From source
 
@@ -127,18 +138,19 @@ assistant (`--assistant claude|opencode`, or inferred from config or disk).
 ## Artifact natures
 
 An **artifact** is a deployable unit of harness configuration. There are eight
-natures, each configuring a different part of the assistant.
+natures, each configuring a different part of the assistant. The two rightmost
+columns show what each adapter installs today.
 
-| Nature      | Summary                                                                   |
-| ----------- | ------------------------------------------------------------------------- |
-| `skill`     | Reusable capability (`SKILL.md`) stored once and symlinked to each host   |
-| `agent`     | Role-specialised sub-agent definition, a single Markdown file             |
-| `guardrail` | Hard-block rule via the assistant's own permission mechanism (deny list)  |
-| `context`   | Advisory instructions file (`AGENTS.md`) the assistant reads              |
-| `hook`      | Command the assistant runs on a lifecycle event (Claude Code only)        |
-| `plugin`    | Bundle of hooks and commands installed via the host's own mechanism       |
-| `mcp`       | MCP server declaration the assistant can reach for extra capabilities     |
-| `tool`      | Third-party host CLI the harness expects; presence-checked, not installed |
+| Nature      | Summary                                                                   | Claude Code | opencode |
+| ----------- | ------------------------------------------------------------------------- | :---------: | :------: |
+| `skill`     | Reusable capability (`SKILL.md`) stored once and symlinked to each host   |     ✅      |    ✅    |
+| `agent`     | Role-specialised sub-agent definition, a single Markdown file             |     ✅      |    ✅    |
+| `guardrail` | Hard-block rule via the assistant's own permission mechanism              |     ✅      |    ✅    |
+| `context`   | Advisory instructions file (`AGENTS.md`) the assistant reads              |     ✅      |    ✅    |
+| `hook`      | Command the assistant runs on a lifecycle event                           |     ✅      |    —     |
+| `plugin`    | Bundle of hooks and commands installed via the host's own mechanism       |     ✅      |    ✅    |
+| `mcp`       | MCP server declaration the assistant can reach for extra capabilities     |     ✅      |    ✅    |
+| `tool`      | Third-party host CLI the harness expects; presence-checked, not installed |    check    |  check   |
 
 A **pack** bundles artifacts installed as a unit; a **catalog** is the versioned
 git repository that declares them; a **manifest** records what was installed so
@@ -150,9 +162,31 @@ git repository that declares them; a **manifest** records what was installed so
 
 agent-rigger targets two assistants today, Claude Code and opencode, each written
 through an assistant-specific adapter over the same plan-confirm-apply engine.
-The target is resolved per transaction (explicit flag, config, or disk detection),
-recorded per manifest entry, and reused by later commands without re-prompting.
-Other assistants such as Copilot are reserved for a later milestone.
+Per-nature support is the two rightmost columns of the artifact natures table
+above. The target is resolved per transaction (explicit flag, config, or disk
+detection), recorded per manifest entry, and reused by later commands without
+re-prompting. Other assistants such as GitHub Copilot CLI are reserved for a
+later milestone (the catalog schema already accepts `copilot` as a target).
+
+---
+
+## Status & roadmap
+
+Pre-1.0. The engine and both adapters are in daily use; here is where the big
+topics stand.
+
+| Topic                                                         | Status         |
+| ------------------------------------------------------------- | -------------- |
+| Install engine (plan → confirm → apply, backups, drift check) | ✅ shipped     |
+| Remote catalogs, `update`, multi-catalog config               | ✅ shipped     |
+| MCP server management (both assistants, secrets via env refs) | ✅ shipped     |
+| Security scanning (Trivy, Gitleaks, …) and `doctor --fix`     | ✅ shipped     |
+| opencode adapter                                              | ✅ shipped     |
+| Documentation site (EN/FR)                                    | ✅ shipped     |
+| Terminal recordings with a CI freshness contract              | 🚧 in progress |
+| GitHub Copilot CLI adapter                                    | 🗺️ planned      |
+| Real `tool` install (brew/mise) — today: presence check only  | 🗺️ planned      |
+| Organization profiles                                         | 🗺️ planned      |
 
 ---
 
@@ -169,36 +203,35 @@ These properties hold across all commands:
 
 ## Documentation
 
-Full documentation lives in the docs site (Astro/Starlight) under
-[`site/`](./site); deployment is pending, so the links below point at the source
-pages, which GitHub renders directly.
+Full documentation lives at **[agent-rigger.github.io](https://agent-rigger.github.io/)**
+(Astro/Starlight, English and French; source under [`site/`](./site)).
 
 **Getting started**
 
-- [What is agent-rigger?](./site/src/content/docs/start/what-is-agent-rigger.md)
-- [Installation](./site/src/content/docs/start/installation.md)
-- [Getting started (10-minute tutorial)](./site/src/content/docs/start/getting-started.md)
+- [What is agent-rigger?](https://agent-rigger.github.io/start/what-is-agent-rigger/)
+- [Installation](https://agent-rigger.github.io/start/installation/)
+- [Getting started (10-minute tutorial)](https://agent-rigger.github.io/start/getting-started/)
 
 **Concepts**
 
-- [Core concepts](./site/src/content/docs/concepts/core-concepts.md) (catalog, manifest, store)
-- [Artifact natures](./site/src/content/docs/concepts/artifact-natures.md)
-- [Trust and security](./site/src/content/docs/concepts/trust-and-security.md)
+- [Core concepts](https://agent-rigger.github.io/concepts/core-concepts/) (catalog, manifest, store)
+- [Artifact natures](https://agent-rigger.github.io/concepts/artifact-natures/)
+- [Trust and security](https://agent-rigger.github.io/concepts/trust-and-security/)
 
 **Guides**
 
-- [Install from a catalog](./site/src/content/docs/guides/install-from-catalog.md)
-- [Update artifacts](./site/src/content/docs/guides/update-artifacts.md)
-- [Remove artifacts](./site/src/content/docs/guides/remove-artifacts.md)
-- [CI and scripts](./site/src/content/docs/guides/ci-and-scripts.md)
+- [Install from a catalog](https://agent-rigger.github.io/guides/install-from-catalog/)
+- [Update artifacts](https://agent-rigger.github.io/guides/update-artifacts/)
+- [Remove artifacts](https://agent-rigger.github.io/guides/remove-artifacts/)
+- [CI and scripts](https://agent-rigger.github.io/guides/ci-and-scripts/)
 
 **Reference**
 
-- [CLI reference](./site/src/content/docs/reference/cli/overview.md) (every command and flag)
-- [catalog.json schema](./site/src/content/docs/reference/catalog-schema.md)
-- [Catalog repository layout](./site/src/content/docs/reference/catalog-layout.md)
-- [Exit codes](./site/src/content/docs/reference/exit-codes.md)
-- Glossary: [English](./site/src/content/docs/reference/glossary.md) · [Français](./site/src/content/docs/fr/reference/glossary.md)
+- [CLI reference](https://agent-rigger.github.io/reference/cli/overview/) (every command and flag)
+- [catalog.json schema](https://agent-rigger.github.io/reference/catalog-schema/)
+- [Catalog repository layout](https://agent-rigger.github.io/reference/catalog-layout/)
+- [Exit codes](https://agent-rigger.github.io/reference/exit-codes/)
+- Glossary: [English](https://agent-rigger.github.io/reference/glossary/) · [Français](https://agent-rigger.github.io/fr/reference/glossary/)
 
 ---
 

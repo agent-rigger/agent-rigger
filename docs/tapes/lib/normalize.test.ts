@@ -6,7 +6,10 @@
  *
  *   (a) volatile fields differing between two runs → identical after normalise;
  *   (b) a REAL divergence (message, exit code, renamed artefact, bumped semver)
- *       → still visible after normalise (an over-eager filter hides real drift).
+ *       → still visible after normalise (an over-eager filter hides real drift);
+ *   (c) screen GEOMETRY (trailing whitespace, rule width, blank-row padding that
+ *       differs macOS↔Linux) erased, while real content (messages, order, values,
+ *       content wraps, section separators) survives.
  */
 
 import { expect, test } from 'bun:test';
@@ -116,4 +119,60 @@ test('(b) order is preserved — swapped lines stay different', async () => {
   const x = await normalize('doctor\nls\ninstall');
   const y = await normalize('doctor\ninstall\nls');
   expect(x).not.toBe(y);
+});
+
+// ---------------------------------------------------------------------------
+// (c) screen geometry erased, real content preserved
+// ---------------------------------------------------------------------------
+
+const RULE40 = '─'.repeat(40);
+const RULE50 = '─'.repeat(50);
+
+// Same session captured with different screen geometry: the Linux runner pads
+// lines with trailing spaces, emits extra blank rows per snapshot, and draws the
+// rule at a different column count. None of that is content.
+const geomMac = ['doctor', '', RULE40, '', '$ '].join('\n');
+const geomLinux = ['doctor   ', '', '', '', RULE50, '', '', '$    '].join('\n');
+
+test('(c) geometry-only differences normalise to the same text', async () => {
+  const a = await normalize(geomMac);
+  const b = await normalize(geomLinux);
+  expect(a).toBe(b);
+});
+
+test('(c) trailing whitespace, rule width and blank runs are all erased', async () => {
+  const out = await normalize(geomLinux);
+  expect(out).toContain('<RULE>'); // the ─ run, whatever its width
+  expect(out).not.toMatch(/[ \t]+\n/); // no trailing whitespace on any line
+  expect(out).not.toMatch(/\n\n\n/); // no run of blank lines survives (collapsed)
+  expect(out).not.toContain('─'); // no raw rule character left
+});
+
+test('(c) a single blank line survives as a section separator (collapse, not delete)', async () => {
+  // Many blank rows (snapshot padding) collapse to exactly one — the separator is
+  // kept, not deleted, so section breaks stay legible.
+  const out = await normalize('deps\n\n\n\n\nmode : full scan\n');
+  expect(out).toContain('deps\n\nmode : full scan');
+  expect(out).not.toMatch(/\n\n\n/);
+});
+
+test('(c) content wraps are preserved verbatim (the wrap is content, not geometry)', async () => {
+  // A long finding the terminal wrapped across two physical lines. The split must
+  // survive — merging wraps would hide a real change to the message.
+  const wrapped = '  - [gitleaks] aws-access-token: … risking unauthorized cloud reso\n'
+    + 'urce access and data breaches.';
+  const out = await normalize(wrapped);
+  expect(out).toContain('cloud reso\nurce access');
+});
+
+test('(c) the vertical bar of a content preview is not a rule and is kept', async () => {
+  const out = await normalize('  write +338 / -0\n     │ # Agent Context');
+  expect(out).toContain('│ # Agent Context');
+  expect(out).not.toContain('<RULE>');
+});
+
+test('(c) a short ─ run (<4) is content, not a rule, and is left intact', async () => {
+  const out = await normalize('─── three dashes');
+  expect(out).toContain('─── three dashes');
+  expect(out).not.toContain('<RULE>');
 });

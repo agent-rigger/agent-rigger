@@ -43,7 +43,10 @@ Set Height 1150
 Set Padding 20
 Set TypingSpeed 30ms
 Set Theme "Catppuccin Mocha"
-Set WaitTimeout 40s
+# 60s (was 40s): the `install` picker only appears after the real jr catalog is
+# cloned and version-resolved over the network — slower on a cold CI runner than
+# locally. Widened so a healthy-but-slow clone doesn't trip the Wait.
+Set WaitTimeout 60s
 
 # --- hidden setup: isolated home + shim + trap, claude detected, jr catalog ---
 Hide

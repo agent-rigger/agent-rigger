@@ -26,6 +26,11 @@ Set Height 860
 Set Padding 24
 Set TypingSpeed 30ms
 Set Theme "Catppuccin Mocha"
+# Cold-runner margin: the hidden staging clones the real jr catalog and installs a
+# skill (network), then `doctor --fix` runs the scanners — all slower than local on
+# a fresh CI runner. The default WaitTimeout (15s) can lapse before the first
+# consent prompt appears; 60s covers the clone + scan without hanging a healthy run.
+Set WaitTimeout 60s
 
 # --- hidden setup: throwaway home + shim, then the staged broken state ---------
 Hide

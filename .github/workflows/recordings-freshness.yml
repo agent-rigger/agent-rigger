@@ -35,7 +35,10 @@ on:
     - cron: "0 6 * * 1"
   workflow_dispatch:
 
-# No secret is used anywhere in this job (no push, no cross-repo publish).
+# One secret only: a fine-grained, read-only PAT to the PRIVATE jr catalog
+# (secrets.JR_CATALOG_READ_TOKEN), consumed solely by this repo's own run-steps —
+# never handed to a third-party action (there are none left). Actions masks it in
+# logs. `contents: read`, no push, no cross-repo publish.
 permissions:
   contents: read
 
@@ -171,6 +174,18 @@ jobs:
           for dep in vhs ttyd ffmpeg; do
             command -v "$dep" >/dev/null || { echo "::error::missing render dep on PATH: $dep"; exit 1; }
           done
+
+      # --- The jr catalog is PRIVATE: an anonymous clone 404s ("Repository not
+      #     found"), which is why doctor-fix + install-picker recorded a failure on
+      #     the first run. Rewrite ONLY that exact repo URL to carry the read-only
+      #     PAT. Scoped to the repo (not github.com at large); the token never
+      #     reaches a third-party action. The tapes still type the public URL —
+      #     insteadOf acts inside git, so no secret appears in any recorded frame.
+      - name: Authenticate the private jr catalog (read-only)
+        run: |
+          git config --global \
+            url."https://x-access-token:${{ secrets.JR_CATALOG_READ_TOKEN }}@github.com/jrobic/jr-agent-rigger-catalog".insteadOf \
+            "https://github.com/jrobic/jr-agent-rigger-catalog"
 
       - name: Replay tapes and compare normalised goldens
         run: |

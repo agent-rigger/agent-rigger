@@ -3,20 +3,44 @@
 #
 # Reads a VHS `.txt` capture on stdin, writes the normalised text on stdout. This
 # is the SINGLE definition of the volatile fields of a session: both the R6
-# verdict (docs/specs/vhs-recordings/verifications/) and the T6 freshness
-# workflow (.github/workflows/recordings-freshness.yml) pipe through it, so
-# "real divergence" has exactly one meaning. A field left un-normalised produces
-# a false red verdict; an over-eager rule hides a real drift — the test suite
+# verdict (docs/specs/vhs-recordings/verifications/) and the freshness workflow
+# (.github/workflows/recordings-freshness.yml) pipe through it, so "real
+# divergence" has exactly one meaning. A field left un-normalised produces a false
+# red verdict; an over-eager rule hides a real drift — the test suite
 # (normalize.test.ts) pins both failure modes.
 #
-# Deliberately NOT normalised: messages, command order, exit codes and artefact
-# names stay verbatim — that is the drift a recording exists to expose.
+# Two classes are erased:
+#
+#   1. Volatile VALUES — mktemp paths, catalog checkout tmpdir, resolved binary
+#      paths (doctor phase 1), backup timestamps, 40-char git shas. Semver tags
+#      (vX.Y.Z) are preserved: a version change is real drift.
+#
+#   2. Screen GEOMETRY — a VHS `.txt` is a stack of full-screen snapshots, and the
+#      geometry is not stable across machines (found empirically: the Linux CI
+#      runner emits a few extra blank rows per snapshot, pads rules and the prompt
+#      with trailing spaces, and the box-rule width follows the resolved column
+#      count). None of that is session content, so:
+#        - trailing whitespace is stripped from every line;
+#        - runs of the box-drawing rule ─ (U+2500, >=4) collapse to <RULE> — the
+#          count is terminal width, not content;
+#        - runs of blank lines collapse to one (`cat -s`) — snapshot padding, not
+#          content. Collapse (not delete) keeps a single separator so section
+#          breaks stay legible; a real double-blank in output would be flattened,
+#          but CLI output never relies on blank-line COUNT to carry meaning.
+#
+# Deliberately NOT normalised: messages, command order, exit codes, artefact names
+# and content wraps stay verbatim — that is the drift a recording exists to expose.
 #
 # perl (present on macOS and on the Linux CI runner) is used for \b and lazy
-# quantifiers that BSD/GNU sed handle inconsistently. Substitutions are ordered:
-# tmp-path tokens are applied before the generic "(abs path)" rule so already
-# tokenised values (starting with '<') are never re-matched.
-exec perl -pe '
+# quantifiers that BSD/GNU sed handle inconsistently; it runs in byte mode, so the
+# rule is matched by ─'s UTF-8 bytes (E2 94 80). Substitutions are ordered: rstrip
+# and tmp-path tokens run before the generic "(abs path)" rule so already tokenised
+# values (starting with '<') are never re-matched. Blank runs collapse last.
+perl -pe '
+  # Geometry — trailing whitespace and terminal-width rules.
+  s/[ \t]+$//;
+  s/(?:\xe2\x94\x80){4,}/<RULE>/g;
+
   # 1. Throwaway RIGGER_HOME from setup.sh: /tmp/rigger-rec.XXXXXX (macOS may
   #    surface it realpath-ed under /private).
   s{(?:/private)?/tmp/rigger-rec\.[A-Za-z0-9]+}{<RIGGER_HOME>}g;
@@ -38,4 +62,4 @@ exec perl -pe '
   # 5. Full 40-char git shas. Semver tags (vX.Y.Z) are NOT hex-40, so a version
   #    change stays visible as real drift.
   s{\b[0-9a-f]{40}\b}{<SHA>}g;
-'
+' | cat -s
