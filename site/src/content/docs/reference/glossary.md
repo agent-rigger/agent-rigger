@@ -163,6 +163,12 @@ The header of a catalog: `{ name, required, recommended }`. `name` identifies th
 `required` and `recommended` are lists of entry ids — see [required](#required) and
 [recommended](#recommended).
 
+#### catalog source
+
+One configured name-and-URL pairing in the tool's config — the thing `catalog add` registers and
+`catalog remove` deletes. A source points at a [catalog](#catalog) (the data layer it fetches);
+several sources together produce the [effective catalog](#effective-catalog).
+
 #### effective catalog
 
 The union of every configured catalog's entries, seen as one. Because two catalogs may reuse the
@@ -192,6 +198,22 @@ The word carries **three distinct meanings** — keep them apart.
 helpful rather than strictly needed.
 
 ## Installation and local state
+
+#### ad-hoc install
+
+Installing straight from a git URL or a local path, with no `catalog add` step in between — a
+one-off pull from a source the config does not track. The install is recorded in the
+[manifest](#manifest) under a [derived prefix](#derived-prefix-provenance-prefix), but with no
+catalog source registered, `update` has nothing to resolve it against. See
+[install from a URL or local path](/guides/ad-hoc-install/).
+
+#### derived prefix (provenance prefix)
+
+The catalog-name stand-in an [ad-hoc install](#ad-hoc-install) synthesises from its source (`gh-…`
+for GitHub, `glab-…` for GitLab, `<host>-…` otherwise, `local-…` for a path) and stores in the
+manifest as provenance. It plays the catalog-name part of a [qualified id](#qualified-id) so
+`remove` and `check` can name the artifact, without being a configured
+[catalog source](#catalog-source).
 
 #### manifest
 
@@ -434,6 +456,7 @@ temporary files or backups). With `--fix` it repairs the safe ones; anything des
 ## Alphabetical index
 
 - [adapter](#adapter)
+- [ad-hoc install](#ad-hoc-install)
 - [adoption](#adoption)
 - [agent (sub-agent)](#agent-sub-agent)
 - [agent-rigger](#agent-rigger)
@@ -446,10 +469,12 @@ temporary files or backups). With `--fix` it repairs the safe ones; anything des
 - [backup (.bak)](#backup-bak)
 - [catalog](#catalog)
 - [catalog entry](#catalog-entry)
+- [catalog source](#catalog-source)
 - [catalog.json](#catalogjson)
 - [consent](#consent)
 - [context](#context)
 - [delegate-first](#delegate-first)
+- [derived prefix (provenance prefix)](#derived-prefix-provenance-prefix)
 - [doctor](#doctor)
 - [drift](#drift)
 - [effective catalog](#effective-catalog)

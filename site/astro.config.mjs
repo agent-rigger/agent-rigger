@@ -54,6 +54,11 @@ export default defineConfig({
             { slug: 'guides/update-artifacts' },
             { slug: 'guides/remove-artifacts' },
             { slug: 'guides/ci-and-scripts' },
+            { slug: 'guides/ad-hoc-install' },
+            { slug: 'guides/multiple-catalogs' },
+            { slug: 'guides/choose-assistant' },
+            { slug: 'guides/mcp-secrets' },
+            { slug: 'guides/doctor' },
           ],
         },
         {
