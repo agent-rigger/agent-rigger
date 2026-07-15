@@ -53,6 +53,10 @@ is, `To update` when one has drifted, `To install` when one is missing. A pack m
 [tools](/reference/glossary/#tool) is the exception: tool installs aren't tracked yet, so that row
 keeps showing "To install" regardless.
 
+![Terminal recording of `agent-rigger install` with no ids against the jr catalog. It asks "Select installation scope:" and the user keeps the default, user (~/.claude/). A grouped picker "Select artifacts to install / update (Space on a group header toggles the whole group):" opens with a single "To install" group: the catalog's required pack (pack:secu) and recommended pack (pack:baseline) start checked while every other entry starts unchecked — the B4 fix. The user arrows down and checks a single entry, agent:tdd-coach, with Space, then arrows down to pack:secu and pack:baseline and unchecks both — overriding the catalog's opinion. Enter submits the selection. "Apply the following plan?" shows a one-change plan installing jr/agent:tdd-coach to ~/.claude/agents/tdd-coach.md; the user confirms by pressing y. The run ends with the --- Plan --- and --- Result --- sections and "&#91;ok&#93; Applied 1 file(s)."](../../../assets/recordings/install-picker.gif)
+
+_The interactive install picker: scope choice, the catalog's required and recommended entries pre-checked, then a manual override and apply. <small>Generated from docs/tapes/install-picker.tape, 2026-07-14.</small>_
+
 ## Install specific artifacts in one command
 
 When you already know what you want, pass [qualified ids](/reference/glossary/#qualified-id) in the
@@ -139,6 +143,10 @@ Re-run with --force to install anyway.
 ```
 
 Read the finding first. If it is a false positive you accept, re-run with `--force` (see below).
+
+![Terminal recording. `rigger install trapped/skill:scan-demo --assistant claude` runs against the trapped-catalog fixture, whose skill carries a planted, fake AWS access key id. The composite scanner (gitleaks) flags it, so the install fails closed before writing anything: the output shows &#91;error&#93; Security scan blocked installation. Findings:, then a single finding — &#91;gitleaks&#93; aws-access-token on the skill's `SKILL.md` in the fetched checkout — then `Re-run with --force to install anyway.` The process exits 1 and nothing is installed.](../../../assets/recordings/scan-blocked.gif)
+
+_A real run of the fail-closed scan gate: the finding stops the install before any file is written; only `--force`, after you have read the finding, would override it. <small>Generated from docs/tapes/scan-blocked.tape, 2026-07-14.</small>_
 
 ## When the plan lists a tool presence-check
 

@@ -1,0 +1,16 @@
+{
+  "meta": {
+    "name": "trapped-catalog",
+    "required": [],
+    "recommended": []
+  },
+  "entries": [
+    {
+      "kind": "artifact",
+      "id": "skill:scan-demo",
+      "nature": "skill",
+      "targets": ["claude"],
+      "scopes": ["user", "project"]
+    }
+  ]
+}

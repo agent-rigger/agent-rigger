@@ -103,4 +103,8 @@ Repair (`--fix`):
 agent-rigger doctor --remote --fix
 ```
 
+![A doctor --fix run against a fabricated broken state. Phase 1 lists four dependencies, all present — git, glab, gitleaks, trivy, each with a check mark — then the line "mode : full scan". Phase 2 reports two findings: an untracked skill that conforms to its store, tagged as a safe fix, and a dangling symlink with no manifest entry, tagged as needing per-item confirmation. The command then prompts once per item. The first prompt reads "Apply repair?", the second "Confirm repair?"; both start on No, and each is deliberately moved to Yes before confirming. A Repairs section finally lists two ok results: adopting skill:diagnose, then unlinking the ghost symlink.](../../../../assets/recordings/doctor-fix.gif)
+
+_A real `doctor --fix` with no `--yes`: each repair is confirmed one item at a time, and every prompt starts on No — pressing Enter out of reflex skips the repair. The safe adopt is granted the same way as the destructive unlink, which `--yes` alone can never grant. <small>Generated from docs/tapes/doctor-fix.tape, 2026-07-14. Regenerate: bun run build && vhs docs/tapes/doctor-fix.tape.</small>_
+
 See [exit codes](/reference/exit-codes) for the shared contract.

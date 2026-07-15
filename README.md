@@ -21,9 +21,10 @@ reproducible way across a team's machines.
 
 ![agent-rigger in action: doctor, browse the team catalog, install the rig in one command, verify zero drift](./docs/demo.gif)
 
-> A throwaway `$RIGGER_HOME` is used for the recording. Your real `~/.claude` is
-> never touched. Regenerate the GIF with `vhs docs/demo.tape` (see
-> [`docs/demo.tape`](./docs/demo.tape)).
+> A throwaway `$RIGGER_HOME` is used for the recording — your real `~/.claude` is
+> never touched. Regenerating this GIF is currently blocked by a VHS/ttyd rendering
+> throttle on large installs; the recording pipeline, prerequisites and status live in
+> [`docs/tapes/README.md`](./docs/tapes/README.md).
 
 ---
 

@@ -54,6 +54,10 @@ chacun d'eux l'est, « À mettre à jour » quand l'un a divergé, « À install
 Exception : un pack composé uniquement de [tools](/fr/reference/glossary/#tool), dont l'install n'est
 pas encore trackée — sa ligne reste « À installer » quoi qu'il arrive.
 
+![Enregistrement terminal de `agent-rigger install` sans id sur le catalog jr. La commande demande « Select installation scope: » et l'utilisateur garde le défaut, user (~/.claude/). Un sélecteur groupé « Select artifacts to install / update (Space on a group header toggles the whole group): » s'ouvre avec un seul groupe « To install » : le pack required du catalog (pack:secu) et le pack recommended (pack:baseline) démarrent cochés tandis que toutes les autres entrées démarrent décochées — le correctif B4. L'utilisateur descend avec les flèches et coche une seule entrée, agent:tdd-coach, avec Espace, puis descend jusqu'à pack:secu et pack:baseline et les décoche tous les deux — passant outre l'opinion du catalog. Entrée valide la sélection. « Apply the following plan? » affiche un plan à un seul changement installant jr/agent:tdd-coach dans ~/.claude/agents/tdd-coach.md ; l'utilisateur confirme en tapant y. Le passage se termine sur les sections --- Plan --- et --- Result --- et « &#91;ok&#93; Applied 1 file(s). »](../../../../assets/recordings/install-picker.gif)
+
+_Le sélecteur d'install interactif : choix du scope, les entrées required et recommended du catalog pré-cochées, puis un override manuel et application. <small>Généré depuis docs/tapes/install-picker.tape, 2026-07-14.</small>_
+
 ## Installer des artifacts précis en une seule commande
 
 Quand vous savez déjà ce que vous voulez, passez des [qualified ids](/fr/reference/glossary/#qualified-id)
@@ -142,6 +146,10 @@ Re-run with --force to install anyway.
 
 Lisez d'abord le finding. Si c'est un faux positif que vous acceptez, relancez avec `--force` (voir
 plus bas).
+
+![Enregistrement terminal. `rigger install trapped/skill:scan-demo --assistant claude` est lancé contre la fixture trapped-catalog, dont le skill porte une fausse clé d'accès AWS factice. Le scanner composite (gitleaks) la détecte, donc l'install échoue en fail-closed avant toute écriture : la sortie affiche &#91;error&#93; Security scan blocked installation. Findings:, puis un unique finding — &#91;gitleaks&#93; aws-access-token sur le `SKILL.md` du skill dans le checkout récupéré — puis `Re-run with --force to install anyway.` Le processus sort en exit 1 et rien n'est installé.](../../../../assets/recordings/scan-blocked.gif)
+
+_Un passage réel du garde-fou de scan fail-closed : le finding arrête l'install avant toute écriture ; seul `--force`, après avoir lu le finding, l'outrepasserait. <small>Généré depuis docs/tapes/scan-blocked.tape, 2026-07-14.</small>_
 
 ## Quand le plan liste une vérification de présence de tool
 
