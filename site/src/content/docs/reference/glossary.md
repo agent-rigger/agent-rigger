@@ -389,7 +389,15 @@ carries the skill's `name`, `description`, and other declared fields.
 
 An environment variable that overrides the home directory the tool uses for every user-scope path.
 It takes priority over `HOME`, and is the single seam used to run the tool against an isolated
-directory (for example when trying it in a sandbox).
+directory (for example when trying it in a [sandbox](#sandbox)).
+
+#### sandbox
+
+The throwaway environment set up by `scripts/sandbox` (shipped in the repository) so you can run
+real rigger commands without touching your real config or your real projects: a disposable
+[`RIGGER_HOME`](#rigger_home) plus a disposable project directory, both under `/tmp`, wiped clean
+with `rigger_reset` and torn down with `rigger_exit`. See
+[try it in a sandbox](/start/sandbox/).
 
 #### TTY / non-interactive
 
@@ -473,6 +481,7 @@ temporary files or backups). With `--fix` it repairs the safe ones; anything des
 - [rig](#rig)
 - [RIGGER_HOME](#rigger_home)
 - [run-lock](#run-lock)
+- [sandbox](#sandbox)
 - [scan / scanner](#scan--scanner)
 - [scope](#scope)
 - [secret by environment reference](#secret-by-environment-reference-var)

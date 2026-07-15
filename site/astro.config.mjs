@@ -34,6 +34,7 @@ export default defineConfig({
             { slug: 'start/what-is-agent-rigger' },
             { slug: 'start/installation' },
             { slug: 'start/getting-started' },
+            { slug: 'start/sandbox' },
           ],
         },
         {
