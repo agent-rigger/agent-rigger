@@ -176,16 +176,35 @@ jobs:
           done
 
       # --- The jr catalog is PRIVATE: an anonymous clone 404s ("Repository not
-      #     found"), which is why doctor-fix + install-picker recorded a failure on
-      #     the first run. Rewrite ONLY that exact repo URL to carry the read-only
-      #     PAT. Scoped to the repo (not github.com at large); the token never
-      #     reaches a third-party action. The tapes still type the public URL —
-      #     insteadOf acts inside git, so no secret appears in any recorded frame.
+      #     found"), which is why doctor-fix + install-picker recorded a failure.
+      #     Rewrite ONLY that exact repo URL to carry the read-only PAT, and pin the
+      #     config via GIT_CONFIG_GLOBAL rather than --global: the CLI spawns git with
+      #     the ambient env fully inherited and NOT scrubbed
+      #     (packages/cli/src/preflight-auth.ts:52 — defaultRunner passes process.env
+      #     through; no HOME override), so an exported GIT_CONFIG_GLOBAL reaches the
+      #     clone through vhs → ttyd → bash → CLI → git regardless of HOME (a plain
+      #     --global into ~/.gitconfig is hostage to whatever HOME that chain resolves
+      #     to). x-access-token is the conventional username for token auth
+      #     (actions/checkout uses it); GitHub ignores it and takes the fine-grained
+      #     PAT as the credential. Scoped to this one repo URL, never github.com at
+      #     large; the tapes still type the public URL, so no secret is ever filmed.
       - name: Authenticate the private jr catalog (read-only)
         run: |
-          git config --global \
+          set -euo pipefail
+          cfg="${RUNNER_TEMP}/git-config-jr"
+          git config --file "$cfg" \
             url."https://x-access-token:${{ secrets.JR_CATALOG_READ_TOKEN }}@github.com/jrobic/jr-agent-rigger-catalog".insteadOf \
             "https://github.com/jrobic/jr-agent-rigger-catalog"
+          echo "GIT_CONFIG_GLOBAL=$cfg" >> "$GITHUB_ENV"
+          # Prove the rewrite actually grants read BEFORE any tape runs — a cheaper,
+          # unambiguous red than a mid-replay "Repository not found".
+          if GIT_CONFIG_GLOBAL="$cfg" git ls-remote \
+              https://github.com/jrobic/jr-agent-rigger-catalog.git HEAD >/dev/null; then
+            echo "rewrite auth: OK"
+          else
+            echo "::error::jr catalog auth failed — the PAT rewrite did not grant read access"
+            exit 1
+          fi
 
       - name: Replay tapes and compare normalised goldens
         run: |

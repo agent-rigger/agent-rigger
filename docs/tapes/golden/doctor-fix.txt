@@ -19,32 +19,22 @@
 >
 
 <RULE>
-> source docs/tapes/lib/setup.sh
-$ source docs/tapes/fixtures/doctor-fix/stage.sh
-clear
+>
 
 <RULE>
-> source docs/tapes/lib/setup.sh
-$ source docs/tapes/fixtures/doctor-fix/stage.sh
-clear
+$
 
 <RULE>
-> source docs/tapes/lib/setup.sh
-$ source docs/tapes/fixtures/doctor-fix/stage.sh
-clear
-rigger doctor --fix
+$
 
 <RULE>
-> source docs/tapes/lib/setup.sh
-$ source docs/tapes/fixtures/doctor-fix/stage.sh
-clear
-rigger doctor --fix
+$ rigger doctor --fix
 
 <RULE>
-> source docs/tapes/lib/setup.sh
-$ source docs/tapes/fixtures/doctor-fix/stage.sh
-clear
-rigger doctor --fix
+$ rigger doctor --fix
+
+<RULE>
+$ rigger doctor --fix
 
 <RULE>
 $ rigger doctor --fix

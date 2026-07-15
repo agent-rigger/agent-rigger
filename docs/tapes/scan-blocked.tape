@@ -103,15 +103,14 @@ Sleep 800ms
 Type "rigger install trapped/skill:scan-demo --assistant claude"
 Sleep 500ms
 Enter
-# Settle then verify. The clone+scan+exit takes ~1s locally; this fixed Sleep
-# lets the output render AND the shell prompt return before the frame cadence
-# captures the final screen — without it, a snapshot can land in the few-ms gap
-# between the last output line and the returning `$` prompt, flipping one frame
-# (a real, if rare, non-determinism that would make the freshness diff flaky).
-# Wait+Screen (@30s for a cold gitleaks run on slow CI) is the safety net that
-# still guarantees the block rendered before the linger, whatever the timing.
+# Gate on the actual block message, generously (60s): the clone + a COLD gitleaks
+# run on a fresh CI runner is much slower than the ~1s local scan, and the earlier
+# @30s window lapsed there — the `[error] Security scan…` block was missing from
+# the CI capture. Wait for the last block line so the whole finding has rendered
+# before the linger, whatever the timing; the short settles absorb the few-ms gap
+# between the last output line and the returning `$` prompt (frame-cadence jitter).
 Sleep 2s
-Wait+Screen@30s /Re-run with --force/
+Wait+Screen@60s /Re-run with --force/
 Sleep 2s
 
 # --- hidden teardown: throwaway home removed (also on INT/TERM via setup trap) -

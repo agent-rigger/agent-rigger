@@ -38,4 +38,11 @@
   # manifest entry -> one dangling-untracked finding, unlink/item-confirm.
   ln -s "$RIGGER_HOME/.claude/skills/_gone" \
     "$RIGGER_HOME/.claude/skills/ghost-skill"
+
+  # Completion marker on stdout (NOT redirected): the tape's hidden setup waits for
+  # it before revealing the screen, so `doctor --fix` never runs against a
+  # half-staged home on a slow runner. set -e above means STAGED prints only if
+  # every staging step succeeded — a broken stage never emits it and the tape's
+  # Wait lapses loudly instead of filming "no findings".
+  echo STAGED
 )

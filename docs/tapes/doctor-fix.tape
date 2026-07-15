@@ -38,6 +38,10 @@ Type 'source docs/tapes/lib/setup.sh'
 Enter
 Type 'source docs/tapes/fixtures/doctor-fix/stage.sh'
 Enter
+# Gate on stage.sh's STAGED marker: the visible `doctor --fix` must not run until
+# the clone + install + breakage are all in place. Without this, a slow runner
+# films "Installed state is healthy — no findings" (staging not yet applied).
+Wait+Screen /STAGED/
 Type 'clear'
 Enter
 Show
