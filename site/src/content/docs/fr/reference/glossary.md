@@ -176,6 +176,12 @@ L'en-tête d'un catalog : `{ name, required, recommended }`. `name` identifie le
 et `recommended` sont des listes d'ids d'entrées — voir [required](#required) et
 [recommended](#recommended).
 
+#### catalog source
+
+Un couple nom-URL configuré dans la config de l'outil — ce que `catalog add` enregistre et que
+`catalog remove` supprime. Une source pointe vers un [catalog](#catalog) (la couche de données
+qu'elle va chercher) ; plusieurs sources ensemble produisent l'[effective catalog](#effective-catalog).
+
 #### effective catalog
 
 L'union des entrées de tous les catalogs configurés, vue comme un tout. Comme deux catalogs peuvent
@@ -206,6 +212,22 @@ opposition au plancher imposé de [required](#required). En tant que `level` d'e
 marque un artifact comme utile plutôt que strictement nécessaire.
 
 ## Installation et état local
+
+#### ad-hoc install
+
+Installer directement depuis une URL git ou un chemin local, sans étape `catalog add` — un
+prélèvement ponctuel depuis une source que la config ne suit pas. L'install est consignée dans le
+[manifest](#manifest) sous un [derived prefix](#derived-prefix-provenance-prefix), mais sans
+catalog source enregistrée, `update` n'a rien pour la résoudre. Voir
+[installer depuis une URL ou un chemin local](/fr/guides/ad-hoc-install/).
+
+#### derived prefix (provenance prefix)
+
+Le substitut de nom de catalog qu'une [ad-hoc install](#ad-hoc-install) synthétise depuis sa source
+(`gh-…` pour GitHub, `glab-…` pour GitLab, `<host>-…` sinon, `local-…` pour un chemin) et stocke
+dans le manifest comme provenance. Il joue le rôle du nom de catalog dans un
+[qualified id](#qualified-id) pour que `remove` et `check` puissent nommer l'artifact, sans être
+une [catalog source](#catalog-source) configurée.
 
 #### manifest
 
@@ -450,6 +472,7 @@ sûrs ; tout ce qui est destructeur demande d'abord le [consent](#consent).
 ## Index alphabétique
 
 - [adapter](#adapter)
+- [ad-hoc install](#ad-hoc-install)
 - [adoption](#adoption)
 - [agent (sub-agent)](#agent-sub-agent)
 - [agent-rigger](#agent-rigger)
@@ -462,10 +485,12 @@ sûrs ; tout ce qui est destructeur demande d'abord le [consent](#consent).
 - [backup (.bak)](#backup-bak)
 - [catalog](#catalog)
 - [catalog entry](#catalog-entry)
+- [catalog source](#catalog-source)
 - [catalog.json](#catalogjson)
 - [consent](#consent)
 - [context](#context)
 - [delegate-first](#delegate-first)
+- [derived prefix (provenance prefix)](#derived-prefix-provenance-prefix)
 - [doctor](#doctor)
 - [drift](#drift)
 - [effective catalog](#effective-catalog)
