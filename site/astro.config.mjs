@@ -75,6 +75,7 @@ export default defineConfig({
             { slug: 'authoring/hooks' },
             { slug: 'authoring/packs' },
             { slug: 'authoring/release' },
+            { slug: 'authoring/mcp-servers' },
           ],
         },
         {

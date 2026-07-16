@@ -34,8 +34,15 @@ be an exact `${VAR_NAME}` reference. A GitHub server entry looks like this:
   "targets": ["claude"],
   "scopes": ["user"],
   "config": {
-    "command": "npx",
-    "args": ["-y", "@modelcontextprotocol/server-github"],
+    "command": "docker",
+    "args": [
+      "run",
+      "-i",
+      "--rm",
+      "-e",
+      "GITHUB_PERSONAL_ACCESS_TOKEN",
+      "ghcr.io/github/github-mcp-server"
+    ],
     "env": { "GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_PERSONAL_ACCESS_TOKEN}" }
   },
   "secrets": [
@@ -97,9 +104,12 @@ variable, and only when the MCP server is spawned. It goes nowhere else:
   variable mapping (names only) so a later `update` re-renders without asking you again. The value
   is not part of it.
 - Not into **the files agent-rigger writes**. For Claude Code, install
-  [delegates](/reference/glossary/#delegate-first) the server to `claude mcp add-json`, passing the
-  config with its `${VAR}` reference verbatim. Claude Code expands the variable itself when it
-  launches the server. The literal token never passes through agent-rigger's writes.
+  [delegates](/reference/glossary/#delegate-first) the server to `claude mcp add-json`. The config it
+  passes still carries a `${VAR}` reference, never the literal token, but agent-rigger rewrites the
+  name inside `${…}` first: it becomes whichever variable `--secret-env` mapped the catalog's `ref` to,
+  or the `ref`'s own name when no mapping was given. That rewritten name, not the catalog's `ref`, is
+  what Claude Code stores in its own config and expands when it later launches the server: keep it
+  exported in the environment that starts the server, or the server breaks without warning.
 
 ## When install cannot resolve the secret
 

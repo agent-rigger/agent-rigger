@@ -310,6 +310,7 @@ unset RIGGER_HOME
 The guardrail is one of eight natures. The full set, and the on-disk mechanism each uses per
 assistant and per scope, is in [the natures matrix](/reference/natures-matrix/). Two of those
 natures carry their rules differently from a guardrail and have their own contracts: `mcp` declares
-its server `config` and `secrets` inline in `catalog.json`, and `tool` is an advisory presence check
+its server `config` and `secrets` inline in `catalog.json` (see
+[publish an MCP server](/authoring/mcp-servers/)), and `tool` is an advisory presence check
 only (installing it is not yet delivered). See the
 [catalog schema reference](/reference/catalog-schema/) for those fields.

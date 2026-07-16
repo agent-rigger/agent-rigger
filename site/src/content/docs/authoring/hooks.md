@@ -228,6 +228,6 @@ unset RIGGER_HOME
 This covers the `hook` nature only. There are eight natures in all, and the other seven install by
 their own mechanisms. The complete map, per assistant and per scope, is in
 [natures × assistants × scopes](/reference/natures-matrix/). The `opencode` hook handler is **not
-delivered** and is not planned as part of this work. A dedicated authoring page for `mcp` (which
-carries secrets) is coming; `tool` is advisory-only and has no authoring flow beyond its entry
-fields.
+delivered** and is not planned as part of this work. Publishing an `mcp` entry (which carries
+secrets) has [its own page](/authoring/mcp-servers/); `tool` is advisory-only and has no authoring
+flow beyond its entry fields.

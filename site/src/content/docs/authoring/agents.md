@@ -270,7 +270,7 @@ full non-interactive contract.
 ## Other natures
 
 This page covers the `agent` nature only. Each of the eight natures has its own on-disk contract; the
-complete map, per assistant and per scope, is the [natures matrix](/reference/natures-matrix/). Two
-are not covered by an authoring page yet: `mcp` and `tool`. `mcp` installs a declared MCP server; a
-dedicated page is coming. `tool`'s presence check works today, but its install from the
-package-manager hints is not yet delivered.
+complete map, per assistant and per scope, is the [natures matrix](/reference/natures-matrix/).
+Publishing an MCP server has [its own page](/authoring/mcp-servers/). `tool` has no authoring page:
+its presence check works today, but its install from the package-manager hints is not yet
+delivered.
