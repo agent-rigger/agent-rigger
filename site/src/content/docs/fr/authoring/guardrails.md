@@ -327,5 +327,6 @@ utilise par assistant et par scope, est dans
 différemment d'un guardrail et ont leur propre contrat : `mcp` déclare son `config` et ses `secrets`
 de serveur à même `catalog.json` (voir
 [publier un serveur MCP](/fr/authoring/mcp-servers/)), et `tool` n'est qu'une vérification de
-présence advisory (l'installer n'est pas encore livré). Voir la
+présence advisory (voir [déclarer une dépendance à un tool](/fr/authoring/tools/) ; l'installer
+n'est pas encore livré). Voir la
 [référence du schéma de catalog](/fr/reference/catalog-schema/) pour ces champs.

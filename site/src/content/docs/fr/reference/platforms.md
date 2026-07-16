@@ -33,7 +33,10 @@ publier un ensemble partiel.
 Chaque binaire est un exécutable autonome avec le runtime Bun compilé dedans ; les utilisateurs
 finaux n'ont besoin ni de Bun, ni de node, ni d'aucun gestionnaire de paquets pour l'exécuter. Le
 binaire compilé rapporte la version tamponnée depuis le tag git quand il est construit en CI ; un
-binaire compilé localement rapporte `0.0.0`.
+build depuis les sources (`bun run build`) rapporte à la place sa version dérivée de git —
+`git describe --tags --always --dirty`, le `v` de tête retiré, par ex. `0.1.2-5-gabc123` et un
+suffixe `-dirty` quand l'arbre est modifié — ne retombant sur `0.0.0` que quand construit sans
+git disponible.
 
 Avant de construire, le job de release lance le gate complet : `bun run lint`, `bun run format:check`,
 `bun run typecheck`, `bun test`. Il abandonne la release si une étape échoue. Sur les cinq binaires,
@@ -64,11 +67,11 @@ automatiquement. Le binaire de release et le build depuis les sources n'installe
 canonique `agent-rigger` ; ajouter l'alias `rigger` pour l'un ou l'autre est une étape manuelle que
 vous effectuez vous-même.
 
-| Canal              | Plateformes couvertes                       | Notes                                                                                                                                            |
-| ------------------ | ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Tap Homebrew       | macOS (arm64, x64), Linux (arm64, x64)      | Recommandé. `brew tap agent-rigger/tap && brew install agent-rigger`. Indisponible sur Windows. Installe l'alias `rigger` automatiquement.       |
-| Binaire de release | Les cinq cibles de release, Windows compris | Téléchargez l'asset pour votre plateforme, vérifiez-le contre `SHA256SUMS.txt`. L'alias `rigger` est un symlink manuel que vous créez vous-même. |
-| Depuis les sources | Tout OS supporté par Bun                    | Nécessite Bun 1.3+. Le binaire rapporte la version `0.0.0`. L'alias `rigger` est un symlink manuel que vous créez vous-même.                     |
+| Canal              | Plateformes couvertes                       | Notes                                                                                                                                                                                                                |
+| ------------------ | ------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Tap Homebrew       | macOS (arm64, x64), Linux (arm64, x64)      | Recommandé. `brew tap agent-rigger/tap && brew install agent-rigger`. Indisponible sur Windows. Installe l'alias `rigger` automatiquement.                                                                           |
+| Binaire de release | Les cinq cibles de release, Windows compris | Téléchargez l'asset pour votre plateforme, vérifiez-le contre `SHA256SUMS.txt`. L'alias `rigger` est un symlink manuel que vous créez vous-même.                                                                     |
+| Depuis les sources | Tout OS supporté par Bun                    | Nécessite Bun 1.3+. Le binaire rapporte sa version dérivée de git (par ex. `0.1.2-5-gabc123`) ; `0.0.0` seulement si construit sans git disponible. L'alias `rigger` est un symlink manuel que vous créez vous-même. |
 
 La formule Homebrew se nomme `agent-rigger`. Elle livre les quatre binaires Unix (les deux cibles
 macOS et les deux cibles Linux) et installe le binaire téléchargé sous le nom canonique plus un

@@ -242,5 +242,6 @@ Ceci couvre uniquement la nature `hook`. Il y a huit natures en tout, et les sep
 par leurs propres mécanismes. La carte complète, par assistant et par scope, est dans
 [natures × assistants × scopes](/fr/reference/natures-matrix/). Le handler `opencode` pour les hooks
 n'est **pas livré** et n'est pas prévu dans le cadre de ce travail. Publier une entrée `mcp` (qui
-porte des secrets) a [sa propre page](/fr/authoring/mcp-servers/) ; `tool` est advisory uniquement
-et n'a aucun flux d'authoring au-delà de ses champs d'entrée.
+porte des secrets) a [sa propre page](/fr/authoring/mcp-servers/), tout comme
+[déclarer une dépendance à un `tool`](/fr/authoring/tools/) : sa vérification est advisory
+uniquement, et son install n'est pas encore livrée.

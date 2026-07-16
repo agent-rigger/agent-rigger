@@ -242,6 +242,7 @@ n'est réel pour votre équipe qu'une fois devenu une release taggée.
 
 Cette page couvre uniquement la nature `mcp`. Chacune des huit natures a son propre contrat sur
 disque ; la carte complète, par assistant et par scope, est la
-[matrice des natures](/fr/reference/natures-matrix/). Une nature n'a pas encore sa page
-d'authoring : la vérification de présence de `tool` fonctionne aujourd'hui, mais son install depuis
-les indications d'install par gestionnaire de paquets n'est pas encore livrée.
+[matrice des natures](/fr/reference/natures-matrix/). La dernière a elle aussi sa propre page :
+[déclarer une dépendance à un tool](/fr/authoring/tools/) couvre la vérification de présence de
+`tool`, qui fonctionne aujourd'hui, même si son install depuis les indications d'install par
+gestionnaire de paquets n'est pas encore livrée.
