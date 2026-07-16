@@ -10,6 +10,21 @@ release (GitHub releases and the Homebrew tap).
 
 ## [Unreleased]
 
+### Added
+
+- **opencode as a second assistant** — `install`, `check`, `remove` and `update`
+  can target [opencode](https://opencode.ai): pick it in the interactive picker,
+  pass `--assistant opencode`, or persist the choice at `rigger init`; the
+  manifest records the assistant per entry so later commands route without
+  asking again. Six natures are ported — context (native `AGENTS.md`), skills
+  (shared store + symlinks), guardrails (native `permission` descriptor from
+  the catalog), agents (frontmatter translated, `tools` whitelists become
+  deny-by-default `permission` maps), MCP servers and plugins. Hooks stay
+  Claude-only and are excluded from opencode transactions with an explicit
+  message. `opencode.json` is edited as JSONC (comments survive), merges never
+  touch keys agent-rigger does not own, and translation warnings are shown at
+  plan and install time.
+
 ## [0.1.2] - 2026-06-30
 
 ### Added
