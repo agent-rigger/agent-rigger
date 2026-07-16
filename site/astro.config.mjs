@@ -47,6 +47,7 @@ export default defineConfig({
             { slug: 'concepts/one-source-many-assistants' },
             { slug: 'concepts/safety-and-reversibility' },
             { slug: 'concepts/versioning-and-provenance' },
+            { slug: 'concepts/for-organizations' },
           ],
         },
         {

@@ -123,4 +123,5 @@ the version it claims to be.
 ## Next
 
 - See how a bad `check` returns [exit codes](/reference/exit-codes/) a script can react to.
+- Weighing this for a team? Read [adopting it for a team](/concepts/for-organizations/).
 - Look up any term in the [glossary](/reference/glossary/).
