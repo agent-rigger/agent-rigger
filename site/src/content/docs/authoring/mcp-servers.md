@@ -230,6 +230,7 @@ real for your team once it is a tagged release.
 ## Other natures
 
 This page covers the `mcp` nature only. Each of the eight natures has its own on-disk contract; the
-complete map, per assistant and per scope, is the [natures matrix](/reference/natures-matrix/). One
-nature has no authoring page yet: `tool`'s presence check works today, but its install from the
-package-manager hints is not yet delivered.
+complete map, per assistant and per scope, is the [natures matrix](/reference/natures-matrix/). The
+last one has its own page too: [declare a tool dependency](/authoring/tools/) covers `tool`'s
+presence check, which works today, though its install from the package-manager hints is not yet
+delivered.

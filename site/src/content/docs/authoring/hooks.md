@@ -229,5 +229,6 @@ This covers the `hook` nature only. There are eight natures in all, and the othe
 their own mechanisms. The complete map, per assistant and per scope, is in
 [natures × assistants × scopes](/reference/natures-matrix/). The `opencode` hook handler is **not
 delivered** and is not planned as part of this work. Publishing an `mcp` entry (which carries
-secrets) has [its own page](/authoring/mcp-servers/); `tool` is advisory-only and has no authoring
-flow beyond its entry fields.
+secrets) has [its own page](/authoring/mcp-servers/), and so does
+[declaring a `tool` dependency](/authoring/tools/): its check is advisory-only, and installing
+it is not yet delivered.

@@ -75,6 +75,7 @@ export default defineConfig({
             { slug: 'authoring/guardrails' },
             { slug: 'authoring/hooks' },
             { slug: 'authoring/packs' },
+            { slug: 'authoring/tools' },
             { slug: 'authoring/release' },
             { slug: 'authoring/mcp-servers' },
           ],

@@ -312,5 +312,5 @@ assistant and per scope, is in [the natures matrix](/reference/natures-matrix/).
 natures carry their rules differently from a guardrail and have their own contracts: `mcp` declares
 its server `config` and `secrets` inline in `catalog.json` (see
 [publish an MCP server](/authoring/mcp-servers/)), and `tool` is an advisory presence check
-only (installing it is not yet delivered). See the
+only (see [declare a tool dependency](/authoring/tools/); installing it is not yet delivered). See the
 [catalog schema reference](/reference/catalog-schema/) for those fields.
