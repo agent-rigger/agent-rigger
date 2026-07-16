@@ -31,6 +31,24 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      - name: Guard — CHANGELOG has a section for this tag
+        # Fail-closed (decision C1): a release must ship a rotated changelog.
+        # Rotation is a local, zero-LLM step run before tagging (CONTRIBUTING.md
+        # § Releasing). If it was skipped, stop here — before install or build —
+        # with the exact command to run, rather than publishing an undocumented
+        # release. Dots in the version are escaped so the section match is exact.
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          if ! grep -qE "^## \[${VERSION//./\\.}\]" CHANGELOG.md; then
+            echo "::error::CHANGELOG.md has no \"## [${VERSION}]\" section for tag ${GITHUB_REF_NAME}."
+            echo "Rotate the changelog before tagging (see CONTRIBUTING.md § Releasing):"
+            echo "    bun scripts/release-changelog.ts ${VERSION}"
+            echo "    git commit -am \"chore(release): ${VERSION}\""
+            echo "    git tag ${GITHUB_REF_NAME} && git push origin main --follow-tags"
+            exit 1
+          fi
+          echo "CHANGELOG.md has a \"## [${VERSION}]\" section — proceeding."
+
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
@@ -69,9 +87,18 @@ jobs:
 
       - name: Smoke-test the linux-x64 binary
         working-directory: packages/cli
+        # Assert the stamped version round-trips: --version must report exactly the
+        # tag with its leading "v" stripped. A drift here means the stamp step or the
+        # version resolver regressed, and the release must not publish.
         run: |
           chmod +x dist/agent-rigger-linux-x64
-          ./dist/agent-rigger-linux-x64 --version
+          EXPECTED="${GITHUB_REF_NAME#v}"
+          ACTUAL="$(./dist/agent-rigger-linux-x64 --version)"
+          if [ "$ACTUAL" != "$EXPECTED" ]; then
+            echo "::error::--version reported \"${ACTUAL}\", expected \"${EXPECTED}\" (tag ${GITHUB_REF_NAME})."
+            exit 1
+          fi
+          echo "Smoke test OK — --version reports \"${ACTUAL}\"."
 
       - name: Checksums
         working-directory: packages/cli/dist

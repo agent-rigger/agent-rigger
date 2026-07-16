@@ -73,6 +73,42 @@ message over a large mixed one.
 4. Open a PR describing **what** changed and **why**. Link any related issue.
 5. CI must be green before review.
 
+## Releasing
+
+Releases are cut from `main` by the maintainer. The version is carried by the git
+tag; the changelog is rotated by a scripted, zero-LLM step, and CI refuses to
+publish a tag whose changelog section is missing.
+
+1. Make sure `## [Unreleased]` lists everything the release ships.
+2. Rotate the changelog into a dated section (version as `X.Y.Z`, no leading `v`):
+
+   ```sh
+   bun scripts/release-changelog.ts X.Y.Z
+   ```
+
+   This moves the Unreleased entries under `## [X.Y.Z] - <today>`, empties
+   Unreleased, and rewrites the `compare`/`tag` link references. It refuses if
+   that section already exists, or if Unreleased has no entries to release.
+
+3. Commit the rotation:
+
+   ```sh
+   git commit -am "chore(release): X.Y.Z"
+   ```
+
+4. Tag and push the tag:
+
+   ```sh
+   git tag vX.Y.Z
+   git push origin main --follow-tags
+   ```
+
+5. The tag push triggers the **Release** workflow. Before installing or building
+   it verifies the changelog has a `## [X.Y.Z]` section (fail-closed) — if the
+   rotation was skipped the run stops with the command to fix it. It then builds
+   the standalone binaries, publishes the GitHub Release, and updates the
+   Homebrew tap.
+
 ## Architecture decisions
 
 Significant design decisions are tracked by the maintainer outside this public

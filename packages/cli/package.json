@@ -20,7 +20,7 @@
     "./ui": "./src/ui.ts"
   },
   "scripts": {
-    "build": "bun build --compile --outfile dist/agent-rigger src/cli.ts"
+    "build": "bun scripts/build.ts"
   },
   "dependencies": {
     "@agent-rigger/adapters": "workspace:*",

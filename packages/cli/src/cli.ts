@@ -89,14 +89,18 @@ import {
 } from './ui';
 
 import pkg from '../package.json';
+import { injectedVersion, resolveCliVersion } from './version';
 
 // ---------------------------------------------------------------------------
-// Version — sourced from package.json, embedded at build time.
-// `bun build --compile` inlines this JSON import, so the standalone binary
-// reports the package version without reading any file at runtime.
+// Version — resolved at build time.
+// A source build (`bun run build` → scripts/build.ts) injects `__AR_VERSION__`
+// = `git describe` (leading "v" stripped), so the binary reports a version
+// coherent with the git tags. The release workflow instead stamps the tag into
+// package.json without injecting the define, so `pkg.version` carries it there.
+// The `0.0.0` sentinel is the last resort (no git, no stamp).
 // ---------------------------------------------------------------------------
 
-const CLI_VERSION: string = pkg.version;
+const CLI_VERSION: string = resolveCliVersion(injectedVersion(), pkg.version);
 
 // ---------------------------------------------------------------------------
 // isAdHocTarget — detect whether an arg is a URL or local path (not a qualified id)

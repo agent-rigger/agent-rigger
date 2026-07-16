@@ -5,10 +5,36 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
-
 agent-rigger is pre-1.0 (milestone M0). Pre-built binaries are published with each
 release (GitHub releases and the Homebrew tap).
+
+## [Unreleased]
+
+## [0.1.2] - 2026-06-30
+
+### Added
+
+- **RIGGER banner** — `agent-rigger --help` now opens with an ANSI Shadow
+  "RIGGER" banner and the "harness package manager for teams" tagline (also
+  added to the README), replacing the former one-line header.
+
+## [0.1.1] - 2026-06-30
+
+### Added
+
+- **Try-it sandbox** — `scripts/sandbox` provisions a throwaway project to
+  exercise agent-rigger with both scopes isolated, resolving a locally built
+  binary or falling back to an installed one, and tears it all down on exit
+  (documented in `docs/sandbox.md`).
+
+### Changed
+
+- **Homebrew tap published from the release run** — the tap formula is now
+  rendered and pushed by the release workflow itself, so a tagged release
+  refreshes `brew install`/`brew upgrade` automatically. It replaces a separate
+  workflow that never fired.
+
+## [0.1.0] - 2026-06-30
 
 ### Added
 
@@ -36,4 +62,7 @@ release (GitHub releases and the Homebrew tap).
 Idempotence, backup-before-write, human-in-the-loop confirmation, and no silent
 failures hold across all commands.
 
-[Unreleased]: https://github.com/agent-rigger/agent-rigger/commits/main
+[Unreleased]: https://github.com/agent-rigger/agent-rigger/compare/v0.1.2...main
+[0.1.2]: https://github.com/agent-rigger/agent-rigger/compare/v0.1.1...v0.1.2
+[0.1.1]: https://github.com/agent-rigger/agent-rigger/compare/v0.1.0...v0.1.1
+[0.1.0]: https://github.com/agent-rigger/agent-rigger/releases/tag/v0.1.0

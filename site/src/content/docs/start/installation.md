@@ -77,10 +77,12 @@ ln -sf "$PWD/packages/cli/dist/agent-rigger" /usr/local/bin/agent-rigger
 ln -sf "$PWD/packages/cli/dist/agent-rigger" /usr/local/bin/rigger
 ```
 
-**Caveat:** a locally built binary reports its version as `0.0.0`. The real version
-number is stamped from the git tag only during the release build in CI, so a from-source
-build has no version to report. Everything else works identically: the `0.0.0` is
-cosmetic.
+**Version reported:** a from-source build derives its version from git. `bun run build`
+injects `git describe --tags --always --dirty` (leading `v` stripped), so a build inside
+the cloned repo reports something like `0.1.2-5-gabc123` — the last tag, commits since,
+and short SHA — with a `-dirty` suffix when the working tree has uncommitted changes. The
+`0.0.0` sentinel appears only when git is unavailable, for example a source tree extracted
+from a tarball with no `.git`. The release build in CI stamps the exact tag instead.
 
 ## Usage prerequisites
 
@@ -108,8 +110,8 @@ Two commands confirm a working setup. First, the version:
 agent-rigger --version
 ```
 
-A Homebrew or release install prints the released version; a from-source build prints
-`0.0.0` (see the caveat above).
+A Homebrew or release install prints the released version; a from-source build prints its
+git-derived version (`0.0.0` only when built with no git available — see the note above).
 
 Then run [`doctor`](/reference/glossary/#doctor), which reports whether git and the
 scanners are present and which scan mode you are in:
