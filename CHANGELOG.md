@@ -7,8 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-agent-rigger is pre-1.0 (milestone M0). The CLI is functional from source; no
-pre-built binary is distributed yet.
+agent-rigger is pre-1.0 (milestone M0). Pre-built binaries are published with each
+release (GitHub releases and the Homebrew tap).
 
 ### Added
 

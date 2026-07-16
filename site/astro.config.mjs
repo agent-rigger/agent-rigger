@@ -109,6 +109,16 @@ export default defineConfig({
             { slug: 'reference/glossary' },
           ],
         },
+        {
+          label: 'Project',
+          translations: { fr: 'Projet' },
+          items: [
+            { slug: 'project/contributing' },
+            { slug: 'project/security-policy' },
+            { slug: 'project/changelog' },
+            { slug: 'project/license' },
+          ],
+        },
       ],
       plugins: [starlightLinksValidator()],
     }),

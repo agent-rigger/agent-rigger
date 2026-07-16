@@ -10,7 +10,7 @@ project, the quality gates a change must pass, and how to propose it.
 - **gitleaks and/or trivy** — required to exercise the install path against a
   remote catalog (content is scanned before it lands on disk).
 
-See the [README](./README.md#prerequisites) for the full list.
+See the [README](./README.md#installation) for the full list.
 
 ## Setup
 
@@ -32,8 +32,9 @@ bun run format:check # dprint — formatting must be clean
 bun run typecheck    # tsc --noEmit
 ```
 
-Apply formatting with `bun run format`. A `git push` is blocked by the lefthook
-hooks if these gates fail.
+Apply formatting with `bun run format`. The lefthook hooks format and lint staged
+files at commit time and enforce the commit message format; tests and typecheck run
+in CI, so run all four gates locally before pushing.
 
 ## Workspace layout
 
@@ -74,10 +75,12 @@ message over a large mixed one.
 
 ## Architecture decisions
 
-Significant design choices are recorded as ADRs (referenced in the README and
-code comments, e.g. ADR-0016, ADR-0017). If your change alters an invariant —
-idempotence, backup-before-write, human-in-the-loop, no silent failures —
-explain the impact in the PR and update or add an ADR.
+Significant design decisions are tracked by the maintainer outside this public
+repository and cited by id in code comments (grep the source for `ADR-` to find
+the decision a given module follows). The decision records themselves are not
+part of the public tree, and the README does not reference them. If your change
+alters an invariant — idempotence, backup-before-write, human-in-the-loop, no
+silent failures — explain the impact in the PR.
 
 ## Reporting bugs and security issues
 
