@@ -50,6 +50,14 @@ Le module qui traduit un artifact canonique vers la forme exacte attendue par un
 où va le fichier, quel format il prend. Ajouter la prise en charge d'un nouvel assistant, c'est
 ajouter un adapter, pas réécrire les artifacts.
 
+#### canonical form
+
+La forme unique sous laquelle chaque [artifact](#artifact) est écrit avant qu'aucun assistant ne le
+voie — la source que l'[adapter](#adapter) rend au format natif d'un assistant au moment de
+l'install. Comme seule cette forme est écrite et versionnée, un artifact n'est jamais écrit deux
+fois pour deux assistants. Voir
+[une source, plusieurs assistants](/fr/concepts/one-source-many-assistants/).
+
 #### delegate-first
 
 Le principe selon lequel, si un assistant sait installer un artifact par son propre mécanisme natif,
@@ -483,6 +491,7 @@ sûrs ; tout ce qui est destructeur demande d'abord le [consent](#consent).
 - [artifact](#artifact)
 - [assistant](#assistant)
 - [backup (.bak)](#backup-bak)
+- [canonical form](#canonical-form)
 - [catalog](#catalog)
 - [catalog entry](#catalog-entry)
 - [catalog source](#catalog-source)
