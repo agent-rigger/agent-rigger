@@ -69,6 +69,12 @@ export default defineConfig({
           translations: { fr: 'Guides — créer un catalog' },
           items: [
             { slug: 'authoring/create-a-catalog' },
+            { slug: 'authoring/skills' },
+            { slug: 'authoring/agents' },
+            { slug: 'authoring/guardrails' },
+            { slug: 'authoring/hooks' },
+            { slug: 'authoring/packs' },
+            { slug: 'authoring/release' },
           ],
         },
         {
