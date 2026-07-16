@@ -16,7 +16,8 @@ dépôt de catalog ; si ce n'est pas le cas, construisez-en un d'abord avec
 
 Un guardrail est une entrée [artifact](/fr/reference/glossary/#artifact) dans `catalog.json`. Elle
 ne porte que les [champs communs](/fr/reference/catalog-schema/#champs-communs) ; il n'y a aucune
-clé spécifique au guardrail dans l'entrée, car les règles vivent dans des fichiers, pas en ligne :
+clé spécifique au guardrail dans l'entrée, car les règles vivent dans des fichiers, pas dans
+l'entrée elle-même :
 
 ```json title="entrée dans catalog.json"
 {
@@ -324,6 +325,7 @@ Le guardrail est l'une des huit natures. L'ensemble complet, et le mécanisme su
 utilise par assistant et par scope, est dans
 [la matrice des natures](/fr/reference/natures-matrix/). Deux de ces natures portent leurs règles
 différemment d'un guardrail et ont leur propre contrat : `mcp` déclare son `config` et ses `secrets`
-de serveur en ligne dans `catalog.json`, et `tool` n'est qu'une vérification de présence advisory
-(l'installer n'est pas encore livré). Voir la
+de serveur à même `catalog.json` (voir
+[publier un serveur MCP](/fr/authoring/mcp-servers/)), et `tool` n'est qu'une vérification de
+présence advisory (l'installer n'est pas encore livré). Voir la
 [référence du schéma de catalog](/fr/reference/catalog-schema/) pour ces champs.

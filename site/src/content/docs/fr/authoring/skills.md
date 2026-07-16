@@ -176,7 +176,7 @@ pour votre équipe qu'une fois devenu une release taggée.
 
 Cette page couvre uniquement la nature `skill`. Chacune des huit natures a son propre contrat sur
 disque ; la carte complète, par assistant et par scope, est la
-[matrice des natures](/fr/reference/natures-matrix/). Deux n'ont pas encore leur page : `mcp` et
-`tool`. `mcp` installe un serveur MCP déclaré ; une page dédiée arrive. La vérification de présence
-de `tool` fonctionne aujourd'hui, mais son install depuis les indications d'install par gestionnaire
+[matrice des natures](/fr/reference/natures-matrix/). Publier un serveur MCP a
+[sa propre page](/fr/authoring/mcp-servers/). `tool` n'a pas de page authoring : sa vérification de
+présence fonctionne aujourd'hui, mais son install depuis les indications d'install par gestionnaire
 de paquets n'est pas encore livrée.

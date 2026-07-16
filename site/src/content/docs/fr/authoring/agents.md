@@ -282,7 +282,7 @@ non-interactif complet.
 
 Cette page couvre uniquement la nature `agent`. Chacune des huit natures a son propre contrat sur le
 disque ; la carte complète, par assistant et par scope, est la
-[matrice des natures](/fr/reference/natures-matrix/). Deux ne sont pas encore couvertes par une page
-authoring : `mcp` et `tool`. `mcp` installe un serveur MCP déclaré ; une page dédiée arrive. La
-vérification de présence de `tool` fonctionne aujourd'hui, mais son install depuis les indications
-d'install par gestionnaire de paquets n'est pas encore livrée.
+[matrice des natures](/fr/reference/natures-matrix/). Publier un serveur MCP a
+[sa propre page](/fr/authoring/mcp-servers/). `tool` n'a pas de page authoring : sa vérification de
+présence fonctionne aujourd'hui, mais son install depuis les indications d'install par gestionnaire
+de paquets n'est pas encore livrée.

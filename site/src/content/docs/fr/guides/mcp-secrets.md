@@ -35,8 +35,15 @@ ressemble à ceci :
   "targets": ["claude"],
   "scopes": ["user"],
   "config": {
-    "command": "npx",
-    "args": ["-y", "@modelcontextprotocol/server-github"],
+    "command": "docker",
+    "args": [
+      "run",
+      "-i",
+      "--rm",
+      "-e",
+      "GITHUB_PERSONAL_ACCESS_TOKEN",
+      "ghcr.io/github/github-mcp-server"
+    ],
     "env": { "GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_PERSONAL_ACCESS_TOKEN}" }
   },
   "secrets": [
@@ -101,9 +108,13 @@ part ailleurs :
   correspondance référence-vers-variable (des noms seulement) pour qu'un `update` ultérieur
   re-génère sans vous redemander. La valeur n'en fait pas partie.
 - Pas dans **les fichiers qu'agent-rigger écrit**. Pour Claude Code, install
-  [délègue](/fr/reference/glossary/#delegate-first) le serveur à `claude mcp add-json`, en passant
-  la config avec sa référence `${VAR}` telle quelle. Claude Code étend lui-même la variable quand il
-  lance le serveur. Le token littéral ne passe jamais par les écritures d'agent-rigger.
+  [délègue](/fr/reference/glossary/#delegate-first) le serveur à `claude mcp add-json`. La config
+  qu'il passe porte toujours une référence `${VAR}`, jamais le token littéral, mais agent-rigger
+  réécrit d'abord le nom à l'intérieur de `${…}` : il devient la variable que `--secret-env` a
+  fait correspondre au `ref` du catalog, ou le nom du `ref` lui-même quand aucune correspondance
+  n'a été donnée. Ce nom réécrit, et non le `ref` du catalog, est ce que Claude Code stocke dans sa propre
+  config et étend quand il lance le serveur plus tard : gardez-le exporté dans l'environnement qui
+  démarre le serveur, sous peine de casser le serveur sans avertissement.
 
 ## Quand install ne peut pas résoudre le secret
 
