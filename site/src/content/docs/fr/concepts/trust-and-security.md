@@ -125,4 +125,6 @@ vous laisse jamais installer un contenu qui n'est pas la version qu'il prétend 
 
 - Voyez comment un `check` en échec renvoie des [exit codes](/fr/reference/exit-codes/)
   auxquels un script peut réagir.
+- Vous pesez cette adoption pour une équipe ? Lisez
+  [l'adopter pour une équipe](/fr/concepts/for-organizations/).
 - Cherchez n'importe quel terme dans le [glossaire](/fr/reference/glossary/).
