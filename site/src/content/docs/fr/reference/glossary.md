@@ -459,9 +459,10 @@ usage de scripts et de CI. Il ne couvre jamais un acte destructeur (voir [consen
 
 #### exit code
 
-Le statut numérique qu'une commande renvoie pour qu'un script puisse réagir. Valeurs vérifiées : `0`
-(succès — pour `check`, tout présent et conforme), `3` (`check` a trouvé quelque chose de manquant ou
-de drifté), et `2` (la commande a échoué).
+Le statut numérique qu'une commande renvoie pour qu'un script puisse réagir. Chaque commande renvoie
+l'un de cinq codes : `0` (succès ou no-op délibéré), `1` (échec d'exécution ou d'environnement), `2`
+(la commande était fausse), `3` (`check` ou `doctor` a trouvé quelque chose) et `130` (interruption
+par Ctrl+C). Voir [exit codes](/fr/reference/exit-codes) pour le contrat qui fait foi.
 
 #### NO_COLOR
 

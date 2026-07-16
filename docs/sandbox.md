@@ -35,7 +35,8 @@ run if executed directly.
 
 ```sh
 source scripts/sandbox     # ✅
-./scripts/sandbox          # ❌ "Error: source me, do not execute"
+./scripts/sandbox          # ❌ Permission denied — no execute bit, on purpose
+bash scripts/sandbox       # ❌ "Error: source me, do not execute:"
 ```
 
 ## What gets isolated
