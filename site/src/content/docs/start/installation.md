@@ -1,6 +1,6 @@
 ---
 title: Installation
-description: Install agent-rigger via Homebrew, a prebuilt GitHub release binary, or from source — plus the tools it expects on your machine and how to verify the install.
+description: Install agent-rigger via Homebrew, a prebuilt GitHub release binary, or from source. This page also covers the tools it expects on your machine and how to verify the install.
 ---
 
 This page installs the agent-rigger command-line tool. Pick one of the three methods

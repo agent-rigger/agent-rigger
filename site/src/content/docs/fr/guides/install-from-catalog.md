@@ -33,13 +33,13 @@ puis affiche un sélecteur groupé qui classe chaque entrée par rapport à ce q
 - **À mettre à jour** : les entrées installées dans une version plus ancienne, présentées sous la
   forme `old → new`.
 - **À jour (cocher pour réinstaller)** : les entrées déjà à jour. Laissées décochées ; n'en cochez
-  une que pour forcer une réinstallation — un [pack](/fr/reference/glossary/#pack) dont tous les
+  une que pour forcer une réinstallation. Un [pack](/fr/reference/glossary/#pack) dont tous les
   membres sont à jour atterrit ici aussi, et le cocher réinstalle chacun de ses membres.
 
 Les lignes à mettre à jour sont toujours pré-cochées. Les lignes à installer le sont aussi, sauf si le
 catalog déclare [`recommended`](/fr/reference/glossary/#recommended) : dès qu'il le fait, seules ses
 entrées `required` et `recommended` démarrent cochées dans ce groupe, le reste étant listé décoché. La
-touche Espace sur un en-tête de groupe bascule tout le groupe d'un coup — c'est le moyen de tout cocher
+touche Espace sur un en-tête de groupe bascule tout le groupe d'un coup : c'est le moyen de tout cocher
 dans « À installer » quelle que soit l'opinion du catalog. Confirmez votre sélection, examinez le
 [plan](/fr/reference/glossary/#plan-dry-run), puis approuvez-le pour écrire. Quand chaque entrée est
 déjà à jour pour le scope choisi, install saute le sélecteur et vous le signale :
@@ -52,7 +52,7 @@ Un [pack](/fr/reference/glossary/#pack) lui-même n'est jamais enregistré comme
 développe en ses membres au moment de l'install. Mais sa ligne ici suit ces membres : à jour quand
 chacun d'eux l'est, « À mettre à jour » quand l'un a divergé, « À installer » quand l'un manque.
 Exception : un pack composé uniquement de [tools](/fr/reference/glossary/#tool), dont l'install n'est
-pas encore trackée — sa ligne reste « À installer » quoi qu'il arrive.
+pas encore trackée : sa ligne reste « À installer » quoi qu'il arrive.
 
 ![Enregistrement terminal de `agent-rigger install` sans id sur le catalog jr. La commande demande « Select installation scope: » et l'utilisateur garde le défaut, user (~/.claude/). Un sélecteur groupé « Select artifacts to install / update (Space on a group header toggles the whole group): » s'ouvre avec un seul groupe « To install » : le pack required du catalog (pack:secu) et le pack recommended (pack:baseline) démarrent cochés tandis que toutes les autres entrées démarrent décochées — le correctif B4. L'utilisateur descend avec les flèches et coche une seule entrée, agent:tdd-coach, avec Espace, puis descend jusqu'à pack:secu et pack:baseline et les décoche tous les deux — passant outre l'opinion du catalog. Entrée valide la sélection. « Apply the following plan? » affiche un plan à un seul changement installant jr/agent:tdd-coach dans ~/.claude/agents/tdd-coach.md ; l'utilisateur confirme en tapant y. Le passage se termine sur les sections --- Plan --- et --- Result --- et « &#91;ok&#93; Applied 1 file(s). »](../../../../assets/recordings/install-picker.gif)
 
