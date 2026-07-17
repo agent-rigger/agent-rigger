@@ -31,12 +31,19 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - name: Guard — CHANGELOG has a section for this tag
+      - name: Guard — CHANGELOG has a non-empty section for this tag
         # Fail-closed (decision C1): a release must ship a rotated changelog.
         # Rotation is a local, zero-LLM step run before tagging (CONTRIBUTING.md
         # § Releasing). If it was skipped, stop here — before install or build —
         # with the exact command to run, rather than publishing an undocumented
-        # release. Dots in the version are escaped so the section match is exact.
+        # release. Two invariants, both fail-closed:
+        #   1. the `## [VERSION]` section header exists (rotation produced it);
+        #   2. that section has real content, not just blank lines — a header
+        #      hand-added above an empty section (bypassing the rotation script,
+        #      whose own empty-release guard would have refused) must not pass.
+        # The section body is every line after the header up to the next `## [`
+        # heading, or EOF. Dots in the version are escaped so the header match is
+        # exact; awk matches the header literally (index), anchored at column 1.
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
           if ! grep -qE "^## \[${VERSION//./\\.}\]" CHANGELOG.md; then
@@ -47,7 +54,19 @@ jobs:
             echo "    git tag ${GITHUB_REF_NAME} && git push origin main --follow-tags"
             exit 1
           fi
-          echo "CHANGELOG.md has a \"## [${VERSION}]\" section — proceeding."
+          section=$(awk -v hdr="## [${VERSION}]" '
+            in_section && /^## \[/ { exit }
+            index($0, hdr) == 1   { in_section = 1; next }
+            in_section            { print }
+          ' CHANGELOG.md)
+          if ! grep -q '[^[:space:]]' <<<"$section"; then
+            echo "::error::CHANGELOG.md has a \"## [${VERSION}]\" header but its section is empty for tag ${GITHUB_REF_NAME}."
+            echo "A release section must list what it ships — do not hand-add an empty header."
+            echo "Rotate the changelog so [Unreleased] entries move under this version (CONTRIBUTING.md § Releasing):"
+            echo "    bun scripts/release-changelog.ts ${VERSION}"
+            exit 1
+          fi
+          echo "CHANGELOG.md has a non-empty \"## [${VERSION}]\" section — proceeding."
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -104,6 +123,14 @@ jobs:
         working-directory: packages/cli/dist
         run: sha256sum agent-rigger-* > SHA256SUMS.txt
 
+      - name: Bundle LICENSE & DISCLAIMER with the binaries
+        # A user who downloads a release binary directly (not via git clone) has
+        # no LICENSE/DISCLAIMER.md next to it. Copy both repo-root files into
+        # dist/ so they attach to the release. Runs after Checksums on purpose —
+        # SHA256SUMS.txt stays scoped to the binaries (glob agent-rigger-*).
+        # Fail-closed: cp exits non-zero if either source is missing, aborting.
+        run: cp LICENSE DISCLAIMER.md packages/cli/dist/
+
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v3
         with:
@@ -114,6 +141,8 @@ jobs:
             packages/cli/dist/agent-rigger-darwin-arm64
             packages/cli/dist/agent-rigger-windows-x64.exe
             packages/cli/dist/SHA256SUMS.txt
+            packages/cli/dist/LICENSE
+            packages/cli/dist/DISCLAIMER.md
           generate_release_notes: true
           fail_on_unmatched_files: true
 
