@@ -264,7 +264,7 @@ async function isAdoptionDue(
  * Step 7 — Compose output with recap.
  */
 export async function runInstall(opts: RunInstallOptions): Promise<InstallResult> {
-  const { catalog, adapter, scope, env, manifestPath, selectedIds, confirm, toolRunner } = opts;
+  const { catalog, adapter, scope, env, manifestPath, selectedIds, confirm } = opts;
   const { versionFor } = opts;
 
   // -------------------------------------------------------------------------
@@ -403,17 +403,26 @@ export async function runInstall(opts: RunInstallOptions): Promise<InstallResult
   // Empty plan → already up to date, skip confirm + apply
   // -------------------------------------------------------------------------
 
-  // No-execution tool warnings — used whenever the run ends WITHOUT the user
-  // confirming (up-to-date short-circuit, or explicit abort below). A `check`
-  // command never runs unless the user has confirmed the plan.
+  // No-execution tool warnings — used only on the explicit ABORT branch below,
+  // where the user declined the plan outright: no `check` command runs when the
+  // whole plan is rejected. (The empty-plan branch DOES run the checks, under
+  // their own separate consent gate — B10/D5 — so it no longer uses these.)
   const noExecToolWarnings = { required: [] as string[], recommended: [] as string[] };
 
-  // No-execution unverified list — mirrors noExecToolWarnings for the same
-  // early-return branches: consent is never evaluated unless the plan was
-  // confirmed, so nothing is ever "refused" on those paths either.
+  // No-execution unverified list — mirrors noExecToolWarnings for the abort
+  // branch: consent is never evaluated when the plan is rejected, so nothing is
+  // ever "refused" there either.
   const noExecUnverified: string[] = [];
 
   if (groups.length === 0) {
+    // B10/D5: an empty write-plan does NOT skip the tool presence-checks. Their
+    // execution has its OWN consent gate (ledger + batch prompt), independent of
+    // any plan confirmation — which is absent here precisely because there is
+    // nothing to write. A tools-only selection (or an up-to-date / adoption run
+    // that still carries tool entries) must still verify and report them. Run
+    // the same sequence as the non-empty path (never a synthetic plan confirm).
+    const { toolWarnings, unverifiedIds } = await runToolPresenceChecks(toolEntries, opts);
+
     // R5/D5: an empty plan does NOT always mean "nothing to do". An artifact
     // present on disk but ABSENT from the manifest (M4, typically after a
     // manifest loss) must be ADOPTED — recorded in state.json with no config
@@ -434,8 +443,8 @@ export async function runInstall(opts: RunInstallOptions): Promise<InstallResult
         // (e.g. a TOCTOU change between detection and apply) — never claim a
         // phantom adoption.
         reason: applyResult.adopted.length > 0 ? 'adopted' : 'up-to-date',
-        toolWarnings: noExecToolWarnings,
-        unverifiedIds: noExecUnverified,
+        toolWarnings,
+        unverifiedIds,
         skipped,
         assistantId: adapter.id,
         written: applyResult.written,
@@ -449,7 +458,7 @@ export async function runInstall(opts: RunInstallOptions): Promise<InstallResult
         applied: false,
         written: applyResult.written,
         backedUp: applyResult.backedUp,
-        toolWarnings: noExecToolWarnings,
+        toolWarnings,
         skipped,
         warnings,
         output,
@@ -459,8 +468,8 @@ export async function runInstall(opts: RunInstallOptions): Promise<InstallResult
     const output = buildOutput({
       planText,
       reason: 'up-to-date',
-      toolWarnings: noExecToolWarnings,
-      unverifiedIds: noExecUnverified,
+      toolWarnings,
+      unverifiedIds,
       skipped,
       assistantId: adapter.id,
       written: [],
@@ -471,7 +480,7 @@ export async function runInstall(opts: RunInstallOptions): Promise<InstallResult
       applied: false,
       written: [],
       backedUp: [],
-      toolWarnings: noExecToolWarnings,
+      toolWarnings,
       skipped,
       warnings,
       output,
@@ -509,16 +518,83 @@ export async function runInstall(opts: RunInstallOptions): Promise<InstallResult
 
   // -------------------------------------------------------------------------
   // Step 5b: Post-confirmation tool presence-checks (advisory), gated by a
-  // SEPARATE granular consent, memoized in a ledger keyed by (id, command
-  // hash).
+  // SEPARATE granular consent (see runToolPresenceChecks).
   //
-  // Confirming the plan above is not consent to run a tool's `check`
-  // command — that consent is per-command and requested (or looked up)
-  // here, only for the resolved selection (toolEntries), only after plan
-  // confirmation. A refused command never runs any shell: it is reported as
-  // 'unverified', never as 'absent' (presence is simply unknown). A missing
-  // (verified-absent) tool is reported but never blocks the install.
+  // Confirming the plan above is not consent to run a tool's `check` command —
+  // that consent is per-command, looked up (or prompted) here, only for the
+  // resolved selection (toolEntries), only after plan confirmation. A refused
+  // command never runs any shell: it is reported 'unverified', never 'absent'.
+  // A missing (verified-absent) tool is reported but never blocks the install.
+  // The empty-plan branch above runs this exact same sequence under the same
+  // consent gate (B10/D5) — the checks are detached from a non-empty write plan.
   // -------------------------------------------------------------------------
+
+  const { toolWarnings, unverifiedIds } = await runToolPresenceChecks(toolEntries, opts);
+
+  // -------------------------------------------------------------------------
+  // Step 6: Apply (backup → write → manifest)
+  // -------------------------------------------------------------------------
+
+  const applyResult = versionFor === undefined
+    ? await apply(adapter, adapterEntries, scope, env, manifestPath)
+    : await apply(adapter, adapterEntries, scope, env, manifestPath, versionFor);
+
+  // -------------------------------------------------------------------------
+  // Step 7: Compose output
+  // -------------------------------------------------------------------------
+
+  const output = buildOutput({
+    planText,
+    reason: 'applied',
+    toolWarnings,
+    unverifiedIds,
+    skipped,
+    assistantId: adapter.id,
+    written: applyResult.written,
+    backedUp: applyResult.backedUp,
+  });
+
+  return {
+    applied: true,
+    written: applyResult.written,
+    backedUp: applyResult.backedUp,
+    toolWarnings,
+    skipped,
+    warnings,
+    output,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Internal helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Granular consent + advisory tool presence-checks for the resolved selection.
+ *
+ * Confirming the install plan is a SEPARATE decision from consenting to run a
+ * tool's `check` command: this gate is per-command, memoized in the consent
+ * ledger keyed by (id, sha256(command)). Each toolEntry is looked up
+ * (isConsented); not-yet-consented commands are batch-prompted
+ * (confirmToolChecks) unless `confirm` is the boolean `true` (--yes), where
+ * consent is implicit. Newly granted consent is persisted (recordConsent)
+ * BEFORE running checkTools on the consented subset. Refused commands never run
+ * any shell and are reported 'unverified' (never 'absent').
+ *
+ * Both the returned toolWarnings (missing required/recommended) and unverifiedIds
+ * are advisory — neither ever blocks installation. This is the SAME sequence
+ * whether the write-plan is empty (tools-only / up-to-date / adoption) or not
+ * (post plan-confirmation): a `check` command is arbitrary shell content sourced
+ * from the catalog and must never run without its own recorded consent.
+ */
+async function runToolPresenceChecks(
+  toolEntries: (ArtifactEntry & { check: string })[],
+  opts: RunInstallOptions,
+): Promise<{
+  toolWarnings: { required: string[]; recommended: string[] };
+  unverifiedIds: string[];
+}> {
+  const { env, scope, confirm, toolRunner, versionFor } = opts;
 
   const consentChecks = await Promise.all(
     toolEntries.map(async (e) => ({
@@ -571,49 +647,14 @@ export async function runInstall(opts: RunInstallOptions): Promise<InstallResult
   }));
   const allToolResults = [...checkedResults, ...unverifiedResults];
 
-  const toolWarnings = {
-    required: missingRequired(allToolResults).map((r) => r.id),
-    recommended: missingRecommended(allToolResults).map((r) => r.id),
-  };
-  const unverifiedIds = unverifiedTools(allToolResults).map((r) => r.id);
-
-  // -------------------------------------------------------------------------
-  // Step 6: Apply (backup → write → manifest)
-  // -------------------------------------------------------------------------
-
-  const applyResult = versionFor === undefined
-    ? await apply(adapter, adapterEntries, scope, env, manifestPath)
-    : await apply(adapter, adapterEntries, scope, env, manifestPath, versionFor);
-
-  // -------------------------------------------------------------------------
-  // Step 7: Compose output
-  // -------------------------------------------------------------------------
-
-  const output = buildOutput({
-    planText,
-    reason: 'applied',
-    toolWarnings,
-    unverifiedIds,
-    skipped,
-    assistantId: adapter.id,
-    written: applyResult.written,
-    backedUp: applyResult.backedUp,
-  });
-
   return {
-    applied: true,
-    written: applyResult.written,
-    backedUp: applyResult.backedUp,
-    toolWarnings,
-    skipped,
-    warnings,
-    output,
+    toolWarnings: {
+      required: missingRequired(allToolResults).map((r) => r.id),
+      recommended: missingRecommended(allToolResults).map((r) => r.id),
+    },
+    unverifiedIds: unverifiedTools(allToolResults).map((r) => r.id),
   };
 }
-
-// ---------------------------------------------------------------------------
-// Internal helpers
-// ---------------------------------------------------------------------------
 
 interface BuildOutputOpts {
   planText: string;

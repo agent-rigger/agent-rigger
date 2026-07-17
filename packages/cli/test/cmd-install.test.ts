@@ -24,6 +24,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { isConsented, recordConsent } from '@agent-rigger/core/consent';
+import { writeManifest } from '@agent-rigger/core/manifest';
 import { resolveOpencodeUserTargets, resolveUserTargets } from '@agent-rigger/core/paths';
 import type { Env } from '@agent-rigger/core/paths';
 import type { Scanner } from '@agent-rigger/core/scan';
@@ -99,6 +100,20 @@ const allToolsAbsentRunner: CommandRunner = async () => ({ exitCode: 1 });
 
 /** Fake runner where all tools are present (exit 0). */
 const allToolsPresentRunner: CommandRunner = async () => ({ exitCode: 0 });
+
+/**
+ * A CommandRunner that counts its invocations — proves whether (and how often)
+ * a `check` command was actually executed, distinct from a check that was never
+ * run (unverified) or a plan that skipped checks entirely.
+ */
+function makeCountingRunner(exitCode: number): { runner: CommandRunner; calls: () => number } {
+  let count = 0;
+  const runner: CommandRunner = async () => {
+    count++;
+    return { exitCode };
+  };
+  return { runner, calls: () => count };
+}
 
 // ---------------------------------------------------------------------------
 // Shared fixture lifecycle
@@ -1146,9 +1161,13 @@ describe('runInstall — T6: tool checks run strictly after confirmation', () =>
     expect(existsAfterFirst).toBe(true);
     await fs.rm(sentinelPath, { force: true });
 
-    // Second install: same forced confirm:true, but the plan is now up-to-date
-    // (empty) → the ordering rule still holds: no re-execution, because a
-    // forced/non-interactive confirm never re-introduces pre-gate execution.
+    // Second install: same forced confirm:true, but the write-plan is now empty
+    // (up-to-date). B10/D5: an empty write-plan no longer skips the tool
+    // presence-checks — they run under their OWN consent gate. tool:x was
+    // consented during the first install (--yes), so the check runs again with
+    // no re-prompt. The ordering invariant the first install proved (never
+    // before confirm) is unchanged; what B10 changes is that the empty-plan
+    // branch now reaches the checks at all.
     const result2 = await runInstall({
       catalog,
       adapter,
@@ -1159,10 +1178,11 @@ describe('runInstall — T6: tool checks run strictly after confirmation', () =>
       confirm: true,
     });
     expect(result2.applied).toBe(false);
+    // tool:x carries no level → still no required/recommended warning.
     expect(result2.toolWarnings).toEqual({ required: [], recommended: [] });
 
     const existsAfterSecond = await fs.stat(sentinelPath).then(() => true, () => false);
-    expect(existsAfterSecond).toBe(false);
+    expect(existsAfterSecond).toBe(true);
   });
 
   it('reports a missing tool as an advisory warning after confirm, without blocking the install', async () => {
@@ -1557,4 +1577,188 @@ describe('runInstall — T7: granular tool-check consent', () => {
       expect(needsConsented).toBe(false);
     },
   );
+});
+
+// ---------------------------------------------------------------------------
+// B10: tool presence-checks run even when the write-plan is EMPTY.
+//
+// A tools-only selection (or an up-to-date/adoption run that still carries tool
+// entries) produces no WriteOps, so the historical `groups.length === 0`
+// short-circuit returned before the presence-checks ever ran (Step 5b was only
+// reachable after a plan confirmation, which an empty plan never triggers). The
+// checks are now detached from the write-plan and gated by their OWN consent
+// (ledger + batch prompt), exactly as on a non-empty plan — never a synthetic
+// plan confirmation (D5 DÉCISION TRANCHÉE). Nothing executes without a recorded
+// consent or an explicit `--yes`.
+// ---------------------------------------------------------------------------
+
+describe('runInstall — B10: presence-checks on an empty write-plan', () => {
+  it('tools-only --yes (up-to-date branch): the check runs and a missing required tool is reported', async () => {
+    const adapter = createClaudeAdapter({ denyRef: REF_DENY, agentsContent: AGENTS_CONTENT });
+    const { runner, calls } = makeCountingRunner(1); // exit 1 → tool absent
+
+    const result = await runInstall({
+      catalog: [REQUIRED_TOOL_ENTRY],
+      adapter,
+      scope: SCOPE,
+      env,
+      manifestPath,
+      selectedIds: ['tool:glab'],
+      confirm: true,
+      toolRunner: runner,
+    });
+
+    // A tools-only selection has no adapter plan → nothing is written.
+    expect(result.applied).toBe(false);
+    expect(result.output.toLowerCase()).toMatch(/up.to.date|nothing to install/);
+
+    // B10: the presence-check nonetheless executed (exactly once) and reported
+    // the absent required tool — the empty plan no longer skips it.
+    expect(calls()).toBe(1);
+    expect(result.toolWarnings.required).toContain('tool:glab');
+    expect(result.output).toContain('[missing required]');
+    expect(result.output).toContain('tool:glab');
+  });
+
+  it('tools-only --yes (adoption branch): checks run alongside the adoption, both reported', async () => {
+    const catalog: CatalogEntry[] = [...MINI_CATALOG, REQUIRED_TOOL_ENTRY];
+    const adapter = createClaudeAdapter({ denyRef: REF_DENY, agentsContent: AGENTS_CONTENT });
+
+    // Install a guardrail normally, then lose the manifest (M4): the file stays
+    // on disk but is no longer tracked → the next install has an empty write
+    // plan yet must ADOPT the on-disk artifact.
+    await runInstall({
+      catalog,
+      adapter,
+      scope: SCOPE,
+      env,
+      manifestPath,
+      selectedIds: ['guardrails-claude'],
+      confirm: true,
+    });
+    await writeManifest(manifestPath, { version: 1, artifacts: [] });
+
+    const result = await runInstall({
+      catalog,
+      adapter,
+      scope: SCOPE,
+      env,
+      manifestPath,
+      // guardrails-claude is adoptable (on disk, untracked) → empty write-plan;
+      // tool:glab adds a presence-check to that empty-plan run.
+      selectedIds: ['guardrails-claude', 'tool:glab'],
+      confirm: true,
+      toolRunner: allToolsAbsentRunner,
+    });
+
+    // Adoption reached (state.json only), no config write.
+    expect(result.applied).toBe(false);
+    expect(result.output).toContain('adopted (already present on disk)');
+
+    // B10: the presence-check ran in the adoption branch too.
+    expect(result.toolWarnings.required).toContain('tool:glab');
+    expect(result.output).toContain('[missing required]');
+    expect(result.output).toContain('tool:glab');
+  });
+
+  it('tools-only without --yes: consent is prompted; a refusal runs no shell and reports unverified', async () => {
+    const adapter = createClaudeAdapter({ denyRef: REF_DENY, agentsContent: AGENTS_CONTENT });
+    const { runner, calls } = makeCountingRunner(1);
+    const consentPrompts: { id: string; command: string }[][] = [];
+
+    const result = await runInstall({
+      catalog: [REQUIRED_TOOL_ENTRY],
+      adapter,
+      scope: SCOPE,
+      env,
+      manifestPath,
+      selectedIds: ['tool:glab'],
+      // A function (not the boolean --yes) → interactive: the empty write-plan
+      // never invokes this, but consent is still gated separately below.
+      confirm: async () => true,
+      confirmToolChecks: async (commands) => {
+        consentPrompts.push(commands);
+        return false; // user refuses the check
+      },
+      toolRunner: runner,
+    });
+
+    expect(result.applied).toBe(false);
+
+    // Consent WAS prompted, exactly once, for the tool's check command.
+    expect(consentPrompts).toEqual([[{ id: 'tool:glab', command: 'which glab' }]]);
+
+    // Refused → no shell ran, tool reported unverified (never "missing").
+    expect(calls()).toBe(0);
+    expect(result.output).toContain('[not verified]');
+    expect(result.output).toContain('tool:glab');
+    expect(result.toolWarnings.required).not.toContain('tool:glab');
+
+    // No consent was persisted for a refused check.
+    expect(await isConsented(env, { id: 'tool:glab', command: 'which glab' })).toBe(false);
+  });
+
+  it('tools-only with prior consent: no re-prompt, the check runs directly on the empty plan', async () => {
+    const sentinelPath = path.join(tmp.dir, 'sentinel-b10-consented.txt');
+    const checkCmd = `touch "${sentinelPath}"`;
+    const toolX: CatalogEntry = {
+      kind: 'artifact',
+      id: 'tool:x',
+      nature: 'tool',
+      targets: ['claude'],
+      scopes: ['user'],
+      check: checkCmd,
+    };
+    const adapter = createClaudeAdapter({ denyRef: REF_DENY, agentsContent: AGENTS_CONTENT });
+
+    // Pre-seed the ledger as if a prior run had already approved this command.
+    await recordConsent(env, { id: 'tool:x', command: checkCmd });
+
+    let confirmToolChecksCalls = 0;
+    const result = await runInstall({
+      catalog: [toolX],
+      adapter,
+      scope: SCOPE,
+      env,
+      manifestPath,
+      selectedIds: ['tool:x'],
+      confirm: async () => true,
+      confirmToolChecks: async () => {
+        confirmToolChecksCalls++;
+        return true;
+      },
+      // No toolRunner injected → the real defaultRunner executes `touch`.
+    });
+
+    expect(result.applied).toBe(false);
+    // Already consented → never re-prompted.
+    expect(confirmToolChecksCalls).toBe(0);
+
+    // The check actually ran on the empty plan (sentinel created).
+    const exists = await fs.stat(sentinelPath).then(() => true, () => false);
+    expect(exists).toBe(true);
+  });
+
+  it('non-regression: on a NON-empty plan the presence-check still runs exactly once (post-confirm)', async () => {
+    const catalog: CatalogEntry[] = [...MINI_CATALOG, REQUIRED_TOOL_ENTRY];
+    const adapter = createClaudeAdapter({ denyRef: REF_DENY, agentsContent: AGENTS_CONTENT });
+    const { runner, calls } = makeCountingRunner(0);
+
+    const result = await runInstall({
+      catalog,
+      adapter,
+      scope: SCOPE,
+      env,
+      manifestPath,
+      selectedIds: ['guardrails-claude', 'context-claude', 'tool:glab'],
+      confirm: true,
+      toolRunner: runner,
+    });
+
+    // Real writes happened → the empty-plan branch is NOT taken.
+    expect(result.applied).toBe(true);
+    // The check ran once (the non-empty path), never twice — the empty-plan
+    // detour is skipped whenever there is a plan.
+    expect(calls()).toBe(1);
+  });
 });
