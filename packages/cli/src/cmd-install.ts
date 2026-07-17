@@ -128,6 +128,15 @@ export interface RunInstallOptions {
   /** Working directory (reserved; unused in M0). */
   cwd?: string;
   /**
+   * Compact output mode (plan-compact-summary D3/D4). Threaded to renderPlan
+   * (one recap line per artefact) and to buildOutput (the Result section drops
+   * the per-written-file list but keeps the aggregated status and the per-file
+   * backup lines). Absent/false → the full output, byte-identical to before.
+   * The Warnings and Tool presence-check blocks are assembled outside renderPlan
+   * and never see this flag — they stay integral in both modes by construction.
+   */
+  summary?: boolean;
+  /**
    * Optional seam for remote installs.
    * When provided, each entry's ref/sha in the manifest is derived
    * from this function instead of the defaults (v0.0.0/'').
@@ -266,6 +275,7 @@ async function isAdoptionDue(
 export async function runInstall(opts: RunInstallOptions): Promise<InstallResult> {
   const { catalog, adapter, scope, env, manifestPath, selectedIds, confirm } = opts;
   const { versionFor } = opts;
+  const summary = opts.summary === true;
 
   // -------------------------------------------------------------------------
   // Step 1: Resolve selected ids → concrete artifact entries
@@ -364,6 +374,7 @@ export async function runInstall(opts: RunInstallOptions): Promise<InstallResult
     cwd: effectiveCwd,
     scope,
     assistant: adapter.id,
+    summary,
   });
 
   // Prepend project-scope note (cwd + optional git-repo warning) when relevant.
@@ -443,6 +454,7 @@ export async function runInstall(opts: RunInstallOptions): Promise<InstallResult
         // (e.g. a TOCTOU change between detection and apply) — never claim a
         // phantom adoption.
         reason: applyResult.adopted.length > 0 ? 'adopted' : 'up-to-date',
+        summary,
         toolWarnings,
         unverifiedIds,
         skipped,
@@ -468,6 +480,7 @@ export async function runInstall(opts: RunInstallOptions): Promise<InstallResult
     const output = buildOutput({
       planText,
       reason: 'up-to-date',
+      summary,
       toolWarnings,
       unverifiedIds,
       skipped,
@@ -497,6 +510,7 @@ export async function runInstall(opts: RunInstallOptions): Promise<InstallResult
     const output = buildOutput({
       planText,
       reason: 'aborted',
+      summary,
       toolWarnings: noExecToolWarnings,
       unverifiedIds: noExecUnverified,
       skipped,
@@ -546,6 +560,7 @@ export async function runInstall(opts: RunInstallOptions): Promise<InstallResult
   const output = buildOutput({
     planText,
     reason: 'applied',
+    summary,
     toolWarnings,
     unverifiedIds,
     skipped,
@@ -678,6 +693,14 @@ interface BuildOutputOpts {
    * Rendered under the "adopted" result line. Absent on non-adoption runs.
    */
   adopted?: string[];
+  /**
+   * Compact mode (D3): drop the per-written-file `+ f` list in the Result
+   * section. The aggregated status line (`[ok] Applied N file(s).`) and the
+   * per-file backup lines (`~ b`) are kept — a backup names a pre-existing file
+   * the user must be able to find again (recovery info, same family as a
+   * warning), and its volume is nil in the nominal fresh install.
+   */
+  summary?: boolean;
 }
 
 /**
@@ -704,6 +727,7 @@ function buildOutput(opts: BuildOutputOpts): string {
   const { planText, reason, toolWarnings, unverifiedIds, skipped, assistantId, written, backedUp } =
     opts;
   const adopted = opts.adopted ?? [];
+  const summary = opts.summary === true;
   const parts: string[] = [];
 
   // Plan section
@@ -739,8 +763,12 @@ function buildOutput(opts: BuildOutputOpts): string {
   } else {
     parts.push(`  [ok] Applied ${written.length} file(s).`);
 
-    for (const f of written) {
-      parts.push(`    + ${f}`);
+    // D3: the per-written-file list repeats paths the Plan section just named;
+    // summary drops it. The aggregated count above stays in both modes.
+    if (!summary) {
+      for (const f of written) {
+        parts.push(`    + ${f}`);
+      }
     }
 
     if (backedUp.length > 0) {

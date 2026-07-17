@@ -285,6 +285,7 @@ export const KNOWN_FLAGS = new Set([
   'force',
   'fix',
   'remote',
+  'summary',
   'help',
   'version',
 ]);
@@ -537,6 +538,7 @@ Options:
   --fix                         Repair the installed state (doctor only; consent-driven).
   --remote                      Read configured catalog content for the differential (doctor
                                 only; read-only, fail-closed).
+  --summary                     Compact plan and result output (one line per artifact).
   --secret-env=<ref>=<VAR>
                                  Override which env var resolves an mcp secret ref (repeatable).
   --help                        Show this help message.
@@ -2210,6 +2212,10 @@ async function handleInstall(opts: HandleInstallOpts): Promise<number> {
 
   const yes = flags['yes'] === true;
   const force = flags['force'] === true;
+  // plan-compact-summary (D4): threaded to every runRemoteInstall below so the
+  // renderer + Result compaction reach the real install path. Inert on commands
+  // that don't consume it (standard flag behaviour).
+  const summary = flags['summary'] === true;
 
   // R5 (lot 6, D5): collect --secret-env overrides BEFORE any checkout or
   // run-lock. An invalid "<ref>=<VAR>" value is an actionable error
@@ -2349,6 +2355,7 @@ async function handleInstall(opts: HandleInstallOpts): Promise<number> {
         tmpFactory,
         confirm,
         assistant,
+        summary,
         ...(force ? { force } : {}),
         ...(deps.remote?.scanner === undefined ? {} : { scanner: deps.remote.scanner }),
         ...(Object.keys(secretOverrides).length === 0 ? {} : { secretOverrides }),
@@ -2506,6 +2513,7 @@ async function handleInstall(opts: HandleInstallOpts): Promise<number> {
       tmpFactory: interactiveTmpFactory,
       confirm: (planText: string) => prompts.confirmApply(planText),
       assistant,
+      summary,
       ...(force ? { force } : {}),
       ...(deps.remote?.scanner === undefined ? {} : { scanner: deps.remote.scanner }),
       ...(Object.keys(secretOverrides).length === 0 ? {} : { secretOverrides }),
@@ -2568,6 +2576,7 @@ async function handleAdHocInstall(opts: HandleAdHocInstallOpts): Promise<number>
 
   const yes = flags['yes'] === true;
   const force = flags['force'] === true;
+  const summary = flags['summary'] === true;
 
   const derivedPrefix = deriveAdHocPrefix(source);
 
@@ -2649,6 +2658,7 @@ async function handleAdHocInstall(opts: HandleAdHocInstallOpts): Promise<number>
     tmpFactory,
     confirm,
     assistant,
+    summary,
     ...(force ? { force } : {}),
     ...(deps.remote?.scanner === undefined ? {} : { scanner: deps.remote.scanner }),
     ...(Object.keys(secretOverrides).length === 0 ? {} : { secretOverrides }),

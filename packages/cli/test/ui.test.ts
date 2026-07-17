@@ -755,6 +755,171 @@ describe('renderPlan — multi-group', () => {
 });
 
 // ---------------------------------------------------------------------------
+// renderPlan — summary (D1/D2): one recap line per artefact, Σ unchanged
+// ---------------------------------------------------------------------------
+
+describe('renderPlan — summary mode', () => {
+  const guardrailGroup: PlanGroup = {
+    id: 'jr/guardrail:claude',
+    nature: 'guardrail',
+    action: 'install',
+    ops: [
+      {
+        kind: 'merge-deny',
+        path: '/home/me/.claude/settings.json',
+        toAdd: ['Bash(rm:-rf)', 'Read(~/.ssh/**)', 'Read(./secrets/**)'],
+      },
+      { kind: 'merge-allow', path: '/home/me/.claude/settings.json', toAdd: ['Bash(git status)'] },
+    ],
+  };
+  const skillGroup: PlanGroup = {
+    id: 'jr/skill:remote-demo',
+    nature: 'skill',
+    action: 'install',
+    ops: [{
+      kind: 'link',
+      source: '/s',
+      store: '/st',
+      target: '/home/me/.claude/skills/remote-demo',
+    }],
+  };
+  const contextGroup: PlanGroup = {
+    id: 'jr/context:claude',
+    nature: 'context',
+    action: 'update',
+    ops: [
+      {
+        kind: 'write-text',
+        path: '/home/me/.claude/CLAUDE.md',
+        content: 'a\nb\nc',
+        description: '',
+      },
+    ],
+  };
+
+  it('emits exactly one recap line per group (header + N groups + Σ, no blanks between)', () => {
+    const lines = renderPlan([guardrailGroup, skillGroup, contextGroup], {
+      color: false,
+      summary: true,
+      home: '/home/me',
+    }).split('\n');
+    // header + 3 recap lines + Σ = 5 lines, no blank separators
+    expect(lines.length).toBe(5);
+    expect(lines[0]).toContain('Plan · 4 changes');
+    expect(lines[1]!.startsWith('+')).toBe(true);
+    expect(lines[2]!.startsWith('+')).toBe(true);
+    expect(lines[3]!.startsWith('~')).toBe(true);
+    expect(lines[4]!).toContain('Σ');
+    expect(lines).not.toContain('');
+  });
+
+  it('keeps the same header line as full mode', () => {
+    const summary = renderPlan([guardrailGroup], {
+      color: false,
+      summary: true,
+      scope: 'user',
+      home: '/home/me',
+    });
+    const full = renderPlan([guardrailGroup], { color: false, scope: 'user', home: '/home/me' });
+    const summaryHeader = summary.split('\n')[0];
+    const fullHeader = full.split('\n')[0];
+    expect(summaryHeader).toBe(fullHeader);
+    expect(summaryHeader).toContain('scope: user');
+    expect(summaryHeader).toContain('~/.claude');
+  });
+
+  it('renders a guardrail recap with symbol, id, primary target and deny/allow digest', () => {
+    const result = renderPlan([guardrailGroup], { color: false, summary: true, home: '/home/me' });
+    const recap = result.split('\n').find((l) => l.includes('jr/guardrail:claude'))!;
+    expect(recap.startsWith('+ ')).toBe(true);
+    expect(recap).toContain('~/.claude/settings.json');
+    expect(recap).toContain('deny +3');
+    expect(recap).toContain('allow +1');
+    // no per-op detail lines in summary
+    expect(result).not.toContain('deny  (+3)');
+    expect(result).not.toContain('+ Bash(rm:-rf)');
+  });
+
+  it('renders a write-text recap as "N write (+lines)" without the content preview', () => {
+    const result = renderPlan([contextGroup], { color: false, summary: true, home: '/home/me' });
+    const recap = result.split('\n').find((l) => l.includes('jr/context:claude'))!;
+    expect(recap.startsWith('~ ')).toBe(true);
+    expect(recap).toContain('~/.claude/CLAUDE.md');
+    expect(recap).toContain('1 write (+3)');
+    expect(result).not.toContain('write  +3 / -0');
+    expect(result).not.toContain('│');
+  });
+
+  it('renders a link recap as "N link"', () => {
+    const result = renderPlan([skillGroup], { color: false, summary: true, home: '/home/me' });
+    const recap = result.split('\n').find((l) => l.includes('jr/skill:remote-demo'))!;
+    expect(recap).toContain('~/.claude/skills/remote-demo');
+    expect(recap).toContain('1 link');
+    expect(result).not.toContain('→ store');
+  });
+
+  it('renders a hook recap as "N hook"', () => {
+    const hookGroup: PlanGroup = {
+      id: 'jr/hook:fmt',
+      nature: 'hook',
+      action: 'install',
+      ops: [
+        {
+          kind: 'merge-hooks',
+          path: '/home/me/.claude/settings.json',
+          event: 'PostToolUse',
+          matcher: 'Edit',
+          command: 'bun run /store/hooks/fmt.sh',
+        },
+      ],
+    };
+    const result = renderPlan([hookGroup], { color: false, summary: true, home: '/home/me' });
+    const recap = result.split('\n').find((l) => l.includes('jr/hook:fmt'))!;
+    expect(recap).toContain('1 hook');
+    expect(result).not.toContain('PostToolUse/Edit → fmt.sh');
+  });
+
+  it('renders a plugin recap as "N plugin" without the native command preview', () => {
+    const pluginGroup: PlanGroup = {
+      id: 'jr/plugin:demo',
+      nature: 'plugin',
+      action: 'install',
+      ops: [
+        {
+          kind: 'plugin-install',
+          plugin: 'demo-plugin',
+          marketplace: '/project/.claude-plugin/marketplace.json',
+        },
+      ],
+    };
+    const result = renderPlan([pluginGroup], { color: false, summary: true, cwd: '/project' });
+    const recap = result.split('\n').find((l) => l.includes('jr/plugin:demo'))!;
+    expect(recap).toContain('1 plugin');
+    expect(result).not.toContain('$ claude plugin install');
+    expect(result).not.toContain('via ./.claude-plugin/marketplace.json');
+  });
+
+  it('produces a Σ line identical to full mode over the same groups', () => {
+    const groups = [guardrailGroup, skillGroup, contextGroup];
+    const opts = { color: false, home: '/home/me' } as const;
+    const summarySigma = renderPlan(groups, { ...opts, summary: true })
+      .split('\n')
+      .find((l) => l.includes('Σ'));
+    const fullSigma = renderPlan(groups, opts)
+      .split('\n')
+      .find((l) => l.includes('Σ'));
+    expect(summarySigma).toBeDefined();
+    expect(summarySigma).toBe(fullSigma);
+  });
+
+  it('leaves full mode byte-identical when summary is absent/false', () => {
+    const groups = [guardrailGroup, skillGroup, contextGroup];
+    const opts = { color: false, home: '/home/me' } as const;
+    expect(renderPlan(groups, { ...opts, summary: false })).toBe(renderPlan(groups, opts));
+  });
+});
+
+// ---------------------------------------------------------------------------
 // renderReport — entries
 // ---------------------------------------------------------------------------
 

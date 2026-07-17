@@ -413,6 +413,13 @@ export async function runRemoteInstall(opts: {
    * invoked only in a TTY. Defaults to secret-collect.ts's clack prompt.
    */
   secretPicker?: (secret: SecretDecl) => Promise<string>;
+  /**
+   * Compact output mode (plan-compact-summary). Forwarded verbatim to runInstall
+   * — the only place the plan/result rendering happens. This is the sole seam
+   * that reaches the real install path, since every `install` route (grouped
+   * ids, interactive picker, ad-hoc) funnels through runRemoteInstall.
+   */
+  summary?: boolean;
 }): Promise<InstallResult> {
   const {
     ids,
@@ -624,6 +631,7 @@ export async function runRemoteInstall(opts: {
         confirm,
         versionFor,
         toolRunner: runner,
+        summary: opts.summary === true,
       });
 
       if (warnings.length === 0) {

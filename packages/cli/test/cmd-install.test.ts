@@ -1762,3 +1762,157 @@ describe('runInstall — B10: presence-checks on an empty write-plan', () => {
     expect(calls()).toBe(1);
   });
 });
+
+// ---------------------------------------------------------------------------
+// T1 (plan-compact-summary): --summary threads to the renderer AND to buildOutput
+//
+// - The plan shown at the confirm prompt AND in the final output is the compact
+//   recap (D2): one line per artefact, no per-op detail.
+// - The Result section drops the per-written-file `+ f` list but keeps the
+//   aggregated status line and the per-file backup `~ b` lines (D3).
+// - The Warnings and Tool presence-checks blocks stay INTEGRAL in summary (they
+//   are assembled outside renderPlan — the invariant of the brief).
+// ---------------------------------------------------------------------------
+
+describe('runInstall — summary mode (T1, plan-compact-summary)', () => {
+  it('the plan at the confirm prompt is the compact recap, not the full op detail', async () => {
+    const adapter = createClaudeAdapter({ denyRef: REF_DENY, agentsContent: AGENTS_CONTENT });
+    let capturedPlanText = '';
+
+    await runInstall({
+      catalog: MINI_CATALOG,
+      adapter,
+      scope: SCOPE,
+      env,
+      manifestPath,
+      selectedIds: ['guardrails-claude', 'context-claude'],
+      summary: true,
+      confirm: async (planText) => {
+        capturedPlanText = planText;
+        return true;
+      },
+    });
+
+    // Recap digest (Σ vocabulary) is present…
+    expect(capturedPlanText).toContain('deny +3');
+    // …but the full-mode op-detail lines are gone.
+    expect(capturedPlanText).not.toContain('deny  (+3)');
+    expect(capturedPlanText).not.toContain('+ Read(./.env)');
+    expect(capturedPlanText).not.toContain('│');
+  });
+
+  it('the final output carries the same compact plan (no per-op detail)', async () => {
+    const adapter = createClaudeAdapter({ denyRef: REF_DENY, agentsContent: AGENTS_CONTENT });
+
+    const result = await runInstall({
+      catalog: MINI_CATALOG,
+      adapter,
+      scope: SCOPE,
+      env,
+      manifestPath,
+      selectedIds: ['guardrails-claude', 'context-claude'],
+      summary: true,
+      confirm: true,
+    });
+
+    expect(result.output).toContain('--- Plan ---');
+    expect(result.output).toContain('deny +3');
+    expect(result.output).not.toContain('deny  (+3)');
+    expect(result.output).not.toContain('│');
+  });
+
+  it('the Result section keeps the aggregated status line but drops the per-file list', async () => {
+    const adapter = createClaudeAdapter({ denyRef: REF_DENY, agentsContent: AGENTS_CONTENT });
+
+    const result = await runInstall({
+      catalog: MINI_CATALOG,
+      adapter,
+      scope: SCOPE,
+      env,
+      manifestPath,
+      selectedIds: ['guardrails-claude', 'context-claude'],
+      summary: true,
+      confirm: true,
+    });
+
+    expect(result.output).toContain('--- Result ---');
+    expect(result.output).toContain(`[ok] Applied ${result.written.length} file(s).`);
+    expect(result.written.length).toBeGreaterThan(0);
+    // None of the written absolute paths appear as a "+ <path>" Result line.
+    for (const f of result.written) {
+      expect(result.output).not.toContain(`+ ${f}`);
+    }
+  });
+
+  it('keeps the per-file backup lines even in summary (recovery info, D3)', async () => {
+    const adapter = createClaudeAdapter({ denyRef: REF_DENY, agentsContent: AGENTS_CONTENT });
+
+    // Pre-create AGENTS.md so the write backs it up → a real `~ b` line to keep.
+    await fs.mkdir(path.dirname(targets.agentsMd), { recursive: true });
+    await fs.writeFile(targets.agentsMd, 'pre-existing unmanaged content\n');
+
+    const result = await runInstall({
+      catalog: MINI_CATALOG,
+      adapter,
+      scope: SCOPE,
+      env,
+      manifestPath,
+      selectedIds: ['guardrails-claude', 'context-claude'],
+      summary: true,
+      confirm: true,
+    });
+
+    expect(result.backedUp.length).toBeGreaterThan(0);
+    expect(result.output).toContain('file(s) backed up.');
+    for (const b of result.backedUp) {
+      expect(result.output).toContain(`~ ${b}`);
+    }
+  });
+
+  it('keeps the Warnings block integral in summary (allow-widening)', async () => {
+    const adapter = createClaudeAdapter({
+      denyRef: REF_DENY,
+      allowRef: ['Bash(*)'],
+      agentsContent: AGENTS_CONTENT,
+    });
+
+    const result = await runInstall({
+      catalog: MINI_CATALOG,
+      adapter,
+      scope: SCOPE,
+      env,
+      manifestPath,
+      selectedIds: ['guardrails-claude'],
+      summary: true,
+      confirm: true,
+    });
+
+    expect(result.output).toContain('--- Warnings ---');
+    expect(result.output).toContain('widens permissions.allow');
+    expect(result.output).toContain('Bash(*)');
+  });
+
+  it('keeps the Tool presence-checks block integral in summary', async () => {
+    const catalogWithTool: CatalogEntry[] = [...MINI_CATALOG, REQUIRED_TOOL_ENTRY];
+    const adapter = createClaudeAdapter({ denyRef: REF_DENY, agentsContent: AGENTS_CONTENT });
+    let capturedPlanText = '';
+
+    await runInstall({
+      catalog: catalogWithTool,
+      adapter,
+      scope: SCOPE,
+      env,
+      manifestPath,
+      selectedIds: ['guardrails-claude', 'context-claude', 'tool:glab'],
+      summary: true,
+      toolRunner: allToolsAbsentRunner,
+      confirm: async (planText) => {
+        capturedPlanText = planText;
+        return true;
+      },
+    });
+
+    expect(capturedPlanText).toContain('Tool presence-checks');
+    expect(capturedPlanText).toContain('which glab');
+  });
+});

@@ -134,6 +134,15 @@ export interface RenderPlanOpts {
   color?: boolean;
   /** Maximum detail lines rendered per op before truncation. Defaults to 6. */
   maxDetail?: number;
+  /**
+   * Compact mode (plan-compact-summary D1/D2): collapse each artefact's op
+   * block into a single recap line (symbol + id + primary target + a per-group
+   * op digest reusing the Σ vocabulary), and drop the blank separators. The
+   * header and the final Σ line are unchanged, so a reader who knows one reads
+   * the other. Absent/false → the full terraform-style diff (byte-identical to
+   * before this option existed).
+   */
+  summary?: boolean;
 }
 
 /**
@@ -256,6 +265,55 @@ function getGroupPrimaryTarget(ops: WriteOp[], abbr: (p: string) => string): str
 }
 
 /**
+ * Op tallies for one artefact group (and, summed, for the whole run). A single
+ * per-op switch in renderPlan feeds this — the Σ line accumulates it across
+ * groups and the summary digest formats it per group, so the two can never
+ * disagree (D1: divergence impossible by construction). `writeLines` carries
+ * the write-text content-line count for the digest's `(+lines)` suffix; it has
+ * no Σ counterpart (the Σ line shows only `N write(s)`).
+ */
+interface OpCounts {
+  deny: number;
+  allow: number;
+  write: number;
+  writeLines: number;
+  import: number;
+  hooks: number;
+  links: number;
+  plugins: number;
+}
+
+/** A zeroed OpCounts tally — reset at each group's open. */
+function emptyOpCounts(): OpCounts {
+  return { deny: 0, allow: 0, write: 0, writeLines: 0, import: 0, hooks: 0, links: 0, plugins: 0 };
+}
+
+/**
+ * Format an OpCounts tally into a compact digest string, reusing the exact
+ * vocabulary of the final Σ line (`deny +N`, `allow +N`, `N write(s)`,
+ * `N import(s)`, `N hook(s)`, `N link(s)`, `N plugin(s)`) — plus a `(+lines)`
+ * suffix on writes carrying a write-text line count, mirroring the full-mode
+ * `write  +L / -0` line. Used by renderPlan's summary branch (D2) on the same
+ * counts that feed Σ. A `remove-hooks` op (traced hook migration) contributes
+ * no token — it increments no counter, parity with the Σ line. Returns '' for a
+ * tally with no token.
+ */
+function formatGroupDigest(c: OpCounts): string {
+  const parts: string[] = [];
+  if (c.deny > 0) parts.push(`deny +${c.deny}`);
+  if (c.allow > 0) parts.push(`allow +${c.allow}`);
+  if (c.write > 0) {
+    const lineSuffix = c.writeLines > 0 ? ` (+${c.writeLines})` : '';
+    parts.push(`${c.write} write${c.write > 1 ? 's' : ''}${lineSuffix}`);
+  }
+  if (c.import > 0) parts.push(`${c.import} import${c.import > 1 ? 's' : ''}`);
+  if (c.hooks > 0) parts.push(`${c.hooks} hook${c.hooks > 1 ? 's' : ''}`);
+  if (c.links > 0) parts.push(`${c.links} link${c.links > 1 ? 's' : ''}`);
+  if (c.plugins > 0) parts.push(`${c.plugins} plugin${c.plugins > 1 ? 's' : ''}`);
+  return parts.join(' · ');
+}
+
+/**
  * Return the primary target string for a removal group header line.
  */
 function getRemovalGroupPrimaryTarget(ops: RemovalOp[], abbr: (p: string) => string): string {
@@ -306,6 +364,7 @@ export function renderPlan(groups: PlanGroup[], opts: RenderPlanOpts = {}): stri
 
   const colorOn = shouldColor(opts.color);
   const maxDetail = opts.maxDetail ?? 6;
+  const summary = opts.summary === true;
   const abbr = (p: string): string => abbreviatePath(p, opts);
 
   const totalOps = groups.reduce((s, g) => s + g.ops.length, 0);
@@ -317,7 +376,9 @@ export function renderPlan(groups: PlanGroup[], opts: RenderPlanOpts = {}): stri
   }
 
   const changeWord = totalOps === 1 ? 'change' : 'changes';
-  const lines: string[] = [`Plan · ${totalOps} ${changeWord}${scopePart}`, ''];
+  // Summary drops the blank after the header (and the per-group blanks below).
+  const header = `Plan · ${totalOps} ${changeWord}${scopePart}`;
+  const lines: string[] = summary ? [header] : [header, ''];
 
   // Σ counters
   let denyCount = 0;
@@ -336,12 +397,18 @@ export function renderPlan(groups: PlanGroup[], opts: RenderPlanOpts = {}): stri
     const primaryTarget = getGroupPrimaryTarget(group.ops, abbr);
     const primaryStr = primaryTarget === '' ? '' : `   ${primaryTarget}`;
 
+    const groupStart = lines.length;
     lines.push(`${symStr} ${idStr}${primaryStr}`);
+
+    // Single counting site: the switch tallies this group; the run-level Σ
+    // counters accumulate it at group close (below). The summary digest formats
+    // the same tally — no second traversal, no divergence (D1).
+    const g = emptyOpCounts();
 
     for (const op of group.ops) {
       switch (op.kind) {
         case 'merge-deny': {
-          denyCount += op.toAdd.length;
+          g.deny += op.toAdd.length;
           lines.push(`  deny  (+${op.toAdd.length})`);
           const shownDeny = op.toAdd.slice(0, maxDetail);
           const remainDeny = op.toAdd.length - shownDeny.length;
@@ -354,7 +421,7 @@ export function renderPlan(groups: PlanGroup[], opts: RenderPlanOpts = {}): stri
           break;
         }
         case 'merge-allow': {
-          allowCount += op.toAdd.length;
+          g.allow += op.toAdd.length;
           lines.push(`  allow  (+${op.toAdd.length})`);
           const shownAllow = op.toAdd.slice(0, maxDetail);
           const remainAllow = op.toAdd.length - shownAllow.length;
@@ -367,9 +434,10 @@ export function renderPlan(groups: PlanGroup[], opts: RenderPlanOpts = {}): stri
           break;
         }
         case 'write-text': {
-          writeCount++;
+          g.write++;
           const contentLines = op.content === '' ? [] : op.content.replace(/\n$/, '').split('\n');
           const lineCount = contentLines.length;
+          g.writeLines += lineCount;
           lines.push(`  write  +${lineCount} / -0`);
           const shownWrite = contentLines.slice(0, maxDetail);
           const remainWrite = lineCount - shownWrite.length;
@@ -382,22 +450,22 @@ export function renderPlan(groups: PlanGroup[], opts: RenderPlanOpts = {}): stri
           break;
         }
         case 'write-json': {
-          writeCount++;
+          g.write++;
           lines.push(`  write  ${abbr(op.path)}`);
           break;
         }
         case 'ensure-import': {
-          importCount++;
+          g.import++;
           lines.push(`  import  ${op.importLine}`);
           break;
         }
         case 'link': {
-          linksCount++;
+          g.links++;
           lines.push(`  link  ${abbr(op.target)} → store`);
           break;
         }
         case 'plugin-install': {
-          pluginsCount++;
+          g.plugins++;
           lines.push(`  plugin  ${op.plugin}`);
           lines.push(`     via ${abbr(op.marketplace)}`);
           // obs1-R4: the plan shows the exact native commands that will be
@@ -413,7 +481,7 @@ export function renderPlan(groups: PlanGroup[], opts: RenderPlanOpts = {}): stri
           break;
         }
         case 'merge-hooks': {
-          hooksCount++;
+          g.hooks++;
           const cmdParts = op.command.trim().split(/\s+/);
           const cmdLast = cmdParts.at(-1) ?? '';
           const scriptName = cmdLast.split('/').pop() ?? cmdLast;
@@ -440,7 +508,27 @@ export function renderPlan(groups: PlanGroup[], opts: RenderPlanOpts = {}): stri
       }
     }
 
-    lines.push('');
+    // Fold this group's tally into the run-level Σ counters — the ONLY place
+    // the Σ totals grow, from the same increments the digest reads.
+    denyCount += g.deny;
+    allowCount += g.allow;
+    writeCount += g.write;
+    importCount += g.import;
+    hooksCount += g.hooks;
+    linksCount += g.links;
+    pluginsCount += g.plugins;
+
+    if (summary) {
+      // Collapse the whole group block (the header + the detail lines the switch
+      // just pushed) into a single recap line, formatted from the same tally the
+      // Σ line derives from.
+      lines.length = groupStart;
+      const digest = formatGroupDigest(g);
+      const digestStr = digest === '' ? '' : `   ${digest}`;
+      lines.push(`${symStr} ${idStr}${primaryStr}${digestStr}`);
+    } else {
+      lines.push('');
+    }
   }
 
   // Σ summary line
