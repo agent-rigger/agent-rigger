@@ -132,11 +132,20 @@ export function isAdHocTarget(arg: string): boolean {
   if (arg.includes('://')) return true;
   if (arg.startsWith('git@')) return true;
   if (arg.endsWith('.git')) return true;
-  if (arg.startsWith('./') || arg.startsWith('/') || arg.startsWith('~/')) return true;
+  if (isLocalPathTarget(arg)) return true;
   for (const prefix of GIT_HOST_PREFIXES) {
     if (arg.startsWith(prefix)) return true;
   }
   return false;
+}
+
+/**
+ * True when `arg` designates a local filesystem path (`./`, `/`, `~/`) — the
+ * subset of ad-hoc targets that live on disk. Extracted from isAdHocTarget so
+ * the B7 dirty-working-tree check can apply to local sources only.
+ */
+export function isLocalPathTarget(arg: string): boolean {
+  return arg.startsWith('./') || arg.startsWith('/') || arg.startsWith('~/');
 }
 
 // ---------------------------------------------------------------------------
@@ -2565,6 +2574,27 @@ async function handleAdHocInstall(opts: HandleAdHocInstallOpts): Promise<number>
   const runner: CommandRunner = deps.remote?.run ?? defaultRunner;
   const tmpFactory: TmpDirFactory = deps.remote?.tmpFactory ?? defaultTmpFactory;
   const manifestPath = resolveManifestPath(env);
+
+  // B7 (D3): install reads committed state only — fetchRemoteCatalog /
+  // withRemoteCheckout clone `--depth 1` and check out the resolved sha, never
+  // the working tree. A local source with uncommitted changes silently installs
+  // something other than what the author is looking at, so warn before the plan.
+  // `source` is passed to git verbatim, exactly as the clone receives it as
+  // `url` (same path form, tilde included). Advisory only — never blocks. Fail-
+  // open: any git-status failure (not a repo, git absent) yields no warning and
+  // no error; the fetch below surfaces its own message if the source is invalid.
+  if (isLocalPathTarget(source)) {
+    try {
+      const status = await runner('git', ['-C', source, 'status', '--porcelain']);
+      if (status.exitCode === 0 && (status.stdout ?? '').trim() !== '') {
+        print(
+          '[warning] working tree has uncommitted changes — install reads committed state only',
+        );
+      }
+    } catch {
+      // Fail-open: an advisory probe must never turn a spawn failure into an error.
+    }
+  }
 
   // Step 1: fetch the catalog to enumerate available entries.
   const remoteCatalog = await fetchRemoteCatalog({ url: source, run: runner, tmpFactory });
