@@ -130,8 +130,8 @@ export class LegacyConfigError extends Error {
 // Env mapping
 // ---------------------------------------------------------------------------
 
-const VALID_SCOPES = new Set<Config['defaultScope']>(['user', 'project']);
-const VALID_AUTH_METHODS = new Set<NonNullable<Config['authMethod']>>([
+export const VALID_SCOPES = new Set<Config['defaultScope']>(['user', 'project']);
+export const VALID_AUTH_METHODS = new Set<NonNullable<Config['authMethod']>>([
   'provider-cli',
   'https',
   'ssh',
@@ -202,7 +202,7 @@ export function resolveConfig(layers: ConfigLayers): Config {
 const KNOWN_KEYS = new Set<keyof Config>(['defaultScope', 'authMethod', 'catalogs', 'assistants']);
 
 /** Valid Assistant literals — anything else in config.assistants[] is dropped. */
-const VALID_ASSISTANTS = new Set<Assistant>(['claude', 'opencode']);
+export const VALID_ASSISTANTS = new Set<Assistant>(['claude', 'opencode']);
 
 /**
  * Read and parse a JSONC config file.

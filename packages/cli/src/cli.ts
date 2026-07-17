@@ -57,6 +57,7 @@ import { buildAdapter } from './adapter-dispatch';
 import { detectAssistants, resolveAssistant } from './assistant-select';
 import { runCatalog } from './cmd-catalog';
 import { runCheck } from './cmd-check';
+import { handleConfig } from './cmd-config';
 import { runDoctor, runDoctorState } from './cmd-doctor';
 import { runInit } from './cmd-init';
 import type { CatalogProposal } from './cmd-init';
@@ -426,6 +427,15 @@ export function parseArgs(argv: string[]): ParsedArgs {
     return { command, resourceVerb: undefined, resourceIds, flags, secretEnvFlags };
   }
 
+  // config sub-command: config <verb> [args...] (e.g. `config set <key> <value>`).
+  // Capture positionals like a resource grammar — without this they fall into the
+  // generic return below with resourceIds=[] and the verb runs with no args (B6).
+  if (command === 'config') {
+    const resourceVerb = positionals[1];
+    resourceIds.push(...positionals.slice(2));
+    return { command, resourceVerb, resourceIds, flags, secretEnvFlags };
+  }
+
   // All other commands (check, init, ls, --help, --version, unknown)
   return { command, resourceVerb: undefined, resourceIds, flags, secretEnvFlags };
 }
@@ -465,6 +475,10 @@ Workflow commands:
   install <url|path> --force
                            Install despite scan findings (warn + proceed).
   init                     First-launch wizard: configure catalog URL and auth method.
+  config set <key> <value> Set a config value non-interactively. Keys: defaultScope
+                           (user|project), authMethod (provider-cli|https|ssh),
+                           assistants (comma-separated). Writes the user config, or
+                           the project config with --scope project.
 
 Discovery commands:
   ls                       List all catalog entries with install status.
@@ -1684,6 +1698,22 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
 
       print(result.output);
       return result.ok ? 0 : 1;
+    }
+
+    // ----- config -----
+    if (command === 'config') {
+      // --scope selects the target file: user (default) or project. The caller
+      // resolves the path here — the same user/project split as loadCliConfig —
+      // and hands it to handleConfig (keeps cmd-config free of a cli.ts cycle).
+      const configPath = scope === 'project'
+        ? path.join(process.cwd(), '.agent-rigger', 'config.json')
+        : resolveConfigPath(env);
+      return await handleConfig({
+        verb: resourceVerb,
+        args: resourceIds,
+        configPath,
+        print,
+      });
     }
 
     // ----- unknown command -----
