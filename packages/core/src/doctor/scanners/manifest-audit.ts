@@ -36,6 +36,8 @@
  * (`<name>/<rest>` split on the first `/`) as `catalogPrefixOf`/`localId`.
  */
 
+import { stat } from 'node:fs/promises';
+
 import { readManifest } from '../../manifest';
 import { manifestMissingFile, manifestMissingSha, manifestOrphanCatalog } from '../finding';
 import type { DoctorContext, DoctorScanner, Finding } from '../finding';
@@ -76,7 +78,17 @@ export const manifestAuditScanner: DoctorScanner = async (
     }
 
     for (const filePath of entry.files) {
-      const exists = await Bun.file(filePath).exists();
+      // `stat` (not `Bun.file().exists()`, which is false for directories, nor
+      // `lstat`, which reports dangling links as present) accepts files AND
+      // directories and follows symlinks: a healthy directory symlink resolves
+      // to present, a dangling one fails on the dead target and stays missing.
+      let exists: boolean;
+      try {
+        await stat(filePath);
+        exists = true;
+      } catch {
+        exists = false;
+      }
       if (!exists) {
         findings.push(
           manifestMissingFile({

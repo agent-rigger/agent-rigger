@@ -15,7 +15,7 @@
  */
 
 import { describe, expect, it } from 'bun:test';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -239,6 +239,99 @@ describe('doctor-R2: files[] disparus', () => {
 
         const findings = await manifestAuditScanner(ctxFor(manifestPath, ['jr']));
         expect(findings).toHaveLength(0);
+      },
+    );
+  });
+
+  it('doctor-R2: a files[] path that is a real directory is never flagged (B8)', async () => {
+    await withManifest(
+      { version: 1, artifacts: [] },
+      async (manifestPath, dir) => {
+        const dirPath = path.join(dir, 'skill-dir');
+        await mkdir(dirPath);
+        const manifest: Manifest = {
+          version: 1,
+          artifacts: [
+            {
+              id: 'jr/skill:foo',
+              nature: 'skill',
+              ref: '1.0.0',
+              sha: 'cafebabe',
+              scope: 'user',
+              installedAt: new Date().toISOString(),
+              files: [dirPath],
+            },
+          ],
+        };
+        await writeFile(manifestPath, JSON.stringify(manifest));
+
+        const findings = await manifestAuditScanner(ctxFor(manifestPath, ['jr']));
+        expect(findings).toHaveLength(0);
+      },
+    );
+  });
+
+  it('doctor-R2: a files[] path that is a healthy symlink to a directory is never flagged (B8)', async () => {
+    await withManifest(
+      { version: 1, artifacts: [] },
+      async (manifestPath, dir) => {
+        const targetDir = path.join(dir, 'skill-target');
+        await mkdir(targetDir);
+        const linkPath = path.join(dir, 'skill-link');
+        await symlink(targetDir, linkPath);
+        const manifest: Manifest = {
+          version: 1,
+          artifacts: [
+            {
+              id: 'jr/skill:foo',
+              nature: 'skill',
+              ref: '1.0.0',
+              sha: 'cafebabe',
+              scope: 'user',
+              installedAt: new Date().toISOString(),
+              files: [linkPath],
+            },
+          ],
+        };
+        await writeFile(manifestPath, JSON.stringify(manifest));
+
+        const findings = await manifestAuditScanner(ctxFor(manifestPath, ['jr']));
+        expect(findings).toHaveLength(0);
+      },
+    );
+  });
+
+  it('doctor-R2: a files[] path that is a dangling symlink is reported missing-file (B8)', async () => {
+    await withManifest(
+      { version: 1, artifacts: [] },
+      async (manifestPath, dir) => {
+        const linkPath = path.join(dir, 'dangling-link');
+        await symlink(path.join(dir, 'no-such-target'), linkPath);
+        const manifest: Manifest = {
+          version: 1,
+          artifacts: [
+            {
+              id: 'jr/skill:foo',
+              nature: 'skill',
+              ref: '1.0.0',
+              sha: 'cafebabe',
+              scope: 'user',
+              installedAt: new Date().toISOString(),
+              files: [linkPath],
+            },
+          ],
+        };
+        await writeFile(manifestPath, JSON.stringify(manifest));
+
+        const findings = await manifestAuditScanner(ctxFor(manifestPath, ['jr']));
+
+        expect(findings).toHaveLength(1);
+        const finding = findings[0]!;
+        expect(finding.class).toBe('manifest');
+        if (finding.class !== 'manifest') throw new Error('unreachable');
+        expect(finding.issue).toBe('missing-file');
+        if (finding.issue !== 'missing-file') throw new Error('unreachable');
+        expect(finding.missingPath).toBe(linkPath);
       },
     );
   });
