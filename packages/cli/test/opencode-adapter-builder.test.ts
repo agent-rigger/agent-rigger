@@ -386,3 +386,91 @@ describe('buildOpencodeAdapter — mcp source resolution from effectiveEntries',
     await expect(adapter.plan(entry, 'user', env)).rejects.toThrow(/config/);
   });
 });
+
+// ---------------------------------------------------------------------------
+// mono-guardrail policy — ≥2 selected guardrails is a hard error (D6, ADR-0021)
+// ---------------------------------------------------------------------------
+
+describe('buildOpencodeAdapter — multiple guardrails selected (mono-guardrail policy)', () => {
+  it('throws at build time, naming BOTH ids, when two guardrails are selected via the guardrail: prefix', async () => {
+    const err = await buildOpencodeAdapter(env, {
+      externalIds: new Set(['guardrail:alpha', 'guardrail:beta']),
+    }).then(
+      () => undefined,
+      (e: unknown) => e as Error,
+    );
+
+    expect(err).toBeInstanceOf(Error);
+    // The message names every offending id (order-independent) and stays actionable.
+    expect(err!.message).toContain('multiple guardrails selected for opencode');
+    expect(err!.message).toContain('guardrail:alpha');
+    expect(err!.message).toContain('guardrail:beta');
+    expect(err!.message).toContain('select a single guardrail per install');
+  });
+
+  it('throws when the second guardrail is detected by nature only (union of both detection modes)', async () => {
+    // One id carries the guardrail: prefix; the other has no prefix but its catalog
+    // entry declares nature 'guardrail' — the filter must union both modes, not just
+    // the prefixed one, so this counts as two guardrails and errors.
+    const effectiveEntries: Map<string, CatalogEntry> = new Map([
+      [
+        'nature-only-guard',
+        {
+          kind: 'artifact',
+          id: 'nature-only-guard',
+          nature: 'guardrail',
+          targets: ['opencode'],
+          scopes: ['user'],
+        },
+      ],
+    ]);
+
+    await expect(
+      buildOpencodeAdapter(env, {
+        externalIds: new Set(['guardrail:alpha', 'nature-only-guard']),
+        effectiveEntries,
+      }),
+    ).rejects.toThrow(/multiple guardrails selected for opencode/);
+  });
+
+  it('builds unchanged with exactly one guardrail among other selected ids (no throw, descriptor resolved)', async () => {
+    // A single guardrail alongside a skill must still resolve its descriptor
+    // verbatim — the filter isolates the one guardrail; behavior identical to before.
+    const descriptor: OpencodePermission = { bash: { 'rm -rf *': 'deny' } };
+    const checkoutDir = await makeCheckoutDir(tmp.dir, {
+      guardrailName: 'main',
+      guardrailPermission: descriptor,
+      skillNames: ['x'],
+    });
+
+    const adapter = await buildOpencodeAdapter(env, {
+      externalIds: new Set(['guardrail:main', 'skill:x']),
+      externalBaseDir: checkoutDir,
+    });
+
+    const entry: AdapterEntry = { id: 'guardrail:main', nature: 'guardrail', scope: 'user' };
+    const ops = await adapter.plan(entry, 'user', env);
+
+    const permOp = ops.find((op) => op.kind === 'merge-permission') as
+      | { kind: string; permission: OpencodePermission }
+      | undefined;
+    expect(permOp).toBeDefined();
+    expect(permOp!.permission).toEqual(descriptor);
+  });
+
+  it('does not throw and leaves permission unset when no guardrail is selected', async () => {
+    // externalIds present but none is a guardrail (by prefix or nature) → length 0,
+    // permission stays unset (no merge-permission op) — unchanged from before.
+    const checkoutDir = await makeCheckoutDir(tmp.dir, { skillNames: ['x'] });
+
+    const adapter = await buildOpencodeAdapter(env, {
+      externalIds: new Set(['skill:x']),
+      externalBaseDir: checkoutDir,
+    });
+
+    const entry: AdapterEntry = { id: 'skill:x', nature: 'skill', scope: 'user' };
+    const ops = await adapter.plan(entry, 'user', env);
+
+    expect(ops.find((op) => op.kind === 'merge-permission')).toBeUndefined();
+  });
+});

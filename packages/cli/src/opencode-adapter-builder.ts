@@ -136,15 +136,28 @@ export async function buildOpencodeAdapter(
   // then installs {}, resolving via entry.applied for legacy manifest entries).
   // ---------------------------------------------------------------------------
 
-  const externalGuardrailId = opts?.externalIds === undefined
-    ? undefined
-    : (
-      [...opts.externalIds].find((id) => localId(id).startsWith('guardrail:'))
-        ?? [...opts.externalIds].find((id) =>
-          opts.effectiveEntries?.get(id)?.kind === 'artifact'
-          && (opts.effectiveEntries.get(id) as { nature: string }).nature === 'guardrail'
-        )
+  // Collect ALL selected guardrail ids via BOTH detection modes — the `guardrail:`
+  // prefix and, for ids that carry none, the catalog entry's nature. externalIds is
+  // a Set, so filtering it once yields the deduplicated union (an id matched by both
+  // modes still counts once). Selecting ≥2 guardrails is a hard error, never a silent
+  // pick of the first: merging permission descriptors would reopen the unfaithful-
+  // coverage risk ADR-0021 closed. One guardrail (or none) keeps the prior behavior.
+  const guardrailIds = opts?.externalIds === undefined
+    ? []
+    : [...opts.externalIds].filter((id) =>
+      localId(id).startsWith('guardrail:')
+      || (opts.effectiveEntries?.get(id)?.kind === 'artifact'
+        && (opts.effectiveEntries.get(id) as { nature: string }).nature === 'guardrail')
     );
+
+  if (guardrailIds.length > 1) {
+    throw new Error(
+      `multiple guardrails selected for opencode: ${[...guardrailIds].sort().join(', ')} `
+        + '— select a single guardrail per install',
+    );
+  }
+
+  const externalGuardrailId: string | undefined = guardrailIds[0];
 
   let permission: OpencodePermission | undefined;
 
