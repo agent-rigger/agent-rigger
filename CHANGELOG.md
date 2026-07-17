@@ -12,6 +12,14 @@ release (GitHub releases and the Homebrew tap).
 
 ### Added
 
+- **`--summary` flag on `install` and `remove`** — opt-in compact output: one
+  recap line per artifact (symbol, id, primary target, op digest) instead of
+  the full terraform-style block, and a Result section without per-item
+  listings. Warnings, tool presence-checks, per-file backups and shared-store
+  deletions stay fully visible; output without the flag is byte-identical.
+  A 24-artifact install drops from 123 to 31 stdout lines and renders in ~7 s
+  under VHS/ttyd where the full plan previously stalled.
+
 - **opencode as a second assistant** — `install`, `check`, `remove` and `update`
   can target [opencode](https://opencode.ai): pick it in the interactive picker,
   pass `--assistant opencode`, or persist the choice at `rigger init`; the
