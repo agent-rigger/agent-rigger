@@ -17,6 +17,7 @@
  */
 
 import { rm } from 'node:fs/promises';
+import path from 'node:path';
 
 import type { AdoptionResult } from '@agent-rigger/core/adapter';
 import { readText, writeText } from '@agent-rigger/core/fs-json';
@@ -272,12 +273,29 @@ export async function applyContext(ops: WriteOp[], _env: Env): Promise<void> {
  * For each delete-file op: removes the file at op.path with force:true (tolerant to absence).
  * Ops of any other kind are ignored (forward-compatibility).
  *
- * @param ops  Removal operations (only 'delete-file' is processed).
- * @param env  Injectable env (kept for interface symmetry).
+ * Shared-file gate (B5, parity with claude/context.ts): a delete whose path is
+ * still referenced by the `files` of another manifest entry (e.g. the claude
+ * context install of the same `<cwd>/AGENTS.md`) is SKIPPED — the engine hands
+ * the files of every entry REMAINING after this removal, and the gate lives at
+ * apply time, mirroring the store refcount. opencode's remove planner never
+ * emits restore-file/remove-block (no restore baseline, no CLAUDE.md bridge —
+ * ADR-0007), so delete-file is the only kind to gate.
+ *
+ * @param ops            Removal operations (only 'delete-file' is processed).
+ * @param env            Injectable env (kept for interface symmetry).
+ * @param manifestFiles  Files of the manifest entries remaining after this
+ *                       removal (R4/R6 channel) — opaque reference candidates.
  */
-export async function applyRemoveContext(ops: RemovalOp[], _env: Env): Promise<void> {
+export async function applyRemoveContext(
+  ops: RemovalOp[],
+  _env: Env,
+  manifestFiles?: string[],
+): Promise<void> {
+  const referenced = new Set((manifestFiles ?? []).map((p) => path.resolve(p)));
+
   for (const op of ops) {
     if (op.kind === 'delete-file') {
+      if (referenced.has(path.resolve(op.path))) continue;
       await rm(op.path, { force: true });
     }
   }

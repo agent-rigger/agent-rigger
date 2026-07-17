@@ -422,7 +422,11 @@ export function createOpencodeAdapter(config: OpencodeAdapterConfig): Adapter {
   // RemovalOp kind → applyRemove fn — mirrors the install dispatch pattern.
   // 'unlink' is shared by skill AND plugin (applyRemoveSkill is nature-agnostic).
   const removalOpKindHandlers = new Map<RemovalOp['kind'], RemovalOpKindApply>([
-    ['delete-file', (ops, env) => applyRemoveContext(ops, env)],
+    // B5: manifestFiles (files of the entries remaining after the removal) feed
+    // the shared-AGENTS.md gate — a path a claude entry still references is not
+    // deleted (parity with claude/adapter.ts). The dispatcher passes the 3rd
+    // arg; forward it explicitly (an (ops, env) => … arrow would swallow it).
+    ['delete-file', (ops, env, manifestFiles) => applyRemoveContext(ops, env, manifestFiles)],
     // R4: manifestFiles (targets of the entries remaining after the removal)
     // feed the store refcount — cwd stays the adapter's project convention
     // (process.cwd(), resolved inside applyRemoveSkill).
