@@ -72,13 +72,17 @@ still trips gitleaks on the installed version (R3 scenario 2). The freshness wor
 ## Not filmed
 
 - **`getting-started`** (flow R1) was **abandoned**. Its 24-artifact install
-  (`jr/pack:secu jr/pack:baseline`) is throttled under VHS's ttyd backend: the Plan prints a full
-  content preview per artifact (hundreds of lines) and ttyd renders it so slowly the session never
-  reaches the Result. Measured cause: with the scanners removed entirely (warn-only, zero spawns)
-  the install stalls identically — it is the **output volume**, not the ~48 gitleaks/trivy spawns
-  (hypothesis disproven). The page keeps its hand-written text blocks and the tape was removed.
+  (`jr/pack:secu jr/pack:baseline`) is throttled under VHS's ttyd backend: per-op detail is
+  already truncated (`maxDetail` 6 lines + `… +N more`), but each artifact opens its own 1-13
+  line block and the Result section repeats every target — 123 raw stdout lines total, which
+  ttyd renders so slowly the session never reaches the Result. Measured cause: with the
+  scanners removed entirely (warn-only, zero spawns) the install stalls identically — it is
+  the **output volume**, not the ~48 gitleaks/trivy spawns (hypothesis disproven). The page
+  keeps its hand-written text blocks and the tape was removed. **Unblocked 2026-07-17**: the
+  `--summary` flag (plan-compact-summary change) renders the same install in ~7 s under
+  VHS/ttyd (31 lines); re-filming R1 is a follow-up change.
 - **`../demo.tape` / `../demo.gif`** installs the same pack and hits the same throttle, so `demo.gif`
   is **not regenerable at the current `jr` catalog volume** and is deliberately excluded from the
-  freshness workflow (ADR-0026). It waits on the backlog item **"plan compact (`--summary`)"**
-  (`docs/specs/BACKLOG.md`): once the Plan output is compact enough to record, `demo.gif` can be
-  regenerated with a golden and folded into the workflow.
+  freshness workflow (ADR-0026). The blocker is now lifted by `--summary` (see above): the tape
+  can be rewritten against the compact plan, regenerated with a golden and folded into the
+  workflow — pending its own follow-up change.
