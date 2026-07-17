@@ -79,6 +79,15 @@ export interface RunRemoveOptions {
   confirm: boolean | ((planText: string) => Promise<boolean>);
   /** Working directory (used for path abbreviation in plan output). */
   cwd?: string;
+  /**
+   * Compact output mode (plan-compact-summary D3/D4, T2). Threaded to
+   * renderRemovalPlan (one recap line per artefact) and to buildOutput (the
+   * Result section drops the per-item `- id` list of removed/purged entries but
+   * keeps the aggregated status lines and the per-file backup lines). Absent/
+   * false → the full output, byte-identical to before. The `[warning]` lines
+   * stay integral in both modes.
+   */
+  summary?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -148,6 +157,7 @@ export class NotInstalledError extends Error {
  */
 export async function runRemove(opts: RunRemoveOptions): Promise<RemoveCommandResult> {
   const { adapter, scope, env, manifestPath, selectedIds, confirm } = opts;
+  const summary = opts.summary === true;
 
   // -------------------------------------------------------------------------
   // Step 1 + 2: Validate ids against the manifest (identity triple) and build
@@ -243,6 +253,7 @@ export async function runRemove(opts: RunRemoveOptions): Promise<RemoveCommandRe
     scope,
     assistant: adapter.id,
     storeFates,
+    summary,
   }) + warningsBlock;
 
   // -------------------------------------------------------------------------
@@ -257,6 +268,7 @@ export async function runRemove(opts: RunRemoveOptions): Promise<RemoveCommandRe
       purged: [],
       backedUp: [],
       warnings: [],
+      summary,
     });
     return { applied: false, removed: [], backedUp: [], output };
   }
@@ -277,6 +289,7 @@ export async function runRemove(opts: RunRemoveOptions): Promise<RemoveCommandRe
         purged: [],
         backedUp: [],
         warnings: [],
+        summary,
       });
       return { applied: false, removed: [], backedUp: [], output };
     }
@@ -306,6 +319,7 @@ export async function runRemove(opts: RunRemoveOptions): Promise<RemoveCommandRe
     purged: removeResult.purged,
     backedUp: removeResult.backedUp,
     warnings: removeResult.warnings,
+    summary,
   });
 
   return {
@@ -327,10 +341,17 @@ interface BuildOutputOpts {
   purged: string[];
   backedUp: string[];
   warnings: string[];
+  /**
+   * Compact mode (D3): drop the per-item `- id` lists (removed AND purged) in
+   * the Result section. The aggregated status lines, the per-file backup lines
+   * (`~ b`) and the `[warning]` lines are kept — same rationale as install.
+   */
+  summary?: boolean;
 }
 
 function buildOutput(opts: BuildOutputOpts): string {
   const { planText, reason, removed, purged, backedUp, warnings } = opts;
+  const summary = opts.summary === true;
   const parts: string[] = [];
 
   parts.push('--- Removal Plan ---');
@@ -346,8 +367,12 @@ function buildOutput(opts: BuildOutputOpts): string {
   } else {
     if (removed.length > 0) {
       parts.push(`  [ok] Removed ${removed.length} entry(s).`);
-      for (const id of removed) {
-        parts.push(`    - ${id}`);
+      // D3: the per-item list repeats ids the Plan section just named — summary
+      // drops it, keeping the aggregated count above.
+      if (!summary) {
+        for (const id of removed) {
+          parts.push(`    - ${id}`);
+        }
       }
     }
 
@@ -355,8 +380,10 @@ function buildOutput(opts: BuildOutputOpts): string {
     // manifest without touching the disk.
     if (purged.length > 0) {
       parts.push(`  [ok] Purged ${purged.length} entry(s) — purged (already absent).`);
-      for (const id of purged) {
-        parts.push(`    - ${id}`);
+      if (!summary) {
+        for (const id of purged) {
+          parts.push(`    - ${id}`);
+        }
       }
     }
 

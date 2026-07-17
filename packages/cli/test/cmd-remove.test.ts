@@ -576,3 +576,99 @@ describe('runRemove — remove both guardrails+context', () => {
     expect(manifest.artifacts).toHaveLength(0);
   });
 });
+
+// ---------------------------------------------------------------------------
+// T2 (plan-compact-summary): --summary threads to renderRemovalPlan AND buildOutput
+//
+// Symmetric to install: the removal plan (confirm + final output) is the compact
+// recap, and the Result section drops the per-item `- id` list but keeps the
+// aggregated status line and the per-file backup `~ b` lines.
+// ---------------------------------------------------------------------------
+
+describe('runRemove — summary mode (T2, plan-compact-summary)', () => {
+  it('the plan at the confirm prompt is the compact recap, not the full op detail', async () => {
+    await installGuardrail();
+    const adapter = createClaudeAdapter({ denyRef: REF_DENY, agentsContent: AGENTS_CONTENT });
+    let capturedPlanText = '';
+
+    await runRemove({
+      adapter,
+      scope: SCOPE,
+      env,
+      manifestPath,
+      selectedIds: ['guardrails-claude'],
+      summary: true,
+      confirm: async (planText) => {
+        capturedPlanText = planText;
+        return true;
+      },
+    });
+
+    expect(capturedPlanText).toContain('deny -3');
+    expect(capturedPlanText).not.toContain('deny  (-3)');
+    expect(capturedPlanText).not.toContain('- Read(./.env)');
+  });
+
+  it('the final output carries the compact plan and drops the per-item removed list', async () => {
+    await installGuardrail();
+    const adapter = createClaudeAdapter({ denyRef: REF_DENY, agentsContent: AGENTS_CONTENT });
+
+    const result = await runRemove({
+      adapter,
+      scope: SCOPE,
+      env,
+      manifestPath,
+      selectedIds: ['guardrails-claude'],
+      summary: true,
+      confirm: true,
+    });
+
+    expect(result.output).toContain('--- Removal Plan ---');
+    expect(result.output).toContain('deny -3');
+    expect(result.output).not.toContain('deny  (-3)');
+    // Result: aggregated status kept, per-item list dropped.
+    expect(result.output).toContain(`[ok] Removed ${result.removed.length} entry(s).`);
+    expect(result.removed.length).toBeGreaterThan(0);
+    for (const id of result.removed) {
+      expect(result.output).not.toContain(`    - ${id}`);
+    }
+  });
+
+  it('keeps the per-file backup lines even in summary', async () => {
+    await installGuardrail();
+    const adapter = createClaudeAdapter({ denyRef: REF_DENY, agentsContent: AGENTS_CONTENT });
+
+    const result = await runRemove({
+      adapter,
+      scope: SCOPE,
+      env,
+      manifestPath,
+      selectedIds: ['guardrails-claude'],
+      summary: true,
+      confirm: true,
+    });
+
+    expect(result.backedUp.length).toBeGreaterThan(0);
+    expect(result.output).toContain('file(s) backed up.');
+    for (const b of result.backedUp) {
+      expect(result.output).toContain(`~ ${b}`);
+    }
+  });
+
+  it('without the flag, the per-item removed list is present (compaction is opt-in)', async () => {
+    await installGuardrail();
+    const adapter = createClaudeAdapter({ denyRef: REF_DENY, agentsContent: AGENTS_CONTENT });
+
+    const result = await runRemove({
+      adapter,
+      scope: SCOPE,
+      env,
+      manifestPath,
+      selectedIds: ['guardrails-claude'],
+      confirm: true,
+    });
+
+    expect(result.output).toContain('    - guardrails-claude');
+    expect(result.output).toContain('deny  (-3)');
+  });
+});

@@ -1433,6 +1433,190 @@ describe('renderRemovalPlan — color', () => {
 });
 
 // ---------------------------------------------------------------------------
+// renderRemovalPlan — summary (T2, symmetric to renderPlan D1/D2)
+// ---------------------------------------------------------------------------
+
+describe('renderRemovalPlan — summary mode', () => {
+  const guardrailGroup: PlanRemovalGroup = {
+    id: 'jr/guardrail:claude',
+    nature: 'guardrail',
+    ops: [
+      { kind: 'remove-deny', path: '/home/me/.claude/settings.json', rules: ['r1', 'r2', 'r3'] },
+      { kind: 'remove-allow', path: '/home/me/.claude/settings.json', rules: ['a1'] },
+    ],
+  };
+  const skillGroup: PlanRemovalGroup = {
+    id: 'jr/skill:remote-demo',
+    nature: 'skill',
+    ops: [{ kind: 'unlink', target: '/home/me/.claude/skills/remote-demo', store: '/store/rd' }],
+  };
+  const contextGroup: PlanRemovalGroup = {
+    id: 'jr/context:claude',
+    nature: 'context',
+    ops: [{ kind: 'delete-file', path: '/home/me/.claude/harness/AGENTS.md' }],
+  };
+
+  it('emits exactly one recap line per group (header + N groups + Σ, no blanks between)', () => {
+    const lines = renderRemovalPlan([guardrailGroup, skillGroup, contextGroup], {
+      color: false,
+      summary: true,
+      home: '/home/me',
+    }).split('\n');
+    // header + 3 recap lines + Σ = 5 lines, no blank separators
+    expect(lines.length).toBe(5);
+    expect(lines[0]).toContain('Removal plan · 4 changes');
+    expect(lines[1]!.startsWith('-')).toBe(true);
+    expect(lines[2]!.startsWith('-')).toBe(true);
+    expect(lines[3]!.startsWith('-')).toBe(true);
+    expect(lines[4]!).toContain('Σ');
+    expect(lines).not.toContain('');
+  });
+
+  it('keeps the same header line as full mode', () => {
+    const summary = renderRemovalPlan([guardrailGroup], {
+      color: false,
+      summary: true,
+      scope: 'user',
+      home: '/home/me',
+    });
+    const full = renderRemovalPlan([guardrailGroup], {
+      color: false,
+      scope: 'user',
+      home: '/home/me',
+    });
+    expect(summary.split('\n')[0]).toBe(full.split('\n')[0]);
+    expect(summary.split('\n')[0]).toContain('scope: user');
+  });
+
+  it('renders a guardrail recap with symbol, id, target and deny/allow digest (minus signs)', () => {
+    const result = renderRemovalPlan([guardrailGroup], {
+      color: false,
+      summary: true,
+      home: '/home/me',
+    });
+    const recap = result.split('\n').find((l) => l.includes('jr/guardrail:claude'))!;
+    expect(recap.startsWith('- ')).toBe(true);
+    expect(recap).toContain('~/.claude/settings.json');
+    expect(recap).toContain('deny -3');
+    expect(recap).toContain('allow -1');
+    expect(result).not.toContain('deny  (-3)');
+    expect(result).not.toContain('- r1');
+  });
+
+  it('renders a delete-file recap as "N delete"', () => {
+    const result = renderRemovalPlan([contextGroup], {
+      color: false,
+      summary: true,
+      home: '/home/me',
+    });
+    const recap = result.split('\n').find((l) => l.includes('jr/context:claude'))!;
+    expect(recap).toContain('1 delete');
+    expect(result).not.toContain('  delete  ~/.claude/harness/AGENTS.md');
+  });
+
+  it('renders a restore-file recap as "N restore"', () => {
+    const group: PlanRemovalGroup = {
+      id: 'jr/context:claude',
+      nature: 'context',
+      ops: [{ kind: 'restore-file', path: '/home/me/.claude/CLAUDE.md', content: '# original\n' }],
+    };
+    const result = renderRemovalPlan([group], { color: false, summary: true, home: '/home/me' });
+    const recap = result.split('\n').find((l) => l.includes('jr/context:claude'))!;
+    expect(recap).toContain('1 restore');
+  });
+
+  it('renders a remove-block recap as "N unimport"', () => {
+    const group: PlanRemovalGroup = {
+      id: 'jr/context:claude',
+      nature: 'context',
+      ops: [{ kind: 'remove-block', path: '/home/me/.claude/CLAUDE.md' }],
+    };
+    const result = renderRemovalPlan([group], { color: false, summary: true, home: '/home/me' });
+    const recap = result.split('\n').find((l) => l.includes('jr/context:claude'))!;
+    expect(recap).toContain('1 unimport');
+  });
+
+  it('surfaces a store "delete" fate as a digest token in summary (R4 — permanent destruction stays visible)', () => {
+    const result = renderRemovalPlan([skillGroup], {
+      color: false,
+      summary: true,
+      home: '/home/me',
+      storeFates: { '/store/rd': 'delete' },
+    });
+    const recap = result.split('\n').find((l) => l.includes('jr/skill:remote-demo'))!;
+    expect(recap).toContain('1 unlink');
+    // The last-reference destruction must not be hidden — it appears as a
+    // compact digest token, not the verbose full-mode phrasing.
+    expect(recap).toContain('1 store deleted');
+    expect(result).not.toContain('last reference');
+  });
+
+  it('collapses a store "keep" fate in summary (non-destructive, no digest token)', () => {
+    const result = renderRemovalPlan([skillGroup], {
+      color: false,
+      summary: true,
+      home: '/home/me',
+      storeFates: { '/store/rd': 'keep' },
+    });
+    const recap = result.split('\n').find((l) => l.includes('jr/skill:remote-demo'))!;
+    expect(recap).toContain('1 unlink');
+    expect(recap).not.toContain('store deleted');
+    expect(result).not.toContain('still referenced');
+  });
+
+  it('renders a plugin-uninstall recap as "N plugin" without the native command', () => {
+    const group: PlanRemovalGroup = {
+      id: 'jr/plugin:demo',
+      nature: 'plugin',
+      ops: [{ kind: 'plugin-uninstall', plugin: 'demo-plugin' }],
+    };
+    const result = renderRemovalPlan([group], { color: false, summary: true });
+    const recap = result.split('\n').find((l) => l.includes('jr/plugin:demo'))!;
+    expect(recap).toContain('1 plugin');
+    expect(result).not.toContain('$ claude plugin uninstall');
+  });
+
+  it('renders a remove-hooks recap as "N hook"', () => {
+    const group: PlanRemovalGroup = {
+      id: 'jr/hook:fmt',
+      nature: 'hook',
+      ops: [{
+        kind: 'remove-hooks',
+        path: '/home/me/.claude/settings.json',
+        event: 'PostToolUse',
+        matcher: 'Edit',
+        command: 'bun run /store/hooks/fmt.sh',
+      }],
+    };
+    const result = renderRemovalPlan([group], { color: false, summary: true, home: '/home/me' });
+    const recap = result.split('\n').find((l) => l.includes('jr/hook:fmt'))!;
+    expect(recap).toContain('1 hook');
+    expect(result).not.toContain('un-hook  PostToolUse/Edit');
+  });
+
+  it('produces a Σ line identical to full mode over the same groups', () => {
+    const groups = [guardrailGroup, skillGroup, contextGroup];
+    const opts = { color: false, home: '/home/me' } as const;
+    const summarySigma = renderRemovalPlan(groups, { ...opts, summary: true })
+      .split('\n')
+      .find((l) => l.includes('Σ'));
+    const fullSigma = renderRemovalPlan(groups, opts)
+      .split('\n')
+      .find((l) => l.includes('Σ'));
+    expect(summarySigma).toBeDefined();
+    expect(summarySigma).toBe(fullSigma);
+  });
+
+  it('leaves full mode byte-identical when summary is absent/false', () => {
+    const groups = [guardrailGroup, skillGroup, contextGroup];
+    const opts = { color: false, home: '/home/me', storeFates: { '/store/rd': 'delete' } } as const;
+    expect(renderRemovalPlan(groups, { ...opts, summary: false })).toBe(
+      renderRemovalPlan(groups, opts),
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
 // buildStatusOptions — version is embedded in the label (always visible)
 // ---------------------------------------------------------------------------
 

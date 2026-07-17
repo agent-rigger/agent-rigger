@@ -168,6 +168,15 @@ export interface RenderRemovalPlanOpts {
    * line is rendered (backward compatibility for callers without a manifest).
    */
   storeFates?: Record<string, 'delete' | 'keep'>;
+  /**
+   * Compact mode (plan-compact-summary D1/D2, T2 — symmetric to
+   * {@link RenderPlanOpts.summary}): collapse each artefact's removal-op block
+   * into a single recap line (symbol `-` + id + primary target + a per-group op
+   * digest reusing the removal Σ vocabulary), and drop the blank separators. The
+   * store-fate detail lines are full-mode only — they carry no Σ token and
+   * collapse with the rest. The header and the final Σ line are unchanged.
+   */
+  summary?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -336,6 +345,72 @@ function getRemovalGroupPrimaryTarget(ops: RemovalOp[], abbr: (p: string) => str
     if (op.kind === 'plugin-uninstall') return op.plugin;
   }
   return '';
+}
+
+/**
+ * Removal op tallies for one artefact group (and, summed, for the whole run).
+ * The removal natures (delete/restore/unimport/unlink/uninstall/un-hook) don't
+ * map onto the install {@link OpCounts}, so removal carries its own tally — but
+ * the same discipline: a single per-op switch in renderRemovalPlan feeds it, the
+ * Σ line accumulates it across groups and the summary digest formats it per
+ * group, so the two can never disagree (D1). `storeDeletes` is a digest-only
+ * field (no Σ counterpart, like install's `writeLines`): it counts the unlinks
+ * whose shared store is deleted (last reference, R4) so the summary surfaces
+ * that permanent destruction as a `N store deleted` token instead of silently
+ * collapsing it — a `keep` fate stays collapsed (non-destructive).
+ */
+interface RemovalOpCounts {
+  deny: number;
+  allow: number;
+  deletes: number;
+  restores: number;
+  unimports: number;
+  hooks: number;
+  unlinks: number;
+  plugins: number;
+  storeDeletes: number;
+}
+
+/** A zeroed RemovalOpCounts tally — reset at each group's open. */
+function emptyRemovalOpCounts(): RemovalOpCounts {
+  return {
+    deny: 0,
+    allow: 0,
+    deletes: 0,
+    restores: 0,
+    unimports: 0,
+    hooks: 0,
+    unlinks: 0,
+    plugins: 0,
+    storeDeletes: 0,
+  };
+}
+
+/**
+ * Format a RemovalOpCounts tally into a compact digest string, reusing the exact
+ * vocabulary of the removal Σ line (`deny -N`, `allow -N`, `N delete(s)`,
+ * `N restore(s)`, `N unimport(s)`, `N hook(s)`, `N unlink(s)`, `N plugin(s)`) —
+ * plus a `N store deleted` token, right after unlinks, when a shared store is
+ * dropped as the last reference (R4). That token is the only store-fate signal
+ * summary keeps: a permanent destruction must stay visible, whereas a `keep`
+ * fate (non-destructive) collapses with the rest of the detail. Used by
+ * renderRemovalPlan's summary branch (T2) on the SAME counts that feed Σ — no
+ * second traversal, no divergence. Returns '' for a tally with no token.
+ */
+function formatRemovalGroupDigest(c: RemovalOpCounts): string {
+  const parts: string[] = [];
+  if (c.deny > 0) parts.push(`deny -${c.deny}`);
+  if (c.allow > 0) parts.push(`allow -${c.allow}`);
+  if (c.deletes > 0) parts.push(`${c.deletes} delete${c.deletes > 1 ? 's' : ''}`);
+  if (c.restores > 0) parts.push(`${c.restores} restore${c.restores > 1 ? 's' : ''}`);
+  if (c.unimports > 0) parts.push(`${c.unimports} unimport${c.unimports > 1 ? 's' : ''}`);
+  if (c.hooks > 0) parts.push(`${c.hooks} hook${c.hooks > 1 ? 's' : ''}`);
+  if (c.unlinks > 0) parts.push(`${c.unlinks} unlink${c.unlinks > 1 ? 's' : ''}`);
+  if (c.storeDeletes > 0) {
+    parts.push(`${c.storeDeletes} store${c.storeDeletes > 1 ? 's' : ''} deleted`);
+  }
+  if (c.plugins > 0) parts.push(`${c.plugins} plugin${c.plugins > 1 ? 's' : ''}`);
+  return parts.join(' · ');
 }
 
 // ---------------------------------------------------------------------------
@@ -576,6 +651,7 @@ export function renderRemovalPlan(
 
   const colorOn = shouldColor(opts.color);
   const maxDetail = opts.maxDetail ?? 6;
+  const summary = opts.summary === true;
   const abbr = (p: string): string => abbreviatePath(p, opts);
 
   const totalOps = groups.reduce((s, g) => s + g.ops.length, 0);
@@ -587,7 +663,9 @@ export function renderRemovalPlan(
   }
 
   const changeWord = totalOps === 1 ? 'change' : 'changes';
-  const lines: string[] = [`Removal plan · ${totalOps} ${changeWord}${scopePart}`, ''];
+  // Summary drops the blank after the header (and the per-group blanks below).
+  const header = `Removal plan · ${totalOps} ${changeWord}${scopePart}`;
+  const lines: string[] = summary ? [header] : [header, ''];
 
   // Σ counters
   let denyCount = 0;
@@ -605,12 +683,18 @@ export function renderRemovalPlan(
     const primaryTarget = getRemovalGroupPrimaryTarget(group.ops, abbr);
     const primaryStr = primaryTarget === '' ? '' : `   ${primaryTarget}`;
 
+    const groupStart = lines.length;
     lines.push(`${symStr} ${idStr}${primaryStr}`);
+
+    // Single counting site: the switch tallies this group; the run-level Σ
+    // counters accumulate it at group close (below). The summary digest formats
+    // the same tally — no second traversal, no divergence (D1).
+    const g = emptyRemovalOpCounts();
 
     for (const op of group.ops) {
       switch (op.kind) {
         case 'remove-deny': {
-          denyCount += op.rules.length;
+          g.deny += op.rules.length;
           lines.push(`  deny  (-${op.rules.length})`);
           const shownDeny = op.rules.slice(0, maxDetail);
           const remainDeny = op.rules.length - shownDeny.length;
@@ -623,7 +707,7 @@ export function renderRemovalPlan(
           break;
         }
         case 'remove-allow': {
-          allowCount += op.rules.length;
+          g.allow += op.rules.length;
           lines.push(`  allow  (-${op.rules.length})`);
           const shownAllow = op.rules.slice(0, maxDetail);
           const remainAllow = op.rules.length - shownAllow.length;
@@ -636,12 +720,12 @@ export function renderRemovalPlan(
           break;
         }
         case 'remove-block': {
-          unimportCount++;
+          g.unimports++;
           lines.push(`  unimport  ${abbr(op.path)}`);
           break;
         }
         case 'delete-file': {
-          deleteCount++;
+          g.deletes++;
           lines.push(`  delete  ${abbr(op.path)}`);
           break;
         }
@@ -649,16 +733,21 @@ export function renderRemovalPlan(
           // R6: the confirmation must state that the file returns to its
           // pre-install content — a "delete" line here would misrepresent
           // what the remove actually does.
-          restoreCount++;
+          g.restores++;
           lines.push(`  restore  ${abbr(op.path)}`);
           break;
         }
         case 'unlink': {
-          unlinksCount++;
+          g.unlinks++;
           lines.push(`  unlink  ${abbr(op.target)}`);
           // R4: the confirmation must state what is actually destroyed — the
           // shared store's fate is part of the preview, not a surprise.
           const fate = opts.storeFates?.[op.store];
+          // Tally the destructive fate at this single counting site so the
+          // summary digest can surface it (R4): a `delete` drops the last
+          // reference — a permanent destruction summary must not hide. A `keep`
+          // is non-destructive and stays full-mode-only detail.
+          if (fate === 'delete') g.storeDeletes++;
           if (fate === 'delete') {
             lines.push(
               `  store   ${abbr(op.store)}  ${
@@ -675,7 +764,7 @@ export function renderRemovalPlan(
           break;
         }
         case 'plugin-uninstall': {
-          pluginsCount++;
+          g.plugins++;
           lines.push(`  uninstall  ${op.plugin}`);
           // obs1-R4: verbatim parity — same command applyRemovePlugin runs.
           lines.push(
@@ -684,14 +773,35 @@ export function renderRemovalPlan(
           break;
         }
         case 'remove-hooks': {
-          hooksCount++;
+          g.hooks++;
           lines.push(`  un-hook  ${op.event}/${op.matcher}`);
           break;
         }
       }
     }
 
-    lines.push('');
+    // Fold this group's tally into the run-level Σ counters — the ONLY place
+    // the Σ totals grow, from the same increments the digest reads.
+    denyCount += g.deny;
+    allowCount += g.allow;
+    deleteCount += g.deletes;
+    restoreCount += g.restores;
+    unimportCount += g.unimports;
+    hooksCount += g.hooks;
+    unlinksCount += g.unlinks;
+    pluginsCount += g.plugins;
+
+    if (summary) {
+      // Collapse the whole group block (the header + the detail lines the switch
+      // just pushed, store-fate lines included) into a single recap line,
+      // formatted from the same tally the Σ line derives from.
+      lines.length = groupStart;
+      const digest = formatRemovalGroupDigest(g);
+      const digestStr = digest === '' ? '' : `   ${digest}`;
+      lines.push(`${symStr} ${idStr}${primaryStr}${digestStr}`);
+    } else {
+      lines.push('');
+    }
   }
 
   // Σ summary line

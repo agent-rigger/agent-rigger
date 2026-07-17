@@ -2729,6 +2729,9 @@ async function handleRemove(opts: HandleRemoveOpts): Promise<number> {
   }
 
   // ids are already qualified (validated by callers — ADR-0017 §5).
+  // plan-compact-summary (D4, T2): runRemove is called directly here — its only
+  // caller — so threading the flag once, straight to runRemove, reaches the
+  // renderer + Result compaction (no intermediate seam, unlike install).
   const result = await runRemove({
     adapter,
     scope,
@@ -2736,6 +2739,7 @@ async function handleRemove(opts: HandleRemoveOpts): Promise<number> {
     manifestPath,
     selectedIds: ids,
     confirm,
+    summary: flags['summary'] === true,
   });
 
   print(result.output);
