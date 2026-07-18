@@ -332,6 +332,35 @@ describe('R2: materializeUnion — anti-traversal guard', () => {
     // The guard fires during target resolution — before mkdtemp, before any fs.cp.
     expect(created).toHaveLength(0);
   });
+
+  // m3 (scan-hardening, T4): the skill case above is one nature; prove the guard
+  // holds for every OTHER nature whose scanPathFor path.joins a raw localId into
+  // the checkout — agent (agents/<name>.md), guardrail (guardrails/<name>/),
+  // context (contexts/<name>/AGENTS.md). Each forged id survives localId as
+  // '../../../evil' (localId slices after the first '/'), so scanPathFor lands
+  // the target above the checkout and enqueue must reject it BEFORE any staging
+  // dir is created. mcp/tool have no checkout path (scanPathFor → null, never
+  // enqueued); hook/plugin path.join a constant dir name, not the id, so they
+  // carry no id-driven traversal surface — the natures below are the exhaustive
+  // id-derived set.
+  it.each([
+    { nature: 'agent' as const, base: AGENT },
+    { nature: 'guardrail' as const, base: GUARDRAIL },
+    { nature: 'context' as const, base: CONTEXT },
+  ])(
+    'throws before any staging for a forged $nature id that escapes the checkout',
+    async ({ nature, base }) => {
+      const { baseDir, tmpParent } = await newCheckout();
+      const evil: ArtifactEntry = { ...base, id: `${nature}:x/../../../evil` };
+      const { factory, created } = recordingStagingIn(tmpParent);
+
+      await expect(
+        materializeUnion({ entries: [evil], baseDir, tmpFactory: factory }),
+      ).rejects.toThrow(/escapes the checkout/);
+
+      expect(created).toHaveLength(0);
+    },
+  );
 });
 
 describe('R2: materializeUnion — cleanup removes the staging idempotently', () => {

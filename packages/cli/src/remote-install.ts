@@ -409,6 +409,16 @@ export async function runRemoteInstall(opts: {
       // Frontier guard: reject external entries whose derived name would cause
       // a path traversal before any install operation begins.
       // Always use local (unqualified) id for path derivation.
+      //
+      // Subsumption (catalog-id-traversal): this guard is now defence-in-depth,
+      // not the frontier. `isSafeCatalogId` (schema.ts) refines every entry `id`
+      // at catalog.json parse time — each ':'-separated segment must be a safe
+      // artefact name ([a-zA-Z0-9._-], never "." / ".."). A forged id such as
+      // `skill:x/../../../evil` is therefore rejected inside `readCatalogDir`
+      // ABOVE, before this loop ever runs, so no traversing id reaches here in
+      // practice. The guard is kept — not extended — as a second, local barrier
+      // (defence-in-depth); extending it to further natures would be dead code,
+      // since the parse-time refinement already covers every id uniformly.
       for (const entry of remoteEntries) {
         if (entry.kind !== 'artifact') continue;
         const local = localId(entry.id);

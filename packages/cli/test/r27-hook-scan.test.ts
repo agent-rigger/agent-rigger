@@ -34,6 +34,7 @@ import path from 'node:path';
 
 import { type CatalogEntry, type TmpDirFactory } from '@agent-rigger/catalog';
 import type { CommandRunner } from '@agent-rigger/catalog/tool-check';
+import { createCompositeScanner } from '@agent-rigger/core';
 import { resolveUserTargets } from '@agent-rigger/core/paths';
 import type { Env } from '@agent-rigger/core/paths';
 import type { Scanner } from '@agent-rigger/core/scan';
@@ -237,6 +238,69 @@ function spyScanner(): { scanner: Scanner; calls: string[]; trees: string[][] } 
     },
   };
   return { scanner, calls, trees };
+}
+
+// ---------------------------------------------------------------------------
+// contentSensitiveGitleaksScanner — a composite scanner whose gitleaks mock
+// walks the scanned dir and reports a finding ONLY for files containing the PAT.
+// Used by the D3 causal proof below: the verdict is driven by what the union
+// mirror actually staged (the whole hooks/ dir, shared lib included), not by a
+// hard-coded finding list. The real gitleaks.ts/composite.ts run; only the CLI
+// is mocked (same seam as scu-r7-attribution).
+// ---------------------------------------------------------------------------
+
+/**
+ * Frozen GitHub PAT fixture: `ghp_` + 36 high-entropy chars — the exact literal
+ * frozen in core/real-binaries.test.ts, verified to trip gitleaks 8.30.1.
+ */
+const FROZEN_PAT = 'ghp_016ABCdef0123456789ghIJKLmnop6789zZq';
+
+/** github-pat regex, no `g` flag → `.test` is stateless. */
+const PAT_RE = /ghp_[A-Za-z0-9]{36}/;
+
+/** gitleaks present, trivy absent — only the gitleaks branch of the composite runs. */
+const gitleaksOnlyWhich = (cmd: string): string | null =>
+  cmd === 'gitleaks' ? '/usr/bin/gitleaks' : null;
+
+/** Sorted absolute paths of every regular file under `root` (symlinks skipped). */
+async function walkFiles(root: string, dir: string = root): Promise<string[]> {
+  const dirents = await fs.readdir(dir, { withFileTypes: true });
+  const out: string[] = [];
+  for (const d of dirents) {
+    const full = path.join(dir, d.name);
+    if (d.isDirectory()) {
+      out.push(...(await walkFiles(root, full)));
+    } else if (d.isFile()) {
+      out.push(full);
+    }
+  }
+  return out.sort();
+}
+
+function contentSensitiveGitleaksScanner(): Scanner {
+  const run = async (
+    cmd: string,
+    args: string[],
+  ): Promise<{ exitCode: number; stdout: string; stderr: string }> => {
+    if (cmd !== 'gitleaks') {
+      return { exitCode: 0, stdout: '[]', stderr: '' };
+    }
+    const srcIdx = args.indexOf('--source');
+    const dir = srcIdx >= 0 ? (args[srcIdx + 1] ?? '') : '';
+    const files = await walkFiles(dir);
+    const findings: { Description: string; File: string; RuleID: string }[] = [];
+    for (const file of files) {
+      const content = await fs.readFile(file, 'utf8').catch(() => '');
+      if (PAT_RE.test(content)) {
+        findings.push({ Description: 'GitHub PAT detected', File: file, RuleID: 'github-pat' });
+      }
+    }
+    if (findings.length === 0) {
+      return { exitCode: 0, stdout: '[]', stderr: '' };
+    }
+    return { exitCode: 1, stdout: JSON.stringify(findings), stderr: '' };
+  };
+  return createCompositeScanner({ run, which: gitleaksOnlyWhich });
 }
 
 // ---------------------------------------------------------------------------
@@ -568,5 +632,48 @@ describe('R27-CLEAN — hook + clean scanner → installs normally', () => {
     expect(calls).toHaveLength(1);
     expect(trees[0]).toContain('hooks/pre-tool.ts');
     expect(trees[0]).toContain('hooks/_shared/hook-lib.ts');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// D3 — causal proof: a secret living ONLY in hooks/_shared/, unreferenced by the
+// selected hook, still blocks (scan-hardening T6)
+// ---------------------------------------------------------------------------
+
+describe('D3 — causal: a secret in _shared/ the selected hook never imports blocks', () => {
+  /**
+   * The _shared/ coverage was previously proven by three INDIRECT tests: the
+   * union tree LISTS hooks/_shared/hook-lib.ts (R27-3, R27-CLEAN), and a
+   * blocking-verdict scanner rejects the whole hooks/ scan (R27-3). None planted
+   * a secret in _shared alone and observed the block. This test closes that gap
+   * causally: the PAT lives ONLY in hooks/_shared/hook-lib.ts — the selected
+   * hook (pre-tool.ts) never references it — and a content-sensitive scanner
+   * walking the mirror must still fire, naming _shared in the finding. That is
+   * the whole point of mirroring the entire hooks/ surface (R2): a shared lib no
+   * selected script imports is still scanned.
+   */
+  it('scanEntries throws ScanBlockedError whose finding names hooks/_shared/hook-lib.ts', async () => {
+    // Plant the secret ONLY in the shared lib; pre-tool.ts and catalog.json stay clean.
+    await fs.writeFile(
+      path.join(hookEnv.contentDir, 'hooks', '_shared', 'hook-lib.ts'),
+      `// shared hook library\nconst token = "${FROZEN_PAT}";\n`,
+      'utf8',
+    );
+
+    let caught: unknown;
+    try {
+      await scanEntries({
+        entries: [HOOK_ENTRY],
+        baseDir: hookEnv.contentDir,
+        scanner: contentSensitiveGitleaksScanner(),
+        force: false,
+      });
+    } catch (e) {
+      caught = e;
+    }
+
+    expect(caught).toBeInstanceOf(ScanBlockedError);
+    const err = caught as ScanBlockedError;
+    expect(err.findings.some((f) => f.includes('hooks/_shared/hook-lib.ts'))).toBe(true);
   });
 });
