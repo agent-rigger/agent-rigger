@@ -1,0 +1,552 @@
+
+<RULE>
+
+<RULE>
+
+<RULE>
+
+<RULE>
+
+<RULE>
+
+<RULE>
+
+<RULE>
+
+<RULE>
+$
+
+<RULE>
+$
+
+<RULE>
+$ rigger doctor
+
+<RULE>
+$ rigger doctor
+
+<RULE>
+$ rigger doctor
+
+<RULE>
+$ rigger doctor
+--- rigger doctor ---
+
+✓ git (<path>)
+✓ glab (<path>)
+✓ gitleaks (<path>)
+✓ trivy (<path>)
+
+mode : full scan
+
+Installed state is healthy — no findings.
+$
+
+<RULE>
+$ rigger doctor
+--- rigger doctor ---
+
+✓ git (<path>)
+✓ glab (<path>)
+✓ gitleaks (<path>)
+✓ trivy (<path>)
+
+mode : full scan
+
+Installed state is healthy — no findings.
+$
+
+<RULE>
+$ rigger doctor
+--- rigger doctor ---
+
+✓ git (<path>)
+✓ glab (<path>)
+✓ gitleaks (<path>)
+✓ trivy (<path>)
+
+mode : full scan
+
+Installed state is healthy — no findings.
+$ rigger catalog add example https://github.com/agent-rigger/agent-rigger-catalog-example.git | cat
+
+<RULE>
+$ rigger doctor
+--- rigger doctor ---
+
+✓ git (<path>)
+✓ glab (<path>)
+✓ gitleaks (<path>)
+✓ trivy (<path>)
+
+mode : full scan
+
+Installed state is healthy — no findings.
+$ rigger catalog add example https://github.com/agent-rigger/agent-rigger-catalog-example.git | cat
+
+<RULE>
+$ rigger doctor
+--- rigger doctor ---
+
+✓ git (<path>)
+✓ glab (<path>)
+✓ gitleaks (<path>)
+✓ trivy (<path>)
+
+mode : full scan
+
+Installed state is healthy — no findings.
+$ rigger catalog add example https://github.com/agent-rigger/agent-rigger-catalog-example.git | cat
+
+<RULE>
+$ rigger doctor
+--- rigger doctor ---
+
+✓ git (<path>)
+✓ glab (<path>)
+✓ gitleaks (<path>)
+✓ trivy (<path>)
+
+mode : full scan
+
+Installed state is healthy — no findings.
+$ rigger catalog add example https://github.com/agent-rigger/agent-rigger-catalog-example.git | cat
+catalog "example" added (https://github.com/agent-rigger/agent-rigger-catalog-example.git)
+$
+
+<RULE>
+$ rigger doctor
+--- rigger doctor ---
+
+✓ git (<path>)
+✓ glab (<path>)
+✓ gitleaks (<path>)
+✓ trivy (<path>)
+
+mode : full scan
+
+Installed state is healthy — no findings.
+$ rigger catalog add example https://github.com/agent-rigger/agent-rigger-catalog-example.git | cat
+catalog "example" added (https://github.com/agent-rigger/agent-rigger-catalog-example.git)
+$
+
+<RULE>
+$ rigger doctor
+--- rigger doctor ---
+
+✓ git (<path>)
+✓ glab (<path>)
+✓ gitleaks (<path>)
+✓ trivy (<path>)
+
+mode : full scan
+
+Installed state is healthy — no findings.
+$ rigger catalog add example https://github.com/agent-rigger/agent-rigger-catalog-example.git | cat
+catalog "example" added (https://github.com/agent-rigger/agent-rigger-catalog-example.git)
+$ rigger ls
+
+<RULE>
+$ rigger doctor
+--- rigger doctor ---
+
+✓ git (<path>)
+✓ glab (<path>)
+✓ gitleaks (<path>)
+✓ trivy (<path>)
+
+mode : full scan
+
+Installed state is healthy — no findings.
+$ rigger catalog add example https://github.com/agent-rigger/agent-rigger-catalog-example.git | cat
+catalog "example" added (https://github.com/agent-rigger/agent-rigger-catalog-example.git)
+$ rigger ls
+
+<RULE>
+$ rigger doctor
+--- rigger doctor ---
+
+✓ git (<path>)
+✓ glab (<path>)
+✓ gitleaks (<path>)
+✓ trivy (<path>)
+
+mode : full scan
+
+Installed state is healthy — no findings.
+$ rigger catalog add example https://github.com/agent-rigger/agent-rigger-catalog-example.git | cat
+catalog "example" added (https://github.com/agent-rigger/agent-rigger-catalog-example.git)
+$ rigger ls
+
+<RULE>
+$ rigger doctor
+--- rigger doctor ---
+
+✓ git (<path>)
+✓ glab (<path>)
+✓ gitleaks (<path>)
+✓ trivy (<path>)
+
+mode : full scan
+
+Installed state is healthy — no findings.
+$ rigger catalog add example https://github.com/agent-rigger/agent-rigger-catalog-example.git | cat
+catalog "example" added (https://github.com/agent-rigger/agent-rigger-catalog-example.git)
+$ rigger ls
+Catalog (7 entries):
+  [available]  example/skill:hello-rigger  skill
+  [available]  example/agent:demo          agent
+  [available]  example/guardrail:demo      guardrail
+  [available]  example/hook:demo           hook
+  [available]  example/context:demo        context
+  [available]  example/pack:demo           pack       (2 members)
+  [available]  example/pack:full           pack       (5 members)
+$
+
+<RULE>
+$ rigger doctor
+--- rigger doctor ---
+
+✓ git (<path>)
+✓ glab (<path>)
+✓ gitleaks (<path>)
+✓ trivy (<path>)
+
+mode : full scan
+
+Installed state is healthy — no findings.
+$ rigger catalog add example https://github.com/agent-rigger/agent-rigger-catalog-example.git | cat
+catalog "example" added (https://github.com/agent-rigger/agent-rigger-catalog-example.git)
+$ rigger ls
+Catalog (7 entries):
+  [available]  example/skill:hello-rigger  skill
+  [available]  example/agent:demo          agent
+  [available]  example/guardrail:demo      guardrail
+  [available]  example/hook:demo           hook
+  [available]  example/context:demo        context
+  [available]  example/pack:demo           pack       (2 members)
+  [available]  example/pack:full           pack       (5 members)
+$
+
+<RULE>
+$ rigger doctor
+--- rigger doctor ---
+
+✓ git (<path>)
+✓ glab (<path>)
+✓ gitleaks (<path>)
+✓ trivy (<path>)
+
+mode : full scan
+
+Installed state is healthy — no findings.
+$ rigger catalog add example https://github.com/agent-rigger/agent-rigger-catalog-example.git | cat
+catalog "example" added (https://github.com/agent-rigger/agent-rigger-catalog-example.git)
+$ rigger ls
+Catalog (7 entries):
+  [available]  example/skill:hello-rigger  skill
+  [available]  example/agent:demo          agent
+  [available]  example/guardrail:demo      guardrail
+  [available]  example/hook:demo           hook
+  [available]  example/context:demo        context
+  [available]  example/pack:demo           pack       (2 members)
+  [available]  example/pack:full           pack       (5 members)
+$ rigger install example/pack:demo --yes --summary --assistant claude
+
+<RULE>
+$ rigger doctor
+--- rigger doctor ---
+
+✓ git (<path>)
+✓ glab (<path>)
+✓ gitleaks (<path>)
+✓ trivy (<path>)
+
+mode : full scan
+
+Installed state is healthy — no findings.
+$ rigger catalog add example https://github.com/agent-rigger/agent-rigger-catalog-example.git | cat
+catalog "example" added (https://github.com/agent-rigger/agent-rigger-catalog-example.git)
+$ rigger ls
+Catalog (7 entries):
+  [available]  example/skill:hello-rigger  skill
+  [available]  example/agent:demo          agent
+  [available]  example/guardrail:demo      guardrail
+  [available]  example/hook:demo           hook
+  [available]  example/context:demo        context
+  [available]  example/pack:demo           pack       (2 members)
+  [available]  example/pack:full           pack       (5 members)
+$ rigger install example/pack:demo --yes --summary --assistant claude
+
+<RULE>
+$ rigger doctor
+--- rigger doctor ---
+
+✓ git (<path>)
+✓ glab (<path>)
+✓ gitleaks (<path>)
+✓ trivy (<path>)
+
+mode : full scan
+
+Installed state is healthy — no findings.
+$ rigger catalog add example https://github.com/agent-rigger/agent-rigger-catalog-example.git | cat
+catalog "example" added (https://github.com/agent-rigger/agent-rigger-catalog-example.git)
+$ rigger ls
+Catalog (7 entries):
+  [available]  example/skill:hello-rigger  skill
+  [available]  example/agent:demo          agent
+  [available]  example/guardrail:demo      guardrail
+  [available]  example/hook:demo           hook
+  [available]  example/context:demo        context
+  [available]  example/pack:demo           pack       (2 members)
+  [available]  example/pack:full           pack       (5 members)
+$ rigger install example/pack:demo --yes --summary --assistant claude
+
+<RULE>
+$ rigger doctor
+--- rigger doctor ---
+
+✓ git (<path>)
+✓ glab (<path>)
+✓ gitleaks (<path>)
+✓ trivy (<path>)
+
+mode : full scan
+
+Installed state is healthy — no findings.
+$ rigger catalog add example https://github.com/agent-rigger/agent-rigger-catalog-example.git | cat
+catalog "example" added (https://github.com/agent-rigger/agent-rigger-catalog-example.git)
+$ rigger ls
+Catalog (7 entries):
+  [available]  example/skill:hello-rigger  skill
+  [available]  example/agent:demo          agent
+  [available]  example/guardrail:demo      guardrail
+  [available]  example/hook:demo           hook
+  [available]  example/context:demo        context
+  [available]  example/pack:demo           pack       (2 members)
+  [available]  example/pack:full           pack       (5 members)
+$ rigger install example/pack:demo --yes --summary --assistant claude
+--- Plan ---
+Plan · 2 changes · scope: user (~/.claude)
++ example/skill:hello-rigger   ~/.claude/skills/hello-rigger   1 link
++ example/agent:demo   ~/.claude/agents/demo.md   1 link
+Σ  2 links
+
+--- Result ---
+  [ok] Applied 2 file(s).
+$
+
+<RULE>
+$ rigger doctor
+--- rigger doctor ---
+
+✓ git (<path>)
+✓ glab (<path>)
+✓ gitleaks (<path>)
+✓ trivy (<path>)
+
+mode : full scan
+
+Installed state is healthy — no findings.
+$ rigger catalog add example https://github.com/agent-rigger/agent-rigger-catalog-example.git | cat
+catalog "example" added (https://github.com/agent-rigger/agent-rigger-catalog-example.git)
+$ rigger ls
+Catalog (7 entries):
+  [available]  example/skill:hello-rigger  skill
+  [available]  example/agent:demo          agent
+  [available]  example/guardrail:demo      guardrail
+  [available]  example/hook:demo           hook
+  [available]  example/context:demo        context
+  [available]  example/pack:demo           pack       (2 members)
+  [available]  example/pack:full           pack       (5 members)
+$ rigger install example/pack:demo --yes --summary --assistant claude
+--- Plan ---
+Plan · 2 changes · scope: user (~/.claude)
++ example/skill:hello-rigger   ~/.claude/skills/hello-rigger   1 link
++ example/agent:demo   ~/.claude/agents/demo.md   1 link
+Σ  2 links
+
+--- Result ---
+  [ok] Applied 2 file(s).
+$
+
+<RULE>
+$ rigger doctor
+--- rigger doctor ---
+
+✓ git (<path>)
+✓ glab (<path>)
+✓ gitleaks (<path>)
+✓ trivy (<path>)
+
+mode : full scan
+
+Installed state is healthy — no findings.
+$ rigger catalog add example https://github.com/agent-rigger/agent-rigger-catalog-example.git | cat
+catalog "example" added (https://github.com/agent-rigger/agent-rigger-catalog-example.git)
+$ rigger ls
+Catalog (7 entries):
+  [available]  example/skill:hello-rigger  skill
+  [available]  example/agent:demo          agent
+  [available]  example/guardrail:demo      guardrail
+  [available]  example/hook:demo           hook
+  [available]  example/context:demo        context
+  [available]  example/pack:demo           pack       (2 members)
+  [available]  example/pack:full           pack       (5 members)
+$ rigger install example/pack:demo --yes --summary --assistant claude
+--- Plan ---
+Plan · 2 changes · scope: user (~/.claude)
++ example/skill:hello-rigger   ~/.claude/skills/hello-rigger   1 link
++ example/agent:demo   ~/.claude/agents/demo.md   1 link
+Σ  2 links
+
+--- Result ---
+  [ok] Applied 2 file(s).
+$ rigger check
+
+<RULE>
+$ rigger doctor
+--- rigger doctor ---
+
+✓ git (<path>)
+✓ glab (<path>)
+✓ gitleaks (<path>)
+✓ trivy (<path>)
+
+mode : full scan
+
+Installed state is healthy — no findings.
+$ rigger catalog add example https://github.com/agent-rigger/agent-rigger-catalog-example.git | cat
+catalog "example" added (https://github.com/agent-rigger/agent-rigger-catalog-example.git)
+$ rigger ls
+Catalog (7 entries):
+  [available]  example/skill:hello-rigger  skill
+  [available]  example/agent:demo          agent
+  [available]  example/guardrail:demo      guardrail
+  [available]  example/hook:demo           hook
+  [available]  example/context:demo        context
+  [available]  example/pack:demo           pack       (2 members)
+  [available]  example/pack:full           pack       (5 members)
+$ rigger install example/pack:demo --yes --summary --assistant claude
+--- Plan ---
+Plan · 2 changes · scope: user (~/.claude)
++ example/skill:hello-rigger   ~/.claude/skills/hello-rigger   1 link
++ example/agent:demo   ~/.claude/agents/demo.md   1 link
+Σ  2 links
+
+--- Result ---
+  [ok] Applied 2 file(s).
+$ rigger check
+
+<RULE>
+$ rigger doctor
+--- rigger doctor ---
+
+✓ git (<path>)
+✓ glab (<path>)
+✓ gitleaks (<path>)
+✓ trivy (<path>)
+
+mode : full scan
+
+Installed state is healthy — no findings.
+$ rigger catalog add example https://github.com/agent-rigger/agent-rigger-catalog-example.git | cat
+catalog "example" added (https://github.com/agent-rigger/agent-rigger-catalog-example.git)
+$ rigger ls
+Catalog (7 entries):
+  [available]  example/skill:hello-rigger  skill
+  [available]  example/agent:demo          agent
+  [available]  example/guardrail:demo      guardrail
+  [available]  example/hook:demo           hook
+  [available]  example/context:demo        context
+  [available]  example/pack:demo           pack       (2 members)
+  [available]  example/pack:full           pack       (5 members)
+$ rigger install example/pack:demo --yes --summary --assistant claude
+--- Plan ---
+Plan · 2 changes · scope: user (~/.claude)
++ example/skill:hello-rigger   ~/.claude/skills/hello-rigger   1 link
++ example/agent:demo   ~/.claude/agents/demo.md   1 link
+Σ  2 links
+
+--- Result ---
+  [ok] Applied 2 file(s).
+$ rigger check
+
+<RULE>
+$ rigger doctor
+--- rigger doctor ---
+
+✓ git (<path>)
+✓ glab (<path>)
+✓ gitleaks (<path>)
+✓ trivy (<path>)
+
+mode : full scan
+
+Installed state is healthy — no findings.
+$ rigger catalog add example https://github.com/agent-rigger/agent-rigger-catalog-example.git | cat
+catalog "example" added (https://github.com/agent-rigger/agent-rigger-catalog-example.git)
+$ rigger ls
+Catalog (7 entries):
+  [available]  example/skill:hello-rigger  skill
+  [available]  example/agent:demo          agent
+  [available]  example/guardrail:demo      guardrail
+  [available]  example/hook:demo           hook
+  [available]  example/context:demo        context
+  [available]  example/pack:demo           pack       (2 members)
+  [available]  example/pack:full           pack       (5 members)
+$ rigger install example/pack:demo --yes --summary --assistant claude
+--- Plan ---
+Plan · 2 changes · scope: user (~/.claude)
++ example/skill:hello-rigger   ~/.claude/skills/hello-rigger   1 link
++ example/agent:demo   ~/.claude/agents/demo.md   1 link
+Σ  2 links
+
+--- Result ---
+  [ok] Applied 2 file(s).
+$ rigger check
+
+--- Catalogs ---
+  [up-to-date]   example  (v0.4.0)
+$
+
+<RULE>
+$ rigger doctor
+--- rigger doctor ---
+
+✓ git (<path>)
+✓ glab (<path>)
+✓ gitleaks (<path>)
+✓ trivy (<path>)
+
+mode : full scan
+
+Installed state is healthy — no findings.
+$ rigger catalog add example https://github.com/agent-rigger/agent-rigger-catalog-example.git | cat
+catalog "example" added (https://github.com/agent-rigger/agent-rigger-catalog-example.git)
+$ rigger ls
+Catalog (7 entries):
+  [available]  example/skill:hello-rigger  skill
+  [available]  example/agent:demo          agent
+  [available]  example/guardrail:demo      guardrail
+  [available]  example/hook:demo           hook
+  [available]  example/context:demo        context
+  [available]  example/pack:demo           pack       (2 members)
+  [available]  example/pack:full           pack       (5 members)
+$ rigger install example/pack:demo --yes --summary --assistant claude
+--- Plan ---
+Plan · 2 changes · scope: user (~/.claude)
++ example/skill:hello-rigger   ~/.claude/skills/hello-rigger   1 link
++ example/agent:demo   ~/.claude/agents/demo.md   1 link
+Σ  2 links
+
+--- Result ---
+  [ok] Applied 2 file(s).
+$ rigger check
+
+--- Catalogs ---
+  [up-to-date]   example  (v0.4.0)
+$
+
+<RULE>
