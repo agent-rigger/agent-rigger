@@ -44,6 +44,12 @@ Enter
 Wait+Screen /STAGED/
 Type 'clear'
 Enter
+# Anti-race guard (vhs#130): the hidden setup lines can bleed into the first
+# visible frame when Show fires before ttyd has flushed the `clear` redraw — the
+# leak is load- and machine-dependent (probed: 60 hidden lines → 9 leaks). The
+# `clear → Enter → Sleep 2s → Show` idiom holds the reveal until the screen is a
+# clean prompt (0 leaks at the probe).
+Sleep 2s
 Show
 Sleep 800ms
 
@@ -75,7 +81,10 @@ Wait+Screen /\[ ok/
 Sleep 2500ms
 
 # --- hidden teardown (setup.sh EXIT/INT/TERM trap also removes $RIGGER_HOME) ---
+# No final Show: the same Hide/Show race (vhs#130) runs in reverse at teardown —
+# a Show after `rm -rf` can capture that command in the LAST GIF frame (it did:
+# `$ rm -rf "$RIGGER_HOME"` leaked into golden line 406). Leaving capture hidden
+# ends the film on the clean repair result; setup.sh's EXIT trap still cleans up.
 Hide
 Type 'rm -rf "$RIGGER_HOME"'
 Enter
-Show

@@ -85,6 +85,11 @@ Type 'rigger catalog add trapped "$TRAP" >/dev/null'
 Enter
 Type 'clear'
 Enter
+# Anti-race guard (vhs#130): hold the reveal until ttyd has flushed the `clear`
+# redraw, else the hidden staging lines bleed into the first visible frame (leak
+# is load- and machine-dependent; probed 60 hidden lines → 9 leaks, 0 with this
+# `clear → Enter → Sleep 2s → Show` idiom).
+Sleep 2s
 Show
 Sleep 800ms
 
@@ -114,7 +119,10 @@ Wait+Screen@60s /Re-run with --force/
 Sleep 2s
 
 # --- hidden teardown: throwaway home removed (also on INT/TERM via setup trap) -
+# No final Show: a Show after `rm -rf` can capture it in the LAST GIF frame via
+# the reverse Hide/Show race (vhs#130) — it did (`$ rm -rf "$RIGGER_HOME"` leaked
+# into golden line 63). Keeping capture hidden ends the film on the clean block
+# message; setup.sh's EXIT trap still removes $RIGGER_HOME.
 Hide
 Type 'rm -rf "$RIGGER_HOME"'
 Enter
-Show

@@ -59,6 +59,11 @@ Enter
 Wait+Screen /READY/
 Type 'clear'
 Enter
+# Anti-race guard (vhs#130): hold the reveal until ttyd has flushed the `clear`
+# redraw so the hidden staging lines cannot bleed into the first visible frame
+# (leak is load- and machine-dependent). Purely hidden — the visible flow and the
+# golden are unchanged, so this tape is not re-rendered.
+Sleep 2s
 Show
 Sleep 800ms
 

@@ -54,13 +54,3 @@ Re-run with --force to install anyway.
 $
 
 <RULE>
-$ rigger install trapped/skill:scan-demo --assistant claude
-[error] Security scan blocked installation. Findings:
-  - [gitleaks] aws-access-token: Identified a pattern that may indicate AWS credentials, risking unauthorized cloud reso
-urce access and data breaches on AWS platforms. (skills/scan-demo/SKILL.md)
-
-Re-run with --force to install anyway.
-$ rm -rf "$RIGGER_HOME"
-$
-
-<RULE>
