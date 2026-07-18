@@ -1,0 +1,493 @@
+
+<RULE>
+
+<RULE>
+
+<RULE>
+
+<RULE>
+
+<RULE>
+
+<RULE>
+
+<RULE>
+
+<RULE>
+$
+
+<RULE>
+$
+
+<RULE>
+$ rigger doctor
+
+<RULE>
+$ rigger doctor
+
+<RULE>
+$ rigger doctor
+
+<RULE>
+$ rigger doctor
+--- rigger doctor ---
+
+✓ git (<path>)
+✓ glab (<path>)
+✓ gitleaks (<path>)
+✓ trivy (<path>)
+
+mode : full scan
+
+Installed state is healthy — no findings.
+$
+
+<RULE>
+$ rigger doctor
+--- rigger doctor ---
+
+✓ git (<path>)
+✓ glab (<path>)
+✓ gitleaks (<path>)
+✓ trivy (<path>)
+
+mode : full scan
+
+Installed state is healthy — no findings.
+$
+
+<RULE>
+$ rigger doctor
+--- rigger doctor ---
+
+✓ git (<path>)
+✓ glab (<path>)
+✓ gitleaks (<path>)
+✓ trivy (<path>)
+
+mode : full scan
+
+Installed state is healthy — no findings.
+$ rigger ls | head -16
+
+<RULE>
+$ rigger doctor
+--- rigger doctor ---
+
+✓ git (<path>)
+✓ glab (<path>)
+✓ gitleaks (<path>)
+✓ trivy (<path>)
+
+mode : full scan
+
+Installed state is healthy — no findings.
+$ rigger ls | head -16
+
+<RULE>
+$ rigger doctor
+--- rigger doctor ---
+
+✓ git (<path>)
+✓ glab (<path>)
+✓ gitleaks (<path>)
+✓ trivy (<path>)
+
+mode : full scan
+
+Installed state is healthy — no findings.
+$ rigger ls | head -16
+
+<RULE>
+$ rigger doctor
+--- rigger doctor ---
+
+✓ git (<path>)
+✓ glab (<path>)
+✓ gitleaks (<path>)
+✓ trivy (<path>)
+
+mode : full scan
+
+Installed state is healthy — no findings.
+$ rigger ls | head -16
+Catalog (39 entries):
+  [available]  jr/hook:guard-command                 hook
+  [available]  jr/hook:guard-secret                  hook
+  [available]  jr/hook:guard-write-secret            hook
+  [available]  jr/hook:guard-prompt                  hook
+  [available]  jr/guardrail:claude                   guardrail
+  [available]  jr/context:claude                     context
+  [available]  jr/agent:pm                           agent
+  [available]  jr/agent:tech-lead                    agent
+  [available]  jr/agent:senior-fullstack             agent
+  [available]  jr/agent:db-postgres                  agent
+  [available]  jr/agent:reviewer                     agent
+  [available]  jr/agent:tdd-coach                    agent
+  [available]  jr/agent:refactoring-specialist       agent
+  [available]  jr/agent:committer                    agent
+  [available]  jr/agent:devops-engineer              agent
+$
+
+<RULE>
+$ rigger doctor
+--- rigger doctor ---
+
+✓ git (<path>)
+✓ glab (<path>)
+✓ gitleaks (<path>)
+✓ trivy (<path>)
+
+mode : full scan
+
+Installed state is healthy — no findings.
+$ rigger ls | head -16
+Catalog (39 entries):
+  [available]  jr/hook:guard-command                 hook
+  [available]  jr/hook:guard-secret                  hook
+  [available]  jr/hook:guard-write-secret            hook
+  [available]  jr/hook:guard-prompt                  hook
+  [available]  jr/guardrail:claude                   guardrail
+  [available]  jr/context:claude                     context
+  [available]  jr/agent:pm                           agent
+  [available]  jr/agent:tech-lead                    agent
+  [available]  jr/agent:senior-fullstack             agent
+  [available]  jr/agent:db-postgres                  agent
+  [available]  jr/agent:reviewer                     agent
+  [available]  jr/agent:tdd-coach                    agent
+  [available]  jr/agent:refactoring-specialist       agent
+  [available]  jr/agent:committer                    agent
+  [available]  jr/agent:devops-engineer              agent
+$
+
+<RULE>
+$ rigger doctor
+--- rigger doctor ---
+
+✓ git (<path>)
+✓ glab (<path>)
+✓ gitleaks (<path>)
+✓ trivy (<path>)
+
+mode : full scan
+
+Installed state is healthy — no findings.
+$ rigger ls | head -16
+Catalog (39 entries):
+  [available]  jr/hook:guard-command                 hook
+  [available]  jr/hook:guard-secret                  hook
+  [available]  jr/hook:guard-write-secret            hook
+  [available]  jr/hook:guard-prompt                  hook
+  [available]  jr/guardrail:claude                   guardrail
+  [available]  jr/context:claude                     context
+  [available]  jr/agent:pm                           agent
+  [available]  jr/agent:tech-lead                    agent
+  [available]  jr/agent:senior-fullstack             agent
+  [available]  jr/agent:db-postgres                  agent
+  [available]  jr/agent:reviewer                     agent
+  [available]  jr/agent:tdd-coach                    agent
+  [available]  jr/agent:refactoring-specialist       agent
+  [available]  jr/agent:committer                    agent
+  [available]  jr/agent:devops-engineer              agent
+$ clear
+
+<RULE>
+$ rigger doctor
+--- rigger doctor ---
+
+✓ git (<path>)
+✓ glab (<path>)
+✓ gitleaks (<path>)
+✓ trivy (<path>)
+
+mode : full scan
+
+Installed state is healthy — no findings.
+$ rigger ls | head -16
+Catalog (39 entries):
+  [available]  jr/hook:guard-command                 hook
+  [available]  jr/hook:guard-secret                  hook
+  [available]  jr/hook:guard-write-secret            hook
+  [available]  jr/hook:guard-prompt                  hook
+  [available]  jr/guardrail:claude                   guardrail
+  [available]  jr/context:claude                     context
+  [available]  jr/agent:pm                           agent
+  [available]  jr/agent:tech-lead                    agent
+  [available]  jr/agent:senior-fullstack             agent
+  [available]  jr/agent:db-postgres                  agent
+  [available]  jr/agent:reviewer                     agent
+  [available]  jr/agent:tdd-coach                    agent
+  [available]  jr/agent:refactoring-specialist       agent
+  [available]  jr/agent:committer                    agent
+  [available]  jr/agent:devops-engineer              agent
+$ clear
+
+<RULE>
+$
+
+<RULE>
+$
+
+<RULE>
+$ rigger install jr/pack:secu jr/pack:baseline --yes --summary --assistant claude
+
+<RULE>
+$ rigger install jr/pack:secu jr/pack:baseline --yes --summary --assistant claude
+
+<RULE>
+$ rigger install jr/pack:secu jr/pack:baseline --yes --summary --assistant claude
+
+<RULE>
+$ rigger install jr/pack:secu jr/pack:baseline --yes --summary --assistant claude
+--- Plan ---
+Plan · 24 changes · scope: user (~/.claude)
++ jr/hook:guard-command   ~/.claude/settings.json (+ hooks)   1 hook
++ jr/hook:guard-secret   ~/.claude/settings.json (+ hooks)   1 hook
++ jr/hook:guard-write-secret   ~/.claude/settings.json (+ hooks)   1 hook
++ jr/hook:guard-prompt   ~/.claude/settings.json (+ hooks)   1 hook
++ jr/guardrail:claude   ~/.claude/settings.json   deny +11 · allow +3
++ jr/context:claude   ~/.claude/harness/AGENTS.md   1 write (+338) · 1 import
++ jr/agent:pm   ~/.claude/agents/pm.md   1 link
++ jr/agent:tech-lead   ~/.claude/agents/tech-lead.md   1 link
++ jr/agent:senior-fullstack   ~/.claude/agents/senior-fullstack.md   1 link
++ jr/agent:db-postgres   ~/.claude/agents/db-postgres.md   1 link
++ jr/agent:reviewer   ~/.claude/agents/reviewer.md   1 link
++ jr/skill:spec-workflow   ~/.claude/skills/spec-workflow   1 link
++ jr/skill:grill-with-docs   ~/.claude/skills/grill-with-docs   1 link
++ jr/skill:solid-principles   ~/.claude/skills/solid-principles   1 link
++ jr/skill:kiss-dry-yagni   ~/.claude/skills/kiss-dry-yagni   1 link
++ jr/skill:testing   ~/.claude/skills/testing   1 link
++ jr/skill:typescript-coding-standards   ~/.claude/skills/typescript-coding-standards   1 link
++ jr/skill:security   ~/.claude/skills/security   1 link
++ jr/skill:diagnose   ~/.claude/skills/diagnose   1 link
++ jr/skill:documentation   ~/.claude/skills/documentation   1 link
++ jr/skill:git-workflow   ~/.claude/skills/git-workflow   1 link
++ jr/skill:workflow-analysis   ~/.claude/skills/workflow-analysis   1 link
+Σ  deny +11 · allow +3 · 1 write · 1 import · 4 hooks · 16 links
+--- Warnings ---
+  [warning] this remote guardrail widens permissions.allow: Read(./.env.example), Read(./.env.test), Read(./node_modules
+/**)
+
+--- Result ---
+  [ok] Applied 24 file(s).
+$
+
+<RULE>
+$ rigger install jr/pack:secu jr/pack:baseline --yes --summary --assistant claude
+--- Plan ---
+Plan · 24 changes · scope: user (~/.claude)
++ jr/hook:guard-command   ~/.claude/settings.json (+ hooks)   1 hook
++ jr/hook:guard-secret   ~/.claude/settings.json (+ hooks)   1 hook
++ jr/hook:guard-write-secret   ~/.claude/settings.json (+ hooks)   1 hook
++ jr/hook:guard-prompt   ~/.claude/settings.json (+ hooks)   1 hook
++ jr/guardrail:claude   ~/.claude/settings.json   deny +11 · allow +3
++ jr/context:claude   ~/.claude/harness/AGENTS.md   1 write (+338) · 1 import
++ jr/agent:pm   ~/.claude/agents/pm.md   1 link
++ jr/agent:tech-lead   ~/.claude/agents/tech-lead.md   1 link
++ jr/agent:senior-fullstack   ~/.claude/agents/senior-fullstack.md   1 link
++ jr/agent:db-postgres   ~/.claude/agents/db-postgres.md   1 link
++ jr/agent:reviewer   ~/.claude/agents/reviewer.md   1 link
++ jr/skill:spec-workflow   ~/.claude/skills/spec-workflow   1 link
++ jr/skill:grill-with-docs   ~/.claude/skills/grill-with-docs   1 link
++ jr/skill:solid-principles   ~/.claude/skills/solid-principles   1 link
++ jr/skill:kiss-dry-yagni   ~/.claude/skills/kiss-dry-yagni   1 link
++ jr/skill:testing   ~/.claude/skills/testing   1 link
++ jr/skill:typescript-coding-standards   ~/.claude/skills/typescript-coding-standards   1 link
++ jr/skill:security   ~/.claude/skills/security   1 link
++ jr/skill:diagnose   ~/.claude/skills/diagnose   1 link
++ jr/skill:documentation   ~/.claude/skills/documentation   1 link
++ jr/skill:git-workflow   ~/.claude/skills/git-workflow   1 link
++ jr/skill:workflow-analysis   ~/.claude/skills/workflow-analysis   1 link
+Σ  deny +11 · allow +3 · 1 write · 1 import · 4 hooks · 16 links
+--- Warnings ---
+  [warning] this remote guardrail widens permissions.allow: Read(./.env.example), Read(./.env.test), Read(./node_modules
+/**)
+
+--- Result ---
+  [ok] Applied 24 file(s).
+$
+
+<RULE>
+$ rigger install jr/pack:secu jr/pack:baseline --yes --summary --assistant claude
+--- Plan ---
+Plan · 24 changes · scope: user (~/.claude)
++ jr/hook:guard-command   ~/.claude/settings.json (+ hooks)   1 hook
++ jr/hook:guard-secret   ~/.claude/settings.json (+ hooks)   1 hook
++ jr/hook:guard-write-secret   ~/.claude/settings.json (+ hooks)   1 hook
++ jr/hook:guard-prompt   ~/.claude/settings.json (+ hooks)   1 hook
++ jr/guardrail:claude   ~/.claude/settings.json   deny +11 · allow +3
++ jr/context:claude   ~/.claude/harness/AGENTS.md   1 write (+338) · 1 import
++ jr/agent:pm   ~/.claude/agents/pm.md   1 link
++ jr/agent:tech-lead   ~/.claude/agents/tech-lead.md   1 link
++ jr/agent:senior-fullstack   ~/.claude/agents/senior-fullstack.md   1 link
++ jr/agent:db-postgres   ~/.claude/agents/db-postgres.md   1 link
++ jr/agent:reviewer   ~/.claude/agents/reviewer.md   1 link
++ jr/skill:spec-workflow   ~/.claude/skills/spec-workflow   1 link
++ jr/skill:grill-with-docs   ~/.claude/skills/grill-with-docs   1 link
++ jr/skill:solid-principles   ~/.claude/skills/solid-principles   1 link
++ jr/skill:kiss-dry-yagni   ~/.claude/skills/kiss-dry-yagni   1 link
++ jr/skill:testing   ~/.claude/skills/testing   1 link
++ jr/skill:typescript-coding-standards   ~/.claude/skills/typescript-coding-standards   1 link
++ jr/skill:security   ~/.claude/skills/security   1 link
++ jr/skill:diagnose   ~/.claude/skills/diagnose   1 link
++ jr/skill:documentation   ~/.claude/skills/documentation   1 link
++ jr/skill:git-workflow   ~/.claude/skills/git-workflow   1 link
++ jr/skill:workflow-analysis   ~/.claude/skills/workflow-analysis   1 link
+Σ  deny +11 · allow +3 · 1 write · 1 import · 4 hooks · 16 links
+--- Warnings ---
+  [warning] this remote guardrail widens permissions.allow: Read(./.env.example), Read(./.env.test), Read(./node_modules
+/**)
+
+--- Result ---
+  [ok] Applied 24 file(s).
+$ rigger check
+
+<RULE>
+$ rigger install jr/pack:secu jr/pack:baseline --yes --summary --assistant claude
+--- Plan ---
+Plan · 24 changes · scope: user (~/.claude)
++ jr/hook:guard-command   ~/.claude/settings.json (+ hooks)   1 hook
++ jr/hook:guard-secret   ~/.claude/settings.json (+ hooks)   1 hook
++ jr/hook:guard-write-secret   ~/.claude/settings.json (+ hooks)   1 hook
++ jr/hook:guard-prompt   ~/.claude/settings.json (+ hooks)   1 hook
++ jr/guardrail:claude   ~/.claude/settings.json   deny +11 · allow +3
++ jr/context:claude   ~/.claude/harness/AGENTS.md   1 write (+338) · 1 import
++ jr/agent:pm   ~/.claude/agents/pm.md   1 link
++ jr/agent:tech-lead   ~/.claude/agents/tech-lead.md   1 link
++ jr/agent:senior-fullstack   ~/.claude/agents/senior-fullstack.md   1 link
++ jr/agent:db-postgres   ~/.claude/agents/db-postgres.md   1 link
++ jr/agent:reviewer   ~/.claude/agents/reviewer.md   1 link
++ jr/skill:spec-workflow   ~/.claude/skills/spec-workflow   1 link
++ jr/skill:grill-with-docs   ~/.claude/skills/grill-with-docs   1 link
++ jr/skill:solid-principles   ~/.claude/skills/solid-principles   1 link
++ jr/skill:kiss-dry-yagni   ~/.claude/skills/kiss-dry-yagni   1 link
++ jr/skill:testing   ~/.claude/skills/testing   1 link
++ jr/skill:typescript-coding-standards   ~/.claude/skills/typescript-coding-standards   1 link
++ jr/skill:security   ~/.claude/skills/security   1 link
++ jr/skill:diagnose   ~/.claude/skills/diagnose   1 link
++ jr/skill:documentation   ~/.claude/skills/documentation   1 link
++ jr/skill:git-workflow   ~/.claude/skills/git-workflow   1 link
++ jr/skill:workflow-analysis   ~/.claude/skills/workflow-analysis   1 link
+Σ  deny +11 · allow +3 · 1 write · 1 import · 4 hooks · 16 links
+--- Warnings ---
+  [warning] this remote guardrail widens permissions.allow: Read(./.env.example), Read(./.env.test), Read(./node_modules
+/**)
+
+--- Result ---
+  [ok] Applied 24 file(s).
+$ rigger check
+
+<RULE>
+$ rigger install jr/pack:secu jr/pack:baseline --yes --summary --assistant claude
+--- Plan ---
+Plan · 24 changes · scope: user (~/.claude)
++ jr/hook:guard-command   ~/.claude/settings.json (+ hooks)   1 hook
++ jr/hook:guard-secret   ~/.claude/settings.json (+ hooks)   1 hook
++ jr/hook:guard-write-secret   ~/.claude/settings.json (+ hooks)   1 hook
++ jr/hook:guard-prompt   ~/.claude/settings.json (+ hooks)   1 hook
++ jr/guardrail:claude   ~/.claude/settings.json   deny +11 · allow +3
++ jr/context:claude   ~/.claude/harness/AGENTS.md   1 write (+338) · 1 import
++ jr/agent:pm   ~/.claude/agents/pm.md   1 link
++ jr/agent:tech-lead   ~/.claude/agents/tech-lead.md   1 link
++ jr/agent:senior-fullstack   ~/.claude/agents/senior-fullstack.md   1 link
++ jr/agent:db-postgres   ~/.claude/agents/db-postgres.md   1 link
++ jr/agent:reviewer   ~/.claude/agents/reviewer.md   1 link
++ jr/skill:spec-workflow   ~/.claude/skills/spec-workflow   1 link
++ jr/skill:grill-with-docs   ~/.claude/skills/grill-with-docs   1 link
++ jr/skill:solid-principles   ~/.claude/skills/solid-principles   1 link
++ jr/skill:kiss-dry-yagni   ~/.claude/skills/kiss-dry-yagni   1 link
++ jr/skill:testing   ~/.claude/skills/testing   1 link
++ jr/skill:typescript-coding-standards   ~/.claude/skills/typescript-coding-standards   1 link
++ jr/skill:security   ~/.claude/skills/security   1 link
++ jr/skill:diagnose   ~/.claude/skills/diagnose   1 link
++ jr/skill:documentation   ~/.claude/skills/documentation   1 link
++ jr/skill:git-workflow   ~/.claude/skills/git-workflow   1 link
++ jr/skill:workflow-analysis   ~/.claude/skills/workflow-analysis   1 link
+Σ  deny +11 · allow +3 · 1 write · 1 import · 4 hooks · 16 links
+--- Warnings ---
+  [warning] this remote guardrail widens permissions.allow: Read(./.env.example), Read(./.env.test), Read(./node_modules
+/**)
+
+--- Result ---
+  [ok] Applied 24 file(s).
+$ rigger check
+
+<RULE>
+$ rigger install jr/pack:secu jr/pack:baseline --yes --summary --assistant claude
+--- Plan ---
+Plan · 24 changes · scope: user (~/.claude)
++ jr/hook:guard-command   ~/.claude/settings.json (+ hooks)   1 hook
++ jr/hook:guard-secret   ~/.claude/settings.json (+ hooks)   1 hook
++ jr/hook:guard-write-secret   ~/.claude/settings.json (+ hooks)   1 hook
++ jr/hook:guard-prompt   ~/.claude/settings.json (+ hooks)   1 hook
++ jr/guardrail:claude   ~/.claude/settings.json   deny +11 · allow +3
++ jr/context:claude   ~/.claude/harness/AGENTS.md   1 write (+338) · 1 import
++ jr/agent:pm   ~/.claude/agents/pm.md   1 link
++ jr/agent:tech-lead   ~/.claude/agents/tech-lead.md   1 link
++ jr/agent:senior-fullstack   ~/.claude/agents/senior-fullstack.md   1 link
++ jr/agent:db-postgres   ~/.claude/agents/db-postgres.md   1 link
++ jr/agent:reviewer   ~/.claude/agents/reviewer.md   1 link
++ jr/skill:spec-workflow   ~/.claude/skills/spec-workflow   1 link
++ jr/skill:grill-with-docs   ~/.claude/skills/grill-with-docs   1 link
++ jr/skill:solid-principles   ~/.claude/skills/solid-principles   1 link
++ jr/skill:kiss-dry-yagni   ~/.claude/skills/kiss-dry-yagni   1 link
++ jr/skill:testing   ~/.claude/skills/testing   1 link
++ jr/skill:typescript-coding-standards   ~/.claude/skills/typescript-coding-standards   1 link
++ jr/skill:security   ~/.claude/skills/security   1 link
++ jr/skill:diagnose   ~/.claude/skills/diagnose   1 link
++ jr/skill:documentation   ~/.claude/skills/documentation   1 link
++ jr/skill:git-workflow   ~/.claude/skills/git-workflow   1 link
++ jr/skill:workflow-analysis   ~/.claude/skills/workflow-analysis   1 link
+Σ  deny +11 · allow +3 · 1 write · 1 import · 4 hooks · 16 links
+--- Warnings ---
+  [warning] this remote guardrail widens permissions.allow: Read(./.env.example), Read(./.env.test), Read(./node_modules
+/**)
+
+--- Result ---
+  [ok] Applied 24 file(s).
+$ rigger check
+  [ ok  ]  guardrails-claude  (guardrail)
+  [ ok  ]  context-claude  (context)
+
+--- Catalogs ---
+  [up-to-date]   jr  (v0.2.2)
+<RULE>
+$ rigger install jr/pack:secu jr/pack:baseline --yes --summary --assistant claude
+--- Plan ---
+Plan · 24 changes · scope: user (~/.claude)
++ jr/hook:guard-command   ~/.claude/settings.json (+ hooks)   1 hook
++ jr/hook:guard-secret   ~/.claude/settings.json (+ hooks)   1 hook
++ jr/hook:guard-write-secret   ~/.claude/settings.json (+ hooks)   1 hook
++ jr/hook:guard-prompt   ~/.claude/settings.json (+ hooks)   1 hook
++ jr/guardrail:claude   ~/.claude/settings.json   deny +11 · allow +3
++ jr/context:claude   ~/.claude/harness/AGENTS.md   1 write (+338) · 1 import
++ jr/agent:pm   ~/.claude/agents/pm.md   1 link
++ jr/agent:tech-lead   ~/.claude/agents/tech-lead.md   1 link
++ jr/agent:senior-fullstack   ~/.claude/agents/senior-fullstack.md   1 link
++ jr/agent:db-postgres   ~/.claude/agents/db-postgres.md   1 link
++ jr/agent:reviewer   ~/.claude/agents/reviewer.md   1 link
++ jr/skill:spec-workflow   ~/.claude/skills/spec-workflow   1 link
++ jr/skill:grill-with-docs   ~/.claude/skills/grill-with-docs   1 link
++ jr/skill:solid-principles   ~/.claude/skills/solid-principles   1 link
++ jr/skill:kiss-dry-yagni   ~/.claude/skills/kiss-dry-yagni   1 link
++ jr/skill:testing   ~/.claude/skills/testing   1 link
++ jr/skill:typescript-coding-standards   ~/.claude/skills/typescript-coding-standards   1 link
++ jr/skill:security   ~/.claude/skills/security   1 link
++ jr/skill:diagnose   ~/.claude/skills/diagnose   1 link
++ jr/skill:documentation   ~/.claude/skills/documentation   1 link
++ jr/skill:git-workflow   ~/.claude/skills/git-workflow   1 link
++ jr/skill:workflow-analysis   ~/.claude/skills/workflow-analysis   1 link
+Σ  deny +11 · allow +3 · 1 write · 1 import · 4 hooks · 16 links
+--- Warnings ---
+  [warning] this remote guardrail widens permissions.allow: Read(./.env.example), Read(./.env.test), Read(./node_modules
+/**)
+
+--- Result ---
+  [ok] Applied 24 file(s).
+$ rigger check
+  [ ok  ]  guardrails-claude  (guardrail)
+  [ ok  ]  context-claude  (context)
+
+--- Catalogs ---
+  [up-to-date]   jr  (v0.2.2)
+<RULE>
