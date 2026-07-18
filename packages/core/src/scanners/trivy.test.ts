@@ -61,6 +61,22 @@ const misconfigHighFailJson = JSON.stringify({
   ],
 });
 
+const misconfigCriticalFailJson = JSON.stringify({
+  Results: [
+    {
+      Target: 'Dockerfile',
+      Misconfigurations: [
+        {
+          ID: 'DS001',
+          Title: 'Use of latest tag',
+          Severity: 'CRITICAL',
+          Status: 'FAIL',
+        },
+      ],
+    },
+  ],
+});
+
 const misconfigLowFailJson = JSON.stringify({
   Results: [
     {
@@ -136,6 +152,27 @@ describe('createTrivyScanner — exit 0, misconfig HIGH FAIL', () => {
     const finding = verdict.findings?.[0] ?? '';
     expect(finding).toContain('DS002');
     expect(finding).toContain('HIGH');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// R3 — misconfig CRITICAL + FAIL (blocking): today only HIGH+FAIL is pinned,
+// but BLOCKING_SEVERITIES (trivy.ts) also contains CRITICAL — lock that too.
+// ---------------------------------------------------------------------------
+
+describe('R3: createTrivyScanner — misconfig CRITICAL FAIL blocks', () => {
+  it('R3: returns { ok: false } for a CRITICAL severity FAIL misconfig', async () => {
+    const scanner = createTrivyScanner({ run: mockRunner(0, misconfigCriticalFailJson) });
+    const verdict = await scanner.scan('/tmp/project');
+    expect(verdict.ok).toBe(false);
+  });
+
+  it('R3: finding mentions the misconfig ID and CRITICAL severity', async () => {
+    const scanner = createTrivyScanner({ run: mockRunner(0, misconfigCriticalFailJson) });
+    const verdict = await scanner.scan('/tmp/project');
+    const finding = verdict.findings?.[0] ?? '';
+    expect(finding).toContain('DS001');
+    expect(finding).toContain('CRITICAL');
   });
 });
 

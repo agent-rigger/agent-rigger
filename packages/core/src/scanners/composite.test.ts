@@ -11,6 +11,8 @@
  *  - both present, both find issues        → findings from both concatenated
  *  - only gitleaks present, clean          → { ok: true }  (trivy not called)
  *  - only gitleaks present, secret found   → { ok: false } with [gitleaks] prefix
+ *  - only trivy present (R5, mirror)       → clean → { ok: true }, gitleaks never invoked; misconfig → { ok: false } [trivy]
+ *  - gitleaks tool error (R4)              → { ok: false } with prefixed "[gitleaks] gitleaks error: <stderr>"
  *  - neither present                       → warn-only: { ok: true, degraded: true } (ADR-0018, no fail-closed)
  */
 
@@ -251,5 +253,61 @@ describe('composite — neither present', () => {
     const scanner = createCompositeScanner({ run, which });
     const verdict = await scanner.scan('/tmp/project');
     expect(verdict.degraded).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// R5 — only trivy present (exact mirror of the only-gitleaks describe above):
+// the composite must run the tool that IS present and never touch the absent one.
+// ---------------------------------------------------------------------------
+
+describe('R5: composite — only trivy present (mirror of only-gitleaks)', () => {
+  it('R5: returns { ok: true } with no degraded flag when trivy is clean, and never invokes gitleaks', async () => {
+    const which = makeWhich({ gitleaksPresent: false, trivyPresent: true });
+    const base = makeRunner({ trivyScanStdout: CLEAN_TRIVY });
+    let gitleaksInvoked = false;
+    const run: ScanRunner = (command: string, args: string[]) => {
+      if (command === 'gitleaks') gitleaksInvoked = true;
+      return base(command, args);
+    };
+    const scanner = createCompositeScanner({ run, which });
+    const verdict = await scanner.scan('/tmp/project');
+    expect(verdict.ok).toBe(true);
+    expect(verdict.degraded).toBeUndefined();
+    expect(gitleaksInvoked).toBe(false);
+  });
+
+  it('R5: returns { ok: false } with a [trivy] prefix when trivy finds a misconfig', async () => {
+    const { which, run } = makeFixtures({
+      gitleaksPresent: false,
+      trivyPresent: true,
+      trivyScanStdout: MISCONFIG_JSON,
+    });
+    const scanner = createCompositeScanner({ run, which });
+    const verdict = await scanner.scan('/tmp/project');
+    expect(verdict.ok).toBe(false);
+    expect(verdict.findings?.some((f: string) => f.startsWith('[trivy]'))).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// R4 — a scanner tool error (exit > 1) is mapped to a fail-closed verdict by
+// gitleaks.ts AND prefixed at the composite level. The composite-level prefixing
+// of a tool-error finding is not covered anywhere else.
+// ---------------------------------------------------------------------------
+
+describe('R4: composite — a scanner tool error is prefixed and blocks', () => {
+  it('R4: gitleaks exit 2 (stderr "boom") → composite ok:false with "[gitleaks] gitleaks error: boom"', async () => {
+    const which = makeWhich({ gitleaksPresent: true, trivyPresent: true });
+    const run: ScanRunner = (command: string) => {
+      if (command === 'gitleaks') {
+        return Promise.resolve({ exitCode: 2, stdout: '', stderr: 'boom' });
+      }
+      return Promise.resolve({ exitCode: 0, stdout: CLEAN_TRIVY, stderr: '' });
+    };
+    const scanner = createCompositeScanner({ run, which });
+    const verdict = await scanner.scan('/tmp/project');
+    expect(verdict.ok).toBe(false);
+    expect(verdict.findings).toContain('[gitleaks] gitleaks error: boom');
   });
 });
