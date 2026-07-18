@@ -542,7 +542,7 @@ Options:
                                  Target assistant (default: resolved from config/detection,
                                  or prompted; see README § Assistants).
   --yes                         Skip confirmation prompt (non-interactive install only).
-  --force                       Proceed despite scan findings (ad-hoc install only).
+  --force                       Proceed despite blocking scan findings (install and update).
   --fix                         Repair the installed state (doctor only; consent-driven).
   --remote                      Read configured catalog content for the differential (doctor
                                 only; read-only, fail-closed).

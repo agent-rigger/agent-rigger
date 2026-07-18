@@ -264,3 +264,30 @@ describe('lot5-R3: anti-drift — no unqualified id in USAGE or README examples'
     expect(unqualifiedIdsInInvocations(readme)).toEqual([]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Anti-drift (④, cli-signal-help-naming): the --force Options entry documents
+// every real surface. --force threads through install (groupé/interactif/
+// ad-hoc) AND update, so its help description must name both — never the old
+// "ad-hoc install only" wording that undersold it. Behaviour on the update
+// surface is proven by cshn-force-surfaces.test.ts; this pins the help text.
+// ---------------------------------------------------------------------------
+
+describe('cli-signal-help-naming ④: --force help documents install and update', () => {
+  it('the Options --force entry names both install and update, not an "only" surface', async () => {
+    const cap = makeCapture();
+    await runCli(['--help'], { print: cap.print, env: { RIGGER_HOME: '/nonexistent' } });
+    const usage = cap.lines.join('\n');
+
+    const optionsSection = usage.slice(usage.indexOf('Options:'), usage.indexOf('Examples:'));
+    const forceEntry = optionsSection
+      .split(/\n(?=  --)/)
+      .find((block) => /^\s*--force\b/.test(block));
+
+    expect(forceEntry).toBeDefined();
+    const entry = forceEntry as string;
+    expect(entry).toContain('install');
+    expect(entry).toContain('update');
+    expect(entry).not.toMatch(/\bonly\b/);
+  });
+});
