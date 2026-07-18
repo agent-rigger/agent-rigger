@@ -9,10 +9,13 @@ name: Recordings freshness
 # the tapes emit under site/src/assets/recordings/ are overwritten and discarded here
 # (contents: read, no commit); `git diff` is deliberately NOT the mechanism.
 #
-# Scope: the three filmed flows (doctor-fix, scan-blocked, install-picker). The
-# getting-started flow and docs/demo.gif are excluded — blocked by the ttyd
-# output-volume throttle on the 24-artifact install (measured; not the scanner
-# spawns). See docs/tapes/README.md and ADR-0026.
+# Scope: all five filmed flows (doctor-fix, scan-blocked, install-picker, demo,
+# getting-started). demo and getting-started were previously excluded — the ttyd
+# output-volume throttle stalled their 24-artifact install before the Result
+# (measured; not the scanner spawns). Both are now unblocked: the `--summary` plan
+# (plan-compact-summary change) renders the install in a fraction of the lines, and
+# the Hide/Show race (vhs#130) is neutralised by the clear → Sleep → Show idiom, so
+# both rejoin the contract. See docs/tapes/README.md and ADR-0026.
 #
 # Network: github.com must be reachable — install-picker and the doctor-fix staging
 # clone the real jr catalog. A network failure reds the run for a non-CLI reason;
@@ -233,7 +236,7 @@ jobs:
           set -uo pipefail
           mkdir -p docs/tapes/.out
           status=0
-          for flux in doctor-fix scan-blocked install-picker; do
+          for flux in doctor-fix scan-blocked install-picker demo getting-started; do
             echo "::group::$flux"
             if ! vhs "docs/tapes/${flux}.tape"; then
               echo "::error::${flux}: vhs replay failed"
@@ -264,3 +267,20 @@ jobs:
             echo "::endgroup::"
           done
           exit "$status"
+
+      # Backup render channel (ADR-0026 amendment 2026-07-18): the runner already
+      # renders every gif and discards them (pixels are not the contract). Keeping
+      # them for 7 days on `if: always()` gives a maintainer a machine-rendered set
+      # to pull down when a local re-shoot is unavailable — the .txt captures ride
+      # along for post-mortem when a golden reds. This publishes nothing to the site;
+      # the artifact is download-only, never committed (R6 keeps the human verdict).
+      - name: Upload rendered recordings
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: recordings-gifs
+          path: |
+            site/src/assets/recordings/*.gif
+            docs/demo.gif
+            docs/tapes/.out/*.txt
+          retention-days: 7
