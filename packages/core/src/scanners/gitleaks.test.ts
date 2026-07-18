@@ -139,6 +139,27 @@ describe('createGitleaksScanner — exit 1 but empty findings (fail-closed)', ()
 });
 
 // ---------------------------------------------------------------------------
+// exit 1 with unparseable or non-array output → clean fail-closed verdict (R4)
+// ---------------------------------------------------------------------------
+
+describe('createGitleaksScanner — exit 1 with unparseable or non-array output (R4, fail-closed)', () => {
+  it('R4: exit 1 with malformed JSON resolves to a clean fail-closed verdict, not a crash', async () => {
+    const scanner = createGitleaksScanner({ run: mockRunner(1, '[{"RuleID": "aws') });
+    const verdict = await scanner.scan('/tmp/x');
+    expect(verdict.ok).toBe(false);
+    const finding = verdict.findings?.[0] ?? '';
+    expect(finding).toContain('unparseable');
+  });
+
+  it('R4: exit 1 with a non-array JSON value ("{}") resolves to { ok: false }', async () => {
+    const scanner = createGitleaksScanner({ run: mockRunner(1, '{}') });
+    const verdict = await scanner.scan('/tmp/x');
+    expect(verdict.ok).toBe(false);
+    expect(verdict.findings?.length).toBeGreaterThan(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // isGitleaksAvailable — WhichFn-based (portable, no shell spawn)
 // ---------------------------------------------------------------------------
 
