@@ -17,9 +17,12 @@ name: Recordings freshness
 # the Hide/Show race (vhs#130) is neutralised by the clear → Sleep → Show idiom, so
 # both rejoin the contract. See docs/tapes/README.md and ADR-0026.
 #
-# Network: github.com must be reachable — install-picker and the doctor-fix staging
-# clone the real jr catalog. A network failure reds the run for a non-CLI reason;
-# re-run manually (workflow_dispatch).
+# Network: github.com must be reachable. The jr-catalog flows (install-picker,
+# doctor-fix, demo) resolve to the LOCAL mirror via the insteadOf rewrite below and
+# never hit github.com in CI; getting-started is the one live dependency — it clones
+# the public example catalog (agent-rigger-catalog-example) directly, no mirror, no
+# token. A network failure or a rename of that public repo reds the run for a
+# non-CLI reason; re-run manually (workflow_dispatch).
 
 on:
   push:
