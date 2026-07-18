@@ -50,7 +50,7 @@ import { apply, remove } from '@agent-rigger/core/engine';
 import { readManifest } from '@agent-rigger/core/manifest';
 import type { Env } from '@agent-rigger/core/paths';
 import { acquireRunLock } from '@agent-rigger/core/run-lock';
-import { memoizeScanner } from '@agent-rigger/core/scan';
+import { constantScanner } from '@agent-rigger/core/scan';
 import type { Scanner } from '@agent-rigger/core/scan';
 import type { Scope } from '@agent-rigger/core/types';
 
@@ -153,12 +153,11 @@ export async function runUpdate(opts: RunUpdateOptions): Promise<UpdateResult> {
   } = opts;
 
   const force = opts.force === true;
-  // Shared, memoized scanner instance: the pre-apply gate (scanEntries below)
-  // and the adapter's apply-time re-check (buildAdapter → applySkill) both
-  // resolve to the same checkout path per artifact. Memoizing means the gate
-  // populates the cache and the apply-time check hits it — the underlying
-  // tool (gitleaks/trivy) runs at most once per artifact, not twice.
-  const scanner: Scanner = memoizeScanner(opts.scanner ?? createCompositeScanner());
+  // Raw scanner (NOT memoized) — parity with runRemoteInstall: the pre-apply gate
+  // scans the whole stale set as one union (scanEntries below) and the apply-time
+  // re-check is handed a constant union verdict, so no per-path cache is threaded
+  // through either seam.
+  const scanner: Scanner = opts.scanner ?? createCompositeScanner();
   const assistant: Assistant = opts.assistant ?? 'claude';
 
   // Adapt CommandRunner → PluginRunner (mirrors remote-install.ts's runRemoteInstall)
@@ -326,7 +325,7 @@ export async function runUpdate(opts: RunUpdateOptions): Promise<UpdateResult> {
         //     with runRemoteInstall — same coverage, no duplicated policy.
         //     Must be BEFORE remove so a blocked scan leaves the artifact intact.
         //     scanEntries uses localId() internally for path derivation.
-        const { warnings: scanWarnings } = await scanEntries({
+        const { warnings: scanWarnings, verdict } = await scanEntries({
           entries: resolved,
           baseDir: dir,
           scanner,
@@ -358,13 +357,18 @@ export async function runUpdate(opts: RunUpdateOptions): Promise<UpdateResult> {
         }
 
         // 3e. Build adapter with remote resolver seam (externalBaseDir = checkout dir).
-        // Thread the memoized scanner to the apply-time re-check only on the
-        // non-force path — see runRemoteInstall (remote-install.ts) for the
-        // full rationale: when !force, scanEntries above already threw on any
-        // blocking verdict, so this is a safe cache-hit no-op; when force=true,
-        // a blocking verdict was deliberately overridden at the gate and
-        // Scanner/applySkill have no notion of --force, so re-threading it
-        // here would re-block a run the operator explicitly forced through.
+        // Thread the union verdict to the apply-time re-check only on the
+        // non-force path, via constantScanner — see runRemoteInstall
+        // (remote-install.ts) for the full rationale: when !force, scanEntries
+        // above already threw on any blocking verdict, so replaying the ok union
+        // verdict at apply is a safe no-op; when force=true, a blocking verdict
+        // was deliberately overridden at the gate and Scanner/applySkill have no
+        // notion of --force, so re-threading it here would re-block a run the
+        // operator explicitly forced through. R8 tautology: this re-check is
+        // defence BY CONSTRUCTION (the constant verdict is what the gate already
+        // computed over a superset of every applied source), not a runtime
+        // re-scan — the real apply-time blocking path stays pinned by t4's
+        // scanner injection at the adapter boundary. See runRemoteInstall.
         const adapter = await buildAdapter(assistant, env, {
           externalIds: remoteIds,
           externalBaseDir: dir,
@@ -372,11 +376,11 @@ export async function runUpdate(opts: RunUpdateOptions): Promise<UpdateResult> {
           // Claude-native delegation (mcp/plugin natures) goes through the same
           // runner as the checkout's git operations — see pluginRunner above.
           pluginRunner,
-          // Share the memoized scanner for the apply-time re-check under !force
-          // only: under --force the gate warns-and-proceeds, so a cached blocking
+          // Constant union verdict for the apply-time re-check under !force only:
+          // under --force the gate warns-and-proceeds, so replaying a blocking
           // verdict would wrongly re-throw at apply. Defense-in-depth, redundant
-          // while applied skills stay a subset of the gate's scanned set.
-          ...(force ? {} : { scanner }),
+          // while applied skills stay a subset of the gate's scanned union.
+          ...(force ? {} : { scanner: constantScanner(verdict) }),
           ...(Object.keys(secretOverrides).length === 0 ? {} : { secretOverrides }),
         });
 

@@ -1,11 +1,13 @@
 /**
- * t4-scanner-apply-time.test.ts — Real apply-time scanner, shared + memoized (T4).
+ * t4-scanner-apply-time.test.ts — Real apply-time scanner + single-spawn union
+ * gate (T4/T5).
  *
- * T3 made the pre-apply gate (scanEntries) comprehensive; it runs before every
- * apply and already closes the active security hole. T4 makes the SECOND layer
- * — the adapter's apply-time re-check (`scanner.scan(linkOp.source)` in
- * applySkill) — real instead of a permanently-passing stub, without spawning
- * the underlying scan tool (gitleaks/trivy) twice for the same content.
+ * T3 built the union staging; T5 wires the gate (scanEntries) to scan that
+ * single union in ONE composite call and hand the apply-time re-check a constant
+ * union verdict. This file proves the SECOND layer — the adapter's apply-time
+ * re-check (`scanner.scan(linkOp.source)` in applySkill) — is real (not a
+ * permanently-passing stub) AND that the injected security scanner is spawned
+ * exactly once for a whole install (the gate's union scan), not once per artefact.
  *
  * Two independent claims, proven separately (their observable effects overlap
  * if tested together — see rationale inline):
@@ -14,22 +16,24 @@
  *    describe blocks below) — isolated from scanEntries entirely: build an
  *    adapter with an injected blocking scanner and call plan()+apply()
  *    directly. Only possible to observe this if the builder threads
- *    opts.scanner through to applySkill instead of the hardcoded stub.
+ *    opts.scanner through to applySkill instead of the hardcoded stub. This
+ *    claim is unchanged by T5 — the apply-time scanner boundary is the same.
  *
- * 2. "no double-spawn" (runRemoteInstall / runUpdate describe blocks below):
- *    a spy scanner shared through opts.scanner is invoked exactly once for
- *    the skill's checkout path across the WHOLE install (gate + apply),
- *    proving the same memoized instance backs both call sites rather than
- *    two independent (real) scanners.
+ * 2. "single spawn" (runRemoteInstall / runUpdate describe blocks below): the
+ *    scanner injected through opts.scanner is invoked EXACTLY ONCE for the whole
+ *    install — the gate's union scan over the staging mirror — and its scanned
+ *    tree carries catalog.json + the skill's checkout surface. Apply-time is
+ *    served a constant verdict via constantScanner (a different instance), so it
+ *    never re-invokes the injected scanner: one union spawn covers gate + apply
+ *    (R1).
  *
  * Claim 1 pins the builder threading (reverting a builder to the stub fails it).
- * Claim 2 pins memoization + instance sharing (two non-shared real scanners
- * would show 2 calls for the skill path instead of 1). Note: the `!force`-only
- * threading at the call sites is defense-in-depth that stays redundant while
- * apply-time coverage (skills) is a subset of the gate's — the gate scans every
- * applied skill first — so dropping it has no observable runtime effect here and
- * no test pins that branch by effect; it guards against a future narrowing of
- * the gate's coverage.
+ * Claim 2 pins the union scan + constant-verdict coupling (a per-artefact gate,
+ * or an apply-time re-spawn, would show more than one call). Note: the
+ * `!force`-only threading at the call sites is defense-in-depth that stays
+ * redundant while apply-time coverage (skills) is a subset of the gate's union —
+ * the gate scans every applied skill first — so dropping it has no observable
+ * runtime effect here; it guards against a future narrowing of the gate's union.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
@@ -48,7 +52,8 @@ import type { WriteOpLink } from '@agent-rigger/core/types';
 import { buildClaudeAdapter } from '../src/cli';
 import { runUpdate } from '../src/cmd-update';
 import { buildOpencodeAdapter } from '../src/opencode-adapter-builder';
-import { runRemoteInstall, scanPathFor } from '../src/remote-install';
+import { runRemoteInstall } from '../src/remote-install';
+import { scanPathFor } from '../src/scan-paths';
 
 // ---------------------------------------------------------------------------
 // Shared fake-scanner builders
@@ -58,7 +63,7 @@ function blockingScanner(findings: string[]): Scanner {
   return { scan: (_source: string) => Promise.resolve({ ok: false, findings }) };
 }
 
-/** Records every path scanned; always passes. */
+/** Records every path scanned; always passes. Used by Claim 1 (adapter boundary). */
 function spyScanner(): { scanner: Scanner; calls: string[] } {
   const calls: string[] = [];
   const scanner: Scanner = {
@@ -68,6 +73,40 @@ function spyScanner(): { scanner: Scanner; calls: string[] } {
     },
   };
   return { scanner, calls };
+}
+
+/** Sorted rel-paths of every leaf under `root` (symlinks are leaves, not followed). */
+async function walkTree(root: string, dir: string = root): Promise<string[]> {
+  const dirents = await fs.readdir(dir, { withFileTypes: true });
+  const out: string[] = [];
+  for (const d of dirents) {
+    const full = path.join(dir, d.name);
+    if (d.isDirectory()) {
+      out.push(...(await walkTree(root, full)));
+    } else {
+      out.push(path.relative(root, full));
+    }
+  }
+  return out.sort();
+}
+
+/**
+ * Records every scanned source AND walks its tree at scan time — before
+ * scanEntries tears the staging mirror down in its `finally`. Used by Claim 2 to
+ * prove the injected gate scanner fires exactly once (calls.length === 1) over a
+ * union staging whose tree carries catalog.json + the skill surface.
+ */
+function treeSpyScanner(): { scanner: Scanner; calls: string[]; trees: string[][] } {
+  const calls: string[] = [];
+  const trees: string[][] = [];
+  const scanner: Scanner = {
+    scan: async (source: string) => {
+      calls.push(source);
+      trees.push(await walkTree(source));
+      return { ok: true };
+    },
+  };
+  return { scanner, calls, trees };
 }
 
 // ---------------------------------------------------------------------------
@@ -216,12 +255,13 @@ describe('buildOpencodeAdapter — apply-time scanner is real (T4, isolated from
 });
 
 // ---------------------------------------------------------------------------
-// path_match — scanPathFor(skill, baseDir) resolves to the SAME absolute path
-// as the WriteOpLink.source the adapter scans at apply time. This is what
-// makes the memoized cache actually hit instead of miss-then-scan-again.
+// path_match — scanPathFor(skill, baseDir) resolves to the SAME path the gate
+// mirrors into the union as the WriteOpLink.source the adapter would scan at
+// apply time. This is what makes the applied skill a member of the scanned union
+// — so the constant union verdict validly covers it (no apply-time re-spawn).
 // ---------------------------------------------------------------------------
 
-describe('scanPathFor(skill) === WriteOpLink.source (T4 — cache-hit precondition)', () => {
+describe('scanPathFor(skill) === WriteOpLink.source (T4/T5 — union-coverage precondition)', () => {
   it('resolves identically for the same baseDir/externalBaseDir', async () => {
     const tmp = await makeTmpDir('rigger-t4-pathmatch-');
     try {
@@ -255,8 +295,9 @@ describe('scanPathFor(skill) === WriteOpLink.source (T4 — cache-hit preconditi
 });
 
 // ---------------------------------------------------------------------------
-// Claim 2a — runRemoteInstall: shared memoized scanner, gate + apply combined
-// scan the skill's checkout path exactly once (LA preuve clé — anti-double-spawn).
+// Claim 2a — runRemoteInstall: the union gate scans ONCE and the apply-time
+// re-check is served a constant verdict, so the injected scanner fires exactly
+// once for the whole install (LA preuve clé — single spawn, R1).
 // ---------------------------------------------------------------------------
 
 const TAG_NAME = 'v1.0.0';
@@ -334,7 +375,7 @@ async function makeRemoteEnv(): Promise<{
   return { env, contentDir, runner, tmpFactory, cleanupAll };
 }
 
-describe('runRemoteInstall — shared memoized scanner scans the skill path exactly once (T4)', () => {
+describe('runRemoteInstall — union gate scans once, apply served a constant verdict (T4/T5)', () => {
   let remoteEnv: Awaited<ReturnType<typeof makeRemoteEnv>>;
   let targets: ReturnType<typeof resolveUserTargets>;
 
@@ -347,8 +388,8 @@ describe('runRemoteInstall — shared memoized scanner scans the skill path exac
     await remoteEnv.cleanupAll();
   });
 
-  it('scans catalog.json once and skills/remote-demo once — not twice — across gate + apply', async () => {
-    const { scanner, calls } = spyScanner();
+  it('invokes the injected scanner exactly once (the union staging) for gate + apply', async () => {
+    const { scanner, calls, trees } = treeSpyScanner();
 
     const result = await runRemoteInstall({
       ids: ['skill:remote-demo'],
@@ -364,15 +405,12 @@ describe('runRemoteInstall — shared memoized scanner scans the skill path exac
 
     expect(result.applied).toBe(true);
 
-    const skillPath = path.join(remoteEnv.contentDir, 'skills', 'remote-demo');
-    const catalogPath = path.join(remoteEnv.contentDir, 'catalog.json');
-
-    const skillCalls = calls.filter((c) => c === skillPath);
-    const catalogCalls = calls.filter((c) => c === catalogPath);
-
-    expect(skillCalls).toHaveLength(1);
-    expect(catalogCalls).toHaveLength(1);
-    expect(calls).toHaveLength(2);
+    // ONE spawn for the whole run: the gate's union scan. Apply-time is served a
+    // constant verdict (constantScanner), never this injected scanner — so no
+    // second call (R1). The scanned tree is the union: catalog.json + the skill.
+    expect(calls).toHaveLength(1);
+    expect(trees[0]).toContain('catalog.json');
+    expect(trees[0]).toContain('skills/remote-demo/SKILL.md');
   });
 
   it('the skill is actually written to the store (apply really ran, not skipped)', async () => {
@@ -399,8 +437,8 @@ describe('runRemoteInstall — shared memoized scanner scans the skill path exac
 // Claim 2b — runUpdate parity: same shared-instance, single-scan guarantee.
 // ---------------------------------------------------------------------------
 
-describe('runUpdate — shared memoized scanner scans the skill path exactly once (T4)', () => {
-  it('scans catalog.json once and skills/remote-demo once — not twice — across gate + apply', async () => {
+describe('runUpdate — union gate scans once, apply served a constant verdict (T4/T5)', () => {
+  it('invokes the injected scanner exactly once (the union staging) for gate + apply', async () => {
     const homeDir = await fs.mkdtemp(path.join(os.tmpdir(), 'rigger-t4-update-home-'));
     const configDir = path.join(homeDir, '.config', 'agent-rigger');
     await fs.mkdir(configDir, { recursive: true });
@@ -479,7 +517,7 @@ describe('runUpdate — shared memoized scanner scans the skill path exactly onc
       // across gate + apply.
       currentTag = TAG_V2;
       currentSha = SHA_V2;
-      const { scanner, calls } = spyScanner();
+      const { scanner, calls, trees } = treeSpyScanner();
 
       const qualifiedId = 'principal/skill:remote-demo';
       const manifestRaw = JSON.parse(await fs.readFile(targets.stateJson, 'utf8')) as {
@@ -506,10 +544,11 @@ describe('runUpdate — shared memoized scanner scans the skill path exactly onc
 
       expect(result.updated).toEqual([qualifiedId]);
 
-      const skillPath = path.join(contentDir, 'skills', 'remote-demo');
-      const catalogPath = path.join(contentDir, 'catalog.json');
-      expect(calls.filter((c) => c === skillPath)).toHaveLength(1);
-      expect(calls.filter((c) => c === catalogPath)).toHaveLength(1);
+      // Update shares scanEntries: one union spawn (gate) whose tree carries
+      // catalog.json + the stale skill; apply-time is served a constant verdict.
+      expect(calls).toHaveLength(1);
+      expect(trees[0]).toContain('catalog.json');
+      expect(trees[0]).toContain('skills/remote-demo/SKILL.md');
     } finally {
       await fs.rm(homeDir, { recursive: true, force: true }).catch(() => {});
       await fs.rm(contentDir, { recursive: true, force: true }).catch(() => {});

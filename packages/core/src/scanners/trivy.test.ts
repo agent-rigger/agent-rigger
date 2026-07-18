@@ -17,6 +17,7 @@
  */
 
 import { describe, expect, it } from 'bun:test';
+import path from 'node:path';
 
 import type { ScanRunner, WhichFn } from './gitleaks';
 import { createTrivyScanner, isTrivyAvailable } from './trivy';
@@ -53,6 +54,22 @@ const misconfigHighFailJson = JSON.stringify({
           ID: 'DS002',
           Title: 'Image user should not be root',
           Severity: 'HIGH',
+          Status: 'FAIL',
+        },
+      ],
+    },
+  ],
+});
+
+const misconfigCriticalFailJson = JSON.stringify({
+  Results: [
+    {
+      Target: 'Dockerfile',
+      Misconfigurations: [
+        {
+          ID: 'DS001',
+          Title: 'Use of latest tag',
+          Severity: 'CRITICAL',
           Status: 'FAIL',
         },
       ],
@@ -139,6 +156,27 @@ describe('createTrivyScanner — exit 0, misconfig HIGH FAIL', () => {
 });
 
 // ---------------------------------------------------------------------------
+// R3 — misconfig CRITICAL + FAIL (blocking): today only HIGH+FAIL is pinned,
+// but BLOCKING_SEVERITIES (trivy.ts) also contains CRITICAL — lock that too.
+// ---------------------------------------------------------------------------
+
+describe('R3: createTrivyScanner — misconfig CRITICAL FAIL blocks', () => {
+  it('R3: returns { ok: false } for a CRITICAL severity FAIL misconfig', async () => {
+    const scanner = createTrivyScanner({ run: mockRunner(0, misconfigCriticalFailJson) });
+    const verdict = await scanner.scan('/tmp/project');
+    expect(verdict.ok).toBe(false);
+  });
+
+  it('R3: finding mentions the misconfig ID and CRITICAL severity', async () => {
+    const scanner = createTrivyScanner({ run: mockRunner(0, misconfigCriticalFailJson) });
+    const verdict = await scanner.scan('/tmp/project');
+    const finding = verdict.findings?.[0] ?? '';
+    expect(finding).toContain('DS001');
+    expect(finding).toContain('CRITICAL');
+  });
+});
+
+// ---------------------------------------------------------------------------
 // createTrivyScanner — misconfig LOW + FAIL (ignored)
 // ---------------------------------------------------------------------------
 
@@ -218,6 +256,46 @@ describe('createTrivyScanner — exit 0, non-JSON stdout', () => {
     const verdict = await scanner.scan('/tmp/project');
     expect(verdict.ok).toBe(false);
     expect(verdict.findings?.[0]).toContain('unparseable');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// R7 — Target rebased defensively (trivy 0.72.0 already emits a relative Target,
+// but the isAbsolute guard hardens attribution against a version drift that
+// starts reporting an absolute path under the scanned staging dir).
+// ---------------------------------------------------------------------------
+
+describe('createTrivyScanner — R7 Target rebasing', () => {
+  it('R7: rebases an absolute Target under the scanned dir to a checkout-relative path', async () => {
+    const dir = '/tmp/rig-scan-staging-xyz';
+    const absTarget = path.join(dir, 'skills', 'api-helper', 'SKILL.md');
+    const json = JSON.stringify({
+      Results: [
+        {
+          Target: absTarget,
+          Secrets: [{
+            RuleID: 'aws-access-key-id',
+            Title: 'AWS Access Key ID',
+            Severity: 'CRITICAL',
+          }],
+        },
+      ],
+    });
+    const scanner = createTrivyScanner({ run: mockRunner(0, json) });
+
+    const verdict = await scanner.scan(dir);
+
+    const finding = verdict.findings?.[0] ?? '';
+    expect(finding).toContain('skills/api-helper/SKILL.md');
+    expect(finding).not.toContain(dir);
+  });
+
+  it('R7: leaves an already-relative Target unchanged', async () => {
+    const scanner = createTrivyScanner({ run: mockRunner(0, oneSecretJson) });
+
+    const verdict = await scanner.scan('/tmp/rig-scan-staging-xyz');
+
+    expect(verdict.findings?.[0]).toContain('src/config.ts');
   });
 });
 

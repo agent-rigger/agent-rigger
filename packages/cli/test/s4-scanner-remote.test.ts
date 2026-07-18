@@ -167,16 +167,38 @@ function cleanScanner(): Scanner {
   return { scan: (_source: string) => Promise.resolve({ ok: true }) };
 }
 
-/** Scanner that records every path it was called with. */
-function spyScanner(): { scanner: Scanner; calls: string[] } {
+/** Sorted rel-paths of every leaf under `root` (symlinks are leaves, not followed). */
+async function walkTree(root: string, dir: string = root): Promise<string[]> {
+  const dirents = await fs.readdir(dir, { withFileTypes: true });
+  const out: string[] = [];
+  for (const d of dirents) {
+    const full = path.join(dir, d.name);
+    if (d.isDirectory()) {
+      out.push(...(await walkTree(root, full)));
+    } else {
+      out.push(path.relative(root, full));
+    }
+  }
+  return out.sort();
+}
+
+/**
+ * Scanner that records each scanned source AND walks its tree at scan time —
+ * before scanEntries tears the staging mirror down in its `finally`. `trees[i]`
+ * is the sorted rel-path listing of the i-th scanned dir (the union surface).
+ * The union is scanned once, so a healthy run has calls.length === 1.
+ */
+function spyScanner(): { scanner: Scanner; calls: string[]; trees: string[][] } {
   const calls: string[] = [];
+  const trees: string[][] = [];
   const scanner: Scanner = {
-    scan: (source: string) => {
+    scan: async (source: string) => {
       calls.push(source);
-      return Promise.resolve({ ok: true });
+      trees.push(await walkTree(source));
+      return { ok: true };
     },
   };
-  return { scanner, calls };
+  return { scanner, calls, trees };
 }
 
 // ---------------------------------------------------------------------------
@@ -367,8 +389,8 @@ describe('S4 — external skill + clean scanner', () => {
 // ---------------------------------------------------------------------------
 
 describe('S4 — guardrail-only install: scanner covers catalog.json and guardrails/<name>', () => {
-  it('calls the scanner for catalog.json and the guardrail directory', async () => {
-    const { scanner, calls } = spyScanner();
+  it('scans a single union of catalog.json and the guardrail directory', async () => {
+    const { scanner, calls, trees } = spyScanner();
 
     await runRemoteInstall({
       ids: ['guardrail:main'],
@@ -382,9 +404,10 @@ describe('S4 — guardrail-only install: scanner covers catalog.json and guardra
       scanner,
     });
 
-    expect(calls).toContain(path.join(remoteEnv.contentDir, 'catalog.json'));
-    expect(calls).toContain(path.join(remoteEnv.contentDir, 'guardrails', 'main'));
-    expect(calls).toHaveLength(2);
+    // One union scan; its tree is exactly catalog.json + the guardrail surface
+    // (guardrails/main/deny.json) — nothing from the unselected skill.
+    expect(calls).toHaveLength(1);
+    expect(trees[0]).toEqual(['catalog.json', 'guardrails/main/deny.json']);
   });
 });
 

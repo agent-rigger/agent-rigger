@@ -11,6 +11,8 @@
  *    (fail-closed: we do NOT pass on tool errors)
  */
 
+import path from 'node:path';
+
 import type { Scanner } from '../scan';
 import type { Verdict } from '../types';
 
@@ -98,16 +100,37 @@ interface GitleaksFinding {
   RuleID: string;
 }
 
-function parseFindings(stdout: string): GitleaksFinding[] {
+/**
+ * Parses gitleaks JSON report output into findings.
+ *
+ * Returns `null` when `JSON.parse` throws (malformed/truncated output) so the
+ * caller can fail-closed on it. Empty/`'[]'`/non-array reports still map to
+ * `[]` (the "no parseable findings" anomaly is handled by the caller).
+ */
+function parseFindings(stdout: string): GitleaksFinding[] | null {
   const trimmed = stdout.trim();
   if (trimmed === '' || trimmed === '[]') return [];
-  const parsed: unknown = JSON.parse(trimmed);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(trimmed);
+  } catch {
+    return null;
+  }
   if (!Array.isArray(parsed)) return [];
   return parsed as GitleaksFinding[];
 }
 
-function formatFinding(f: GitleaksFinding): string {
-  return `${f.RuleID}: ${f.Description} (${f.File})`;
+/**
+ * gitleaks 8.30.1 reports `File` as an ABSOLUTE path for `detect --source <dir>`
+ * (probe T1). Since `dir` is the union staging mirror — a byte-faithful copy of
+ * the checkout layout — relativising the absolute File against it yields the
+ * exact checkout-relative path the attribution must carry (`skills/x/SKILL.md`,
+ * R7). A File already relative (older gitleaks, or a mock) is passed through
+ * unchanged.
+ */
+function formatFinding(f: GitleaksFinding, dir: string): string {
+  const file = path.isAbsolute(f.File) ? path.relative(dir, f.File) : f.File;
+  return `${f.RuleID}: ${f.Description} (${file})`;
 }
 
 // ---------------------------------------------------------------------------
@@ -141,6 +164,14 @@ export function createGitleaksScanner(opts?: GitleaksOpts): Scanner {
 
       if (exitCode === 1) {
         const raw = parseFindings(stdout);
+        if (raw === null) {
+          // stdout could not be parsed as JSON at all (truncated/garbled report) →
+          // fail-closed on the anomaly instead of rejecting the scan promise.
+          return {
+            ok: false,
+            findings: ['gitleaks: exit 1 with unparseable output (unexpected — fail-closed)'],
+          };
+        }
         if (raw.length === 0) {
           // exit 1 signals findings by contract; an empty/unparseable report is
           // anomalous (broken report flag, partial parse) → fail-closed, not clean.
@@ -149,7 +180,7 @@ export function createGitleaksScanner(opts?: GitleaksOpts): Scanner {
             findings: ['gitleaks: exit 1 with no parseable findings (unexpected — fail-closed)'],
           };
         }
-        return { ok: false, findings: raw.map(formatFinding) };
+        return { ok: false, findings: raw.map((f) => formatFinding(f, dir)) };
       }
 
       // exit > 1: tool-level error — fail-closed

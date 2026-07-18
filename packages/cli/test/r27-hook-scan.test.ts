@@ -39,7 +39,8 @@ import type { Env } from '@agent-rigger/core/paths';
 import type { Scanner } from '@agent-rigger/core/scan';
 
 import { runCli } from '../src/cli';
-import { ScanBlockedError, scanEntries, scanPathFor } from '../src/remote-install';
+import { ScanBlockedError, scanEntries } from '../src/remote-install';
+import { scanPathFor } from '../src/scan-paths';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -204,16 +205,38 @@ function cleanScanner(): Scanner {
   return { scan: () => Promise.resolve({ ok: true }) };
 }
 
-/** Scanner that records each path it is called with. */
-function spyScanner(): { scanner: Scanner; calls: string[] } {
+/** Sorted rel-paths of every leaf under `root` (symlinks are leaves, not followed). */
+async function walkTree(root: string, dir: string = root): Promise<string[]> {
+  const dirents = await fs.readdir(dir, { withFileTypes: true });
+  const out: string[] = [];
+  for (const d of dirents) {
+    const full = path.join(dir, d.name);
+    if (d.isDirectory()) {
+      out.push(...(await walkTree(root, full)));
+    } else {
+      out.push(path.relative(root, full));
+    }
+  }
+  return out.sort();
+}
+
+/**
+ * Scanner that records each scanned source AND walks its tree at scan time —
+ * before scanEntries tears the staging mirror down in its `finally`. `trees[i]`
+ * is the sorted rel-path listing of the i-th scanned dir (the union surface).
+ * The union is scanned once, so a healthy run has calls.length === 1.
+ */
+function spyScanner(): { scanner: Scanner; calls: string[]; trees: string[][] } {
   const calls: string[] = [];
+  const trees: string[][] = [];
   const scanner: Scanner = {
-    scan: (source: string) => {
+    scan: async (source: string) => {
       calls.push(source);
-      return Promise.resolve({ ok: true });
+      trees.push(await walkTree(source));
+      return { ok: true };
     },
   };
-  return { scanner, calls };
+  return { scanner, calls, trees };
 }
 
 // ---------------------------------------------------------------------------
@@ -319,31 +342,34 @@ describe('R27-4 — scanPathFor: hook nature → hooks/ directory', () => {
 // ---------------------------------------------------------------------------
 
 describe('R27-3 — scanEntries: deduplicates hook paths', () => {
-  it('calls scanner exactly once for hooks/ when 4 hook entries are present (plus catalog.json)', async () => {
-    const { scanner, calls } = spyScanner();
-    const baseDir = '/tmp/checkout';
+  it('scans a single union with hooks/ once when 4 hook entries share it (plus catalog.json)', async () => {
+    const { scanner, calls, trees } = spyScanner();
 
     await scanEntries({
       entries: [HOOK_ENTRY, HOOK_ENTRY_2, HOOK_ENTRY_3, HOOK_ENTRY_4],
-      baseDir,
+      baseDir: hookEnv.contentDir,
       scanner,
       force: false,
     });
 
-    expect(calls).toContain(path.join(baseDir, 'catalog.json'));
-    const hooksDirPath = path.join(baseDir, 'hooks');
-    const hookCalls = calls.filter((c) => c === hooksDirPath);
-    expect(hookCalls).toHaveLength(1);
-    // Overall: catalog.json (always) + hooks/ once (all 4 hooks share the same directory)
-    expect(calls).toHaveLength(2);
+    // Four hook entries → one hooks/ in the union (dedup), scanned once; the tree
+    // is exactly catalog.json + the whole hooks/ dir, shared lib included (R2).
+    expect(calls).toHaveLength(1);
+    expect(trees[0]).toEqual([
+      'catalog.json',
+      'hooks/_shared/hook-lib.ts',
+      'hooks/post-tool.ts',
+      'hooks/pre-tool.ts',
+      'hooks/stop.ts',
+      'hooks/submit.ts',
+    ]);
   });
 
   it('blocks on the hooks/ scan even when multiple hook entries share it', async () => {
-    const baseDir = '/tmp/checkout';
     await expect(
       scanEntries({
         entries: [HOOK_ENTRY, HOOK_ENTRY_2],
-        baseDir,
+        baseDir: hookEnv.contentDir,
         scanner: blockingScanner(['evil-payload-in-shared-lib']),
         force: false,
       }),
@@ -523,8 +549,8 @@ describe('R27-CLEAN — hook + clean scanner → installs normally', () => {
     expect(commands.length).toBeGreaterThan(0);
   });
 
-  it('spy scanner is called with the hooks/ directory path (not just the individual hook script)', async () => {
-    const { scanner, calls } = spyScanner();
+  it('scans the whole hooks/ directory (shared libs included), not just the selected hook script', async () => {
+    const { scanner, calls, trees } = spyScanner();
 
     await runCli(['install', 'principal/hook:pre-tool', '--yes'], {
       print: () => {},
@@ -536,10 +562,11 @@ describe('R27-CLEAN — hook + clean scanner → installs normally', () => {
       },
     });
 
-    // The scan must have been called with the hooks/ directory (not hooks/pre-tool.ts)
-    const scannedHooksDir = calls.some((c) => c.endsWith(path.join('hooks')));
-    expect(scannedHooksDir).toBe(true);
-    const scannedIndividualScript = calls.some((c) => c.endsWith('pre-tool.ts'));
-    expect(scannedIndividualScript).toBe(false);
+    // One union scan; the hooks/ surface is mirrored whole — the selected
+    // pre-tool.ts AND the shared _shared/hook-lib.ts nobody referenced (R2
+    // "chaque nature conserve sa surface"), never a per-script standalone scan.
+    expect(calls).toHaveLength(1);
+    expect(trees[0]).toContain('hooks/pre-tool.ts');
+    expect(trees[0]).toContain('hooks/_shared/hook-lib.ts');
   });
 });

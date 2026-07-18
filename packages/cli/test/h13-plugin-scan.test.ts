@@ -52,12 +52,8 @@ import { resolveOpencodeUserTargets, resolveUserTargets } from '@agent-rigger/co
 import type { Env } from '@agent-rigger/core/paths';
 import type { Scanner } from '@agent-rigger/core/scan';
 
-import {
-  runRemoteInstall,
-  ScanBlockedError,
-  scanEntries,
-  scanPathFor,
-} from '../src/remote-install';
+import { runRemoteInstall, ScanBlockedError, scanEntries } from '../src/remote-install';
+import { scanPathFor } from '../src/scan-paths';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -104,16 +100,38 @@ function blockingScanner(findings: string[] = ['secret exfiltration in plugin mo
   return { scan: () => Promise.resolve({ ok: false, findings }) };
 }
 
-/** Scanner that records each path it is called with and passes. */
-function spyScanner(): { scanner: Scanner; calls: string[] } {
+/** Sorted rel-paths of every leaf under `root` (symlinks are leaves, not followed). */
+async function walkTree(root: string, dir: string = root): Promise<string[]> {
+  const dirents = await fs.readdir(dir, { withFileTypes: true });
+  const out: string[] = [];
+  for (const d of dirents) {
+    const full = path.join(dir, d.name);
+    if (d.isDirectory()) {
+      out.push(...(await walkTree(root, full)));
+    } else {
+      out.push(path.relative(root, full));
+    }
+  }
+  return out.sort();
+}
+
+/**
+ * Scanner that records each scanned source AND walks its tree at scan time —
+ * before scanEntries tears the staging mirror down in its `finally`. `trees[i]`
+ * is the sorted rel-path listing of the i-th scanned dir (the union surface).
+ * The union is scanned once, so a healthy run has calls.length === 1.
+ */
+function spyScanner(): { scanner: Scanner; calls: string[]; trees: string[][] } {
   const calls: string[] = [];
+  const trees: string[][] = [];
   const scanner: Scanner = {
-    scan: (source: string) => {
+    scan: async (source: string) => {
       calls.push(source);
-      return Promise.resolve({ ok: true });
+      trees.push(await walkTree(source));
+      return { ok: true };
     },
   };
-  return { scanner, calls };
+  return { scanner, calls, trees };
 }
 
 // ---------------------------------------------------------------------------
@@ -260,38 +278,41 @@ describe('H13-2 — scanEntries: plugin entries', () => {
     await expect(
       scanEntries({
         entries: [OPENCODE_PLUGIN_ENTRY],
-        baseDir: '/tmp/checkout',
+        baseDir: fixture.contentDir,
         scanner: blockingScanner(),
         force: false,
       }),
     ).rejects.toBeInstanceOf(ScanBlockedError);
   });
 
-  it('calls scanner exactly once for plugins/ when 2 opencode plugin entries are present (plus catalog.json)', async () => {
-    const { scanner, calls } = spyScanner();
-    const baseDir = '/tmp/checkout';
+  it('scans a single union of catalog.json + the whole plugins/ dir for 2 opencode plugin entries (dedup)', async () => {
+    const { scanner, calls, trees } = spyScanner();
 
     await scanEntries({
       entries: [OPENCODE_PLUGIN_ENTRY, OPENCODE_PLUGIN_ENTRY_2],
-      baseDir,
+      baseDir: fixture.contentDir,
       scanner,
       force: false,
     });
 
-    expect(calls).toEqual([path.join(baseDir, 'catalog.json'), path.join(baseDir, 'plugins')]);
+    // Two plugin entries → one plugins/ in the union (dedup), scanned once; the
+    // whole dir is present, sibling modules included (audit.ts + guard.ts, R2).
+    expect(calls).toHaveLength(1);
+    expect(trees[0]).toEqual(['catalog.json', 'plugins/audit.ts', 'plugins/guard.ts']);
   });
 
   it('only scans catalog.json for a claude-only plugin entry (no module in checkout)', async () => {
-    const { scanner, calls } = spyScanner();
+    const { scanner, calls, trees } = spyScanner();
 
     await scanEntries({
       entries: [CLAUDE_PLUGIN_ENTRY],
-      baseDir: '/tmp/checkout',
+      baseDir: fixture.contentDir,
       scanner,
       force: false,
     });
 
-    expect(calls).toEqual([path.join('/tmp/checkout', 'catalog.json')]);
+    expect(calls).toHaveLength(1);
+    expect(trees[0]).toEqual(['catalog.json']);
   });
 });
 
@@ -350,12 +371,17 @@ describe('H13-3 — opencode plugin + blocking scanner, no --force → fail-clos
 // ---------------------------------------------------------------------------
 
 describe('H13-4 — opencode plugin + clean scanner → scanned then installed', () => {
-  it('invokes the scanner on the checkout plugins/ directory', async () => {
-    const { scanner, calls } = spyScanner();
+  it('scans the whole plugins/ dir in a single union scan', async () => {
+    const { scanner, calls, trees } = spyScanner();
 
     await installGuardPlugin(fixture, scanner);
 
-    expect(calls).toContain(path.join(fixture.contentDir, 'plugins'));
+    // One union scan; the plugins/ surface is present in full — both the
+    // selected guard.ts and the sibling audit.ts (R2 "chaque nature conserve sa
+    // surface", shared modules included).
+    expect(calls).toHaveLength(1);
+    expect(trees[0]).toContain('plugins/guard.ts');
+    expect(trees[0]).toContain('plugins/audit.ts');
   });
 
   it('installs the plugin module into pluginDir after a clean scan', async () => {

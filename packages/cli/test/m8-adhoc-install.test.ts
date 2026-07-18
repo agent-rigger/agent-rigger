@@ -555,3 +555,68 @@ describe('M8 — ad-hoc install, blocking scanner, with --force', () => {
     expect(output).toContain('[warning]');
   });
 });
+
+// ---------------------------------------------------------------------------
+// m7 — ad-hoc install from an ABSOLUTE LOCAL PATH target (the URL flow above is
+// covered by 4c/4d; this pins the same fail-closed / degraded scan-gate
+// behaviour on the local-path ad-hoc branch, closing the validation.md
+// traceability note that ad-hoc blocked/degraded were only covered transitively).
+// ---------------------------------------------------------------------------
+
+describe('m7 — ad-hoc install from an absolute local path (scan gate)', () => {
+  let ctx: Awaited<ReturnType<typeof makeAdHocEnv>>;
+
+  beforeEach(async () => {
+    ctx = await makeAdHocEnv();
+  });
+
+  afterEach(async () => {
+    await ctx.cleanupAll();
+  });
+
+  it('m7: blocking scanner (no --force) → exit 1, [error], nothing installed', async () => {
+    const { lines, print } = makeCapture();
+
+    const code = await runCli(
+      ['install', '/local/catalog/leaky-repo', '--yes'],
+      {
+        print,
+        env: ctx.env,
+        remote: {
+          run: ctx.runner,
+          tmpFactory: ctx.tmpFactory,
+          scanner: blockingScanner(['[gitleaks] aws-key detected']),
+        },
+      },
+    );
+
+    expect(code).toBe(1);
+    expect(lines.join('\n')).toContain('[error]');
+    // Fail-closed: the skill was never written to the store.
+    const skillPath = path.join(resolveUserTargets(ctx.env).skillsDir, 'remote-demo');
+    const stat = await fs.stat(skillPath).catch(() => null);
+    expect(stat).toBeNull();
+  });
+
+  it('m7: degraded scanner → exit 0 with a "not scanned" warning', async () => {
+    const { lines, print } = makeCapture();
+
+    const code = await runCli(
+      ['install', '/local/catalog/leaky-repo', '--yes'],
+      {
+        print,
+        env: ctx.env,
+        remote: {
+          run: ctx.runner,
+          tmpFactory: ctx.tmpFactory,
+          scanner: degradedScanner(),
+        },
+      },
+    );
+
+    expect(code).toBe(0);
+    const output = lines.join('\n');
+    expect(output).toMatch(/\[warning\]/i);
+    expect(output).toMatch(/not scanned|non scanné|unscanned/i);
+  });
+});

@@ -62,7 +62,8 @@ import { stubScanner } from '@agent-rigger/core/scan';
 
 import { runCli } from '../src/cli';
 import { runUpdate } from '../src/cmd-update';
-import { runRemoteInstall, ScanBlockedError, scanPathFor } from '../src/remote-install';
+import { runRemoteInstall, ScanBlockedError, scanEntries } from '../src/remote-install';
+import { scanPathFor } from '../src/scan-paths';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -114,6 +115,16 @@ const CONTEXT_ENTRY: CatalogEntry = {
   scopes: ['user', 'project'],
 };
 
+// A tool artefact: advisory check/install commands in catalog.json, no checkout
+// of its own → scanPathFor returns null (case 'tool'). Exercised by m6 below.
+const TOOL_ENTRY: CatalogEntry = {
+  kind: 'artifact',
+  id: 'tool:glab',
+  nature: 'tool',
+  targets: ['claude', 'opencode'],
+  scopes: ['user', 'project'],
+};
+
 const MULTI_NATURE_CATALOG: CatalogEntry[] = [MCP_LEAKY_ENTRY, GUARDRAIL_ENTRY, CONTEXT_ENTRY];
 
 // ---------------------------------------------------------------------------
@@ -132,15 +143,38 @@ function degradedScanner(): Scanner {
   return { scan: (_source: string) => Promise.resolve({ ok: true, degraded: true }) };
 }
 
-function spyScanner(): { scanner: Scanner; calls: string[] } {
+/** Sorted rel-paths of every leaf under `root` (symlinks are leaves, not followed). */
+async function walkTree(root: string, dir: string = root): Promise<string[]> {
+  const dirents = await fs.readdir(dir, { withFileTypes: true });
+  const out: string[] = [];
+  for (const d of dirents) {
+    const full = path.join(dir, d.name);
+    if (d.isDirectory()) {
+      out.push(...(await walkTree(root, full)));
+    } else {
+      out.push(path.relative(root, full));
+    }
+  }
+  return out.sort();
+}
+
+/**
+ * Spy scanner that records each scanned source AND walks its tree at scan time —
+ * before scanEntries tears the staging mirror down in its `finally`. `trees[i]`
+ * is the sorted rel-path listing of the i-th scanned dir, i.e. the exact union
+ * surface (R2). The union is scanned once, so a healthy run has calls.length===1.
+ */
+function spyScanner(): { scanner: Scanner; calls: string[]; trees: string[][] } {
   const calls: string[] = [];
+  const trees: string[][] = [];
   const scanner: Scanner = {
-    scan: (source: string) => {
+    scan: async (source: string) => {
       calls.push(source);
-      return Promise.resolve({ ok: true });
+      trees.push(await walkTree(source));
+      return { ok: true };
     },
   };
-  return { scanner, calls };
+  return { scanner, calls, trees };
 }
 
 // ---------------------------------------------------------------------------
@@ -350,8 +384,8 @@ describe('T3-2 — secret-shaped catalog.json + blocking scanner, with --force',
 // ---------------------------------------------------------------------------
 
 describe('T3-3 — guardrail-only selection (from a multi-nature catalog)', () => {
-  it('scans catalog.json and guardrails/main, nothing else', async () => {
-    const { scanner, calls } = spyScanner();
+  it('scans a single union of catalog.json and guardrails/main, nothing else', async () => {
+    const { scanner, calls, trees } = spyScanner();
 
     await runRemoteInstall({
       ids: ['guardrail:main'],
@@ -365,9 +399,15 @@ describe('T3-3 — guardrail-only selection (from a multi-nature catalog)', () =
       scanner,
     });
 
-    expect(calls).toEqual([
-      path.join(fixture.contentDir, 'catalog.json'),
-      path.join(fixture.contentDir, 'guardrails', 'main'),
+    // One scan over the union staging; its tree is exactly catalog.json plus the
+    // full guardrails/main surface — contexts/main (present in the checkout but
+    // NOT selected) is absent, re-verifying R2 scope by the staging content.
+    expect(calls).toHaveLength(1);
+    expect(trees[0]).toEqual([
+      'catalog.json',
+      'guardrails/main/allow.json',
+      'guardrails/main/deny.json',
+      'guardrails/main/permission.json',
     ]);
   });
 });
@@ -377,12 +417,35 @@ describe('T3-3 — guardrail-only selection (from a multi-nature catalog)', () =
 // ---------------------------------------------------------------------------
 
 describe('T3-4 — mcp-only selection (no scan path of its own)', () => {
-  it('still scans catalog.json', async () => {
-    const { scanner, calls } = spyScanner();
+  it('still scans catalog.json (union tree = catalog.json alone)', async () => {
+    const { scanner, calls, trees } = spyScanner();
 
     await installLeakyMcp(scanner);
 
-    expect(calls).toEqual([path.join(fixture.contentDir, 'catalog.json')]);
+    expect(calls).toHaveLength(1);
+    expect(trees[0]).toEqual(['catalog.json']);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// m6 — tool-only selection: scanPathFor's `case 'tool': return null` branch was
+// exercised by no test. A tool contributes no checkout surface, so the union is
+// catalog.json alone (like mcp-only, but via a different null branch).
+// ---------------------------------------------------------------------------
+
+describe('m6 — tool-only selection (case tool: return null)', () => {
+  it('stages catalog.json alone for a tool-only selection', async () => {
+    const { scanner, calls, trees } = spyScanner();
+
+    await scanEntries({
+      entries: [TOOL_ENTRY],
+      baseDir: fixture.contentDir,
+      scanner,
+      force: false,
+    });
+
+    expect(calls).toHaveLength(1);
+    expect(trees[0]).toEqual(['catalog.json']);
   });
 });
 
@@ -466,14 +529,7 @@ describe('T3-5 — update parity: runUpdate scans catalog.json too', () => {
       currentTag = 'v1.1.0';
       currentSha = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
 
-      const { scanner, calls } = spyScanner();
-      let capturedCheckoutDir = '';
-      const factory = makeTmpFactory();
-      const capturingFactory: TmpDirFactory = async () => {
-        const result = await factory();
-        capturedCheckoutDir = result.path;
-        return result;
-      };
+      const { scanner, calls, trees } = spyScanner();
 
       await runUpdate({
         ids: ['principal/skill:remote-demo'],
@@ -482,13 +538,16 @@ describe('T3-5 — update parity: runUpdate scans catalog.json too', () => {
         manifestPath,
         catalogUrl: CATALOG_URL,
         runner,
-        tmpFactory: capturingFactory,
+        tmpFactory: makeTmpFactory(),
         confirm: true,
         scanner,
       });
 
-      expect(calls).toContain(path.join(capturedCheckoutDir, 'catalog.json'));
-      expect(calls).toContain(path.join(capturedCheckoutDir, 'skills', 'remote-demo'));
+      // Update shares scanEntries: one union scan whose tree carries both
+      // catalog.json and the stale skill's checkout surface.
+      expect(calls).toHaveLength(1);
+      expect(trees[0]).toContain('catalog.json');
+      expect(trees[0]).toContain('skills/remote-demo/SKILL.md');
     } finally {
       await fs.rm(homeDir, { recursive: true, force: true });
       for (const d of tmpDirsCreated) {
@@ -519,13 +578,14 @@ describe('T3-6 — degraded scanner + mcp-only selection', () => {
 
 describe('T3-7 — nominal: clean scanner, mcp-only install', () => {
   it('installs without warning and still scans catalog.json', async () => {
-    const { scanner, calls } = spyScanner();
+    const { scanner, calls, trees } = spyScanner();
 
     const result = await installLeakyMcp(scanner);
 
     expect(result.applied).toBe(true);
     expect(result.output).not.toMatch(/\[warning\]/);
-    expect(calls).toContain(path.join(fixture.contentDir, 'catalog.json'));
+    expect(calls).toHaveLength(1);
+    expect(trees[0]).toContain('catalog.json');
   });
 
   it('behaves identically with an explicit clean scanner (no findings)', async () => {

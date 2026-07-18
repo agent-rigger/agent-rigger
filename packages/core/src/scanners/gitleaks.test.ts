@@ -13,6 +13,7 @@
  */
 
 import { describe, expect, it } from 'bun:test';
+import path from 'node:path';
 
 import { createGitleaksScanner, isGitleaksAvailable } from './gitleaks';
 import type { ScanRunner, WhichFn } from './gitleaks';
@@ -135,6 +136,60 @@ describe('createGitleaksScanner — exit 1 but empty findings (fail-closed)', ()
     const scanner = createGitleaksScanner({ run: mockRunner(1, '[]') });
     const verdict = await scanner.scan('/tmp/x');
     expect(verdict.ok).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// exit 1 with unparseable or non-array output → clean fail-closed verdict (R4)
+// ---------------------------------------------------------------------------
+
+describe('createGitleaksScanner — exit 1 with unparseable or non-array output (R4, fail-closed)', () => {
+  it('R4: exit 1 with malformed JSON resolves to a clean fail-closed verdict, not a crash', async () => {
+    const scanner = createGitleaksScanner({ run: mockRunner(1, '[{"RuleID": "aws') });
+    const verdict = await scanner.scan('/tmp/x');
+    expect(verdict.ok).toBe(false);
+    const finding = verdict.findings?.[0] ?? '';
+    expect(finding).toContain('unparseable');
+  });
+
+  it('R4: exit 1 with a non-array JSON value ("{}") resolves to { ok: false }', async () => {
+    const scanner = createGitleaksScanner({ run: mockRunner(1, '{}') });
+    const verdict = await scanner.scan('/tmp/x');
+    expect(verdict.ok).toBe(false);
+    expect(verdict.findings?.length).toBeGreaterThan(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// R7 — File rebased to checkout-relative when gitleaks reports an absolute path
+// (gitleaks 8.30.1 emits an ABSOLUTE File for `detect --source <dir>`; the dir
+// scanned is the union staging mirror, so relativising it yields the exact
+// checkout-relative path the attribution must carry).
+// ---------------------------------------------------------------------------
+
+describe('createGitleaksScanner — R7 File rebasing', () => {
+  it('R7: rebases an absolute File under the scanned dir to a checkout-relative path', async () => {
+    const dir = '/tmp/rig-scan-staging-abc';
+    const absFile = path.join(dir, 'skills', 'api-helper', 'SKILL.md');
+    const json = JSON.stringify([
+      { Description: 'AWS key', File: absFile, RuleID: 'aws-access-key' },
+    ]);
+    const scanner = createGitleaksScanner({ run: mockRunner(1, json) });
+
+    const verdict = await scanner.scan(dir);
+
+    const finding = verdict.findings?.[0] ?? '';
+    expect(finding).toContain('skills/api-helper/SKILL.md');
+    expect(finding).not.toContain(dir);
+  });
+
+  it('R7: leaves an already-relative File unchanged', async () => {
+    const scanner = createGitleaksScanner({ run: mockRunner(1, twoFindingsJson) });
+
+    const verdict = await scanner.scan('/tmp/rig-scan-staging-abc');
+
+    expect(verdict.findings?.[0]).toContain('config/secrets.env');
+    expect(verdict.findings?.[1]).toContain('src/client.ts');
   });
 });
 
