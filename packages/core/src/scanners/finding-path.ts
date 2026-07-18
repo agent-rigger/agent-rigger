@@ -68,7 +68,10 @@ export function sanitizeToolStderr(stderr: string, scanRoot: string): string {
     // scanRoot absent (unit-test dir, torn-down staging): literal substitution only.
   }
   let sanitized = stderr;
-  for (const root of roots) {
+  // Longest root first: on macOS the mkdtemp alias (/var/…) is a SUBSTRING of its
+  // realpath (/private/var/…) — substituting the alias first would leave a
+  // malformed '/private<scan-root>' residue when stderr carries the resolved form.
+  for (const root of [...roots].sort((a, b) => b.length - a.length)) {
     if (root !== '') sanitized = sanitized.split(root).join(SCAN_ROOT_PLACEHOLDER);
   }
   return sanitized.trim();

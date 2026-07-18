@@ -10,6 +10,8 @@
  */
 
 import { describe, expect, it } from 'bun:test';
+import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 
 import { relativiseFindingPath, sanitizeToolStderr } from './finding-path';
@@ -59,5 +61,26 @@ describe('sanitizeToolStderr', () => {
   it('is the identity (modulo trim) on a stderr that names no path', () => {
     expect(sanitizeToolStderr('boom', '/tmp/rig-scan-staging-abc')).toBe('boom');
     expect(sanitizeToolStderr('  boom  \n', '/tmp/rig-scan-staging-abc')).toBe('boom');
+  });
+
+  it('masks the realpath form without a leading residue (macOS /var → /private/var)', () => {
+    // Real directory: on macOS os.tmpdir() is the /var alias whose realpath is the
+    // LONGER /private/var form — substituting the alias first would leave a
+    // malformed '/private<scan-root>' residue. The fix substitutes longest-first.
+    // On Linux alias === realpath and this degenerates to the literal case (green).
+    const alias = fs.mkdtempSync(path.join(os.tmpdir(), 'rig-fp-realpath-'));
+    try {
+      const resolved = fs.realpathSync(alias);
+      const raw = `fatal: could not open ${resolved}/skills/x/SKILL.md: permission denied`;
+      const sanitized = sanitizeToolStderr(raw, alias);
+      expect(sanitized).toBe(
+        'fatal: could not open <scan-root>/skills/x/SKILL.md: permission denied',
+      );
+      expect(sanitized).not.toContain('/private<scan-root>');
+      expect(sanitized).not.toContain(resolved);
+      expect(sanitized).not.toContain(alias);
+    } finally {
+      fs.rmSync(alias, { recursive: true, force: true });
+    }
   });
 });
