@@ -462,6 +462,13 @@ export async function runUpdate(opts: RunUpdateOptions): Promise<UpdateResult> {
     );
 
     if (checkoutResult.aborted) {
+      // Mirror of the success branch: scan warnings collected before the confirm
+      // prompt would otherwise be dropped on abort, letting the user believe the
+      // content was scanned clean. opWarnings are NOT re-pushed here — they were
+      // already shown in the confirm's planText (warningsBlock).
+      if (checkoutResult.scanWarnings.length > 0) {
+        outputParts.push(...checkoutResult.scanWarnings);
+      }
       outputParts.push('  [aborted] Update cancelled by user.');
     } else {
       updatedIds = staleIds;

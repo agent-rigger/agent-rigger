@@ -31,6 +31,7 @@ import type { CommandRunner } from '@agent-rigger/catalog/tool-check';
 import { resolveUserTargets } from '@agent-rigger/core/paths';
 import type { Env } from '@agent-rigger/core/paths';
 import { stubScanner } from '@agent-rigger/core/scan';
+import type { Scanner } from '@agent-rigger/core/scan';
 
 import { runCli } from '../src/cli';
 import type { CliDeps } from '../src/cli';
@@ -490,6 +491,63 @@ describe('D6 — init --yes: recommended absent from entries is skipped silently
     const manifest = await readManifest(fix.env);
     const ids = manifest.artifacts.map((a) => a.id);
     expect(ids.some((id) => id.includes('ghost'))).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// D8 — init --yes surfaces the scan warnings the auto-install would swallow (③)
+//
+// The --yes closure calls runRemoteInstall per assistant but historically
+// dropped its return value, so scan warnings (degraded included) never reached
+// the user — the opposite of the interactive path, which prints result.output.
+// These tests pin the mirror: warnings surfaced, install recap visible.
+// ---------------------------------------------------------------------------
+
+describe('D8 — init --yes: scan warnings surfaced on the auto-install path', () => {
+  const degradedScanner: Scanner = {
+    scan: () => Promise.resolve({ ok: true, degraded: true }),
+  };
+
+  beforeEach(async () => {
+    fix = await makeInitEnv({
+      meta: {
+        required: ['skill:required-skill'],
+        recommended: ['skill:recommended-skill'],
+      },
+      entries: [REQUIRED_SKILL_ENTRY, RECOMMENDED_SKILL_ENTRY, OPTIONAL_SKILL_ENTRY],
+    });
+  });
+
+  it('prints the degraded scan warning and still exits 0', async () => {
+    const printed: string[] = [];
+    const code = await runCli(
+      ['init', '--yes'],
+      makeInitDeps(fix, {
+        print: (msg: string) => printed.push(msg),
+        remote: {
+          run: fix.runner,
+          tmpFactory: fix.tmpFactory,
+          scanner: degradedScanner,
+        },
+      }),
+    );
+
+    expect(code).toBe(0);
+    expect(printed.join('\n')).toContain('[warning] content not scanned');
+  });
+
+  it('prints the install recap on a clean scan (a stable recap line, not the exact output)', async () => {
+    const printed: string[] = [];
+    // No remote override → makeInitDeps default scanner (stubScanner) → clean scan.
+    const code = await runCli(
+      ['init', '--yes'],
+      makeInitDeps(fix, {
+        print: (msg: string) => printed.push(msg),
+      }),
+    );
+
+    expect(code).toBe(0);
+    expect(printed.join('\n')).toContain('--- Result ---');
   });
 });
 

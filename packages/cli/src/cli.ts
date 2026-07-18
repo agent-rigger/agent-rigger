@@ -1572,7 +1572,7 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
           const proposalAssistants = await resolveProposalAssistants(env);
 
           for (const assistant of proposalAssistants) {
-            await runRemoteInstall({
+            const result = await runRemoteInstall({
               ids: defaultIds,
               catalogUrl: initPrimary.url,
               sourceName,
@@ -1585,6 +1585,12 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
               assistant,
               ...(deps.remote?.scanner === undefined ? {} : { scanner: deps.remote.scanner }),
             });
+
+            // Surface the plan + result recap + scan/tool warnings — mirror of
+            // runInteractiveProposeInstall. Without this the --yes auto-install
+            // ran silently, swallowing scan warnings (degraded included) that the
+            // interactive path always prints.
+            print(result.output);
           }
 
           return defaultIds;

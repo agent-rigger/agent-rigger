@@ -28,6 +28,7 @@ import type { CommandRunner } from '@agent-rigger/catalog/tool-check';
 import { resolveUserTargets } from '@agent-rigger/core/paths';
 import type { Env } from '@agent-rigger/core/paths';
 import { stubScanner } from '@agent-rigger/core/scan';
+import type { Scanner } from '@agent-rigger/core/scan';
 
 import { runCli } from '../src/cli';
 import { runUpdate } from '../src/cmd-update';
@@ -637,6 +638,39 @@ describe('runUpdate — transactional: confirm=false leaves artifact intact', ()
     });
 
     expect(result.output).toMatch(/aborted/i);
+  });
+
+  it('surfaces the degraded scan warning BEFORE the aborted line (③)', async () => {
+    await preInstallRemote(iso.env, TAG_V1_0_0, SHA_V1_0_0);
+    iso.setRemoteTag(TAG_V1_1_0, SHA_V1_1_0);
+
+    // A scanner in degraded mode (no tool installed): scanEntries collects a
+    // warning before the confirm prompt. On abort those scanWarnings were
+    // historically dropped — the mirror of the success branch pushes them.
+    const degradedScanner: Scanner = {
+      scan: () => Promise.resolve({ ok: true, degraded: true }),
+    };
+
+    const result = await runUpdate({
+      ids: ['principal/skill:remote-demo'],
+      scope: 'user',
+      env: iso.env,
+      manifestPath: targets.stateJson,
+      catalogUrl: 'https://example.com/catalog.git',
+      runner: iso.makeRunner(),
+      tmpFactory: iso.makeTmpFactory(),
+      scanner: degradedScanner,
+      confirm: false,
+    });
+
+    // Abort semantics unchanged: nothing reinstalled.
+    expect(result.updated).toHaveLength(0);
+
+    const warningIdx = result.output.indexOf('[warning] content not scanned');
+    const abortedIdx = result.output.indexOf('[aborted] Update cancelled by user.');
+    expect(warningIdx).toBeGreaterThanOrEqual(0);
+    expect(abortedIdx).toBeGreaterThanOrEqual(0);
+    expect(warningIdx).toBeLessThan(abortedIdx);
   });
 });
 
