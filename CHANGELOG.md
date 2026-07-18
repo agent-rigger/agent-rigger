@@ -33,6 +33,23 @@ release (GitHub releases and the Homebrew tap).
   touch keys agent-rigger does not own, and translation warnings are shown at
   plan and install time.
 
+### Changed
+
+- **Security scan runs once per install, over the exact selection** — the
+  pre-apply gate now scans a single staging mirror holding the union of the
+  selected artifacts plus `catalog.json`, instead of invoking the scanners once
+  per artifact. A full install drops from ~22 scanner spawns to 2 (gitleaks +
+  trivy), measured at −46 % install time, with the same fail-closed semantics.
+  Scan findings now name each file by its path relative to the checkout root
+  (e.g. `skills/my-skill/SKILL.md`) instead of an absolute temporary-checkout
+  path.
+
+### Fixed
+
+- **gitleaks unparseable exit-1 output now fails closed** — when gitleaks exits
+  1 (findings) but its JSON report cannot be parsed, the scan resolves to a
+  clean blocking verdict instead of crashing on `JSON.parse`.
+
 ## [0.1.2] - 2026-06-30
 
 ### Added
