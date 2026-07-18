@@ -12,6 +12,10 @@ configuration.
 Vous avez besoin d'agent-rigger [installé](/fr/start/installation/) et de `git` sur votre
 poste.
 
+![Enregistrement terminal de tout le tutoriel premiers pas, joué de bout en bout dans un sandbox jetable. D'abord, `rigger doctor` liste quatre dépendances — git, glab, gitleaks, trivy — chacune avec une coche, puis la ligne "mode : full scan" et un état installé sain et vide. Ensuite, `rigger catalog add example https://github.com/agent-rigger/agent-rigger-catalog-example.git` enregistre le catalog d'exemple public et affiche la confirmation "example" added. `rigger ls` liste alors les sept entrées du catalog, chacune taguée &#91;available&#93; et qualifiée du nom example/ : un skill, un agent, un guardrail, un hook, un context et deux packs. `rigger install example/pack:demo --yes --summary` installe le pack demo — un Plan compact de deux changements, le skill hello-rigger et le sous-agent demo, chacun lié dans le store, suivi d'un Result affichant "&#91;ok&#93; Applied 2 file(s)." Enfin, `rigger check` rapporte le catalog example à jour en v0.4.0. Rien ne touche au vrai répertoire home de l'opérateur.](../../../../assets/recordings/getting-started.gif)
+
+_Tout le tutoriel en un seul passage : lire l'environnement, enregistrer le catalog d'exemple, voir ce qu'il propose, installer `example/pack:demo` et vérifier le résultat — le tout sous un `RIGGER_HOME` jetable. Le film utilise le Plan compact `--summary` ; les blocs pas à pas ci-dessous font référence, le film ne fait que les illustrer. <small>Généré depuis docs/tapes/getting-started.tape, 2026-07-18. Régénérer : bun run build && vhs docs/tapes/getting-started.tape.</small>_
+
 ## Travailler dans un sandbox jetable
 
 Tout ici s'exécute dans un répertoire home jetable, si bien que rien n'atterrit dans

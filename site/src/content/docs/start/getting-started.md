@@ -10,6 +10,10 @@ confirm the result — without touching your real setup.
 
 You need agent-rigger [installed](/start/installation/) and `git` on your machine.
 
+![Terminal recording of the whole getting-started tutorial run end to end in a disposable sandbox. First, `rigger doctor` lists four dependencies — git, glab, gitleaks, trivy — each with a check mark, then the line "mode : full scan" and a healthy, empty installed state. Next, `rigger catalog add example https://github.com/agent-rigger/agent-rigger-catalog-example.git` registers the public example catalog and prints the confirmation "example" added. `rigger ls` then lists the catalog's seven entries, each tagged &#91;available&#93; and qualified with the example/ name: a skill, an agent, a guardrail, a hook, a context, and two packs. `rigger install example/pack:demo --yes --summary` installs the demo pack — a compact Plan of two changes, the hello-rigger skill and the demo sub-agent, each linked into the store, followed by a Result reading "&#91;ok&#93; Applied 2 file(s)." Finally, `rigger check` reports the example catalog up-to-date at v0.4.0. Nothing touches the operator's real home directory.](../../../assets/recordings/getting-started.gif)
+
+_The whole tutorial in a single run: read the environment, register the example catalog, list what it offers, install `example/pack:demo`, and audit the result — all under a throwaway `RIGGER_HOME`. The film uses the compact `--summary` plan; the step-by-step blocks below are the reference, and the film only illustrates them. <small>Generated from docs/tapes/getting-started.tape, 2026-07-18. Regenerate: bun run build && vhs docs/tapes/getting-started.tape.</small>_
+
 ## Work in a disposable sandbox
 
 Everything here runs against a throwaway home directory, so nothing lands in your real
