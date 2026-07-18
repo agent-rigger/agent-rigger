@@ -5,6 +5,8 @@
  *  1. Two sources fetched in parallel, entries merged (first-source wins on collision).
  *  2. One source fails → per-source degradation: warning emitted, other source proceeds.
  *  3. Collision across sources → conflict warning reported (qualified ids collide).
+ *  3b. Forged pre-qualified entry id (a raw '/' in an id) → rejected at parse,
+ *      per-source degradation keeps the other source (catalog-id-traversal).
  *  4. Legacy `catalogUrl` config (no `catalogs[]`) → R7: LegacyConfigError warning, empty catalog.
  *
  * Strategy:
@@ -445,7 +447,7 @@ describe('M4 — per-source degradation: one source fails, other succeeds', () =
 // Scenario 3: Collision across sources → conflict warning reported
 // ---------------------------------------------------------------------------
 
-describe('M4 — collision detection: same id in two sources triggers warning', () => {
+describe('M4 — collision detection: same qualified id in two sources triggers warning', () => {
   let homeDir: string;
   let catalogDirA: string;
   let catalogDirB: string;
@@ -454,6 +456,89 @@ describe('M4 — collision detection: same id in two sources triggers warning', 
     homeDir = await fs.mkdtemp(path.join(os.tmpdir(), 'rigger-m4-collision-'));
     catalogDirA = await fs.mkdtemp(path.join(os.tmpdir(), 'rigger-m4-col-a-'));
     catalogDirB = await fs.mkdtemp(path.join(os.tmpdir(), 'rigger-m4-col-b-'));
+
+    // Canonical collision per ADR-0017 §3: the SAME catalog is added twice.
+    // Both config entries carry the same source name → qualifyEntries prefixes
+    // both with 'source-a/', so an id present in both yields the exact same
+    // fully-qualified id — a true duplicate for foldCatalogs to deduplicate.
+    // (Both point at CATALOG_URL_A so the URL-aware remote serves entriesA to
+    // both fetches — literally the same catalog, twice.)
+    const configDir = path.join(homeDir, '.config', 'agent-rigger');
+    await fs.mkdir(configDir, { recursive: true });
+    await fs.writeFile(
+      path.join(configDir, 'config.json'),
+      JSON.stringify({
+        catalogs: [
+          { name: 'source-a', url: CATALOG_URL_A },
+          { name: 'source-a', url: CATALOG_URL_A },
+        ],
+      }),
+      'utf8',
+    );
+  });
+
+  afterEach(async () => {
+    await fs.rm(homeDir, { recursive: true, force: true });
+    await fs.rm(catalogDirA, { recursive: true, force: true });
+    await fs.rm(catalogDirB, { recursive: true, force: true });
+  });
+
+  it('collision warning is emitted when the same catalog is folded twice', async () => {
+    const entriesA: CatalogEntry[] = [
+      { kind: 'artifact', id: 'skill:dup', nature: 'skill', targets: ['claude'], scopes: ['user'] },
+      // qualifyEntries('source-a', entriesA) → 'source-a/skill:dup', produced twice.
+    ];
+
+    const cap = makeCapture();
+    await runCli(['ls'], {
+      print: cap.print,
+      env: { RIGGER_HOME: homeDir },
+      remote: makeUrlAwareRemote(catalogDirA, entriesA, catalogDirB, []),
+    });
+
+    const out = cap.lines.join('\n');
+    // Collision warning should be emitted (duplicate qualified ids).
+    expect(out).toContain('[warning]');
+    expect(out).toContain('deduplicated');
+    expect(out).toContain('source-a/skill:dup');
+  });
+
+  it('only the first occurrence survives collision (second discarded)', async () => {
+    const entriesA: CatalogEntry[] = [
+      { kind: 'artifact', id: 'skill:dup', nature: 'skill', targets: ['claude'], scopes: ['user'] },
+    ];
+
+    const cap = makeCapture();
+    await runCli(['ls'], {
+      print: cap.print,
+      env: { RIGGER_HOME: homeDir },
+      remote: makeUrlAwareRemote(catalogDirA, entriesA, catalogDirB, []),
+    });
+
+    const out = cap.lines.join('\n');
+    // skill:dup appears once in the catalog listing.
+    expect(out).toContain('skill:dup');
+    // Collision warning confirms dedup happened.
+    expect(out).toContain('deduplicated');
+    // Catalog shows exactly 1 entry (dedup worked).
+    expect(out).toContain('Catalog (1 entry)');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Scenario 3b: Forged pre-qualified entry id rejected at parse (entry-id
+// analogue of governance-id-forge / partitionMetaIds — catalog-id-traversal)
+// ---------------------------------------------------------------------------
+
+describe('M4 — forged pre-qualified entry id is rejected at parse (qualification-forge closed)', () => {
+  let homeDir: string;
+  let catalogDirA: string;
+  let catalogDirB: string;
+
+  beforeEach(async () => {
+    homeDir = await fs.mkdtemp(path.join(os.tmpdir(), 'rigger-m4-forge-'));
+    catalogDirA = await fs.mkdtemp(path.join(os.tmpdir(), 'rigger-m4-forge-a-'));
+    catalogDirB = await fs.mkdtemp(path.join(os.tmpdir(), 'rigger-m4-forge-b-'));
 
     const configDir = path.join(homeDir, '.config', 'agent-rigger');
     await fs.mkdir(configDir, { recursive: true });
@@ -475,16 +560,23 @@ describe('M4 — collision detection: same id in two sources triggers warning', 
     await fs.rm(catalogDirB, { recursive: true, force: true });
   });
 
-  it('collision warning is emitted when both sources produce the same qualified id', async () => {
-    // Collision occurs when source-b has an entry pre-qualified as "source-a/skill:x"
-    // (already contains '/') — qualifyEntries leaves it unchanged — same as source-a produces.
-    // This represents the case of a cross-catalog reference collision.
+  it('rejects source-b forging id "source-a/skill:dup" at parse, keeps source-a intact', async () => {
+    // A raw catalog.json must never carry a '/' in an entry id: qualification is
+    // what the CLI does with a source name, not something a remote may pre-declare
+    // for another catalog. schema.ts's isSafeCatalogId rejects it at parse — the
+    // entry-id analogue of governance-id-forge / partitionMetaIds (meta ids).
+    // Effect: source-b fails to parse as a whole; per-source degradation keeps
+    // source-a — no crash, and NOT a collision dedup.
     const entriesA: CatalogEntry[] = [
-      { kind: 'artifact', id: 'skill:dup', nature: 'skill', targets: ['claude'], scopes: ['user'] },
-      // qualifyEntries('source-a', entriesA) → 'source-a/skill:dup'
+      {
+        kind: 'artifact',
+        id: 'skill:legit',
+        nature: 'skill',
+        targets: ['claude'],
+        scopes: ['user'],
+      },
     ];
     const entriesB: CatalogEntry[] = [
-      // pre-qualified id — qualifyEntries('source-b', entriesB) leaves it unchanged
       {
         kind: 'artifact',
         id: 'source-a/skill:dup',
@@ -502,39 +594,14 @@ describe('M4 — collision detection: same id in two sources triggers warning', 
     });
 
     const out = cap.lines.join('\n');
-    // Collision warning should be emitted (duplicate qualified ids)
+    // source-b dropped with a per-source failure warning naming the forged id.
     expect(out).toContain('[warning]');
-    expect(out).toContain('deduplicated');
-  });
-
-  it('only first-source entry survives collision (second discarded)', async () => {
-    const entriesA: CatalogEntry[] = [
-      { kind: 'artifact', id: 'skill:dup', nature: 'skill', targets: ['claude'], scopes: ['user'] },
-    ];
-    const entriesB: CatalogEntry[] = [
-      {
-        kind: 'artifact',
-        id: 'source-a/skill:dup',
-        nature: 'skill',
-        targets: ['claude'],
-        scopes: ['project'],
-      },
-    ];
-
-    const cap = makeCapture();
-    await runCli(['ls'], {
-      print: cap.print,
-      env: { RIGGER_HOME: homeDir },
-      remote: makeUrlAwareRemote(catalogDirA, entriesA, catalogDirB, entriesB),
-    });
-
-    const out = cap.lines.join('\n');
-    // skill:dup from source-a appears in the catalog listing
-    expect(out).toContain('skill:dup');
-    // Collision warning confirms dedup happened
-    expect(out).toContain('deduplicated');
-    // catalog shows exactly 1 entry (dedup worked)
-    expect(out).toContain('Catalog (1 entry)');
+    expect(out).toContain('source-b');
+    expect(out).toContain('source-a/skill:dup');
+    // It is a parse rejection, not a collision dedup.
+    expect(out).not.toContain('deduplicated');
+    // source-a survived — no crash, other sources intact.
+    expect(out).toContain('skill:legit');
   });
 });
 

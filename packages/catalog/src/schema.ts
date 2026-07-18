@@ -11,7 +11,12 @@
 
 import * as z from 'zod';
 
-import type { Nature, Scope } from '@agent-rigger/core';
+import {
+  isSafeArtifactName,
+  type Nature,
+  sanitizeIdForMessage,
+  type Scope,
+} from '@agent-rigger/core';
 
 // ---------------------------------------------------------------------------
 // Nature constants + compile-time coherence check with core.Nature
@@ -53,6 +58,44 @@ const _assertScopesInSync: _ScopeCheck = true;
 void _assertScopesInSync;
 
 // ---------------------------------------------------------------------------
+// Catalog id safety — parse-time path-traversal rejection
+// ---------------------------------------------------------------------------
+
+/**
+ * Whether a raw catalog id is safe to carry through the install pipeline.
+ *
+ * Ids follow the `<prefix>:<name>` convention (e.g. "skill:hello-rigger"), but
+ * the schema does NOT require the colon — an id without one is validated as a
+ * single segment (`nature` is a separate schema field; the prefix is a
+ * convention, not an invariant). The id is split at its FIRST colon and each
+ * resulting segment must pass core's isSafeArtifactName — the single source of
+ * truth for the rule (SAFE_NAME_RE plus rejection of "."/".."/empty), so this
+ * parse-time gate can never diverge from the deep guard assertSafeArtifactName.
+ *
+ * A forged id like "skill:../../evil" is thus rejected at catalog.json parse,
+ * before any fetch, resolve, or path construction (brief § Fail-fast).
+ *
+ * Note: `requires[]`/`members[]` refs are deliberately NOT validated here — they
+ * legitimately carry cross-catalog `<catalog>/<id>` references (ADR-0017).
+ */
+export function isSafeCatalogId(id: string): boolean {
+  const colon = id.indexOf(':');
+  if (colon === -1) return isSafeArtifactName(id);
+  return isSafeArtifactName(id.slice(0, colon)) && isSafeArtifactName(id.slice(colon + 1));
+}
+
+/**
+ * Deterministic, machine-independent message for an id rejected by isSafeCatalogId.
+ * The id is untrusted (out of charset by construction), so it is sanitised and
+ * length-bounded via sanitizeIdForMessage before interpolation — no raw control
+ * sequence from a hostile catalog ever reaches the terminal or the logs.
+ */
+function describeUnsafeCatalogId(id: unknown): string {
+  return `unsafe catalog id "${sanitizeIdForMessage(String(id))}" — each ':'-separated segment `
+    + 'must be a safe artefact name ([a-zA-Z0-9._-], and not "." or "..")';
+}
+
+// ---------------------------------------------------------------------------
 // Shared sub-schemas
 // ---------------------------------------------------------------------------
 
@@ -67,8 +110,14 @@ const ScopesSchema = z.array(z.enum(SCOPES)).min(1);
  * Extracted to avoid duplication; each variant spreads these via z.object().merge().
  */
 const CommonFieldsSchema = z.object({
-  /** Unique, non-empty artefact identifier (e.g. "tool:glab", "pack:dev-tools"). */
-  id: z.string().min(1),
+  /**
+   * Unique, non-empty artefact identifier (e.g. "tool:glab", "pack:dev-tools").
+   * Rejected at parse time if any ':'-separated segment could traverse a path
+   * (see isSafeCatalogId) — fail-fast before any fetch or path construction.
+   */
+  id: z.string().min(1).refine(isSafeCatalogId, {
+    error: (issue) => describeUnsafeCatalogId(issue.input),
+  }),
 
   /** Non-empty list of AI assistants this entry is compatible with. */
   targets: TargetsSchema,

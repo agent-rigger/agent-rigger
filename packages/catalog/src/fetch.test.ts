@@ -634,6 +634,42 @@ describe('fetchCatalog — bare-array catalog.json triggers CatalogParseError', 
 });
 
 // ---------------------------------------------------------------------------
+// fetchCatalog — forged traversal id → CatalogParseError (fail-fast at parse)
+// ---------------------------------------------------------------------------
+
+describe('fetchCatalog — forged traversal id triggers CatalogParseError', () => {
+  it('throws CatalogParseError when an entry id would traverse (skill:../../evil)', async () => {
+    const badEntry = { ...VALID_TOOL_ENTRY, id: 'skill:../../evil' };
+    const catalog = wrapCatalog([badEntry]);
+    const { factory } = await makeTmpFactory(catalog);
+    await expect(
+      fetchCatalog('https://example.com/catalog.git', 'v1.0.0', true, makeCloneRunner(), {
+        tmpFactory: factory,
+      }),
+    ).rejects.toBeInstanceOf(CatalogParseError);
+  });
+
+  it('aggregated issue names the forged id and its index, before any other work', async () => {
+    const badEntry = { ...VALID_TOOL_ENTRY, id: 'skill:../../evil' };
+    const catalog = wrapCatalog([badEntry]);
+    const { factory } = await makeTmpFactory(catalog);
+    try {
+      await fetchCatalog('https://example.com/catalog.git', 'v1.0.0', true, makeCloneRunner(), {
+        tmpFactory: factory,
+      });
+      expect(true).toBe(false);
+    } catch (e) {
+      expect(e).toBeInstanceOf(CatalogParseError);
+      const issues = (e as CatalogParseError).issues;
+      expect(
+        issues.some((issue) => issue.includes('index 0') && issue.includes('skill:../../evil')),
+      )
+        .toBe(true);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
 // fetchCatalog — missing meta.name → CatalogParseError
 // ---------------------------------------------------------------------------
 

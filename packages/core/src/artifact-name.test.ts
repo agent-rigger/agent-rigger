@@ -11,7 +11,12 @@
 
 import { describe, expect, it } from 'bun:test';
 
-import { assertSafeArtifactName, UnsafeArtifactNameError } from './artifact-name';
+import {
+  assertSafeArtifactName,
+  isSafeArtifactName,
+  sanitizeIdForMessage,
+  UnsafeArtifactNameError,
+} from './artifact-name';
 
 // ---------------------------------------------------------------------------
 // Accepted names
@@ -144,5 +149,118 @@ describe('UnsafeArtifactNameError — carries original id property', () => {
         /skill:\.\.\/\.\.\/\.\.\/\.\.\/etc\/evil/,
       );
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// isSafeArtifactName — predicate form (single source of truth for the rule)
+// ---------------------------------------------------------------------------
+
+describe('isSafeArtifactName — accepts safe segments', () => {
+  it('accepts lowercase letters, digits, hyphen, underscore, dot', () => {
+    expect(isSafeArtifactName('hello-rigger')).toBe(true);
+    expect(isSafeArtifactName('skill_123')).toBe(true);
+    expect(isSafeArtifactName('v1.2')).toBe(true);
+    expect(isSafeArtifactName('MySkill')).toBe(true);
+  });
+});
+
+describe('isSafeArtifactName — rejects unsafe segments', () => {
+  it('rejects the empty string', () => {
+    expect(isSafeArtifactName('')).toBe(false);
+  });
+
+  it('rejects "." and ".."', () => {
+    expect(isSafeArtifactName('.')).toBe(false);
+    expect(isSafeArtifactName('..')).toBe(false);
+  });
+
+  it('rejects segments with slash, backslash, colon, space or out-of-charset chars', () => {
+    expect(isSafeArtifactName('a/b')).toBe(false);
+    expect(isSafeArtifactName('a\\b')).toBe(false);
+    expect(isSafeArtifactName('a:b')).toBe(false);
+    expect(isSafeArtifactName('my skill')).toBe(false);
+    expect(isSafeArtifactName('~x')).toBe(false);
+  });
+});
+
+describe('isSafeArtifactName — is the rule assertSafeArtifactName enforces', () => {
+  // Guards the delegation: the predicate and the assert can never diverge.
+  const samples = ['ok-name', 'v1.2', '', '.', '..', 'a/b', 'a\\b', 'a:b', 'x y', '~z'];
+
+  it('predicate false iff assertSafeArtifactName throws, for every sample', () => {
+    for (const sample of samples) {
+      const throws = (() => {
+        try {
+          assertSafeArtifactName(sample, `skill:${sample}`);
+          return false;
+        } catch {
+          return true;
+        }
+      })();
+      expect(throws).toBe(!isSafeArtifactName(sample));
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// sanitizeIdForMessage — untrusted id is safe to print
+// ---------------------------------------------------------------------------
+
+describe('sanitizeIdForMessage — leaves printable ids readable', () => {
+  it('passes through safe and printable characters unchanged', () => {
+    expect(sanitizeIdForMessage('skill:hello-rigger')).toBe('skill:hello-rigger');
+    expect(sanitizeIdForMessage('skill:../../evil')).toBe('skill:../../evil');
+    expect(sanitizeIdForMessage('skill:a b~')).toBe('skill:a b~');
+    // Non-ASCII printable letters stay readable (not control chars).
+    expect(sanitizeIdForMessage('skill:café')).toBe('skill:café');
+  });
+});
+
+describe('sanitizeIdForMessage — escapes control characters', () => {
+  const ESC = String.fromCharCode(0x1b);
+  const DEL = String.fromCharCode(0x7f);
+  const CSI = String.fromCharCode(0x9b); // C1 CSI introducer
+
+  it('escapes the ANSI escape byte (U+001B) as \\x1b, leaving no raw control', () => {
+    const out = sanitizeIdForMessage(`skill:a${ESC}[31mevil`);
+    expect(out).toContain('\\x1b');
+    expect(out).not.toContain(ESC);
+  });
+
+  it('escapes CR and LF', () => {
+    const out = sanitizeIdForMessage('a\r\nb');
+    expect(out).toBe('a\\x0d\\x0ab');
+  });
+
+  it('escapes DEL (U+007F) and the C1 CSI introducer (U+009B)', () => {
+    expect(sanitizeIdForMessage(`a${DEL}b`)).toBe('a\\x7fb');
+    const out = sanitizeIdForMessage(`a${CSI}b`);
+    expect(out).toBe('a\\x9bb');
+    expect(out).not.toContain(CSI);
+  });
+});
+
+describe('sanitizeIdForMessage — bounds the length', () => {
+  it('truncates an over-long id and marks the cut', () => {
+    const out = sanitizeIdForMessage('x'.repeat(500));
+    expect(out.length).toBeLessThanOrEqual(123);
+    expect(out.endsWith('...')).toBe(true);
+  });
+
+  it('is deterministic (same input → same output)', () => {
+    const sample = `a${String.fromCharCode(0x1b)}b`;
+    expect(sanitizeIdForMessage(sample)).toBe(sanitizeIdForMessage(sample));
+  });
+});
+
+describe('UnsafeArtifactNameError — message carries no raw control characters', () => {
+  it('sanitises a control-bearing id in the message but keeps id raw', () => {
+    const raw = `skill:a${String.fromCharCode(0x1b)}[2Kevil`;
+    const err = new UnsafeArtifactNameError(raw);
+    expect(err.message).not.toContain(String.fromCharCode(0x1b));
+    expect(err.message).toContain('\\x1b');
+    // The programmatic id field stays verbatim.
+    expect(err.id).toBe(raw);
   });
 });
