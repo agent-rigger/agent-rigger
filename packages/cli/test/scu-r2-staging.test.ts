@@ -279,6 +279,27 @@ describe('R2: materializeUnion — symlink copied verbatim (dereference:false)',
   });
 });
 
+describe('R2: materializeUnion — staging root is never a symlink', () => {
+  it('the default mkdtemp staging dir is a real directory, not a symlink (canary does not reach the pipeline)', async () => {
+    // No tmpFactory: exercise the production default (fs.mkdtemp sibling of the
+    // checkout). gitleaks 8.30.1 silently scans 0 bytes through a directly
+    // symlinked source (frozen canary in core/real-binaries.test.ts); this
+    // invariant proves that bypass can never apply to the real gate — the root
+    // the scanner is pointed at is always a genuine directory.
+    const { baseDir } = await newCheckout();
+
+    const { stagingDir, cleanup } = await materializeUnion({ entries: [SKILL], baseDir });
+
+    try {
+      const stat = await fs.lstat(stagingDir);
+      expect(stat.isSymbolicLink()).toBe(false);
+      expect(stat.isDirectory()).toBe(true);
+    } finally {
+      await cleanup();
+    }
+  });
+});
+
 describe('R2: materializeUnion — missing target fails closed', () => {
   it('throws when a selected skill has no directory, and tears down the partial staging', async () => {
     const { baseDir, tmpParent } = await newCheckout();
