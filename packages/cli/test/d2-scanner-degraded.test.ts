@@ -5,7 +5,11 @@
  * - Inject a degraded scanner ({ ok: true, degraded: true }) into scanEntries directly.
  * - Verify that scanEntries does NOT throw and emits a warning.
  * - Verify that a scanner with real findings ({ ok: false }) still throws ScanBlockedError.
- * - Uses minimal ArtifactEntry stubs — no filesystem, no checkout, no CLI runner.
+ * - scanEntries now materialises the union into a staging mirror before scanning,
+ *   so each test runs against a real on-disk checkout fixture (catalog.json +
+ *   skills/demo); the injected fake scanners ignore the staging path and return
+ *   a fixed verdict, so every locked invariant here is still the SAME verdict
+ *   policy — degraded/blocked/force and the anyBlocked-before-anyDegraded order.
  *
  * Scenarios:
  * 1. degraded scanner (no tool available) → scanEntries proceeds + returns warning message.
@@ -18,7 +22,10 @@
  *    still surface, a clean verdict still returns no warnings.
  */
 
-import { describe, expect, it } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 
 import type { ArtifactEntry } from '@agent-rigger/catalog';
 import type { Scanner } from '@agent-rigger/core/scan';
@@ -74,7 +81,25 @@ const SKILL_ENTRY: ArtifactEntry = {
   scopes: ['user', 'project'],
 };
 
-const BASE_DIR = '/tmp/rigger-d2-fake-checkout';
+// Real on-disk checkout: materializeUnion (inside scanEntries) mirrors
+// catalog.json + skills/demo into a staging dir. The fake scanners below ignore
+// that dir, so the verdict — and every invariant asserted here — is unchanged.
+let BASE_DIR: string;
+
+beforeEach(async () => {
+  BASE_DIR = await fs.mkdtemp(path.join(os.tmpdir(), 'rigger-d2-checkout-'));
+  await fs.writeFile(
+    path.join(BASE_DIR, 'catalog.json'),
+    '{"meta":{"name":"d2"},"entries":[]}\n',
+    'utf8',
+  );
+  await fs.mkdir(path.join(BASE_DIR, 'skills', 'demo'), { recursive: true });
+  await fs.writeFile(path.join(BASE_DIR, 'skills', 'demo', 'SKILL.md'), '# demo\n', 'utf8');
+});
+
+afterEach(async () => {
+  await fs.rm(BASE_DIR, { recursive: true, force: true });
+});
 
 // ---------------------------------------------------------------------------
 // Scenario 1 & 2: degraded scanner → proceeds + warning

@@ -40,9 +40,9 @@ import { assertSafeArtifactName } from '@agent-rigger/core/artifact-name';
 import { assertNever } from '@agent-rigger/core/assert-never';
 import { findEntry, readManifest } from '@agent-rigger/core/manifest';
 import type { Env } from '@agent-rigger/core/paths';
-import { memoizeScanner } from '@agent-rigger/core/scan';
+import { constantScanner } from '@agent-rigger/core/scan';
 import type { Scanner } from '@agent-rigger/core/scan';
-import type { Manifest, Scope } from '@agent-rigger/core/types';
+import type { Manifest, Scope, Verdict } from '@agent-rigger/core/types';
 
 import {
   type ArtifactEntry,
@@ -63,6 +63,7 @@ import type { CommandRunner } from '@agent-rigger/catalog/tool-check';
 import { buildAdapter } from './adapter-dispatch';
 import type { InstallResult } from './cmd-install';
 import { runInstall } from './cmd-install';
+import { materializeUnion } from './scan-staging';
 import { resolveSecretOverrides } from './secret-collect';
 
 // ---------------------------------------------------------------------------
@@ -253,36 +254,42 @@ export function scanPathFor(entry: ArtifactEntry, baseDir: string): string | nul
 // ---------------------------------------------------------------------------
 
 /**
- * Scan catalog.json (always) plus every entry that has a resolvable checkout
- * path in the given directory.
+ * Scan the union of the selection plus catalog.json as ONE composite call, and
+ * return both the human warnings and the single union verdict (design.md § Le
+ * seam de scan).
  *
- * - catalog.json is scanned unconditionally, once per call, regardless of what
- *   was selected: it carries inline `mcp` server config (secrets can live in
- *   config.env) and the `check`/`install` command strings for every nature —
- *   none of which has a checkout path of its own (ADR-0014/0015 §3: uniform
- *   scan of all fetched content).
- * - Resolves each remaining entry to a scan path (skills/agents/guardrails/
- *   contexts/hooks/opencode plugins; others skipped naturally).
- * - Runs scanner.scan() in parallel via Promise.all.
- * - If any verdict is degraded (no scanner tool installed) → actionable warning + proceeds.
- *   force is NOT needed for this case (ADR-0018).
- * - If any verdict is !ok (real findings, scanner present) and force is false → throws ScanBlockedError.
- * - If any verdict is !ok and force is true → returns { warnings: [...] }.
- * - If all ok and not degraded → returns { warnings: [] }.
+ * `materializeUnion` builds a staging root mirroring the checkout layout —
+ * catalog.json (unconditional: inline `mcp` config with secrets in config.env,
+ * `check`/`install` strings for every nature, ADR-0014/0015 §3) plus every
+ * selected entry's checkout path (skills/agents/guardrails/contexts/hooks/
+ * opencode plugins; mcp/tool/claude-only-plugin contribute nothing beyond
+ * catalog.json). The scanner runs once over that root, so the whole selection
+ * costs ~2 tool spawns, not ~2 per artefact (R1) — and because the mirror
+ * reproduces the checkout layout, gitleaks/trivy findings already carry the
+ * checkout-relative path (R7), attributed per artefact with no rewrite here.
  *
- * Callers prepend the warnings to their output.
+ * The verdict drives the SAME force/degraded/blocked policy as before (order
+ * anyBlocked before anyDegraded — R5 scénario 3):
+ * - degraded (no scanner tool installed) → actionable warning + proceeds; force
+ *   is NOT needed (ADR-0018).
+ * - !ok (real findings, scanner present) and force is false → throws ScanBlockedError.
+ * - !ok and force is true → returns { warnings: [...], verdict }.
+ * - all ok and not degraded → returns { warnings: [], verdict }.
  *
- * This function always runs at least one scan (catalog.json) whenever it is
- * called — callers only call it from inside an active checkout (withRemoteCheckout),
- * so there is always a real catalog.json to point the scanner at. It therefore
- * always verifies scanner presence too: a selection with no scannable natures
- * (e.g. guardrail-only before this change, or mcp-only) still surfaces the
- * degraded warning instead of silently skipping the check.
+ * Callers prepend the warnings to their output, and thread `constantScanner(verdict)`
+ * to the adapter's apply-time re-check under !force (design.md § Le seam de couplage).
+ *
+ * The staging mirror is torn down in a `finally` — it never survives the call,
+ * scan success or failure. A scan always runs (catalog.json is always mirrored),
+ * so a selection with no scannable natures (guardrail-only, mcp-only) still
+ * surfaces the degraded warning instead of silently skipping the check.
  *
  * @param opts.entries  ArtifactEntry list to scan (entries without a checkout path
  *                      contribute nothing beyond the unconditional catalog.json scan).
  * @param opts.baseDir  Root of the remote checkout directory.
- * @param opts.scanner  Scanner instance to use.
+ * @param opts.scanner  Raw scanner instance (composite or a test fake) — NOT
+ *                      memoized: the union is scanned once, and the apply-time
+ *                      re-check is served a constant verdict, not a cache hit.
  * @param opts.force    When true, a blocking scan (real findings) warns instead of throwing.
  */
 export async function scanEntries(opts: {
@@ -290,38 +297,28 @@ export async function scanEntries(opts: {
   baseDir: string;
   scanner: Scanner;
   force: boolean;
-}): Promise<{ warnings: string[] }> {
+}): Promise<{ warnings: string[]; verdict: Verdict }> {
   const { entries, baseDir, scanner, force } = opts;
 
-  const rawTargets = entries
-    .map((entry) => ({ entry, scanPath: scanPathFor(entry, baseDir) }))
-    .filter((t): t is { entry: ArtifactEntry; scanPath: string } => t.scanPath !== null);
-
-  // Deduplicate scan paths: multiple hook entries share the same hooks/ directory;
-  // scanning it once is sufficient and avoids redundant scanner invocations.
-  // catalog.json is always first and always present — it is not gated by any
-  // selection or nature.
-  const seenPaths = new Set<string>();
-  const uniquePaths: string[] = [];
-  const catalogJsonPath = path.join(baseDir, 'catalog.json');
-  seenPaths.add(catalogJsonPath);
-  uniquePaths.push(catalogJsonPath);
-  for (const { scanPath } of rawTargets) {
-    if (!seenPaths.has(scanPath)) {
-      seenPaths.add(scanPath);
-      uniquePaths.push(scanPath);
-    }
+  // Materialise the exact union (catalog.json + every selected surface) into one
+  // staging root mirroring the checkout layout, scan it in a SINGLE composite
+  // call (~2 tool spawns for the whole selection, not ~2×artefact — R1), then
+  // tear the mirror down. cleanup runs in finally: the staging never survives,
+  // scan success or failure. The lone verdict drives everything below.
+  const { stagingDir, cleanup } = await materializeUnion({ entries, baseDir });
+  let verdict: Verdict;
+  try {
+    verdict = await scanner.scan(stagingDir);
+  } finally {
+    await cleanup();
   }
 
-  const verdicts = await Promise.all(uniquePaths.map((p) => scanner.scan(p)));
-
   // Real findings from a present scanner (ok: false).
-  const allFindings = verdicts.flatMap((v) => v.findings ?? []);
-  const anyBlocked = verdicts.some((v) => !v.ok);
+  const allFindings = verdict.findings ?? [];
+  const anyBlocked = !verdict.ok;
 
   // Degraded mode: scanner returned ok: true but no tool is installed (ADR-0018).
-  // All verdicts are degraded — none ran a real scan.
-  const anyDegraded = verdicts.some((v) => v.degraded === true);
+  const anyDegraded = verdict.degraded === true;
 
   if (anyBlocked) {
     if (!force) {
@@ -334,6 +331,7 @@ export async function scanEntries(opts: {
           allFindings.join('; ')
         }`,
       ],
+      verdict,
     };
   }
 
@@ -342,10 +340,11 @@ export async function scanEntries(opts: {
       warnings: [
         '[warning] content not scanned — install gitleaks or trivy then re-run for a full scan; see `rigger doctor`',
       ],
+      verdict,
     };
   }
 
-  return { warnings: [] };
+  return { warnings: [], verdict };
 }
 
 // ---------------------------------------------------------------------------
@@ -435,12 +434,11 @@ export async function runRemoteInstall(opts: {
   const assistant: Assistant = opts.assistant ?? 'claude';
 
   const force = opts.force === true;
-  // Shared, memoized scanner instance: the pre-apply gate (scanEntries below)
-  // and the adapter's apply-time re-check (buildAdapter → applySkill) both
-  // resolve to the same checkout path per artifact. Memoizing means the gate
-  // populates the cache and the apply-time check hits it — the underlying
-  // tool (gitleaks/trivy) runs at most once per artifact, not twice.
-  const scanner = memoizeScanner(opts.scanner ?? createCompositeScanner());
+  // Raw scanner (NOT memoized): the pre-apply gate scans the whole selection as
+  // a single union (scanEntries below), and the adapter's apply-time re-check is
+  // handed a constant verdict — no per-path cache is threaded through either
+  // seam anymore. The union verdict returned by scanEntries feeds constantScanner.
+  const scanner = opts.scanner ?? createCompositeScanner();
   const sourceName = opts.sourceName;
 
   // Normalise: strip any existing qualifier prefix from user-provided ids so that
@@ -543,10 +541,12 @@ export async function runRemoteInstall(opts: {
           .map((e) => e.id),
       );
 
-      // Security scan — catalog.json unconditionally, plus every entry that has
-      // a checkout path (uniform scan, ADR-0014). scanPathFor uses localId()
-      // internally to strip the qualifier before path derivation.
-      const { warnings } = await scanEntries({
+      // Security scan — the union of the selection plus catalog.json, scanned as
+      // ONE composite call over a staging mirror (uniform scan, ADR-0014; R2
+      // surfaces). scanPathFor (inside materializeUnion) uses localId() to strip
+      // the qualifier before path derivation. The union verdict is threaded to
+      // the apply-time re-check below via constantScanner.
+      const { warnings, verdict } = await scanEntries({
         entries: resolved,
         baseDir: dir,
         scanner,
@@ -578,16 +578,16 @@ export async function runRemoteInstall(opts: {
           ...(opts.secretPicker === undefined ? {} : { picker: opts.secretPicker }),
         });
 
-      // Thread the memoized scanner to the adapter's apply-time re-check only
-      // on the non-force path. When !force, scanEntries above has ALREADY
-      // thrown ScanBlockedError on any blocking verdict — so by the time we
-      // reach here, the cache holds only ok:true verdicts for every scanned
-      // path, and the apply-time re-check is a pure cache-hit no-op (real
-      // defense in depth for anything scanEntries doesn't cover, at zero extra
-      // tool spawns). When force=true, a blocking verdict was deliberately
-      // overridden by the operator at the gate; Scanner/applySkill have no
-      // notion of --force, so re-running the SAME verdict at apply time would
-      // re-block a run the operator explicitly forced through (D5/ADR-0018:
+      // Thread the union verdict to the adapter's apply-time re-check only on the
+      // non-force path, via constantScanner. When !force, scanEntries above has
+      // ALREADY thrown ScanBlockedError on any blocking verdict — so by the time
+      // we reach here the union verdict is ok (or degraded), and every apply-time
+      // re-check replays that same ok verdict (the union is a superset of every
+      // applied source — structural via scanPathFor's assertNever, ADR-0022 §4),
+      // at zero extra tool spawns. When force=true, a blocking verdict was
+      // deliberately overridden by the operator at the gate; Scanner/applySkill
+      // have no notion of --force, so re-running the SAME verdict at apply time
+      // would re-block a run the operator explicitly forced through (D5/ADR-0018:
       // --force policy is unchanged, not narrowed to "gate only").
       const adapter = await buildAdapter(assistant, env, {
         externalIds: remoteIds,
@@ -595,11 +595,11 @@ export async function runRemoteInstall(opts: {
         catalogUrl,
         pluginRunner,
         effectiveEntries,
-        // Share the memoized scanner for the apply-time re-check under !force
-        // only: under --force the gate warns-and-proceeds, so a cached blocking
+        // Constant union verdict for the apply-time re-check under !force only:
+        // under --force the gate warns-and-proceeds, so replaying a blocking
         // verdict would wrongly re-throw at apply. Defense-in-depth, redundant
-        // while applied skills stay a subset of the gate's scanned set.
-        ...(force ? {} : { scanner }),
+        // while applied skills stay a subset of the gate's scanned union.
+        ...(force ? {} : { scanner: constantScanner(verdict) }),
         // R5 (lot 6, D5): threaded through to the builder — mcpSource resolves
         // secretRefs (override, TTY-prompted, or ref default — see above),
         // checks env presence, and fails closed on an unresolved `required`

@@ -17,6 +17,8 @@
  *  - unparseable JSON on exit 0 → fail-closed { ok: false, findings: ['trivy: unparseable output'] }
  */
 
+import path from 'node:path';
+
 import type { Scanner } from '../scan';
 import type { Verdict } from '../types';
 import { defaultScanRunner, defaultWhich } from './gitleaks';
@@ -91,11 +93,18 @@ function parseTrivyReport(stdout: string): TrivyReport | null {
   }
 }
 
-function collectFindings(results: TrivyResult[]): string[] {
+function collectFindings(results: TrivyResult[], dir: string): string[] {
   const findings: string[] = [];
 
   for (const result of results) {
-    const target = result.Target;
+    // Defensive R7 rebase: trivy 0.72.0 already emits a relative Target (probe
+    // T1), so the isAbsolute guard is a no-op today; it hardens attribution
+    // against a version drift that would start reporting an absolute path under
+    // the scanned staging dir — relativising it keeps the finding checkout-
+    // relative like gitleaks.
+    const target = path.isAbsolute(result.Target)
+      ? path.relative(dir, result.Target)
+      : result.Target;
 
     for (const secret of result.Secrets ?? []) {
       findings.push(`${secret.RuleID}: ${secret.Title} (${target})`);
@@ -144,7 +153,7 @@ export function createTrivyScanner(opts?: TrivyOpts): Scanner {
         return { ok: false, findings: ['trivy: unparseable output'] };
       }
 
-      const findings = collectFindings(report.Results ?? []);
+      const findings = collectFindings(report.Results ?? [], dir);
 
       if (findings.length === 0) {
         return { ok: true };

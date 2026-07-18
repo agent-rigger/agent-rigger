@@ -11,6 +11,8 @@
  *    (fail-closed: we do NOT pass on tool errors)
  */
 
+import path from 'node:path';
+
 import type { Scanner } from '../scan';
 import type { Verdict } from '../types';
 
@@ -118,8 +120,17 @@ function parseFindings(stdout: string): GitleaksFinding[] | null {
   return parsed as GitleaksFinding[];
 }
 
-function formatFinding(f: GitleaksFinding): string {
-  return `${f.RuleID}: ${f.Description} (${f.File})`;
+/**
+ * gitleaks 8.30.1 reports `File` as an ABSOLUTE path for `detect --source <dir>`
+ * (probe T1). Since `dir` is the union staging mirror — a byte-faithful copy of
+ * the checkout layout — relativising the absolute File against it yields the
+ * exact checkout-relative path the attribution must carry (`skills/x/SKILL.md`,
+ * R7). A File already relative (older gitleaks, or a mock) is passed through
+ * unchanged.
+ */
+function formatFinding(f: GitleaksFinding, dir: string): string {
+  const file = path.isAbsolute(f.File) ? path.relative(dir, f.File) : f.File;
+  return `${f.RuleID}: ${f.Description} (${file})`;
 }
 
 // ---------------------------------------------------------------------------
@@ -169,7 +180,7 @@ export function createGitleaksScanner(opts?: GitleaksOpts): Scanner {
             findings: ['gitleaks: exit 1 with no parseable findings (unexpected — fail-closed)'],
           };
         }
-        return { ok: false, findings: raw.map(formatFinding) };
+        return { ok: false, findings: raw.map((f) => formatFinding(f, dir)) };
       }
 
       // exit > 1: tool-level error — fail-closed
