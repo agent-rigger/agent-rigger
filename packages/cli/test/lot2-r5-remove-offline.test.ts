@@ -361,6 +361,7 @@ describe('lot2-R5 — remove of an id absent from the manifest', () => {
     const output = cap.lines.join('\n');
     expect(output).toContain('principal/guardrail:main');
     expect(output).not.toContain('agent-rigger ls');
+    expect(output).not.toContain('rigger ls');
   });
 });
 

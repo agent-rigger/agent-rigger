@@ -30,7 +30,7 @@ $ rigger doctor --fix
 
 <RULE>
 $ rigger doctor --fix
---- agent-rigger doctor ---
+--- rigger doctor ---
 
 ✓ git (<path>)
 ✓ glab (<path>)
@@ -55,7 +55,7 @@ irm]
 
 <RULE>
 $ rigger doctor --fix
---- agent-rigger doctor ---
+--- rigger doctor ---
 
 ✓ git (<path>)
 ✓ glab (<path>)
@@ -80,32 +80,7 @@ irm]
 
 <RULE>
 $ rigger doctor --fix
---- agent-rigger doctor ---
-
-✓ git (<path>)
-✓ glab (<path>)
-✓ gitleaks (<path>)
-✓ trivy (<path>)
-
-mode : full scan
-
-Installed-state check · 2 findings
-
-Untracked artifacts (1)
-  + skill "<RIGGER_HOME>/.claude/skills/diagnose" is untracked but conforms to its store — adoptable.  [fix]
-
-Dangling symlinks (1)
-  + "<RIGGER_HOME>/.claude/skills/ghost-skill" is a dangling symlink with no manifest entry — removable.  [conf
-irm]
-│
-◆  Apply repair?  skill "<RIGGER_HOME>/.claude/skills/diagnose" is untracked but conforms to its
-│  store — adoptable.
-│  ● Yes / ○ No
-└
-
-<RULE>
-$ rigger doctor --fix
---- agent-rigger doctor ---
+--- rigger doctor ---
 
 ✓ git (<path>)
 ✓ glab (<path>)
@@ -130,7 +105,7 @@ irm]
 
 <RULE>
 $ rigger doctor --fix
---- agent-rigger doctor ---
+--- rigger doctor ---
 
 ✓ git (<path>)
 ✓ glab (<path>)
@@ -148,105 +123,101 @@ Dangling symlinks (1)
   + "<RIGGER_HOME>/.claude/skills/ghost-skill" is a dangling symlink with no manifest entry — removable.  [conf
 irm]
 │
-◇  Apply repair?  skill "<RIGGER_HOME>/.claude/skills/diagnose" is untracked but conforms to its
+◆  Apply repair?  skill "<RIGGER_HOME>/.claude/skills/diagnose" is untracked but conforms to its
 │  store — adoptable.
-│  Yes
-│
-◆  Confirm repair?  "<RIGGER_HOME>/.claude/skills/ghost-skill" is a dangling symlink with no manifest
-│   entry — removable.
-│  ○ Yes / ● No
-└
-
-<RULE>
-$ rigger doctor --fix
---- agent-rigger doctor ---
-
-✓ git (<path>)
-✓ glab (<path>)
-✓ gitleaks (<path>)
-✓ trivy (<path>)
-
-mode : full scan
-
-Installed-state check · 2 findings
-
-Untracked artifacts (1)
-  + skill "<RIGGER_HOME>/.claude/skills/diagnose" is untracked but conforms to its store — adoptable.  [fix]
-
-Dangling symlinks (1)
-  + "<RIGGER_HOME>/.claude/skills/ghost-skill" is a dangling symlink with no manifest entry — removable.  [conf
-irm]
-│
-◇  Apply repair?  skill "<RIGGER_HOME>/.claude/skills/diagnose" is untracked but conforms to its
-│  store — adoptable.
-│  Yes
-│
-◆  Confirm repair?  "<RIGGER_HOME>/.claude/skills/ghost-skill" is a dangling symlink with no manifest
-│   entry — removable.
-│  ○ Yes / ● No
-└
-
-<RULE>
-$ rigger doctor --fix
---- agent-rigger doctor ---
-
-✓ git (<path>)
-✓ glab (<path>)
-✓ gitleaks (<path>)
-✓ trivy (<path>)
-
-mode : full scan
-
-Installed-state check · 2 findings
-
-Untracked artifacts (1)
-  + skill "<RIGGER_HOME>/.claude/skills/diagnose" is untracked but conforms to its store — adoptable.  [fix]
-
-Dangling symlinks (1)
-  + "<RIGGER_HOME>/.claude/skills/ghost-skill" is a dangling symlink with no manifest entry — removable.  [conf
-irm]
-│
-◇  Apply repair?  skill "<RIGGER_HOME>/.claude/skills/diagnose" is untracked but conforms to its
-│  store — adoptable.
-│  Yes
-│
-◆  Confirm repair?  "<RIGGER_HOME>/.claude/skills/ghost-skill" is a dangling symlink with no manifest
-│   entry — removable.
-│  ○ Yes / ● No
-└
-
-<RULE>
-$ rigger doctor --fix
---- agent-rigger doctor ---
-
-✓ git (<path>)
-✓ glab (<path>)
-✓ gitleaks (<path>)
-✓ trivy (<path>)
-
-mode : full scan
-
-Installed-state check · 2 findings
-
-Untracked artifacts (1)
-  + skill "<RIGGER_HOME>/.claude/skills/diagnose" is untracked but conforms to its store — adoptable.  [fix]
-
-Dangling symlinks (1)
-  + "<RIGGER_HOME>/.claude/skills/ghost-skill" is a dangling symlink with no manifest entry — removable.  [conf
-irm]
-│
-◇  Apply repair?  skill "<RIGGER_HOME>/.claude/skills/diagnose" is untracked but conforms to its
-│  store — adoptable.
-│  Yes
-│
-◆  Confirm repair?  "<RIGGER_HOME>/.claude/skills/ghost-skill" is a dangling symlink with no manifest
-│   entry — removable.
 │  ● Yes / ○ No
 └
 
 <RULE>
 $ rigger doctor --fix
---- agent-rigger doctor ---
+--- rigger doctor ---
+
+✓ git (<path>)
+✓ glab (<path>)
+✓ gitleaks (<path>)
+✓ trivy (<path>)
+
+mode : full scan
+
+Installed-state check · 2 findings
+
+Untracked artifacts (1)
+  + skill "<RIGGER_HOME>/.claude/skills/diagnose" is untracked but conforms to its store — adoptable.  [fix]
+
+Dangling symlinks (1)
+  + "<RIGGER_HOME>/.claude/skills/ghost-skill" is a dangling symlink with no manifest entry — removable.  [conf
+irm]
+│
+◇  Apply repair?  skill "<RIGGER_HOME>/.claude/skills/diagnose" is untracked but conforms to its
+│  store — adoptable.
+│  Yes
+│
+◆  Confirm repair?  "<RIGGER_HOME>/.claude/skills/ghost-skill" is a dangling symlink with no manifest
+│   entry — removable.
+│  ○ Yes / ● No
+└
+
+<RULE>
+$ rigger doctor --fix
+--- rigger doctor ---
+
+✓ git (<path>)
+✓ glab (<path>)
+✓ gitleaks (<path>)
+✓ trivy (<path>)
+
+mode : full scan
+
+Installed-state check · 2 findings
+
+Untracked artifacts (1)
+  + skill "<RIGGER_HOME>/.claude/skills/diagnose" is untracked but conforms to its store — adoptable.  [fix]
+
+Dangling symlinks (1)
+  + "<RIGGER_HOME>/.claude/skills/ghost-skill" is a dangling symlink with no manifest entry — removable.  [conf
+irm]
+│
+◇  Apply repair?  skill "<RIGGER_HOME>/.claude/skills/diagnose" is untracked but conforms to its
+│  store — adoptable.
+│  Yes
+│
+◆  Confirm repair?  "<RIGGER_HOME>/.claude/skills/ghost-skill" is a dangling symlink with no manifest
+│   entry — removable.
+│  ○ Yes / ● No
+└
+
+<RULE>
+$ rigger doctor --fix
+--- rigger doctor ---
+
+✓ git (<path>)
+✓ glab (<path>)
+✓ gitleaks (<path>)
+✓ trivy (<path>)
+
+mode : full scan
+
+Installed-state check · 2 findings
+
+Untracked artifacts (1)
+  + skill "<RIGGER_HOME>/.claude/skills/diagnose" is untracked but conforms to its store — adoptable.  [fix]
+
+Dangling symlinks (1)
+  + "<RIGGER_HOME>/.claude/skills/ghost-skill" is a dangling symlink with no manifest entry — removable.  [conf
+irm]
+│
+◇  Apply repair?  skill "<RIGGER_HOME>/.claude/skills/diagnose" is untracked but conforms to its
+│  store — adoptable.
+│  Yes
+│
+◆  Confirm repair?  "<RIGGER_HOME>/.claude/skills/ghost-skill" is a dangling symlink with no manifest
+│   entry — removable.
+│  ○ Yes / ● No
+└
+
+<RULE>
+$ rigger doctor --fix
+--- rigger doctor ---
 
 ✓ git (<path>)
 ✓ glab (<path>)
@@ -275,7 +246,36 @@ irm]
 
 <RULE>
 $ rigger doctor --fix
---- agent-rigger doctor ---
+--- rigger doctor ---
+
+✓ git (<path>)
+✓ glab (<path>)
+✓ gitleaks (<path>)
+✓ trivy (<path>)
+
+mode : full scan
+
+Installed-state check · 2 findings
+
+Untracked artifacts (1)
+  + skill "<RIGGER_HOME>/.claude/skills/diagnose" is untracked but conforms to its store — adoptable.  [fix]
+
+Dangling symlinks (1)
+  + "<RIGGER_HOME>/.claude/skills/ghost-skill" is a dangling symlink with no manifest entry — removable.  [conf
+irm]
+│
+◇  Apply repair?  skill "<RIGGER_HOME>/.claude/skills/diagnose" is untracked but conforms to its
+│  store — adoptable.
+│  Yes
+│
+◆  Confirm repair?  "<RIGGER_HOME>/.claude/skills/ghost-skill" is a dangling symlink with no manifest
+│   entry — removable.
+│  ● Yes / ○ No
+└
+
+<RULE>
+$ rigger doctor --fix
+--- rigger doctor ---
 
 ✓ git (<path>)
 ✓ glab (<path>)
@@ -308,7 +308,7 @@ $
 
 <RULE>
 $ rigger doctor --fix
---- agent-rigger doctor ---
+--- rigger doctor ---
 
 ✓ git (<path>)
 ✓ glab (<path>)
@@ -341,7 +341,7 @@ $
 
 <RULE>
 $ rigger doctor --fix
---- agent-rigger doctor ---
+--- rigger doctor ---
 
 ✓ git (<path>)
 ✓ glab (<path>)
@@ -374,7 +374,7 @@ $
 
 <RULE>
 $ rigger doctor --fix
---- agent-rigger doctor ---
+--- rigger doctor ---
 
 ✓ git (<path>)
 ✓ glab (<path>)

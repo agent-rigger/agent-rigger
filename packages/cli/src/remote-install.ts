@@ -58,6 +58,7 @@ import { collectForeignRequires, resolve } from '@agent-rigger/catalog/resolver'
 import type { CommandRunner } from '@agent-rigger/catalog/tool-check';
 
 import { buildAdapter } from './adapter-dispatch';
+import { CLI_COMMAND } from './cli';
 import type { InstallResult } from './cmd-install';
 import { runInstall } from './cmd-install';
 import { materializeUnion } from './scan-staging';
@@ -112,7 +113,7 @@ export class ForeignRequireUnsatisfiedError extends Error {
     const chainText = [...chain, ref].join(' -> ');
     super(
       `${requirer} requires "${ref}", which is not installed for this scope/assistant `
-        + `(chain: ${chainText}). Install it first: agent-rigger install ${ref}`,
+        + `(chain: ${chainText}). Install it first: ${CLI_COMMAND} install ${ref}`,
     );
     this.name = 'ForeignRequireUnsatisfiedError';
     this.ref = ref;

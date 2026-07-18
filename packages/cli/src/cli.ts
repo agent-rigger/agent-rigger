@@ -454,6 +454,14 @@ export function parseArgs(argv: string[]): ParsedArgs {
 // Usage text
 // ---------------------------------------------------------------------------
 
+// Canonical command name shown to users. The distribution is still named
+// `agent-rigger` (package, repo, tap), but every user-facing surface — USAGE,
+// remediation hints, the doctor header — displays `rigger`, the installed bin
+// (naming decision 2026-07-17). Hardcoded, not derived from argv[1]: derivation
+// breaks under `bun build --compile` (argv[1] = embedded bunfs path) and makes
+// the golden output non-deterministic across invocation channels.
+export const CLI_COMMAND = 'rigger';
+
 const USAGE = `\
   ██████╗ ██╗ ██████╗  ██████╗ ███████╗██████╗
   ██╔══██╗██║██╔════╝ ██╔════╝ ██╔════╝██╔══██╗
@@ -464,8 +472,8 @@ const USAGE = `\
   The harness package manager for teams
 
 Usage:
-  agent-rigger <command> [options]
-  agent-rigger <resource> <verb> [args] [options]
+  ${CLI_COMMAND} <command> [options]
+  ${CLI_COMMAND} <resource> <verb> [args] [options]
 
 Workflow commands:
   check                    Audit whether guardrails and context are correctly installed.
@@ -545,17 +553,17 @@ Options:
   --version                     Show CLI version.
 
 Examples:
-  agent-rigger check
-  agent-rigger ls
-  agent-rigger skills ls
-  agent-rigger guardrails add jr/guardrail:claude --yes
-  agent-rigger guardrails info jr/guardrail:claude
-  agent-rigger guardrails check
-  agent-rigger install --scope=user
-  agent-rigger update --yes
-  agent-rigger skills update jr/skill:remote-demo --yes
-  agent-rigger install jr/skill:foo --assistant opencode
-  agent-rigger init
+  ${CLI_COMMAND} check
+  ${CLI_COMMAND} ls
+  ${CLI_COMMAND} skills ls
+  ${CLI_COMMAND} guardrails add jr/guardrail:claude --yes
+  ${CLI_COMMAND} guardrails info jr/guardrail:claude
+  ${CLI_COMMAND} guardrails check
+  ${CLI_COMMAND} install --scope=user
+  ${CLI_COMMAND} update --yes
+  ${CLI_COMMAND} skills update jr/skill:remote-demo --yes
+  ${CLI_COMMAND} install jr/skill:foo --assistant opencode
+  ${CLI_COMMAND} init
 `;
 
 // ---------------------------------------------------------------------------
@@ -880,7 +888,7 @@ async function resolveEffectiveCatalogFull(
   }
 
   if (config.catalogs.length === 0) {
-    print('no catalog configured — run `agent-rigger init`');
+    print(`no catalog configured — run \`${CLI_COMMAND} init\``);
     return { entries: [], metaBySource: new Map(), allSourcesFailed: false };
   }
 
@@ -909,7 +917,7 @@ async function resolveEffectiveCatalogFull(
         const msg = err instanceof Error ? err.message : String(err);
         print(
           `[warning] Catalog "${source.name}" (${source.url}) unavailable (${msg}). `
-            + `Check the URL or run \`agent-rigger init\`.`,
+            + `Check the URL or run \`${CLI_COMMAND} init\`.`,
         );
         return {
           name: source.name,
@@ -1901,7 +1909,7 @@ async function handleResourceCommand(opts: ResourceCommandOpts): Promise<number>
     if (unqualifiedIds.length > 0) {
       for (const id of unqualifiedIds) {
         print(
-          `[error] unqualified id "${id}" — use \`<catalog>/${id}\` (see \`agent-rigger ls\`)`,
+          `[error] unqualified id "${id}" — use \`<catalog>/${id}\` (see \`${CLI_COMMAND} ls\`)`,
         );
       }
       return 2;
@@ -1936,7 +1944,7 @@ async function handleResourceCommand(opts: ResourceCommandOpts): Promise<number>
     // Reject unqualified id immediately with an actionable error (ADR-0017 §5).
     if (!id.includes('/')) {
       print(
-        `[error] unqualified id "${id}" — use \`<catalog>/${id}\` (see \`agent-rigger ls\`)`,
+        `[error] unqualified id "${id}" — use \`<catalog>/${id}\` (see \`${CLI_COMMAND} ls\`)`,
       );
       return 2;
     }
@@ -1955,7 +1963,9 @@ async function handleResourceCommand(opts: ResourceCommandOpts): Promise<number>
     const effectiveCatalog = await resolveEffectiveCatalog(env, print, deps.remote);
     const entry = effectiveCatalog.find((e) => e.id === id);
     if (entry === undefined) {
-      print(`[error] Unknown artifact id "${id}". Run "agent-rigger ls" to see available entries.`);
+      print(
+        `[error] Unknown artifact id "${id}". Run "${CLI_COMMAND} ls" to see available entries.`,
+      );
       return 2;
     }
 
@@ -2060,7 +2070,7 @@ async function handleResourceCommand(opts: ResourceCommandOpts): Promise<number>
     if (unqualifiedUpdateIds.length > 0) {
       for (const id of unqualifiedUpdateIds) {
         print(
-          `[error] unqualified id "${id}" — use \`<catalog>/${id}\` (see \`agent-rigger ls\`)`,
+          `[error] unqualified id "${id}" — use \`<catalog>/${id}\` (see \`${CLI_COMMAND} ls\`)`,
         );
       }
       return 2;
@@ -2114,7 +2124,7 @@ async function handleResourceCommand(opts: ResourceCommandOpts): Promise<number>
     if (unqualifiedRemoveIds.length > 0) {
       for (const id of unqualifiedRemoveIds) {
         print(
-          `[error] unqualified id "${id}" — use \`<catalog>/${id}\` (see \`agent-rigger ls\`)`,
+          `[error] unqualified id "${id}" — use \`<catalog>/${id}\` (see \`${CLI_COMMAND} ls\`)`,
         );
       }
       return 2;
@@ -2283,7 +2293,7 @@ async function handleInstall(opts: HandleInstallOpts): Promise<number> {
     if (unqualifiedInstallIds.length > 0) {
       for (const id of unqualifiedInstallIds) {
         print(
-          `[error] unqualified id "${id}" — use \`<catalog>/${id}\` (see \`agent-rigger ls\`)`,
+          `[error] unqualified id "${id}" — use \`<catalog>/${id}\` (see \`${CLI_COMMAND} ls\`)`,
         );
       }
       return 2;
@@ -2312,7 +2322,7 @@ async function handleInstall(opts: HandleInstallOpts): Promise<number> {
       // satisfied — a missing precondition, not a voluntary abort. Nothing
       // is written (no manifest, no config). Same message used by the
       // interactive site below.
-      print('[error] no catalog configured — run `agent-rigger init`');
+      print(`[error] no catalog configured — run \`${CLI_COMMAND} init\``);
       return 2;
     }
 
@@ -2337,7 +2347,7 @@ async function handleInstall(opts: HandleInstallOpts): Promise<number> {
       const catalog = config.catalogs.find((c) => c.name === prefix);
       if (catalog === undefined) {
         print(
-          `[error] catalog "${prefix}" not configured — see \`agent-rigger catalog ls\``,
+          `[error] catalog "${prefix}" not configured — see \`${CLI_COMMAND} catalog ls\``,
         );
         return 2;
       }
@@ -2385,7 +2395,7 @@ async function handleInstall(opts: HandleInstallOpts): Promise<number> {
   const interactiveConfig = await loadCliConfig(env);
 
   if (interactiveConfig.catalogs.length === 0) {
-    print('[error] no catalog configured — run `agent-rigger init`');
+    print(`[error] no catalog configured — run \`${CLI_COMMAND} init\``);
     return 2;
   }
 
@@ -2445,7 +2455,7 @@ async function handleInstall(opts: HandleInstallOpts): Promise<number> {
       const installedCount = statuses.filter((s) => s.kind !== 'pack').length;
       print(
         `✓ Everything already up-to-date for scope "${interactiveScope}" `
-          + `(${installedCount} artifact(s) installed). Use \`agent-rigger remove\` to uninstall.`,
+          + `(${installedCount} artifact(s) installed). Use \`${CLI_COMMAND} remove\` to uninstall.`,
       );
       return 0;
     }
@@ -2702,7 +2712,7 @@ async function handleRemove(opts: HandleRemoveOpts): Promise<number> {
   if (unqualifiedRemIds.length > 0) {
     for (const id of unqualifiedRemIds) {
       print(
-        `[error] unqualified id "${id}" — use \`<catalog>/${id}\` (see \`agent-rigger ls\`)`,
+        `[error] unqualified id "${id}" — use \`<catalog>/${id}\` (see \`${CLI_COMMAND} ls\`)`,
       );
     }
     return 2;
@@ -2775,7 +2785,7 @@ async function handleUpdate(opts: HandleUpdateOpts): Promise<number> {
     if (unqualifiedUpdateIds.length > 0) {
       for (const id of unqualifiedUpdateIds) {
         print(
-          `[error] unqualified id "${id}" — use \`<catalog>/${id}\` (see \`agent-rigger ls\`)`,
+          `[error] unqualified id "${id}" — use \`<catalog>/${id}\` (see \`${CLI_COMMAND} ls\`)`,
         );
       }
       return 2;
@@ -2793,7 +2803,7 @@ async function handleUpdate(opts: HandleUpdateOpts): Promise<number> {
   if (config.catalogs.length === 0) {
     // No catalogs configured — surface as actionable error.
     print('[error] No catalog URL configured.');
-    print('  Run `agent-rigger init` to configure the catalog URL.');
+    print(`  Run \`${CLI_COMMAND} init\` to configure the catalog URL.`);
     return 2;
   }
 
@@ -2886,7 +2896,7 @@ async function handleUpdate(opts: HandleUpdateOpts): Promise<number> {
     const catalog = config.catalogs.find((c) => c.name === prefix);
     if (catalog === undefined) {
       print(
-        `[error] catalog "${prefix}" not configured — see \`agent-rigger catalog ls\``,
+        `[error] catalog "${prefix}" not configured — see \`${CLI_COMMAND} catalog ls\``,
       );
       return 2;
     }

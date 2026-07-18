@@ -483,7 +483,7 @@ describe('remote install — install WITHOUT catalogUrl → actionable message',
       // No catalogUrl → handleInstall exits early with actionable message → runner never called
       expect(runnerCallCount).toBe(0);
       const out = cap.lines.join('\n');
-      expect(out).toMatch(/aucun catalog|agent-rigger init/);
+      expect(out).toMatch(/aucun catalog|rigger init/);
     } finally {
       await localEnv.cleanupAll();
     }

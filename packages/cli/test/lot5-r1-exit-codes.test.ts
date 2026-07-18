@@ -146,7 +146,7 @@ describe('lot5-R1: install explicite sans catalogue configuré', () => {
     expect(code).toBe(2);
     const out = cap.lines.join('\n');
     expect(out).toContain('[error]');
-    expect(out).toMatch(/agent-rigger init/);
+    expect(out).toMatch(/rigger init/);
 
     const manifestPath = resolveUserTargets(tmp.env).stateJson;
     const manifestExists = await fs.stat(manifestPath).then(() => true).catch(() => false);

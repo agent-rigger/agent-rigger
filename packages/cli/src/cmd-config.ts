@@ -27,6 +27,7 @@
 
 import type { Assistant } from '@agent-rigger/core';
 
+import { CLI_COMMAND } from './cli';
 import type { Config } from './config';
 import {
   loadConfigFile,
@@ -94,8 +95,8 @@ export async function handleConfig(opts: HandleConfigOpts): Promise<number> {
 
   if (key === 'catalogs') {
     print(
-      '[error] "catalogs" is managed by `agent-rigger catalog add <name> <url>` and '
-        + '`agent-rigger catalog remove <name>`, not `config set`.',
+      `[error] "catalogs" is managed by \`${CLI_COMMAND} catalog add <name> <url>\` and `
+        + `\`${CLI_COMMAND} catalog remove <name>\`, not \`config set\`.`,
     );
     return 2;
   }

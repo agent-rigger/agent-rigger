@@ -232,13 +232,14 @@ describe('lot5-R3: anti-drift — no unqualified id in USAGE or README examples'
     /\b(skill|agent|guardrail|context|plugin|tool|pack|hook|mcp):[A-Za-z0-9_-]+/g;
 
   // A command-invocation line: starts (after leading whitespace) with
-  // "agent-rigger " — this deliberately excludes prose/concept mentions
+  // "rigger " (CLI usage) or "agent-rigger " (README keeps the distribution
+  // name) — this deliberately excludes prose/concept mentions
   // (e.g. "the built-in guards (`hook:guard-command`, ...)") which are out
   // of scope for this checklist item (only worked examples must be qualified).
   function unqualifiedIdsInInvocations(text: string): string[] {
     const offenders: string[] = [];
     for (const line of text.split('\n')) {
-      if (!/^\s*agent-rigger\s/.test(line)) continue;
+      if (!/^\s*(agent-)?rigger\s/.test(line)) continue;
       for (const match of line.matchAll(naturePattern)) {
         const idx = match.index ?? 0;
         const precedingChar = line[idx - 1];

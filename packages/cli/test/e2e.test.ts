@@ -557,7 +557,7 @@ describe('e2e — via runCli', () => {
     // Without catalogUrl → effective catalog is [] → check returns 0 with actionable message
     expect(code).toBe(0);
     const out = cap.lines.join('\n');
-    expect(out).toMatch(/aucun catalog|agent-rigger init/);
+    expect(out).toMatch(/aucun catalog|rigger init/);
   });
 
   it('direct runCheck on empty HOME returns exit code 3 (no catalog involvement)', async () => {

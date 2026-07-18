@@ -216,7 +216,7 @@ describe('lot6-R3: foreign require absent — actionable error, zero writes', ()
     const output = cap.lines.join('\n');
     expect(output).toContain('principal/skill:bar'); // requérant
     expect(output).toContain('othercat/skill:foo'); // the unsatisfied ref
-    expect(output).toContain('agent-rigger install othercat/skill:foo'); // remediation
+    expect(output).toContain('rigger install othercat/skill:foo'); // remediation
   });
 
   it('writes no manifest (state.json absent)', async () => {
@@ -320,7 +320,7 @@ describe('lot6-R3: foreign require NOT satisfied — manifest entry is a differe
       // Distinguishes this from the generic UnknownEntryError path: the
       // scope-mismatched entry was found and rejected by partitionForeignRequires
       // (ForeignRequireUnsatisfiedError), not by resolve() failing to find the ref.
-      expect(output).toContain('agent-rigger install othercat/skill:foo');
+      expect(output).toContain('rigger install othercat/skill:foo');
     } finally {
       await principalEnv.cleanupAll();
     }
@@ -357,7 +357,7 @@ describe('lot6-R3: foreign require NOT satisfied — manifest entry is a differe
       expect(code).toBe(2);
       const output = cap.lines.join('\n');
       expect(output).toContain('othercat/skill:foo');
-      expect(output).toContain('agent-rigger install othercat/skill:foo');
+      expect(output).toContain('rigger install othercat/skill:foo');
     } finally {
       await principalEnv.cleanupAll();
     }

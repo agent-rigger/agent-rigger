@@ -408,6 +408,7 @@ describe('runRemove — id absent from manifest', () => {
     expect(errorMessage.toLowerCase()).toContain('not installed');
     expect(errorMessage).toContain('guardrails-claude');
     expect(errorMessage).not.toContain('agent-rigger ls');
+    expect(errorMessage).not.toContain('rigger ls');
   });
 
   it('lot2-R5: confirm callback is NOT called when validation fails', async () => {

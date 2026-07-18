@@ -346,7 +346,7 @@ describe('interactive install — without catalogUrl', () => {
 
       expect(code).toBe(2);
       const out = lines.join('\n');
-      expect(out).toMatch(/aucun catalog|agent-rigger init/);
+      expect(out).toMatch(/aucun catalog|rigger init/);
     } finally {
       await noUrlIso.cleanupAll();
     }

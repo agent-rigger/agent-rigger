@@ -188,7 +188,10 @@ describe('runCli — --help', () => {
     const cap = makeCapture();
     await runCli(['--help'], { print: cap.print });
     const out = cap.lines.join('\n');
-    expect(out).toContain('agent-rigger');
+    expect(out).toContain('rigger');
+    // Canonical command name is `rigger`; the distribution name `agent-rigger`
+    // must not leak into user-facing help output (naming decision 2026-07-17).
+    expect(out).not.toContain('agent-rigger');
     expect(out).toMatch(/check|install|init/);
   });
 
@@ -235,7 +238,10 @@ describe('runCli — no args', () => {
     const cap = makeCapture();
     await runCli([], { print: cap.print });
     const out = cap.lines.join('\n');
-    expect(out).toContain('agent-rigger');
+    expect(out).toContain('rigger');
+    // Canonical command name is `rigger`; the distribution name `agent-rigger`
+    // must not leak into user-facing help output (naming decision 2026-07-17).
+    expect(out).not.toContain('agent-rigger');
   });
 });
 
@@ -334,7 +340,7 @@ describe('runCli — check without catalogUrl → empty catalog + actionable mes
       env: { RIGGER_HOME: tmp.dir },
     });
     const out = cap.lines.join('\n');
-    expect(out).toMatch(/aucun catalog|agent-rigger init/);
+    expect(out).toMatch(/aucun catalog|rigger init/);
   });
 });
 
@@ -369,7 +375,7 @@ describe('runCli — install without catalogUrl → missing precondition, exit 2
     expect(code).toBe(2);
     const out = cap.lines.join('\n');
     expect(out).toMatch(/\[error\]/);
-    expect(out).toMatch(/no catalog configured|agent-rigger init/);
+    expect(out).toMatch(/no catalog configured|rigger init/);
   });
 
   it('install does not write settings.json when no catalogUrl configured', async () => {
@@ -407,7 +413,7 @@ describe('runCli — install without catalogUrl → missing precondition, exit 2
     // an empty state is not a failure, unlike install's explicit request.
     expect(checkCode).toBe(0);
     const out = checkCap.lines.join('\n');
-    expect(out).toMatch(/aucun catalog|agent-rigger init/);
+    expect(out).toMatch(/aucun catalog|rigger init/);
   });
 });
 
@@ -487,7 +493,7 @@ describe('runCli — ls (top-level) without catalogUrl → empty + actionable me
       env: { RIGGER_HOME: tmp.dir },
     });
     const out = cap.lines.join('\n');
-    expect(out).toMatch(/aucun catalog|agent-rigger init/);
+    expect(out).toMatch(/aucun catalog|rigger init/);
   });
 });
 
@@ -518,7 +524,7 @@ describe('runCli — skills ls (filtered) without catalogUrl → actionable mess
       env: { RIGGER_HOME: tmp.dir },
     });
     const out = cap.lines.join('\n');
-    expect(out).toMatch(/aucun catalog|agent-rigger init/);
+    expect(out).toMatch(/aucun catalog|rigger init/);
   });
 });
 
@@ -548,7 +554,7 @@ describe('runCli — install <id> --yes without catalogUrl → missing precondit
     });
     expect(code).toBe(2);
     const out = cap.lines.join('\n');
-    expect(out).toMatch(/no catalog configured|agent-rigger init/);
+    expect(out).toMatch(/no catalog configured|rigger init/);
   });
 
   it('does not call selectArtifacts prompt when ids provided', async () => {
@@ -600,7 +606,7 @@ describe('runCli — install <id> --yes without catalogUrl → missing precondit
     });
     expect(code).toBe(2);
     const out = cap.lines.join('\n');
-    expect(out).toMatch(/no catalog configured|agent-rigger init/);
+    expect(out).toMatch(/no catalog configured|rigger init/);
   });
 });
 
@@ -835,7 +841,7 @@ describe('runCli — <resource> info <id>', () => {
       const out = cap.lines.join('\n');
       expect(code === 0 || code === 2).toBe(true);
       if (code === 0) {
-        expect(out).toMatch(/aucun catalog|agent-rigger init/);
+        expect(out).toMatch(/aucun catalog|rigger init/);
       } else {
         expect(out).toContain('principal/guardrail:main');
       }
@@ -930,7 +936,7 @@ describe('runCli — <resource> check', () => {
       });
       expect(code).toBe(0);
       const out = cap.lines.join('\n');
-      expect(out).toMatch(/aucun catalog|agent-rigger init/);
+      expect(out).toMatch(/aucun catalog|rigger init/);
     } finally {
       await tmpNoCatalog.cleanup();
     }
@@ -1475,7 +1481,7 @@ describe('runCli — non-regression interactive install', () => {
       // Without catalogUrl, catalog is empty → selectArtifacts must NOT be called
       expect(selectCalled).toBe(false);
       const out = cap.lines.join('\n');
-      expect(out).toMatch(/aucun catalog|agent-rigger init/);
+      expect(out).toMatch(/aucun catalog|rigger init/);
     } finally {
       await tmpNoCatalog.cleanup();
     }
@@ -1643,7 +1649,7 @@ describe('runCli — ls without catalogUrl configured → empty + actionable mes
     expect(code).toBe(0);
     const out = cap.lines.join('\n');
     // No built-in catalog → actionable message shown
-    expect(out).toMatch(/aucun catalog|agent-rigger init/);
+    expect(out).toMatch(/aucun catalog|rigger init/);
     expect(out).not.toContain('skill:remote');
   });
 });

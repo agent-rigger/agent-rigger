@@ -66,6 +66,7 @@ import {
 } from '@agent-rigger/adapters';
 
 import { buildAdapter } from './adapter-dispatch';
+import { CLI_COMMAND } from './cli';
 import { driveConsent } from './doctor-consent';
 import {
   ANSI,
@@ -148,7 +149,7 @@ export async function runDoctor(opts: RunDoctorOpts): Promise<void> {
   const { print } = opts;
   const colorOn = shouldColor(opts.color);
 
-  print(paint('--- agent-rigger doctor ---', ANSI.bold, colorOn));
+  print(paint(`--- ${CLI_COMMAND} doctor ---`, ANSI.bold, colorOn));
   print('');
 
   let gitleaksPresent = false;

@@ -17,6 +17,7 @@
  *   post-add picker) is re-thrown, not swallowed — it maps to exit 130.
  */
 
+import { CLI_COMMAND } from './cli';
 import type { CatalogProposal } from './cmd-init';
 import { loadConfigFile, persistConfig } from './config';
 import { CancelledError } from './ui';
@@ -76,7 +77,7 @@ export async function runCatalog(opts: RunCatalogOpts): Promise<number> {
     const catalogs = config.catalogs ?? [];
 
     if (catalogs.length === 0) {
-      print('no catalog configured — run `agent-rigger init` or `catalog add <name> <url>`');
+      print(`no catalog configured — run \`${CLI_COMMAND} init\` or \`catalog add <name> <url>\``);
       return 0;
     }
 
