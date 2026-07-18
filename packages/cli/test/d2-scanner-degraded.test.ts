@@ -331,3 +331,40 @@ describe('scanEntries — mixed degraded+blocked verdict (order guard)', () => {
     expect(result.warnings.join(' ')).not.toMatch(/non scanné|not scanned|unscanned/i);
   });
 });
+
+// ---------------------------------------------------------------------------
+// R5 / R6 — the warning literals pinned BYTE-FOR-BYTE. The other tests match
+// them by loose regex; these lock the exact prod strings (remote-install.ts) so
+// a typo in a user-facing warning turns the suite red.
+// ---------------------------------------------------------------------------
+
+describe('R5: degraded warning is byte-exact', () => {
+  it('R5: emits exactly the "content not scanned" literal (single warning)', async () => {
+    const result = await scanEntries({
+      entries: [SKILL_ENTRY],
+      baseDir: BASE_DIR,
+      scanner: degradedScanner(),
+      force: false,
+    });
+
+    expect(result.warnings).toEqual([
+      '[warning] content not scanned — install gitleaks or trivy then re-run for a full scan; see `rigger doctor`',
+    ]);
+  });
+});
+
+describe('R6: force warning is byte-exact (findings joined by "; ")', () => {
+  it('R6: emits exactly the "security scan findings" literal with the "; "-joined findings', async () => {
+    const result = await scanEntries({
+      entries: [SKILL_ENTRY],
+      baseDir: BASE_DIR,
+      scanner: blockingScanner(['[gitleaks] aws-access-key: token', '[trivy] CVE-2024-0001: vuln']),
+      force: true,
+    });
+
+    expect(result.warnings).toEqual([
+      '[warning] security scan findings (installed anyway via --force): '
+      + '[gitleaks] aws-access-key: token; [trivy] CVE-2024-0001: vuln',
+    ]);
+  });
+});

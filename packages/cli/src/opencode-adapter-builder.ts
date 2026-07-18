@@ -52,9 +52,9 @@ import { renderMcpConfig } from './mcp-source';
  * @param effectiveEntries Lookup map (id → CatalogEntry) for the resolved effective
  *                         catalog. Used by mcpSource to resolve the raw `config` field.
  * @param scanner          Security scanner invoked at apply time (defense in depth) for each
- *                         skill link write-op. Callers that already ran the pre-apply gate
- *                         (scanEntries) should pass the SAME (memoized) instance so the apply-time
- *                         re-check hits the cache instead of re-spawning gitleaks/trivy. Omitted →
+ *                         skill link write-op. Callers that already ran the pre-apply union
+ *                         gate (scanEntries) pass constantScanner(union verdict) so the
+ *                         re-check blocks on a bad verdict with zero extra spawns. Omitted →
  *                         falls back to stubScanner (check/remove paths never write content, so a
  *                         stub there is inert).
  * @param secretOverrides  ref→VAR overrides for mcp secrets (R5, lot 6, D5): from
@@ -203,9 +203,9 @@ export async function buildOpencodeAdapter(
     // The REAL security scan runs at the pre-apply gate (remote-install.ts
     // scanEntries) on the checkout paths — skills, agents, and opencode plugin
     // modules (H13) are all covered there before any write. The adapter-level
-    // scanner re-scans each link-op source at apply time (defense in depth):
-    // callers that already ran the gate pass the SAME memoized scanner
-    // instance (opts.scanner) so this re-check hits the cache instead of
+    // scanner re-checks each link-op source at apply time (defense in depth):
+    // callers that already ran the union gate pass constantScanner(union
+    // verdict) (opts.scanner), which blocks on a bad verdict without
     // re-spawning gitleaks/trivy. Callers with nothing to write (check/remove)
     // never pass one → stub.
     scanner: opts?.scanner ?? stubScanner,

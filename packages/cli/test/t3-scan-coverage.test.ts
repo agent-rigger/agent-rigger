@@ -62,7 +62,8 @@ import { stubScanner } from '@agent-rigger/core/scan';
 
 import { runCli } from '../src/cli';
 import { runUpdate } from '../src/cmd-update';
-import { runRemoteInstall, ScanBlockedError, scanPathFor } from '../src/remote-install';
+import { runRemoteInstall, ScanBlockedError, scanEntries } from '../src/remote-install';
+import { scanPathFor } from '../src/scan-paths';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -110,6 +111,16 @@ const CONTEXT_ENTRY: CatalogEntry = {
   kind: 'artifact',
   id: 'context:main',
   nature: 'context',
+  targets: ['claude', 'opencode'],
+  scopes: ['user', 'project'],
+};
+
+// A tool artefact: advisory check/install commands in catalog.json, no checkout
+// of its own → scanPathFor returns null (case 'tool'). Exercised by m6 below.
+const TOOL_ENTRY: CatalogEntry = {
+  kind: 'artifact',
+  id: 'tool:glab',
+  nature: 'tool',
   targets: ['claude', 'opencode'],
   scopes: ['user', 'project'],
 };
@@ -410,6 +421,28 @@ describe('T3-4 — mcp-only selection (no scan path of its own)', () => {
     const { scanner, calls, trees } = spyScanner();
 
     await installLeakyMcp(scanner);
+
+    expect(calls).toHaveLength(1);
+    expect(trees[0]).toEqual(['catalog.json']);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// m6 — tool-only selection: scanPathFor's `case 'tool': return null` branch was
+// exercised by no test. A tool contributes no checkout surface, so the union is
+// catalog.json alone (like mcp-only, but via a different null branch).
+// ---------------------------------------------------------------------------
+
+describe('m6 — tool-only selection (case tool: return null)', () => {
+  it('stages catalog.json alone for a tool-only selection', async () => {
+    const { scanner, calls, trees } = spyScanner();
+
+    await scanEntries({
+      entries: [TOOL_ENTRY],
+      baseDir: fixture.contentDir,
+      scanner,
+      force: false,
+    });
 
     expect(calls).toHaveLength(1);
     expect(trees[0]).toEqual(['catalog.json']);

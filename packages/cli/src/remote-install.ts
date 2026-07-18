@@ -31,13 +31,10 @@
  * - exactOptionalPropertyTypes: never assigns undefined to optional fields.
  */
 
-import path from 'node:path';
-
 import type { PluginRunner } from '@agent-rigger/adapters';
 import type { Assistant } from '@agent-rigger/core';
 import { createCompositeScanner } from '@agent-rigger/core';
 import { assertSafeArtifactName } from '@agent-rigger/core/artifact-name';
-import { assertNever } from '@agent-rigger/core/assert-never';
 import { findEntry, readManifest } from '@agent-rigger/core/manifest';
 import type { Env } from '@agent-rigger/core/paths';
 import { constantScanner } from '@agent-rigger/core/scan';
@@ -186,67 +183,6 @@ function pruneSatisfiedRequires(
     const pruned = entry.requires.filter((r) => !externallySatisfied.has(r));
     return pruned.length === entry.requires.length ? entry : { ...entry, requires: pruned };
   });
-}
-
-// ---------------------------------------------------------------------------
-// scanPathFor — derive the filesystem path to scan inside the checkout dir
-// ---------------------------------------------------------------------------
-
-/**
- * Exhaustive over Nature (8 members, packages/core/src/types.ts): the `default`
- * branch calls assertNever so that a 9th nature materialising checkout content
- * fails the BUILD instead of silently returning null (which would exempt it
- * from every scan except the unconditional catalog.json one).
- */
-export function scanPathFor(entry: ArtifactEntry, baseDir: string): string | null {
-  const local = localId(entry.id);
-  switch (entry.nature) {
-    case 'skill': {
-      const name = local.replace(/^skill:/, '');
-      return path.join(baseDir, 'skills', name);
-    }
-    case 'agent': {
-      const name = local.replace(/^agent:/, '');
-      return path.join(baseDir, 'agents', name + '.md');
-    }
-    case 'guardrail': {
-      // The whole guardrail dir is scanned: deny.json/allow.json (claude) or
-      // permission.json (opencode) all live under guardrails/<name>/.
-      const name = local.replace(/^guardrail:/, '');
-      return path.join(baseDir, 'guardrails', name);
-    }
-    case 'context': {
-      // A context artifact is a single AGENTS.md file fetched from the checkout
-      // and injected verbatim into the assistant's system content — same risk
-      // class as a skill/agent file, so it is scanned like one.
-      const name = local.replace(/^context:/, '');
-      return path.join(baseDir, 'contexts', name, 'AGENTS.md');
-    }
-    case 'hook':
-      // The entire hooks/ directory is scanned so that guard scripts AND shared
-      // libs (e.g. _shared/hook-lib.ts) are covered by the composite scanner.
-      return path.join(baseDir, 'hooks');
-    case 'plugin':
-      // An opencode plugin is a native JS/TS module shipped in the checkout's
-      // plugins/ directory and copied verbatim into pluginDir (ADR-0020 §4,
-      // R8.2) — executable code loaded by opencode at runtime, scanned like
-      // hooks (whole directory, so sibling modules are covered too — H13).
-      // Claude-only plugins are delegate-installed via `claude plugin install`
-      // from the marketplace URL (ADR-0003): no module in the checkout → null.
-      return entry.targets.includes('opencode') ? path.join(baseDir, 'plugins') : null;
-    case 'mcp':
-      // Inline server config in catalog.json (secrets can live in config.env) —
-      // not a checkout of its own. Covered by the unconditional catalog.json
-      // scan in scanEntries instead.
-      return null;
-    case 'tool':
-      // Advisory check/install command strings live in catalog.json — not a
-      // checkout of their own. Covered by the unconditional catalog.json scan
-      // in scanEntries instead.
-      return null;
-    default:
-      return assertNever(entry.nature);
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -589,6 +525,15 @@ export async function runRemoteInstall(opts: {
       // have no notion of --force, so re-running the SAME verdict at apply time
       // would re-block a run the operator explicitly forced through (D5/ADR-0018:
       // --force policy is unchanged, not narrowed to "gate only").
+      //
+      // R8 (tautology, by design): threading constantScanner here is defence BY
+      // CONSTRUCTION, not a runtime re-scan. The verdict is exactly what the gate
+      // already computed over a superset of every applied source (structural via
+      // scanPathFor's assertNever), so the apply-time re-check can only agree with
+      // the gate — it can never independently catch something the union missed.
+      // The apply-time BLOCKING path is nonetheless real (applySkill throws on a
+      // !ok verdict) and stays pinned by t4's scanner injection at the adapter
+      // boundary, where a genuinely blocking scanner is fed in directly.
       const adapter = await buildAdapter(assistant, env, {
         externalIds: remoteIds,
         externalBaseDir: dir,

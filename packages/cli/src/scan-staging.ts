@@ -36,7 +36,7 @@ import path from 'node:path';
 
 import type { ArtifactEntry } from '@agent-rigger/catalog';
 
-import { scanPathFor } from './remote-install';
+import { scanPathFor } from './scan-paths';
 
 /** Prefix for the sibling staging directory created by the default factory. */
 const STAGING_PREFIX = 'rig-scan-staging-';

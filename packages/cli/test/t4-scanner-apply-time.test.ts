@@ -52,7 +52,8 @@ import type { WriteOpLink } from '@agent-rigger/core/types';
 import { buildClaudeAdapter } from '../src/cli';
 import { runUpdate } from '../src/cmd-update';
 import { buildOpencodeAdapter } from '../src/opencode-adapter-builder';
-import { runRemoteInstall, scanPathFor } from '../src/remote-install';
+import { runRemoteInstall } from '../src/remote-install';
+import { scanPathFor } from '../src/scan-paths';
 
 // ---------------------------------------------------------------------------
 // Shared fake-scanner builders

@@ -364,7 +364,11 @@ export async function runUpdate(opts: RunUpdateOptions): Promise<UpdateResult> {
         // verdict at apply is a safe no-op; when force=true, a blocking verdict
         // was deliberately overridden at the gate and Scanner/applySkill have no
         // notion of --force, so re-threading it here would re-block a run the
-        // operator explicitly forced through.
+        // operator explicitly forced through. R8 tautology: this re-check is
+        // defence BY CONSTRUCTION (the constant verdict is what the gate already
+        // computed over a superset of every applied source), not a runtime
+        // re-scan — the real apply-time blocking path stays pinned by t4's
+        // scanner injection at the adapter boundary. See runRemoteInstall.
         const adapter = await buildAdapter(assistant, env, {
           externalIds: remoteIds,
           externalBaseDir: dir,

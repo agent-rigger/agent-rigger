@@ -52,12 +52,8 @@ import { resolveOpencodeUserTargets, resolveUserTargets } from '@agent-rigger/co
 import type { Env } from '@agent-rigger/core/paths';
 import type { Scanner } from '@agent-rigger/core/scan';
 
-import {
-  runRemoteInstall,
-  ScanBlockedError,
-  scanEntries,
-  scanPathFor,
-} from '../src/remote-install';
+import { runRemoteInstall, ScanBlockedError, scanEntries } from '../src/remote-install';
+import { scanPathFor } from '../src/scan-paths';
 
 // ---------------------------------------------------------------------------
 // Constants

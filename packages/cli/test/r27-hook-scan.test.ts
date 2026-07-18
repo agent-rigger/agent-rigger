@@ -39,7 +39,8 @@ import type { Env } from '@agent-rigger/core/paths';
 import type { Scanner } from '@agent-rigger/core/scan';
 
 import { runCli } from '../src/cli';
-import { ScanBlockedError, scanEntries, scanPathFor } from '../src/remote-install';
+import { ScanBlockedError, scanEntries } from '../src/remote-install';
+import { scanPathFor } from '../src/scan-paths';
 
 // ---------------------------------------------------------------------------
 // Constants

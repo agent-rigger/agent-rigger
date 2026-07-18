@@ -8,8 +8,6 @@
  * milestone.
  */
 
-import path from 'node:path';
-
 import type { Verdict } from './types';
 
 /**
@@ -30,45 +28,6 @@ export const stubScanner: Scanner = {
     return Promise.resolve({ ok: true });
   },
 };
-
-/**
- * Wraps `inner` with a per-process, per-resolved-path cache of its Verdict.
- *
- * The problem this once solved on the remote-install/update path: two scan call
- * sites see the same fetched content — the pre-apply gate (scanEntries) and the
- * adapter's apply-time re-check (one scan per link write-op, defense in depth) —
- * both resolving to the SAME checkout path per artifact. Sharing one raw Scanner
- * across both would spawn the underlying tool (gitleaks/trivy) twice per
- * artifact; memoizing on the resolved path collapsed that to one run — the gate's
- * scan populating the cache, the apply-time re-check hitting it.
- *
- * That is NO LONGER how the remote-install/update path holds a constant spawn
- * count. It now scans the whole selection as a single union and threads a
- * constant union verdict to the apply-time re-check (see `constantScanner` and
- * `design.md § Le seam de couplage`), so per-path cache hits no longer carry
- * that path. `memoizeScanner` is kept as the public API for any caller that
- * scans the same resolved path more than once; its behaviour below is unchanged.
- *
- * Cache key is `path.resolve(source)` so that equivalent-but-differently-
- * spelled paths (relative segments, `..`, trailing separators) collapse to the
- * same entry. Not bounded/evicted — scoped to a single CLI invocation.
- */
-export function memoizeScanner(inner: Scanner): Scanner {
-  const cache = new Map<string, Promise<Verdict>>();
-
-  return {
-    scan(source: string): Promise<Verdict> {
-      const key = path.resolve(source);
-      const cached = cache.get(key);
-      if (cached !== undefined) {
-        return cached;
-      }
-      const pending = inner.scan(source);
-      cache.set(key, pending);
-      return pending;
-    },
-  };
-}
 
 /**
  * A Scanner that ignores its argument and always resolves the same `verdict`.

@@ -208,9 +208,9 @@ async function resolvePluginLedgerMarketplace(
  *                         Required when any hook entry needs to be installed — hookSpec will
  *                         throw an actionable error if the entry is not found in this map.
  * @param scanner          Security scanner invoked at apply time (defense in depth) for each
- *                         skill link write-op. Callers that already ran the pre-apply gate
- *                         (scanEntries) should pass the SAME (memoized) instance so the apply-time
- *                         re-check hits the cache instead of re-spawning gitleaks/trivy. Omitted →
+ *                         skill link write-op. Callers that already ran the pre-apply union
+ *                         gate (scanEntries) pass constantScanner(union verdict) so the
+ *                         re-check blocks on a bad verdict with zero extra spawns. Omitted →
  *                         falls back to stubScanner (check/remove paths never write content, so a
  *                         stub there is inert).
  * @param secretOverrides  ref→VAR overrides collected by the CLI (--secret-env / TTY prompt,
@@ -442,8 +442,8 @@ export async function buildClaudeAdapter(
     // covered there before any write (claude plugins are delegate-installed by
     // the `claude` binary, ADR-0003). The adapter-level scanner re-scans each
     // link-op source at apply time (defense in depth): callers that already
-    // ran the gate pass the SAME memoized scanner instance (opts.scanner) so
-    // this re-check hits the cache instead of re-spawning gitleaks/trivy.
+    // ran the union gate pass constantScanner(union verdict) (opts.scanner),
+    // which blocks on a bad verdict without re-spawning gitleaks/trivy.
     // Callers with nothing to write (check/remove) never pass one → stub.
     scanner: opts?.scanner ?? stubScanner,
     hookSpec,
