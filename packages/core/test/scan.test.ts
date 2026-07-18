@@ -5,7 +5,8 @@
 import { describe, expect, it } from 'bun:test';
 import path from 'node:path';
 
-import { memoizeScanner, type Scanner, stubScanner } from '../src/scan';
+import { constantScanner, memoizeScanner, type Scanner, stubScanner } from '../src/scan';
+import type { Verdict } from '../src/types';
 
 describe('stubScanner', () => {
   it('passes for any source path', async () => {
@@ -117,5 +118,60 @@ describe('memoizeScanner', () => {
     expect(second.ok).toBe(false);
     expect(second.findings).toEqual(first.findings);
     expect(callCount).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// constantScanner
+// ---------------------------------------------------------------------------
+
+describe('constantScanner', () => {
+  it('resolves the given passing verdict for any source path', async () => {
+    const verdict: Verdict = { ok: true };
+    const scanner = constantScanner(verdict);
+
+    const result = await scanner.scan('/some/apply-time/source');
+
+    expect(result).toBe(verdict);
+    expect(result.ok).toBe(true);
+  });
+
+  it('restitutes a blocking verdict findings as-is', async () => {
+    const verdict: Verdict = {
+      ok: false,
+      findings: ['[gitleaks] aws-access-key', '[trivy] CVE-2024-1234'],
+    };
+    const scanner = constantScanner(verdict);
+
+    const result = await scanner.scan('/some/source');
+
+    expect(result.ok).toBe(false);
+    expect(result.findings).toEqual(['[gitleaks] aws-access-key', '[trivy] CVE-2024-1234']);
+    // Same reference: the union verdict is threaded verbatim, never rebuilt.
+    expect(result).toBe(verdict);
+  });
+
+  it('restitutes a degraded verdict', async () => {
+    const verdict: Verdict = { ok: true, degraded: true };
+    const scanner = constantScanner(verdict);
+
+    const result = await scanner.scan('/x');
+
+    expect(result.ok).toBe(true);
+    expect(result.degraded).toBe(true);
+    expect(result).toBe(verdict);
+  });
+
+  it('ignores its source argument — distinct paths yield the same constant verdict', async () => {
+    const verdict: Verdict = { ok: true };
+    const scanner = constantScanner(verdict);
+
+    const first = await scanner.scan('/path/one');
+    const second = await scanner.scan('/path/two/much/deeper');
+
+    // Identity across distinct arguments proves the argument is ignored AND that
+    // no scanner tool ran (a real scanner would mint a fresh verdict per call).
+    expect(first).toBe(second);
+    expect(first).toBe(verdict);
   });
 });
