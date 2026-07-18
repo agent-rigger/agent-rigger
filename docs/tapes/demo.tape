@@ -113,6 +113,19 @@ Wait+Screen /Applied 24 file/
 Sleep 2s
 
 # --- 4. verify: zero drift ---------------------------------------------------
+# Reset the screen before check — the same ttyd guard as before the install (the
+# `clear` above). ttyd re-renders the whole screen buffer per frame, so with the
+# ~34-line install plan still resident, `check`'s output stacks past the rendering-
+# throughput knee. On CI (run 29660712033) that flood froze mid-render: the grid
+# stalled right after the first `[ ok ]` audit line and `up-to-date` never entered
+# the buffer VHS polls, so `Wait Screen /up-to-date/` timed out at 60s (a faster
+# local machine renders through, which is why the tracked golden is green). The
+# visible clear drops the buffer back to a clean prompt so `check` renders in a
+# handful of lines, well under the knee.
+Type "clear"
+Sleep 500ms
+Enter
+Sleep 500ms
 Type "rigger check"
 Sleep 500ms
 Enter
