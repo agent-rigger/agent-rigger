@@ -17,10 +17,9 @@
  *  - unparseable JSON on exit 0 → fail-closed { ok: false, findings: ['trivy: unparseable output'] }
  */
 
-import path from 'node:path';
-
 import type { Scanner } from '../scan';
 import type { Verdict } from '../types';
+import { relativiseFindingPath, sanitizeToolStderr } from './finding-path';
 import { defaultScanRunner, defaultWhich } from './gitleaks';
 import type { ScanRunner, WhichFn } from './gitleaks';
 
@@ -97,14 +96,11 @@ function collectFindings(results: TrivyResult[], dir: string): string[] {
   const findings: string[] = [];
 
   for (const result of results) {
-    // Defensive R7 rebase: trivy 0.72.0 already emits a relative Target (probe
-    // T1), so the isAbsolute guard is a no-op today; it hardens attribution
-    // against a version drift that would start reporting an absolute path under
-    // the scanned staging dir — relativising it keeps the finding checkout-
-    // relative like gitleaks.
-    const target = path.isAbsolute(result.Target)
-      ? path.relative(dir, result.Target)
-      : result.Target;
+    // Defensive R7 rebase via the shared helper: trivy 0.72.0 already emits a
+    // relative Target (probe T1), so this is a no-op today; it hardens
+    // attribution against a version drift reporting an absolute path under the
+    // scanned staging dir, and clamps any Target escaping the root.
+    const target = relativiseFindingPath(result.Target, dir);
 
     for (const secret of result.Secrets ?? []) {
       findings.push(`${secret.RuleID}: ${secret.Title} (${target})`);
@@ -144,7 +140,9 @@ export function createTrivyScanner(opts?: TrivyOpts): Scanner {
       ]);
 
       if (exitCode !== 0) {
-        return { ok: false, findings: [`trivy error: ${stderr}`] };
+        // Sanitise the stderr so the scanned staging path (and its realpath)
+        // never leaks into the finding.
+        return { ok: false, findings: [`trivy error: ${sanitizeToolStderr(stderr, dir)}`] };
       }
 
       const report = parseTrivyReport(stdout);

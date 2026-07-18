@@ -300,6 +300,55 @@ describe('createTrivyScanner — R7 Target rebasing', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Clamp — a Target escaping the scanned dir is reduced to the basename sentinel,
+// never leaking the host path (D1 / m1, shared helper).
+// ---------------------------------------------------------------------------
+
+describe('createTrivyScanner — Target outside the scanned dir is clamped', () => {
+  it('clamps an absolute Target outside the staging dir to <outside-scan-root>, host path absent', async () => {
+    const dir = '/tmp/rig-scan-staging-xyz';
+    const json = JSON.stringify({
+      Results: [
+        {
+          Target: '/etc/passwd',
+          Secrets: [{
+            RuleID: 'aws-access-key-id',
+            Title: 'AWS Access Key ID',
+            Severity: 'CRITICAL',
+          }],
+        },
+      ],
+    });
+    const scanner = createTrivyScanner({ run: mockRunner(0, json) });
+
+    const verdict = await scanner.scan(dir);
+
+    const finding = verdict.findings?.[0] ?? '';
+    expect(finding).toContain('<outside-scan-root>/passwd');
+    expect(finding).not.toContain('/etc');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tool-error stderr sanitisation — the scanned dir is scrubbed to <scan-root>
+// so a tool-level error (exit != 0) never leaks the mkdtemp staging path (m2).
+// ---------------------------------------------------------------------------
+
+describe('createTrivyScanner — exit 2 stderr sanitisation', () => {
+  it('substitutes the scanned dir in the error finding with <scan-root>', async () => {
+    const dir = '/tmp/rig-scan-staging-xyz';
+    const stderr = `fatal: unable to walk ${dir}/skills: permission denied`;
+    const scanner = createTrivyScanner({ run: mockRunner(2, '', stderr) });
+
+    const verdict = await scanner.scan(dir);
+
+    const finding = verdict.findings?.[0] ?? '';
+    expect(finding).toContain('<scan-root>');
+    expect(finding).not.toContain(dir);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // isTrivyAvailable — WhichFn-based (portable, no shell spawn)
 // ---------------------------------------------------------------------------
 

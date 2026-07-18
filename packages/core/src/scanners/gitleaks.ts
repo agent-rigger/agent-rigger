@@ -11,10 +11,9 @@
  *    (fail-closed: we do NOT pass on tool errors)
  */
 
-import path from 'node:path';
-
 import type { Scanner } from '../scan';
 import type { Verdict } from '../types';
+import { relativiseFindingPath, sanitizeToolStderr } from './finding-path';
 
 // ---------------------------------------------------------------------------
 // ScanRunner — minimal local runner type (core must not depend on catalog)
@@ -122,15 +121,13 @@ function parseFindings(stdout: string): GitleaksFinding[] | null {
 
 /**
  * gitleaks 8.30.1 reports `File` as an ABSOLUTE path for `detect --source <dir>`
- * (probe T1). Since `dir` is the union staging mirror — a byte-faithful copy of
- * the checkout layout — relativising the absolute File against it yields the
- * exact checkout-relative path the attribution must carry (`skills/x/SKILL.md`,
- * R7). A File already relative (older gitleaks, or a mock) is passed through
- * unchanged.
+ * (probe T1). `relativiseFindingPath` rebases it against the scanned staging
+ * mirror to the checkout-relative attribution R7 carries (`skills/x/SKILL.md`),
+ * passes an already-relative File through, and clamps any path escaping the root
+ * to `<outside-scan-root>/<basename>`.
  */
 function formatFinding(f: GitleaksFinding, dir: string): string {
-  const file = path.isAbsolute(f.File) ? path.relative(dir, f.File) : f.File;
-  return `${f.RuleID}: ${f.Description} (${file})`;
+  return `${f.RuleID}: ${f.Description} (${relativiseFindingPath(f.File, dir)})`;
 }
 
 // ---------------------------------------------------------------------------
@@ -183,8 +180,9 @@ export function createGitleaksScanner(opts?: GitleaksOpts): Scanner {
         return { ok: false, findings: raw.map((f) => formatFinding(f, dir)) };
       }
 
-      // exit > 1: tool-level error — fail-closed
-      return { ok: false, findings: [`gitleaks error: ${stderr}`] };
+      // exit > 1: tool-level error — fail-closed. Sanitise the stderr so the
+      // scanned staging path (and its realpath) never leaks into the finding.
+      return { ok: false, findings: [`gitleaks error: ${sanitizeToolStderr(stderr, dir)}`] };
     },
   };
 }

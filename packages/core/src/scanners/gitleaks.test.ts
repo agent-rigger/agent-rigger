@@ -194,6 +194,46 @@ describe('createGitleaksScanner — R7 File rebasing', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Clamp — a File escaping the scanned dir is reduced to the basename sentinel,
+// never leaking the host path (D1 / m1, shared helper).
+// ---------------------------------------------------------------------------
+
+describe('createGitleaksScanner — File outside the scanned dir is clamped', () => {
+  it('clamps an absolute File outside the staging dir to <outside-scan-root>, host path absent', async () => {
+    const dir = '/tmp/rig-scan-staging-abc';
+    const json = JSON.stringify([
+      { Description: 'leaked host secret', File: '/etc/passwd', RuleID: 'generic-api-key' },
+    ]);
+    const scanner = createGitleaksScanner({ run: mockRunner(1, json) });
+
+    const verdict = await scanner.scan(dir);
+
+    const finding = verdict.findings?.[0] ?? '';
+    expect(finding).toContain('<outside-scan-root>/passwd');
+    expect(finding).not.toContain('/etc');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tool-error stderr sanitisation — the scanned dir is scrubbed to <scan-root>
+// so a tool-level error (exit > 1) never leaks the mkdtemp staging path (m2).
+// ---------------------------------------------------------------------------
+
+describe('createGitleaksScanner — exit 2 stderr sanitisation', () => {
+  it('substitutes the scanned dir in the error finding with <scan-root>', async () => {
+    const dir = '/tmp/rig-scan-staging-abc';
+    const stderr = `fatal: could not open ${dir}/skills/x/SKILL.md: permission denied`;
+    const scanner = createGitleaksScanner({ run: mockRunner(2, '', stderr) });
+
+    const verdict = await scanner.scan(dir);
+
+    const finding = verdict.findings?.[0] ?? '';
+    expect(finding).toContain('<scan-root>');
+    expect(finding).not.toContain(dir);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // isGitleaksAvailable — WhichFn-based (portable, no shell spawn)
 // ---------------------------------------------------------------------------
 
