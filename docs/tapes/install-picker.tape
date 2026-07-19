@@ -114,6 +114,7 @@ Type "y"
 
 # --- 8. applied result ---
 Wait+Screen /Applied/
-Sleep 2500ms
+# 30s reading hold: the GIF lingers on the final state before looping.
+Sleep 30s
 
 # --- teardown: setup.sh's EXIT/INT/TERM trap rm -rf's $RIGGER_HOME (R5), hidden ---

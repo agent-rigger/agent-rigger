@@ -130,7 +130,8 @@ Type "rigger check"
 Sleep 500ms
 Enter
 Wait+Screen /up-to-date/
-Sleep 2500ms
+# 30s reading hold: the GIF lingers on the final state before looping.
+Sleep 30s
 
 # --- hidden teardown (setup.sh EXIT/INT/TERM trap also removes $RIGGER_HOME) ---
 # No final Show: the same Hide/Show race (vhs#130) runs in reverse at teardown —
