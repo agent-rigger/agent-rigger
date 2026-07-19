@@ -95,11 +95,19 @@ export function createCompositeScanner(opts?: CompositeScannerOpts): Scanner {
       const allOk = results.every(({ verdict }) => verdict.ok);
       const findings = results.flatMap(({ prefix, verdict }) => prefixFindings(prefix, verdict));
 
+      // Partial presence (ADR-0018 additive signal): exactly one of the two
+      // tools is installed. Name the absent one so the install layer can warn
+      // about it. Both-present and neither-present (handled above) never set this.
+      const missingTools: ('gitleaks' | 'trivy')[] = [];
+      if (!gitleaksAvail) missingTools.push('gitleaks');
+      if (!trivyAvail) missingTools.push('trivy');
+      const partialPresence = missingTools.length === 1;
+
       if (allOk) {
-        return { ok: true };
+        return partialPresence ? { ok: true, missingTools } : { ok: true };
       }
 
-      return { ok: false, findings };
+      return partialPresence ? { ok: false, findings, missingTools } : { ok: false, findings };
     },
   };
 }

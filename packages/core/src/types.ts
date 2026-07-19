@@ -702,6 +702,16 @@ export interface Verdict {
    * Absent (undefined) when a scanner ran normally.
    */
   degraded?: boolean;
+  /**
+   * Names of scanner tools that were NOT available on the host, populated
+   * only by the composite scanner and only in the partial-presence case:
+   * exactly one of gitleaks/trivy is installed, the other is not.
+   * Absent in every other case — both tools present, or neither present.
+   *
+   * Distinct from `degraded` (ADR-0018): `degraded` signals the double-absence
+   * case (no tool ran at all) and its semantics are unchanged by this field.
+   */
+  missingTools?: ('gitleaks' | 'trivy')[];
 }
 
 // ---------------------------------------------------------------------------

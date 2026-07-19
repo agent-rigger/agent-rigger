@@ -20,6 +20,10 @@
  * 6. empty entries list → catalog.json is still scanned unconditionally (T3), so
  *    scanEntries is no longer a no-op: degraded/blocking verdicts on catalog.json
  *    still surface, a clean verdict still returns no warnings.
+ * 7. mixed degraded+blocked verdict → anyBlocked-before-anyDegraded order guard.
+ * 8. partial presence (T2, signal-degraded-partiel): exactly one of gitleaks/
+ *    trivy installed. Blocking still wins (zero partial warning) when the
+ *    present tool finds something; an all-ok verdict names the absent tool.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
@@ -51,6 +55,32 @@ function blockingScanner(findings: string[]): Scanner {
 function cleanScanner(): Scanner {
   return {
     scan: (_source: string) => Promise.resolve({ ok: true }),
+  };
+}
+
+/**
+ * All-ok verdict with exactly one tool missing (composite.ts partial-presence
+ * case, T1). The other tool ran and found nothing.
+ */
+function partialOkScanner(missingTools: ('gitleaks' | 'trivy')[]): Scanner {
+  return {
+    scan: (_source: string) => Promise.resolve({ ok: true, missingTools }),
+  };
+}
+
+/**
+ * Blocking verdict (real findings from the one present tool) that ALSO carries
+ * missingTools — the real composite scanner sets missingTools on both the ok
+ * and !ok branches of the partial-presence case (composite.ts). Used to lock
+ * "blocage prime partiel": the present tool's finding blocks the install, and
+ * no partial-scan warning is emitted alongside the block.
+ */
+function partialBlockingScanner(
+  findings: string[],
+  missingTools: ('gitleaks' | 'trivy')[],
+): Scanner {
+  return {
+    scan: (_source: string) => Promise.resolve({ ok: false, findings, missingTools }),
   };
 }
 
@@ -365,6 +395,130 @@ describe('R6: force warning is byte-exact (findings joined by "; ")', () => {
     expect(result.warnings).toEqual([
       '[warning] security scan findings (installed anyway via --force): '
       + '[gitleaks] aws-access-key: token; [trivy] CVE-2024-0001: vuln',
+    ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Scenario 8a: partial presence + blocked — "blocage prime partiel" (T2).
+//
+// Only one tool is installed AND it finds something: the install still
+// blocks (fail-closed, unchanged), and — the point of this scenario — the
+// block emits ZERO partial-scan warning. Mirrors scenario 7's shape (no
+// force → throws; force → the force warning only, never the partial one).
+// ---------------------------------------------------------------------------
+
+describe('scanEntries — partial presence + blocked (blocking wins over partial)', () => {
+  it('throws ScanBlockedError when the present tool blocks, even though the other is missing', async () => {
+    await expect(
+      scanEntries({
+        entries: [SKILL_ENTRY],
+        baseDir: BASE_DIR,
+        scanner: partialBlockingScanner(
+          ['[gitleaks] aws-access-key: AWS key (config.env)'],
+          ['trivy'],
+        ),
+        force: false,
+      }),
+    ).rejects.toBeInstanceOf(ScanBlockedError);
+  });
+
+  it('emits ONLY the force warning, never a partial-scan warning, when forced through a partial-presence block', async () => {
+    const result = await scanEntries({
+      entries: [SKILL_ENTRY],
+      baseDir: BASE_DIR,
+      scanner: partialBlockingScanner(
+        ['[gitleaks] aws-access-key: AWS key (config.env)'],
+        ['trivy'],
+      ),
+      force: true,
+    });
+
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings.join(' ')).toContain('[warning] security scan findings');
+    expect(result.warnings.join(' ')).not.toMatch(/partially scanned/i);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Scenario 8b: partial presence + all-ok — names the absent tool (T2).
+//
+// Neither anyBlocked nor anyDegraded fires (the present tool ran clean), so
+// scanEntries reaches the new branch driven by verdict.missingTools. The
+// warning transits through the SAME `warnings` array as every other case
+// here — these tests read only `result.warnings`, no other surface.
+// ---------------------------------------------------------------------------
+
+describe('scanEntries — partial presence + all-ok (names the absent tool)', () => {
+  it('warns naming trivy as absent when only gitleaks ran clean', async () => {
+    const result = await scanEntries({
+      entries: [SKILL_ENTRY],
+      baseDir: BASE_DIR,
+      scanner: partialOkScanner(['trivy']),
+      force: false,
+    });
+
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings.join(' ')).toMatch(/trivy/i);
+    expect(result.warnings.join(' ')).not.toMatch(/security scan findings|content not scanned/i);
+  });
+
+  it('warns naming gitleaks as absent when only trivy ran clean (symmetric)', async () => {
+    const result = await scanEntries({
+      entries: [SKILL_ENTRY],
+      baseDir: BASE_DIR,
+      scanner: partialOkScanner(['gitleaks']),
+      force: false,
+    });
+
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings.join(' ')).toMatch(/gitleaks/i);
+    expect(result.warnings.join(' ')).not.toMatch(/security scan findings|content not scanned/i);
+  });
+
+  it('does not throw and does not need --force (all-ok, warn-only like degraded)', async () => {
+    await expect(
+      scanEntries({
+        entries: [SKILL_ENTRY],
+        baseDir: BASE_DIR,
+        scanner: partialOkScanner(['trivy']),
+        force: false,
+      }),
+    ).resolves.toBeDefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// R7 — the partial-presence warning literal, ratified at the gate, pinned
+// BYTE-FOR-BYTE (both directions).
+// ---------------------------------------------------------------------------
+
+describe('R7: partial-presence warning is byte-exact', () => {
+  it('R7a: emits exactly the trivy-missing literal', async () => {
+    const result = await scanEntries({
+      entries: [SKILL_ENTRY],
+      baseDir: BASE_DIR,
+      scanner: partialOkScanner(['trivy']),
+      force: false,
+    });
+
+    expect(result.warnings).toEqual([
+      '[warning] content partially scanned — trivy not installed (gitleaks ran); '
+      + 'install trivy then re-run for a full scan; see `rigger doctor`',
+    ]);
+  });
+
+  it('R7b: emits exactly the gitleaks-missing literal (symmetric)', async () => {
+    const result = await scanEntries({
+      entries: [SKILL_ENTRY],
+      baseDir: BASE_DIR,
+      scanner: partialOkScanner(['gitleaks']),
+      force: false,
+    });
+
+    expect(result.warnings).toEqual([
+      '[warning] content partially scanned — gitleaks not installed (trivy ran); '
+      + 'install gitleaks then re-run for a full scan; see `rigger doctor`',
     ]);
   });
 });

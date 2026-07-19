@@ -14,6 +14,10 @@
  *  - only trivy present (R5, mirror)       → clean → { ok: true }, gitleaks never invoked; misconfig → { ok: false } [trivy]
  *  - gitleaks tool error (R4)              → { ok: false } with prefixed "[gitleaks] gitleaks error: <stderr>"
  *  - neither present                       → warn-only: { ok: true, degraded: true } (ADR-0018, no fail-closed)
+ *  - only gitleaks present (partial)       → missingTools: ['trivy'] on both { ok: true } and { ok: false } outcomes
+ *  - only trivy present (partial, mirror)  → missingTools: ['gitleaks'] when clean
+ *  - both present                          → no `missingTools` property at all (key absent, not undefined)
+ *  - neither present                       → degraded: true, no `missingTools` property (distinct from partial presence)
  */
 
 import { describe, expect, it } from 'bun:test';
@@ -120,6 +124,13 @@ describe('composite — both present, both clean', () => {
     expect(verdict.ok).toBe(true);
     expect(verdict.findings).toBeUndefined();
   });
+
+  it('does not carry a missingTools property at all when both tools are present', async () => {
+    const { which, run } = makeFixtures({ gitleaksPresent: true, trivyPresent: true });
+    const scanner = createCompositeScanner({ run, which });
+    const verdict = await scanner.scan('/tmp/project');
+    expect(Object.hasOwn(verdict, 'missingTools')).toBe(false);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -215,6 +226,13 @@ describe('composite — only gitleaks present', () => {
     expect(verdict.ok).toBe(true);
   });
 
+  it('sets missingTools: ["trivy"] when gitleaks is clean and trivy is absent', async () => {
+    const { which, run } = makeFixtures({ gitleaksPresent: true, trivyPresent: false });
+    const scanner = createCompositeScanner({ run, which });
+    const verdict = await scanner.scan('/tmp/project');
+    expect(verdict.missingTools).toEqual(['trivy']);
+  });
+
   it('returns { ok: false } with [gitleaks] prefix when secret found', async () => {
     const { which, run } = makeFixtures({
       gitleaksPresent: true,
@@ -226,6 +244,19 @@ describe('composite — only gitleaks present', () => {
     const verdict = await scanner.scan('/tmp/project');
     expect(verdict.ok).toBe(false);
     expect(verdict.findings?.some((f: string) => f.startsWith('[gitleaks]'))).toBe(true);
+  });
+
+  it('also sets missingTools: ["trivy"] when a secret is found (partial presence)', async () => {
+    const { which, run } = makeFixtures({
+      gitleaksPresent: true,
+      trivyPresent: false,
+      gitleaksScanExit: 1,
+      gitleaksScanStdout: SECRET_JSON,
+    });
+    const scanner = createCompositeScanner({ run, which });
+    const verdict = await scanner.scan('/tmp/project');
+    expect(verdict.ok).toBe(false);
+    expect(verdict.missingTools).toEqual(['trivy']);
   });
 });
 
@@ -254,6 +285,14 @@ describe('composite — neither present', () => {
     const verdict = await scanner.scan('/tmp/project');
     expect(verdict.degraded).toBeUndefined();
   });
+
+  it('does not carry a missingTools property when neither tool is present (degraded, not partial)', async () => {
+    const { which, run } = makeFixtures({ gitleaksPresent: false, trivyPresent: false });
+    const scanner = createCompositeScanner({ run, which });
+    const verdict = await scanner.scan('/tmp/project');
+    expect(verdict.degraded).toBe(true);
+    expect(Object.hasOwn(verdict, 'missingTools')).toBe(false);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -275,6 +314,14 @@ describe('R5: composite — only trivy present (mirror of only-gitleaks)', () =>
     expect(verdict.ok).toBe(true);
     expect(verdict.degraded).toBeUndefined();
     expect(gitleaksInvoked).toBe(false);
+  });
+
+  it('R5: sets missingTools: ["gitleaks"] when trivy is clean and gitleaks is absent', async () => {
+    const which = makeWhich({ gitleaksPresent: false, trivyPresent: true });
+    const run = makeRunner({ trivyScanStdout: CLEAN_TRIVY });
+    const scanner = createCompositeScanner({ run, which });
+    const verdict = await scanner.scan('/tmp/project');
+    expect(verdict.missingTools).toEqual(['gitleaks']);
   });
 
   it('R5: returns { ok: false } with a [trivy] prefix when trivy finds a misconfig', async () => {

@@ -211,7 +211,11 @@ function pruneSatisfiedRequires(
  *   is NOT needed (ADR-0018).
  * - !ok (real findings, scanner present) and force is false → throws ScanBlockedError.
  * - !ok and force is true → returns { warnings: [...], verdict }.
- * - all ok and not degraded → returns { warnings: [], verdict }.
+ * - all ok, not degraded, and verdict.missingTools names exactly one absent tool
+ *   (partial presence, T2) → actionable warning naming the absent tool, install
+ *   proceeds. Checked AFTER anyBlocked/anyDegraded, so a blocking or degraded
+ *   verdict never also emits this warning (blocking prime partiel).
+ * - all ok and not degraded and no partial presence → returns { warnings: [], verdict }.
  *
  * Callers prepend the warnings to their output, and thread `constantScanner(verdict)`
  * to the adapter's apply-time re-check under !force (design.md § Le seam de couplage).
@@ -276,6 +280,25 @@ export async function scanEntries(opts: {
     return {
       warnings: [
         '[warning] content not scanned — install gitleaks or trivy then re-run for a full scan; see `rigger doctor`',
+      ],
+      verdict,
+    };
+  }
+
+  // Partial presence (ADR-0018 additive signal, T1/T2): all-ok, but exactly
+  // one of gitleaks/trivy is installed (composite.ts). Only reached once
+  // anyBlocked/anyDegraded above have both fallen through — blocking always
+  // wins over a partial warning (fail-closed prime partiel), so a present
+  // tool's finding never reaches this branch. `noUncheckedIndexedAccess`
+  // means an index read stays `T | undefined` even after the length check,
+  // hence the guarded destructure below rather than `missingTools[0]` inline.
+  const missingTool = verdict.missingTools?.length === 1 ? verdict.missingTools[0] : undefined;
+  if (missingTool !== undefined) {
+    const presentTool = missingTool === 'gitleaks' ? 'trivy' : 'gitleaks';
+    return {
+      warnings: [
+        `[warning] content partially scanned — ${missingTool} not installed (${presentTool} ran); `
+        + `install ${missingTool} then re-run for a full scan; see \`rigger doctor\``,
       ],
       verdict,
     };
