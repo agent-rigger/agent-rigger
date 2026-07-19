@@ -276,14 +276,14 @@ Register the local catalog by path and install the guardrail by its
 [qualified id](/reference/glossary/#qualified-id), accepting the plan with `--yes`:
 
 ```sh
-agent-rigger catalog add cltest /path/to/your-catalog
-agent-rigger install cltest/guardrail:no-force-push --yes
+rigger catalog add cltest /path/to/your-catalog
+rigger install cltest/guardrail:no-force-push --yes
 ```
 
 Confirm it is enforced:
 
 ```sh
-agent-rigger check
+rigger check
 ```
 
 ```
@@ -295,7 +295,7 @@ agent-rigger check
 
 To exercise an opencode guardrail, drive the install for that assistant with `--assistant opencode`;
 its check reports under `guardrails-opencode`. In any non-interactive session (CI, the sandbox loop
-above), always name the id and pass `--yes`: a bare `agent-rigger install` with no id and no TTY has
+above), always name the id and pass `--yes`: a bare `rigger install` with no id and no TTY has
 nothing to select and cannot proceed (see [CI and scripts](/guides/ci-and-scripts/)).
 
 Erase the sandbox when done; your catalog repository stays put:

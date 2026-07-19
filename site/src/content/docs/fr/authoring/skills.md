@@ -139,7 +139,7 @@ requis et sélectionne toutes les entrées que la source propose. Sans lui, l'ex
 avant de toucher le réseau :
 
 ```sh
-agent-rigger install /path/to/your-catalog --yes
+rigger install /path/to/your-catalog --yes
 ```
 
 ```

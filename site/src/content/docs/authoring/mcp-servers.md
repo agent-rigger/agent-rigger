@@ -189,7 +189,7 @@ so pass [`--secret-env`](/reference/glossary/#secret-env) too:
 
 ```sh
 export MY_GH_PAT=ghp_your_token
-agent-rigger install /path/to/your-catalog --secret-env=GITHUB_PERSONAL_ACCESS_TOKEN=MY_GH_PAT --yes
+rigger install /path/to/your-catalog --secret-env=GITHUB_PERSONAL_ACCESS_TOKEN=MY_GH_PAT --yes
 ```
 
 ```

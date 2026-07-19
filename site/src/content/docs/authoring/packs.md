@@ -118,7 +118,7 @@ share.
 
 ## What the installer sees
 
-To the person installing, a pack is a **grouped selection**. `agent-rigger ls` marks it as a pack
+To the person installing, a pack is a **grouped selection**. `rigger ls` marks it as a pack
 and counts its members rather than listing a nature:
 
 ```
@@ -165,14 +165,14 @@ Author a pack the way you author any entry: edit `catalog.json`, install it agai
 so nothing touches your real `~/.claude`, read the plan, then tag a release. Two paths install from
 your working copy without a `catalog add` round-trip:
 
-- Register the folder once under a local name and iterate: `agent-rigger catalog add myteam
-  "$(pwd)"`, then `agent-rigger install myteam/pack:demo --yes`. The
+- Register the folder once under a local name and iterate: `rigger catalog add myteam
+  "$(pwd)"`, then `rigger install myteam/pack:demo --yes`. The
   [sandbox setup](/authoring/create-a-catalog/#work-against-a-disposable-sandbox) shows the
   `RIGGER_HOME` throwaway home this relies on.
 - Or install the local path directly, no registration: see
   [install from a URL or local path](/guides/ad-hoc-install/).
 
-Always pass explicit ids and `--yes` in a non-interactive shell: `agent-rigger install` with no id
+Always pass explicit ids and `--yes` in a non-interactive shell: `rigger install` with no id
 in a script has no picker to fall back to and no plan to confirm. Resolve the pack once against the
 sandbox, confirm the plan lists every member you expect and no `Unknown catalog entry` error, then
 cut the version tag your team pins to.

@@ -46,7 +46,7 @@ rigger doctor
 ```
 
 ```
---- agent-rigger doctor ---
+--- rigger doctor ---
 
 ✓ git (/opt/homebrew/bin/git)
 ✓ glab (/opt/homebrew/bin/glab)
@@ -69,7 +69,7 @@ Enregistrez le catalog d'exemple public sous un nom local, `example`. Une URL gi
 fait office de source (un chemin local aussi) :
 
 ```sh
-agent-rigger catalog add example https://github.com/agent-rigger/agent-rigger-catalog-example.git
+rigger catalog add example https://github.com/agent-rigger/agent-rigger-catalog-example.git
 ```
 
 ```
@@ -77,14 +77,14 @@ catalog "example" added (https://github.com/agent-rigger/agent-rigger-catalog-ex
 ```
 
 La source est désormais enregistrée dans votre config. Confirmez-le avec
-`agent-rigger catalog ls`, qui liste chaque catalog configuré sous la forme `name  url`.
+`rigger catalog ls`, qui liste chaque catalog configuré sous la forme `name  url`.
 
 ## Étape 3 — voir ce qui est disponible
 
 Listez les entrées du catalog :
 
 ```sh
-agent-rigger ls
+rigger ls
 ```
 
 ```
@@ -111,7 +111,7 @@ Installez `example/pack:demo`, qui regroupe le skill `hello-rigger` et le sous-a
 `demo`. Passer `--yes` accepte le plan sans invite interactive :
 
 ```sh
-agent-rigger install example/pack:demo --yes
+rigger install example/pack:demo --yes
 ```
 
 ```
@@ -145,7 +145,7 @@ fichiers qu'il a réellement écrits.
 Lancez `check` pour confirmer que tout est correctement en place :
 
 ```sh
-agent-rigger check
+rigger check
 ```
 
 ```
@@ -186,7 +186,7 @@ chaque install a écrit ; le même relevé contre lequel `check` audite et que `
 
 ## Le chemin interactif
 
-Vous avez tout lancé de façon non-interactive. Lancez `agent-rigger install` sans id et,
+Vous avez tout lancé de façon non-interactive. Lancez `rigger install` sans id et,
 dans un vrai terminal, rigger demande quel scope utiliser et montre à la place une liste
 cochable :
 
@@ -198,7 +198,7 @@ Select installation scope:
 Select artifacts to install / update (Space on a group header toggles the whole group):
 ```
 
-Le parcours guidé de premier lancement, `agent-rigger init`, est interactif lui aussi. Il demande
+Le parcours guidé de premier lancement, `rigger init`, est interactif lui aussi. Il demande
 le catalog de votre équipe et comment s'y authentifier :
 
 ```

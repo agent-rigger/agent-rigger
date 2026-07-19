@@ -37,9 +37,18 @@ class AgentRigger < Formula
 
   def install
     # Each platform downloads exactly one bare binary named agent-rigger-<os>-<arch>.
-    # Install it under the canonical name and expose the short `rigger` alias.
+    # Install it under its distribution name and expose the canonical `rigger`
+    # command as a symlink (pattern: distribution agent-rigger, command rigger).
     bin.install Dir["agent-rigger-*"].first => "agent-rigger"
     bin.install_symlink "agent-rigger" => "rigger"
+  end
+
+  def caveats
+    <<~EOS
+      The canonical command is `rigger`:
+        rigger --help
+      The `agent-rigger` name remains available as a compatibility alias.
+    EOS
   end
 
   test do

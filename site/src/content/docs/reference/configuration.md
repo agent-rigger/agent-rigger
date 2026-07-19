@@ -43,9 +43,14 @@ and then pretty-prints the JSON:
 }
 ```
 
-The header comment's `rigger config set` is not a delivered command: there is no `config` verb in the
-CLI today, and running `rigger config set` prints `Unknown command: "config"` and exits
-[`2`](/reference/exit-codes/). Edit the file directly until that command lands.
+The header comment's `rigger config set <key> <value>` is a delivered command. Only the `set` verb
+exists (no get/list/unset), and it validates before writing: settable keys are `defaultScope`
+(`user` | `project`), `authMethod` (`provider-cli` | `https` | `ssh`) and `assistants`
+(comma-separated list of known assistants). `catalogs` is deliberately not settable — it is managed
+by `rigger catalog add` / `rigger catalog remove`, and `config set catalogs` says so. An unknown
+key or out-of-enum value prints an actionable `[error]` and exits [`2`](/reference/exit-codes/)
+without touching the file; a successful write prints `config: <key> set to "<value>"` with the
+target path. Editing the file directly remains supported.
 
 ### Fields
 

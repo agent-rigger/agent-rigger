@@ -151,7 +151,7 @@ absolu. Un chemin local est une source valide, exactement comme une URL git dist
 tout aller-retour réseau pendant que vous itérez :
 
 ```sh
-agent-rigger catalog add myteam "$(pwd)"
+rigger catalog add myteam "$(pwd)"
 ```
 
 ```
@@ -161,7 +161,7 @@ catalog "myteam" added (/home/you/my-first-catalog)
 Listez ce que le catalog propose désormais :
 
 ```sh
-agent-rigger ls
+rigger ls
 ```
 
 ```
@@ -176,7 +176,7 @@ que vous avez employé le même mot pour les deux, comme le recommande la conven
 signifie qu'il est connu mais pas encore installé. Installez-le, en acceptant le plan sans invite :
 
 ```sh
-agent-rigger install myteam/skill:commit-style --yes
+rigger install myteam/skill:commit-style --yes
 ```
 
 ```
@@ -201,7 +201,7 @@ vers un [store](/fr/reference/glossary/#store) managé, le mécanisme même qu'u
 installé. Vérifiez que l'install est saine :
 
 ```sh
-agent-rigger check
+rigger check
 ```
 
 ```
@@ -217,7 +217,7 @@ L'étape suivante lui donne une vraie version à résoudre à la place.
 Lancez `ls` sur un catalog sans aucun commit et l'outil ne peut pas le lire :
 
 ```
-[warning] Catalog "myteam" (/home/you/my-first-catalog) unavailable (HEAD not found: ls-remote HEAD returned empty output). Check the URL or run `agent-rigger init`.
+[warning] Catalog "myteam" (/home/you/my-first-catalog) unavailable (HEAD not found: ls-remote HEAD returned empty output). Check the URL or run `rigger init`.
 ```
 
 Un dépôt vide n'a rien à récupérer. Un seul commit règle le problème.
@@ -236,7 +236,7 @@ L'outil résout un catalog vers son [tag](/fr/reference/glossary/#tag)
 revérifiez :
 
 ```sh
-agent-rigger update --yes
+rigger update --yes
 ```
 
 ```
@@ -248,7 +248,7 @@ aucun contenu ne change donc ; seul le label vers lequel l'outil résout le cata
 brut à `v0.1.0`. Le prochain `check` en est la vraie preuve :
 
 ```sh
-agent-rigger check
+rigger check
 ```
 
 ```
@@ -264,7 +264,7 @@ une release que toute l'équipe peut épingler.
 Un catalog peut orienter ses membres vers les bons choix. Lister un id dans
 [`meta.recommended`](/fr/reference/glossary/#recommended) le pré-coche dans le sélecteur de
 proposition qu'un coéquipier voit la première fois qu'il branche votre catalog : quand il lance
-`agent-rigger init` ou `agent-rigger catalog add`. L'id arrive déjà sélectionné, et il peut toujours
+`rigger init` ou `rigger catalog add`. L'id arrive déjà sélectionné, et il peut toujours
 le décocher. Ajoutez le champ, puis committez et taggez une nouvelle release :
 
 ```sh ins={5}
@@ -294,7 +294,7 @@ Le changement n'est réel pour l'équipe qu'une fois publié en release. Lancez 
 regardez l'outil dépasser `v0.1.0` pour aller au tag supérieur :
 
 ```sh
-agent-rigger update --yes
+rigger update --yes
 ```
 
 ```
@@ -314,7 +314,7 @@ Select artifacts to install (required items are always included):
 Les ids recommandés arrivent cochés, et le coéquipier reste libre de les décocher ; les ids listés sous `required`
 (ce catalog n'en déclare aucun) ne peuvent pas être décochés. Lancer l'une ou l'autre commande avec
 `--yes` saute entièrement le sélecteur et installe les required plus les recommended sans rien
-demander. L'opinion atteint aussi `agent-rigger install` tout court : son sélecteur différent, fondé
+demander. L'opinion atteint aussi `rigger install` tout court : son sélecteur différent, fondé
 sur le statut, pré-coche uniquement `required` plus `recommended` dans le groupe « À installer » dès
 qu'un catalog en déclare, laissant le reste de ce groupe listé mais décoché ; un catalog sans opinion
 garde tout le groupe pré-coché, comme avant. La forme complète de `meta` est dans la
@@ -334,7 +334,7 @@ unset RIGGER_HOME
 
 Vous avez maintenant un catalog versionné avec un skill recommandé. Pour le mettre entre les mains de
 votre équipe, poussez le dépôt vers un hébergeur git. L'URL vers laquelle vous poussez est exactement
-ce qu'un coéquipier passe à `agent-rigger init` ou `agent-rigger catalog add <name> <url>` : le
+ce qu'un coéquipier passe à `rigger init` ou `rigger catalog add <name> <url>` : le
 chemin local que vous avez utilisé ici devient une URL distante, et rien d'autre ne change.
 
 - La forme complète, champ par champ, de `catalog.json` (packs, tools et entrées mcp compris) est

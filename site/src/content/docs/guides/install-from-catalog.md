@@ -23,7 +23,7 @@ _What a run does between your command and the manifest, and the two exits a deci
 Run install with no ids:
 
 ```
-agent-rigger install
+rigger install
 ```
 
 It asks for the [scope](/reference/glossary/#scope) (unless you passed `--scope`), then shows a
@@ -44,7 +44,7 @@ then approve it to write. When every entry is already current for the chosen sco
 the picker and tells you so:
 
 ```
-✓ Everything already up-to-date for scope "user" (N artifact(s) installed). Use `agent-rigger remove` to uninstall.
+✓ Everything already up-to-date for scope "user" (N artifact(s) installed). Use `rigger remove` to uninstall.
 ```
 
 A [pack](/reference/glossary/#pack) itself is never recorded as installed — it expands into its
@@ -53,7 +53,7 @@ is, `To update` when one has drifted, `To install` when one is missing. A pack m
 [tools](/reference/glossary/#tool) is the exception: tool installs aren't tracked yet, so that row
 keeps showing "To install" regardless.
 
-![Terminal recording of `agent-rigger install` with no ids against the jr catalog. It asks "Select installation scope:" and the user keeps the default, user (~/.claude/). A grouped picker "Select artifacts to install / update (Space on a group header toggles the whole group):" opens with a single "To install" group: the catalog's required pack (pack:secu) and recommended pack (pack:baseline) start checked while every other entry starts unchecked — the B4 fix. The user arrows down and checks a single entry, agent:tdd-coach, with Space, then arrows down to pack:secu and pack:baseline and unchecks both — overriding the catalog's opinion. Enter submits the selection. "Apply the following plan?" shows a one-change plan installing jr/agent:tdd-coach to ~/.claude/agents/tdd-coach.md; the user confirms by pressing y. The run ends with the --- Plan --- and --- Result --- sections and "&#91;ok&#93; Applied 1 file(s)."](../../../assets/recordings/install-picker.gif)
+![Terminal recording of `rigger install` with no ids against the jr catalog. It asks "Select installation scope:" and the user keeps the default, user (~/.claude/). A grouped picker "Select artifacts to install / update (Space on a group header toggles the whole group):" opens with a single "To install" group: the catalog's required pack (pack:secu) and recommended pack (pack:baseline) start checked while every other entry starts unchecked — the B4 fix. The user arrows down and checks a single entry, agent:tdd-coach, with Space, then arrows down to pack:secu and pack:baseline and unchecks both — overriding the catalog's opinion. Enter submits the selection. "Apply the following plan?" shows a one-change plan installing jr/agent:tdd-coach to ~/.claude/agents/tdd-coach.md; the user confirms by pressing y. The run ends with the --- Plan --- and --- Result --- sections and "&#91;ok&#93; Applied 1 file(s)."](../../../assets/recordings/install-picker.gif)
 
 _The interactive install picker: scope choice, the catalog's required and recommended entries pre-checked, then a manual override and apply. <small>Generated from docs/tapes/install-picker.tape, 2026-07-14.</small>_
 
@@ -63,10 +63,10 @@ When you already know what you want, pass [qualified ids](/reference/glossary/#q
 form `<catalog>/<nature>:<name>`:
 
 ```
-agent-rigger install example/skill:hello-rigger example/agent:demo --yes
+rigger install example/skill:hello-rigger example/agent:demo --yes
 ```
 
-`--yes` skips the confirmation prompt. Find the exact ids with `agent-rigger ls`, whose first column
+`--yes` skips the confirmation prompt. Find the exact ids with `rigger ls`, whose first column
 is the qualified id:
 
 ```
@@ -80,13 +80,13 @@ Catalog (7 entries):
 A bare id is rejected before any network access:
 
 ```
-[error] unqualified id "skill:hello-rigger" — use `<catalog>/skill:hello-rigger` (see `agent-rigger ls`)
+[error] unqualified id "skill:hello-rigger" — use `<catalog>/skill:hello-rigger` (see `rigger ls`)
 ```
 
 So is a prefix that names no configured catalog:
 
 ```
-[error] catalog "<prefix>" not configured — see `agent-rigger catalog ls`
+[error] catalog "<prefix>" not configured — see `rigger catalog ls`
 ```
 
 Without `--yes`, the command shows the plan and waits for your confirmation:

@@ -6,8 +6,8 @@ description: Met à jour les artifacts installés vers leur dernière version di
 ## Synopsis
 
 ```
-agent-rigger update [<id>...] [--yes] [--force] [--scope=<user|project>] [--assistant=<claude|opencode>]
-agent-rigger <resource> update <id>... [--yes] [--force]
+rigger update [<id>...] [--yes] [--force] [--scope=<user|project>] [--assistant=<claude|opencode>]
+rigger <resource> update <id>... [--yes] [--force]
 ```
 
 Met à jour les artifacts installés vers leur dernière version distante en les re-récupérant depuis
@@ -77,7 +77,7 @@ Sans catalog configuré, update affiche `[error] No catalog URL configured.` et 
 ## Exemple
 
 ```
-agent-rigger update team/skill:spec-workflow --yes
+rigger update team/skill:spec-workflow --yes
 ```
 
 Voir [codes de sortie](/fr/reference/exit-codes) pour le contrat partagé.

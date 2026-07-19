@@ -6,7 +6,7 @@ description: La grammaire <resource> <verb>, un front-end typé par nature au-de
 ## Synopsis
 
 ```
-agent-rigger <resource> <verb> [<id>...] [options]
+rigger <resource> <verb> [<id>...] [options]
 ```
 
 Une seconde grammaire cible une seule [nature](/fr/reference/glossary/#nature) à la fois. Le
@@ -46,7 +46,7 @@ Les formes au singulier et au pluriel sont équivalentes :
 non qualifié est rejeté :
 
 ```
-[error] unqualified id "<id>" — use `<catalog>/<id>` (see `agent-rigger ls`)
+[error] unqualified id "<id>" — use `<catalog>/<id>` (see `rigger ls`)
 ```
 
 Un id dont la nature ne correspond pas à la resource est rejeté avec `[error] id "<id>" is not a
@@ -75,5 +75,5 @@ Voir [codes de sortie](/fr/reference/exit-codes) pour le contrat partagé.
 ## Exemple
 
 ```
-agent-rigger guardrails add team/guardrail:no-force-push --yes
+rigger guardrails add team/guardrail:no-force-push --yes
 ```

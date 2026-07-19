@@ -6,8 +6,8 @@ description: Désinstalle hors ligne les artifacts enregistrés au manifest, en 
 ## Synopsis
 
 ```
-agent-rigger remove <id>... [--yes] [--scope=<user|project>] [--assistant=<claude|opencode>]
-agent-rigger <resource> remove <id>...
+rigger remove <id>... [--yes] [--scope=<user|project>] [--assistant=<claude|opencode>]
+rigger <resource> remove <id>...
 ```
 
 Désinstalle les artifacts enregistrés dans le [manifest](/fr/reference/glossary/#manifest). L'opération
@@ -83,7 +83,7 @@ installed.` quand le manifest est vide).
 ## Exemple
 
 ```
-agent-rigger remove team/skill:spec-workflow
+rigger remove team/skill:spec-workflow
 ```
 
 Voir [codes de sortie](/fr/reference/exit-codes) pour le contrat partagé.

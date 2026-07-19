@@ -9,14 +9,15 @@ page fixes those shared rules. Per-command detail lives on each command's own pa
 
 ## Two binaries
 
-The tool ships as two binaries with identical behaviour: `agent-rigger` and the shorter `rigger`.
-Every example here uses `agent-rigger`; substitute `rigger` freely.
+The tool ships as two binaries with identical behaviour: the canonical `rigger` command and the
+`agent-rigger` distribution name. Every example here uses `rigger`; `agent-rigger` works
+identically as a compatibility alias.
 
 ## Grammar
 
 ```
-agent-rigger <command> [options]
-agent-rigger <resource> <verb> [args] [options]
+rigger <command> [options]
+rigger <resource> <verb> [args] [options]
 ```
 
 The first non-flag token is the command. When that token is a known resource, the second non-flag
@@ -24,7 +25,7 @@ token is a verb and the rest are its arguments.
 
 Resources: `skill` `agent` `guardrail` `context` `plugin` `hook` `tool` `pack` (each also accepts
 its plural), plus `catalog`. Verbs: `ls` `add` `info` `check` `remove` `update`. For example,
-`agent-rigger guardrails add jr/guardrail:claude` is the resource form of an install restricted to
+`rigger guardrails add jr/guardrail:claude` is the resource form of an install restricted to
 the `guardrail` [nature](/reference/glossary/#nature).
 
 ## Global flags

@@ -80,7 +80,7 @@ rigger doctor
 ```
 
 ```
---- agent-rigger doctor ---
+--- rigger doctor ---
 
 ✓ git (/opt/homebrew/bin/git)
 ✓ glab (/opt/homebrew/bin/glab)

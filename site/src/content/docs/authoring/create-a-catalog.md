@@ -147,7 +147,7 @@ path is a valid source, exactly like a remote git URL, and it means zero network
 you iterate:
 
 ```sh
-agent-rigger catalog add myteam "$(pwd)"
+rigger catalog add myteam "$(pwd)"
 ```
 
 ```
@@ -157,7 +157,7 @@ catalog "myteam" added (/home/you/my-first-catalog)
 List what the catalog now offers:
 
 ```sh
-agent-rigger ls
+rigger ls
 ```
 
 ```
@@ -171,7 +171,7 @@ under (`catalog add myteam …`); it matches `meta.name` here only because you u
 both, as the convention recommends. `[available]` means it is known but not yet installed. Install it, accepting the plan without a prompt:
 
 ```sh
-agent-rigger install myteam/skill:commit-style --yes
+rigger install myteam/skill:commit-style --yes
 ```
 
 ```
@@ -195,7 +195,7 @@ real home. Your skill installed as a link into a managed [store](/reference/glos
 same mechanism every installed skill uses. Confirm the install is sound:
 
 ```sh
-agent-rigger check
+rigger check
 ```
 
 ```
@@ -211,7 +211,7 @@ version to resolve instead.
 Run `ls` on a catalog with no commits and the tool cannot read it:
 
 ```
-[warning] Catalog "myteam" (/home/you/my-first-catalog) unavailable (HEAD not found: ls-remote HEAD returned empty output). Check the URL or run `agent-rigger init`.
+[warning] Catalog "myteam" (/home/you/my-first-catalog) unavailable (HEAD not found: ls-remote HEAD returned empty output). Check the URL or run `rigger init`.
 ```
 
 An empty repository has nothing to fetch. One commit fixes it.
@@ -229,7 +229,7 @@ The tool resolves a catalog to its highest [semver](/reference/glossary/#semver)
 [tag](/reference/glossary/#tag). Move your install onto that tag and re-check:
 
 ```sh
-agent-rigger update --yes
+rigger update --yes
 ```
 
 ```
@@ -241,7 +241,7 @@ content changes — only the label the tool resolves to moves from a raw sha to 
 `check` is the real proof:
 
 ```sh
-agent-rigger check
+rigger check
 ```
 
 ```
@@ -256,8 +256,8 @@ whole team can pin to.
 
 A catalog can nudge its members toward the right choices. Listing an id in
 [`meta.recommended`](/reference/glossary/#recommended) pre-checks it in the proposal picker a
-teammate sees the first time they wire up your catalog — when they run `agent-rigger init` or
-`agent-rigger catalog add`. The id arrives already selected, and they can still uncheck it. Add the
+teammate sees the first time they wire up your catalog — when they run `rigger init` or
+`rigger catalog add`. The id arrives already selected, and they can still uncheck it. Add the
 field, then commit and tag a new release:
 
 ```sh ins={5}
@@ -287,7 +287,7 @@ The change is only real for the team once it is a release. Run `update`, and wat
 past `v0.1.0` for the higher tag:
 
 ```sh
-agent-rigger update --yes
+rigger update --yes
 ```
 
 ```
@@ -306,7 +306,7 @@ Select artifacts to install (required items are always included):
 
 Recommended ids arrive checked and are theirs to uncheck; ids listed under `required` (this catalog
 declares none) cannot be unchecked. Running either command with `--yes` skips the picker entirely
-and installs required plus recommended without asking. The opinion reaches plain `agent-rigger
+and installs required plus recommended without asking. The opinion reaches plain `rigger
 install` too: its different, status-based picker pre-checks only `required` plus `recommended` in
 the "To install" group once a catalog declares one, leaving the rest of that group listed but
 unchecked; a catalog with no opinion keeps the whole group pre-checked, as before. The full `meta`
@@ -325,7 +325,7 @@ unset RIGGER_HOME
 
 You now have a versioned catalog with one recommended skill. To put it in your team's hands, push
 the repository to a git host. The URL you push to is exactly what a teammate passes to
-`agent-rigger init` or `agent-rigger catalog add <name> <url>`: the local path you used here becomes
+`rigger init` or `rigger catalog add <name> <url>`: the local path you used here becomes
 a remote URL, and nothing else changes.
 
 - The full field-by-field shape of `catalog.json`, including packs, tools, and mcp entries, is in

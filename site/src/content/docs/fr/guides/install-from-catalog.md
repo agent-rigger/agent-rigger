@@ -23,7 +23,7 @@ _Ce qu'un passage fait entre votre commande et le manifest, et les deux sorties 
 Lancez install sans id :
 
 ```
-agent-rigger install
+rigger install
 ```
 
 La commande demande le [scope](/fr/reference/glossary/#scope) (sauf si vous avez passé `--scope`),
@@ -45,7 +45,7 @@ dans « À installer » quelle que soit l'opinion du catalog. Confirmez votre s�
 déjà à jour pour le scope choisi, install saute le sélecteur et vous le signale :
 
 ```
-✓ Everything already up-to-date for scope "user" (N artifact(s) installed). Use `agent-rigger remove` to uninstall.
+✓ Everything already up-to-date for scope "user" (N artifact(s) installed). Use `rigger remove` to uninstall.
 ```
 
 Un [pack](/fr/reference/glossary/#pack) lui-même n'est jamais enregistré comme installé : il se
@@ -54,7 +54,7 @@ chacun d'eux l'est, « À mettre à jour » quand l'un a divergé, « À install
 Exception : un pack composé uniquement de [tools](/fr/reference/glossary/#tool), dont l'install n'est
 pas encore trackée : sa ligne reste « À installer » quoi qu'il arrive.
 
-![Enregistrement terminal de `agent-rigger install` sans id sur le catalog jr. La commande demande « Select installation scope: » et l'utilisateur garde le défaut, user (~/.claude/). Un sélecteur groupé « Select artifacts to install / update (Space on a group header toggles the whole group): » s'ouvre avec un seul groupe « To install » : le pack required du catalog (pack:secu) et le pack recommended (pack:baseline) démarrent cochés tandis que toutes les autres entrées démarrent décochées — le correctif B4. L'utilisateur descend avec les flèches et coche une seule entrée, agent:tdd-coach, avec Espace, puis descend jusqu'à pack:secu et pack:baseline et les décoche tous les deux — passant outre l'opinion du catalog. Entrée valide la sélection. « Apply the following plan? » affiche un plan à un seul changement installant jr/agent:tdd-coach dans ~/.claude/agents/tdd-coach.md ; l'utilisateur confirme en tapant y. Le passage se termine sur les sections --- Plan --- et --- Result --- et « &#91;ok&#93; Applied 1 file(s). »](../../../../assets/recordings/install-picker.gif)
+![Enregistrement terminal de `rigger install` sans id sur le catalog jr. La commande demande « Select installation scope: » et l'utilisateur garde le défaut, user (~/.claude/). Un sélecteur groupé « Select artifacts to install / update (Space on a group header toggles the whole group): » s'ouvre avec un seul groupe « To install » : le pack required du catalog (pack:secu) et le pack recommended (pack:baseline) démarrent cochés tandis que toutes les autres entrées démarrent décochées — le correctif B4. L'utilisateur descend avec les flèches et coche une seule entrée, agent:tdd-coach, avec Espace, puis descend jusqu'à pack:secu et pack:baseline et les décoche tous les deux — passant outre l'opinion du catalog. Entrée valide la sélection. « Apply the following plan? » affiche un plan à un seul changement installant jr/agent:tdd-coach dans ~/.claude/agents/tdd-coach.md ; l'utilisateur confirme en tapant y. Le passage se termine sur les sections --- Plan --- et --- Result --- et « &#91;ok&#93; Applied 1 file(s). »](../../../../assets/recordings/install-picker.gif)
 
 _Le sélecteur d'install interactif : choix du scope, les entrées required et recommended du catalog pré-cochées, puis un override manuel et application. <small>Généré depuis docs/tapes/install-picker.tape, 2026-07-14.</small>_
 
@@ -64,10 +64,10 @@ Quand vous savez déjà ce que vous voulez, passez des [qualified ids](/fr/refer
 de la forme `<catalog>/<nature>:<name>` :
 
 ```
-agent-rigger install example/skill:hello-rigger example/agent:demo --yes
+rigger install example/skill:hello-rigger example/agent:demo --yes
 ```
 
-`--yes` saute l'invite de confirmation. Trouvez les ids exacts avec `agent-rigger ls`, dont la
+`--yes` saute l'invite de confirmation. Trouvez les ids exacts avec `rigger ls`, dont la
 première colonne est le qualified id :
 
 ```
@@ -81,13 +81,13 @@ Catalog (7 entries):
 Un id nu est rejeté avant tout accès réseau :
 
 ```
-[error] unqualified id "skill:hello-rigger" — use `<catalog>/skill:hello-rigger` (see `agent-rigger ls`)
+[error] unqualified id "skill:hello-rigger" — use `<catalog>/skill:hello-rigger` (see `rigger ls`)
 ```
 
 De même pour un préfixe qui ne désigne aucun catalog configuré :
 
 ```
-[error] catalog "<prefix>" not configured — see `agent-rigger catalog ls`
+[error] catalog "<prefix>" not configured — see `rigger catalog ls`
 ```
 
 Sans `--yes`, la commande affiche le plan et attend votre confirmation :

@@ -108,7 +108,7 @@ sandbox (a catalog registered locally as `example`), installing by a
 [qualified id](/reference/glossary/#qualified-id):
 
 ```sh
-agent-rigger install example/hook:demo --yes
+rigger install example/hook:demo --yes
 ```
 
 ```
@@ -200,8 +200,8 @@ you can iterate entirely offline. Register your catalog folder, install by id, t
 
 ```sh
 export RIGGER_HOME="$(mktemp -d)"
-agent-rigger catalog add mycat "$(pwd)"
-agent-rigger install mycat/hook:demo --yes
+rigger catalog add mycat "$(pwd)"
+rigger install mycat/hook:demo --yes
 cat "$RIGGER_HOME/.claude/settings.json"
 ```
 

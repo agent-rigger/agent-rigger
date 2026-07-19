@@ -6,9 +6,9 @@ description: "Gère les sources de catalog configurées : liste, ajoute et retir
 ## Synopsis
 
 ```
-agent-rigger catalog ls
-agent-rigger catalog add <name> <url>
-agent-rigger catalog remove <name>
+rigger catalog ls
+rigger catalog add <name> <url>
+rigger catalog remove <name>
 ```
 
 Gère les sources de [catalog](/fr/reference/glossary/#catalog) configurées : la liste des catalogs
@@ -29,7 +29,7 @@ supprime jamais d'artifacts. Chaque source est un nom associé à une url git.
 Liste chaque source configurée sous la forme `<name>  <url>`. Sans aucune configurée, il affiche :
 
 ```
-no catalog configured — run `agent-rigger init` or `catalog add <name> <url>`
+no catalog configured — run `rigger init` or `catalog add <name> <url>`
 ```
 
 ### catalog add
@@ -68,7 +68,7 @@ suivi de l'usage.
 ## Exemple
 
 ```
-agent-rigger catalog add team https://gitlab.com/acme/rig-catalog.git
+rigger catalog add team https://gitlab.com/acme/rig-catalog.git
 ```
 
 Voir [codes de sortie](/fr/reference/exit-codes) pour le contrat partagé.

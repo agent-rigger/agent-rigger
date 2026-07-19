@@ -109,7 +109,7 @@ avec moins de garanties.
 Deux commandes confirment une installation fonctionnelle. D'abord, la version :
 
 ```sh
-agent-rigger --version
+rigger --version
 ```
 
 Une install Homebrew ou de release affiche la version publiée ; un build depuis les sources
@@ -126,7 +126,7 @@ rigger doctor
 Un poste où les scanners sont installés indique le mode full scan :
 
 ```
---- agent-rigger doctor ---
+--- rigger doctor ---
 
 ✓ git (/opt/homebrew/bin/git)
 ✓ glab (/opt/homebrew/bin/glab)

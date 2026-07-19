@@ -14,7 +14,7 @@ and drops a source again. For a first run end to end, see
 A source is a name paired with a git url. Add one with `catalog add`:
 
 ```
-agent-rigger catalog add team https://github.com/agent-rigger/agent-rigger-catalog-example.git
+rigger catalog add team https://github.com/agent-rigger/agent-rigger-catalog-example.git
 ```
 
 ```
@@ -36,7 +36,7 @@ source is simply saved.
 
 ## See the combined view
 
-`agent-rigger ls` fetches every configured source and shows them as one
+`rigger ls` fetches every configured source and shows them as one
 [effective catalog](/reference/glossary/#effective-catalog). Each row's first column is the
 qualified id, prefixed with the source it came from:
 
@@ -59,7 +59,7 @@ see the [`ls` reference](/reference/cli/ls/).
 work across catalogs by prefix in a single command:
 
 ```
-agent-rigger install example/skill:hello-rigger team/agent:demo --yes
+rigger install example/skill:hello-rigger team/agent:demo --yes
 ```
 
 A bare, unqualified id is rejected before any network access, and so is a prefix that names no
@@ -102,7 +102,7 @@ about that source and carry on with the rest, rather than failing outright:
 ```
 [warning] Catalog "broken" (https://github.com/acme/does-not-exist.git) unavailable (remote: Repository not found.
 fatal: repository 'https://github.com/acme/does-not-exist.git/' not found
-). Check the URL or run `agent-rigger init`.
+). Check the URL or run `rigger init`.
 Catalog (7 entries):
   [available]  example/skill:hello-rigger  skill
 ```
@@ -114,7 +114,7 @@ Fix the url with `catalog remove` then `catalog add`, or leave it if the outage 
 Drop a source by name:
 
 ```
-agent-rigger catalog remove team
+rigger catalog remove team
 ```
 
 ```

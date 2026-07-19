@@ -250,8 +250,8 @@ URL is in [install from a URL or local path](/guides/ad-hoc-install/).
 To see both mechanisms, install once per assistant and read the files back:
 
 ```sh
-agent-rigger install myteam/agent:reviewer --yes
-agent-rigger install myteam/agent:reviewer --assistant opencode --yes
+rigger install myteam/agent:reviewer --yes
+rigger install myteam/agent:reviewer --assistant opencode --yes
 ```
 
 The `--yes` is not optional in a script. Both commands above already pass explicit ids; in a

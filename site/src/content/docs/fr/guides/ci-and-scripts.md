@@ -47,10 +47,10 @@ indicatives catalog et update ne changent jamais le code. Un verrou qui fait éc
 drift :
 
 ```sh {4}
-agent-rigger check
+rigger check
 case $? in
   0) echo "harness in sync" ;;
-  3) echo "drift detected; run agent-rigger update"; exit 1 ;;
+  3) echo "drift detected; run rigger update"; exit 1 ;;
   *) echo "check failed"; exit 1 ;;
 esac
 ```
@@ -73,7 +73,7 @@ tout accès réseau, checkout ou scan :
 Épinglez donc toujours les ids dans un script :
 
 ```
-agent-rigger install example/skill:hello-rigger example/agent:demo --yes
+rigger install example/skill:hello-rigger example/agent:demo --yes
 ```
 
 Relancer cette commande exacte sur un poste déjà à jour est un no-op qui sort avec `0`. La CLI
@@ -94,5 +94,5 @@ fichier),
 définissez [`NO_COLOR`](/fr/reference/glossary/#no_color) :
 
 ```
-NO_COLOR=1 agent-rigger check
+NO_COLOR=1 rigger check
 ```

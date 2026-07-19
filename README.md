@@ -22,9 +22,9 @@ reproducible way across a team's machines.
 ![agent-rigger in action: doctor, browse the team catalog, install the rig in one command, verify zero drift](./docs/demo.gif)
 
 > A throwaway `$RIGGER_HOME` is used for the recording — your real `~/.claude` is
-> never touched. Regenerating this GIF is currently blocked by a VHS/ttyd rendering
-> throttle on large installs; the recording pipeline, prerequisites and status live in
-> [`docs/tapes/README.md`](./docs/tapes/README.md).
+> never touched. This recording is kept fresh under a CI contract that re-plays every
+> tape against the current CLI output; the pipeline, prerequisites and freshness
+> contract live in [`docs/tapes/README.md`](./docs/tapes/README.md).
 
 ---
 
@@ -48,7 +48,7 @@ brew tap agent-rigger/tap
 brew install agent-rigger
 ```
 
-Installs the `agent-rigger` binary and the shorter `rigger` alias.
+Installs the `rigger` command; `agent-rigger` remains available as a compatibility alias.
 
 ### Pre-built binaries
 
@@ -123,11 +123,11 @@ cwd). Full guide: [docs/sandbox.md](docs/sandbox.md).
 ## Quick start
 
 ```sh
-agent-rigger doctor       # check the environment (scanners, git, provider CLIs)
-agent-rigger init         # point rigger at your team's catalog (one-time)
-agent-rigger ls           # list catalog entries and their install status
-agent-rigger install      # select artifacts, review the plan, confirm, apply
-agent-rigger check        # audit the installed setup for drift
+rigger doctor       # check the environment (scanners, git, provider CLIs)
+rigger init         # point rigger at your team's catalog (one-time)
+rigger ls           # list catalog entries and their install status
+rigger install      # select artifacts, review the plan, confirm, apply
+rigger check        # audit the installed setup for drift
 ```
 
 Every write is shown as a plan and confirmed first, and every command targets one

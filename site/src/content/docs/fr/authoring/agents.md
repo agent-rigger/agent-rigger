@@ -260,8 +260,8 @@ un chemin ou une URL est dans
 Pour voir les deux mécanismes, installez une fois par assistant et relisez les fichiers :
 
 ```sh
-agent-rigger install myteam/agent:reviewer --yes
-agent-rigger install myteam/agent:reviewer --assistant opencode --yes
+rigger install myteam/agent:reviewer --yes
+rigger install myteam/agent:reviewer --assistant opencode --yes
 ```
 
 Le `--yes` n'est pas optionnel dans un script. Les deux commandes ci-dessus passent déjà des ids

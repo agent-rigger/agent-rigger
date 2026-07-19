@@ -15,7 +15,7 @@ la [référence `install`](/fr/reference/cli/install/).
 
 ## Avant de commencer
 
-- Un catalog est configuré (`agent-rigger catalog ls` le liste).
+- Un catalog est configuré (`rigger catalog ls` le liste).
 - Ce catalog déclare une entrée mcp avec au moins un secret. Les catalogs de référence et d'exemple
   n'en livrent aucune aujourd'hui, c'est donc une entrée que le catalog de votre équipe définit. Le
   reste de ce guide prend un serveur MCP GitHub comme exemple fil rouge.
@@ -76,7 +76,7 @@ pointer une référence vers la variable qui la porte avec
 
 ```
 export MY_GH_PAT=ghp_your_token
-agent-rigger install acme/mcp:github --secret-env=GITHUB_PERSONAL_ACCESS_TOKEN=MY_GH_PAT --yes
+rigger install acme/mcp:github --secret-env=GITHUB_PERSONAL_ACCESS_TOKEN=MY_GH_PAT --yes
 ```
 
 Le flag est répétable, une fois par référence, et la dernière valeur l'emporte pour un `ref` donné.
@@ -92,7 +92,7 @@ install ne peut pas résoudre le secret », plus bas). Passez le flag même quan
 
 ```
 export GITHUB_PERSONAL_ACCESS_TOKEN=ghp_your_token
-agent-rigger install acme/mcp:github --secret-env=GITHUB_PERSONAL_ACCESS_TOKEN=GITHUB_PERSONAL_ACCESS_TOKEN --yes
+rigger install acme/mcp:github --secret-env=GITHUB_PERSONAL_ACCESS_TOKEN=GITHUB_PERSONAL_ACCESS_TOKEN --yes
 ```
 
 ## Où la valeur atterrit, et où elle n'atterrit jamais

@@ -6,8 +6,8 @@ description: The read-only audit of installed guardrails and context against the
 ## Synopsis
 
 ```
-agent-rigger check [--scope=<user|project>] [--assistant=<claude|opencode>]
-agent-rigger <resource> check [--scope=<user|project>] [--assistant=<claude|opencode>]
+rigger check [--scope=<user|project>] [--assistant=<claude|opencode>]
+rigger <resource> check [--scope=<user|project>] [--assistant=<claude|opencode>]
 ```
 
 `check` audits whether the [guardrails](/reference/glossary/#guardrail) and
@@ -20,7 +20,7 @@ restricts the audit to one [nature](/reference/glossary/#nature).
 ## Arguments
 
 `check` takes no positional arguments. In the resource form the resource token selects the nature to
-audit (for example `agent-rigger guardrails check`).
+audit (for example `rigger guardrails check`).
 
 ## Flags
 
@@ -62,7 +62,7 @@ unreachable one still leaves `check` at `0` when everything audited is present a
 With no catalog configured, `check` prints the following and exits `0`:
 
 ```
-no catalog configured — run `agent-rigger init`
+no catalog configured — run `rigger init`
 ```
 
 See [exit codes](/reference/exit-codes) for the shared contract.
@@ -77,5 +77,5 @@ To gate a pipeline on drift, see [In CI and scripts](/guides/ci-and-scripts/).
 ## Example
 
 ```
-agent-rigger check --scope=project
+rigger check --scope=project
 ```

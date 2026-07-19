@@ -44,7 +44,7 @@ rigger doctor
 ```
 
 ```
---- agent-rigger doctor ---
+--- rigger doctor ---
 
 ✓ git (/opt/homebrew/bin/git)
 ✓ glab (/opt/homebrew/bin/glab)
@@ -66,14 +66,14 @@ Register the public example catalog under a local name, `example`. A remote git 
 as a source (a local path does too):
 
 ```sh
-agent-rigger catalog add example https://github.com/agent-rigger/agent-rigger-catalog-example.git
+rigger catalog add example https://github.com/agent-rigger/agent-rigger-catalog-example.git
 ```
 
 ```
 catalog "example" added (https://github.com/agent-rigger/agent-rigger-catalog-example.git)
 ```
 
-The source is now recorded in your config. Confirm it with `agent-rigger catalog ls`,
+The source is now recorded in your config. Confirm it with `rigger catalog ls`,
 which lists each configured catalog as `name  url`.
 
 ## Step 3 — see what is available
@@ -81,7 +81,7 @@ which lists each configured catalog as `name  url`.
 List the catalog's entries:
 
 ```sh
-agent-rigger ls
+rigger ls
 ```
 
 ```
@@ -108,7 +108,7 @@ Install `example/pack:demo`, which bundles the `hello-rigger` skill and the `dem
 sub-agent. Passing `--yes` accepts the plan without an interactive prompt:
 
 ```sh
-agent-rigger install example/pack:demo --yes
+rigger install example/pack:demo --yes
 ```
 
 ```
@@ -142,7 +142,7 @@ wrote.
 Run `check` to confirm everything is correctly in place:
 
 ```sh
-agent-rigger check
+rigger check
 ```
 
 ```
@@ -182,7 +182,7 @@ is installed here, at which version, and exactly what each install wrote: the sa
 
 ## The interactive path
 
-You ran everything non-interactively. Run `agent-rigger install` with no ids and, in a
+You ran everything non-interactively. Run `rigger install` with no ids and, in a
 real terminal, rigger asks which scope to use and shows a checkable list instead:
 
 ```
@@ -193,7 +193,7 @@ Select installation scope:
 Select artifacts to install / update (Space on a group header toggles the whole group):
 ```
 
-The first-run wizard, `agent-rigger init`, is interactive too. It asks for your team's
+The first-run wizard, `rigger init`, is interactive too. It asks for your team's
 catalog and how to authenticate against it:
 
 ```

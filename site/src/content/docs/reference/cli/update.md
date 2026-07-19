@@ -6,8 +6,8 @@ description: Re-fetch installed artifacts to the latest remote version, with a s
 ## Synopsis
 
 ```
-agent-rigger update [<id>...] [--yes] [--force] [--scope=<user|project>] [--assistant=<claude|opencode>]
-agent-rigger <resource> update <id>... [--yes] [--force]
+rigger update [<id>...] [--yes] [--force] [--scope=<user|project>] [--assistant=<claude|opencode>]
+rigger <resource> update <id>... [--yes] [--force]
 ```
 
 Re-fetches installed artifacts to the latest remote version of their
@@ -77,7 +77,7 @@ With no catalog configured, update prints `[error] No catalog URL configured.` a
 ## Example
 
 ```
-agent-rigger update team/skill:spec-workflow --yes
+rigger update team/skill:spec-workflow --yes
 ```
 
 See [exit codes](/reference/exit-codes) for the shared contract.

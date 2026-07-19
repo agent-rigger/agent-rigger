@@ -15,7 +15,7 @@ classe de [finding](/fr/reference/glossary/#finding), voyez la
 Lancez doctor sans flag :
 
 ```
-agent-rigger doctor
+rigger doctor
 ```
 
 Il lance deux diagnostics dans l'ordre. La phase 1 liste les outils externes dont agent-rigger
@@ -24,7 +24,7 @@ qui a [drifté](/fr/reference/glossary/#drift). Sur un poste où les scanners so
 n'est cassé, le run entier est court :
 
 ```
---- agent-rigger doctor ---
+--- rigger doctor ---
 
 ✓ git (/opt/homebrew/bin/git)
 ✓ glab (/opt/homebrew/bin/glab)
@@ -59,7 +59,7 @@ ln -s ~/.claude/skills/_gone ~/.claude/skills/ghost-skill
 Relancez doctor :
 
 ```
---- agent-rigger doctor ---
+--- rigger doctor ---
 
 ✓ git (/opt/homebrew/bin/git)
 ✓ glab (/opt/homebrew/bin/glab)
@@ -141,7 +141,7 @@ vous-même ou confirmez-le dans un `doctor --fix` interactif :
 rm ~/.claude/skills/ghost-skill
 ```
 
-Un dernier `agent-rigger doctor` devrait à nouveau afficher
+Un dernier `rigger doctor` devrait à nouveau afficher
 `Installed state is healthy — no findings.`
 
 ## Vérifier les sources distantes avec --remote
@@ -156,7 +156,7 @@ présent sur votre hôte mais suivi par aucun catalog.
 hôte :
 
 ```
-agent-rigger doctor --remote
+rigger doctor --remote
 ```
 
 La récupération est [fail-closed](/fr/reference/glossary/#fail-closed--fail-open) : toute erreur

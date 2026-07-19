@@ -16,7 +16,7 @@ takes a different shape on each assistant, see [artifact natures](/concepts/arti
 Pass `--assistant` on any command that writes or audits (`install`, `check`, `remove`, `update`):
 
 ```
-agent-rigger install jr/skill:tdd-coach --assistant opencode --yes
+rigger install jr/skill:tdd-coach --assistant opencode --yes
 ```
 
 The flag accepts only `claude` or `opencode`, and it wins over everything else: a script that
@@ -49,7 +49,7 @@ one way behaves the same across `install`, `check`, `remove`, and `update`.
 
 ## Persist your choice
 
-`agent-rigger init` writes the assistants you pick into `assistants[]` in your configuration. When
+`rigger init` writes the assistants you pick into `assistants[]` in your configuration. When
 that list holds a single entry, every command targets it without the flag, and detection and the
 prompt are skipped. Configure it once instead of passing `--assistant` on each call. See
 [getting started](/start/getting-started/) for the init walkthrough.

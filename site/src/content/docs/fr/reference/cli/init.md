@@ -6,7 +6,7 @@ description: "Première configuration guidée : sonder l'accès au catalog, enre
 ## Synopsis
 
 ```
-agent-rigger init [--yes] [--scope=<user|project>]
+rigger init [--yes] [--scope=<user|project>]
 ```
 
 `init` est la commande de premier lancement, interactive : il demande l'URL d'un dépôt de
@@ -94,5 +94,5 @@ Voir [codes de sortie](/fr/reference/exit-codes) pour le contrat commun.
 ## Exemple
 
 ```
-agent-rigger init
+rigger init
 ```

@@ -6,7 +6,7 @@ description: Diagnostique les dépendances de l'environnement et l'état install
 ## Synopsis
 
 ```
-agent-rigger doctor [--remote] [--fix [--yes]]
+rigger doctor [--remote] [--fix [--yes]]
 ```
 
 Lance deux diagnostics dans l'ordre. D'abord il rapporte les outils externes dont agent-rigger dépend
@@ -102,7 +102,7 @@ Réparation (`--fix`) :
 ## Exemple
 
 ```
-agent-rigger doctor --remote --fix
+rigger doctor --remote --fix
 ```
 
 ![Un doctor --fix sur un état cassé fabriqué. La phase 1 liste quatre dépendances, toutes présentes — git, glab, gitleaks, trivy, chacune avec une coche — puis la ligne "mode : full scan". La phase 2 rapporte deux findings : un skill untracked conforme à son store, marqué comme réparation safe, et un symlink pendouillant sans entrée manifest, marqué comme nécessitant une confirmation par item. La commande demande ensuite confirmation une fois par item. Le premier prompt affiche "Apply repair?", le second "Confirm repair?" ; les deux démarrent sur No, et chacun est déplacé volontairement vers Yes avant confirmation. Une section Repairs liste enfin deux résultats ok : l'adoption de skill:diagnose, puis le unlink du symlink fantôme.](../../../../../assets/recordings/doctor-fix.gif)

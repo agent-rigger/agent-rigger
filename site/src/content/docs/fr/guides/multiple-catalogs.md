@@ -14,7 +14,7 @@ commande, voyez la [référence `catalog`](/fr/reference/cli/catalog/).
 Une source est un nom associé à une url git. Ajoutez-en une avec `catalog add` :
 
 ```
-agent-rigger catalog add team https://github.com/agent-rigger/agent-rigger-catalog-example.git
+rigger catalog add team https://github.com/agent-rigger/agent-rigger-catalog-example.git
 ```
 
 ```
@@ -36,7 +36,7 @@ proposition est sautée et la source est simplement enregistrée.
 
 ## Voir la vue combinée
 
-`agent-rigger ls` récupère chaque source configurée et les affiche comme un seul
+`rigger ls` récupère chaque source configurée et les affiche comme un seul
 [effective catalog](/fr/reference/glossary/#effective-catalog). La première colonne de chaque ligne
 est le qualified id, préfixé par la source dont il vient :
 
@@ -59,7 +59,7 @@ que `ls` accepte, voyez la [référence `ls`](/fr/reference/cli/ls/).
 l'intérieur même de l'id. Vous agissez sur plusieurs catalogs par préfixe en une seule commande :
 
 ```
-agent-rigger install example/skill:hello-rigger team/agent:demo --yes
+rigger install example/skill:hello-rigger team/agent:demo --yes
 ```
 
 Un id nu, non qualifié, est rejeté avant tout accès réseau, tout comme un préfixe qui ne désigne
@@ -103,7 +103,7 @@ lieu d'échouer purement et simplement :
 ```
 [warning] Catalog "broken" (https://github.com/acme/does-not-exist.git) unavailable (remote: Repository not found.
 fatal: repository 'https://github.com/acme/does-not-exist.git/' not found
-). Check the URL or run `agent-rigger init`.
+). Check the URL or run `rigger init`.
 Catalog (7 entries):
   [available]  example/skill:hello-rigger  skill
 ```
@@ -116,7 +116,7 @@ temporaire.
 Retirez une source par son nom :
 
 ```
-agent-rigger catalog remove team
+rigger catalog remove team
 ```
 
 ```

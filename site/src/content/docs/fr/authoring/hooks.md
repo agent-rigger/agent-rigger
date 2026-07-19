@@ -115,7 +115,7 @@ store partagé. Depuis le sandbox (un catalog enregistré localement sous le nom
 installant par [id qualifié](/fr/reference/glossary/#qualified-id) :
 
 ```sh
-agent-rigger install example/hook:demo --yes
+rigger install example/hook:demo --yes
 ```
 
 ```
@@ -212,8 +212,8 @@ votre dossier de catalog, installez par id, puis lisez ce qui a atterri :
 
 ```sh
 export RIGGER_HOME="$(mktemp -d)"
-agent-rigger catalog add mycat "$(pwd)"
-agent-rigger install mycat/hook:demo --yes
+rigger catalog add mycat "$(pwd)"
+rigger install mycat/hook:demo --yes
 cat "$RIGGER_HOME/.claude/settings.json"
 ```
 

@@ -100,7 +100,7 @@ Une fois le tag poussé, un coéquipier qui a votre catalog configuré s'y réso
 
 `(v0.4.0)` est le ref que l'outil a résolu : votre tag semver le plus élevé. Quand vous publiez plus
 tard un tag supérieur, ce même `check` fait basculer le catalog dans une section `--- Updates ---`,
-et [`agent-rigger update`](/fr/guides/update-artifacts/) réinstalle chaque artifact en retard, en
+et [`rigger update`](/fr/guides/update-artifacts/) réinstalle chaque artifact en retard, en
 affichant `[updated]  <id>  → <ref>` par artifact. Taguer et pousser un nouveau tag, plus élevé,
 c'est tout l'acte de livrer un changement à l'équipe.
 
@@ -163,9 +163,9 @@ touche votre vrai `~/.claude`. Enregistrez le catalog par chemin local, installe
 laissez `check` confirmer le tag :
 
 ```sh
-agent-rigger catalog add example "$(pwd)"
-agent-rigger install example/skill:hello-rigger --yes
-agent-rigger check
+rigger catalog add example "$(pwd)"
+rigger install example/skill:hello-rigger --yes
+rigger check
 ```
 
 ```

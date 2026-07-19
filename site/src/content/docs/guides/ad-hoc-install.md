@@ -21,7 +21,7 @@ session, add `--yes` (without it the run exits `2` before any fetch, see
 [interactive vs non-interactive](#interactive-vs-non-interactive)):
 
 ```
-agent-rigger install https://github.com/agent-rigger/agent-rigger-catalog-example.git --yes
+rigger install https://github.com/agent-rigger/agent-rigger-catalog-example.git --yes
 ```
 
 The content is fetched, [scanned](#the-content-is-scanned), and shown as a
@@ -54,7 +54,7 @@ Point at a directory instead. An absolute path, a `~/`-relative path, or a `./`-
 work:
 
 ```
-agent-rigger install /path/to/agent-rigger-catalog-example --yes
+rigger install /path/to/agent-rigger-catalog-example --yes
 ```
 
 The plan reads the same, only the [provenance](#the-provenance-prefix) prefix differs:
@@ -76,7 +76,7 @@ An ad-hoc source has no catalog name, so `install` derives one from the source a
 - a local path → `local-<name>`
 
 That prefix is provenance only. An ad-hoc install does **not** register a catalog source, so
-`agent-rigger catalog ls` and `agent-rigger ls` still report `no catalog configured` afterward. What
+`rigger catalog ls` and `rigger ls` still report `no catalog configured` afterward. What
 you got, and where from, lives in the manifest under the derived id.
 
 ## The content is scanned
@@ -119,14 +119,14 @@ Because no catalog is registered, `update` has nothing to resolve against and re
 
 ```
 [error] No catalog URL configured.
-  Run `agent-rigger init` to configure the catalog URL.
+  Run `rigger init` to configure the catalog URL.
 ```
 
 `check` does not refuse the same way. Like `ls` and `catalog ls`, it treats a missing catalog as
 informational rather than an error, and exits `0`:
 
 ```
-no catalog configured — run `agent-rigger init`
+no catalog configured — run `rigger init`
 ```
 
 To refresh an ad-hoc artifact, re-run the same `install <url|path> --yes`: it re-fetches and
@@ -134,10 +134,10 @@ re-applies. To uninstall, use [`remove`](/guides/remove-artifacts/) with the der
 (remove is offline and reads the manifest, so the derived prefix is all it needs):
 
 ```
-agent-rigger remove gh-agent-rigger-catalog-example/agent:demo --yes
+rigger remove gh-agent-rigger-catalog-example/agent:demo --yes
 ```
 
 For a source you will track over time, add it as a catalog instead
-(`agent-rigger catalog add <name> <url>`) and install by qualified id, which keeps `update` and
+(`rigger catalog add <name> <url>`) and install by qualified id, which keeps `update` and
 `check` working. See [install from a catalog](/guides/install-from-catalog/), and
 [work with multiple catalogs](/guides/multiple-catalogs/) if that makes it your second source.

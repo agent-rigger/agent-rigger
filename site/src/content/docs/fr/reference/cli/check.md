@@ -6,8 +6,8 @@ description: L'audit en lecture seule des guardrails et du context installés fa
 ## Synopsis
 
 ```
-agent-rigger check [--scope=<user|project>] [--assistant=<claude|opencode>]
-agent-rigger <resource> check [--scope=<user|project>] [--assistant=<claude|opencode>]
+rigger check [--scope=<user|project>] [--assistant=<claude|opencode>]
+rigger <resource> check [--scope=<user|project>] [--assistant=<claude|opencode>]
 ```
 
 `check` audite si les [guardrails](/fr/reference/glossary/#guardrail) et le
@@ -21,7 +21,7 @@ sections indicatives ci-dessous. La forme ressource restreint l'audit à une seu
 ## Arguments
 
 `check` ne prend aucun argument positionnel. Dans la forme ressource, le token de ressource
-sélectionne la nature à auditer (par exemple `agent-rigger guardrails check`).
+sélectionne la nature à auditer (par exemple `rigger guardrails check`).
 
 ## Flags
 
@@ -64,7 +64,7 @@ injoignable laisse tout de même `check` à `0` quand tout ce qui est audité es
 Sans catalog configuré, `check` affiche ce qui suit et sort en `0` :
 
 ```
-no catalog configured — run `agent-rigger init`
+no catalog configured — run `rigger init`
 ```
 
 Voir [codes de sortie](/fr/reference/exit-codes) pour le contrat commun.
@@ -80,5 +80,5 @@ Pour conditionner un pipeline au drift, voir [En CI et scripts](/fr/guides/ci-an
 ## Exemple
 
 ```
-agent-rigger check --scope=project
+rigger check --scope=project
 ```

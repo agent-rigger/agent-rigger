@@ -13,13 +13,13 @@ réseau et sans catalog configuré. Pour la liste complète des flags, voyez la
 Passez des [qualified ids](/fr/reference/glossary/#qualified-id) :
 
 ```
-agent-rigger remove example/guardrail:demo example/context:demo --yes
+rigger remove example/guardrail:demo example/context:demo --yes
 ```
 
 `--yes` saute la confirmation. Un id non qualifié est rejeté d'emblée :
 
 ```
-[error] unqualified id "skill:hello-rigger" — use `<catalog>/skill:hello-rigger` (see `agent-rigger ls`)
+[error] unqualified id "skill:hello-rigger" — use `<catalog>/skill:hello-rigger` (see `rigger ls`)
 ```
 
 Un id que le manifest ne connaît pas est refusé, et le message liste ce qui est installé pour que
@@ -85,7 +85,7 @@ qui vous oriente :
 [error] Pack "<id>" is not installed — packs are expanded at install time; remove their member artifacts instead. Installed entries: <ids>.
 ```
 
-Listez les membres avec `agent-rigger ls`, puis supprimez-les par id.
+Listez les membres avec `rigger ls`, puis supprimez-les par id.
 
 ## Une cible que vous avez modifiée vous-même
 

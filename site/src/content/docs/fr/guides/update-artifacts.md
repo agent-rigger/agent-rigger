@@ -11,7 +11,7 @@ Pour la liste complète des flags, voyez la [référence `update`](/fr/reference
 
 Deux moyens en lecture seule.
 
-`agent-rigger check` affiche une section indicative `--- Updates ---` qui liste chaque artifact
+`rigger check` affiche une section indicative `--- Updates ---` qui liste chaque artifact
 installé en retard sur la dernière version de son catalog, et une section `--- Catalogs ---` avec le
 statut par catalog :
 
@@ -23,7 +23,7 @@ statut par catalog :
 Ces sections sont informatives : elles ne changent jamais l'exit code de check. Une entrée en retard y
 est un signal, pas un échec.
 
-`agent-rigger update` sans id classe chaque artifact installé et affiche un plan avant de toucher
+`rigger update` sans id classe chaque artifact installé et affiche un plan avant de toucher
 quoi que ce soit. Refusez la confirmation pour tout laisser en l'état.
 
 ## Tout mettre à jour ou un ensemble choisi
@@ -31,19 +31,19 @@ quoi que ce soit. Refusez la confirmation pour tout laisser en l'état.
 Tous les artifacts installés :
 
 ```
-agent-rigger update
+rigger update
 ```
 
 Des [qualified ids](/fr/reference/glossary/#qualified-id) précis :
 
 ```
-agent-rigger update example/skill:hello-rigger
+rigger update example/skill:hello-rigger
 ```
 
 Un id non qualifié est rejeté avant toute récupération :
 
 ```
-[error] unqualified id "skill:hello-rigger" — use `<catalog>/skill:hello-rigger` (see `agent-rigger ls`)
+[error] unqualified id "skill:hello-rigger" — use `<catalog>/skill:hello-rigger` (see `rigger ls`)
 ```
 
 ## Lire le résultat
@@ -87,7 +87,7 @@ d'abord sauvegardés en copies [`.bak-*`](/fr/reference/glossary/#backup-bak).
 Dans un script ou un job de CI, passez `--yes` pour accepter la confirmation d'emblée :
 
 ```
-agent-rigger update --yes
+rigger update --yes
 ```
 
 Sans TTY et sans `--yes`, update sort avec `2` avant tout accès réseau. Voyez

@@ -93,7 +93,7 @@ read-only [`check`](/guides/update-artifacts/) reports the catalog at your versi
 
 The `(v0.4.0)` is the ref the tool resolved: your highest semver tag. When you later publish a
 higher tag, the same `check` moves the catalog into an `--- Updates ---` section, and
-[`agent-rigger update`](/guides/update-artifacts/) re-installs each behind artifact, printing
+[`rigger update`](/guides/update-artifacts/) re-installs each behind artifact, printing
 `[updated]  <id>  → <ref>` per artifact. Cutting and pushing a new, higher tag is the whole act of
 shipping a change to the team.
 
@@ -152,9 +152,9 @@ up (`export RIGGER_HOME="$(mktemp -d)"`), so nothing touches your real `~/.claud
 catalog by local path, install one entry, and let `check` confirm the tag:
 
 ```sh
-agent-rigger catalog add example "$(pwd)"
-agent-rigger install example/skill:hello-rigger --yes
-agent-rigger check
+rigger catalog add example "$(pwd)"
+rigger install example/skill:hello-rigger --yes
+rigger check
 ```
 
 ```

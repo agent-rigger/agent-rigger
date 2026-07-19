@@ -15,7 +15,7 @@ the value does and does not land. For a first install end to end, see
 
 ## Before you start
 
-- A catalog is configured (`agent-rigger catalog ls` lists it).
+- A catalog is configured (`rigger catalog ls` lists it).
 - That catalog declares an mcp entry with at least one secret. The reference and example catalogs
   ship none today, so this is an entry your team's catalog defines. The rest of this guide uses a
   GitHub MCP server as the worked example.
@@ -75,7 +75,7 @@ the variable that holds it with
 
 ```
 export MY_GH_PAT=ghp_your_token
-agent-rigger install acme/mcp:github --secret-env=GITHUB_PERSONAL_ACCESS_TOKEN=MY_GH_PAT --yes
+rigger install acme/mcp:github --secret-env=GITHUB_PERSONAL_ACCESS_TOKEN=MY_GH_PAT --yes
 ```
 
 The flag is repeatable, once per reference, and the last value wins for a given `ref`.
@@ -90,7 +90,7 @@ even when `<VAR>` matches `<ref>`:
 
 ```
 export GITHUB_PERSONAL_ACCESS_TOKEN=ghp_your_token
-agent-rigger install acme/mcp:github --secret-env=GITHUB_PERSONAL_ACCESS_TOKEN=GITHUB_PERSONAL_ACCESS_TOKEN --yes
+rigger install acme/mcp:github --secret-env=GITHUB_PERSONAL_ACCESS_TOKEN=GITHUB_PERSONAL_ACCESS_TOKEN --yes
 ```
 
 ## Where the value goes, and where it never goes

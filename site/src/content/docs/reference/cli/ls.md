@@ -6,8 +6,8 @@ description: List the effective catalog across every configured source, marking 
 ## Synopsis
 
 ```
-agent-rigger ls [--scope=<user|project>] [--assistant=<claude|opencode>]
-agent-rigger <resource> ls [--scope=<user|project>] [--assistant=<claude|opencode>]
+rigger ls [--scope=<user|project>] [--assistant=<claude|opencode>]
+rigger <resource> ls [--scope=<user|project>] [--assistant=<claude|opencode>]
 ```
 
 Lists the [effective catalog](/reference/glossary/#effective-catalog): the union of every configured
@@ -21,7 +21,7 @@ ls fetches every configured source in parallel. A source that cannot be reached 
 warning and the listing continues from the sources that responded:
 
 ```
-[warning] Catalog "<name>" (<url>) unavailable (<reason>). Check the URL or run `agent-rigger init`.
+[warning] Catalog "<name>" (<url>) unavailable (<reason>). Check the URL or run `rigger init`.
 ```
 
 Two sources that expose the same qualified id are deduplicated (first source wins), with a warning
@@ -54,7 +54,7 @@ singular label, for example `Skill (12):`.
 ls is read-only and never prompts. With no catalog configured it prints the following and stops:
 
 ```
-no catalog configured — run `agent-rigger init`
+no catalog configured — run `rigger init`
 ```
 
 ## Exit codes
@@ -67,7 +67,7 @@ no catalog configured — run `agent-rigger init`
 ## Example
 
 ```
-agent-rigger skills ls --assistant=claude
+rigger skills ls --assistant=claude
 ```
 
 See [exit codes](/reference/exit-codes) for the shared contract.

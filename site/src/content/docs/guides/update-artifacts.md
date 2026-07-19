@@ -11,7 +11,7 @@ surface, see the [`update` reference](/reference/cli/update/).
 
 Two read-only ways.
 
-`agent-rigger check` prints an advisory `--- Updates ---` section listing every installed artifact
+`rigger check` prints an advisory `--- Updates ---` section listing every installed artifact
 behind its catalog's latest version, and a `--- Catalogs ---` section with per-catalog status:
 
 ```
@@ -22,7 +22,7 @@ behind its catalog's latest version, and a `--- Catalogs ---` section with per-c
 These sections are informational: they never change check's exit code. A stale entry there is a
 heads-up, not a failure.
 
-`agent-rigger update` with no ids classifies every installed artifact and shows a plan before it
+`rigger update` with no ids classifies every installed artifact and shows a plan before it
 touches anything. Decline the confirmation to keep everything as it is.
 
 ## Update everything or a chosen set
@@ -30,19 +30,19 @@ touches anything. Decline the confirmation to keep everything as it is.
 All installed artifacts:
 
 ```
-agent-rigger update
+rigger update
 ```
 
 Specific [qualified ids](/reference/glossary/#qualified-id):
 
 ```
-agent-rigger update example/skill:hello-rigger
+rigger update example/skill:hello-rigger
 ```
 
 An unqualified id is rejected before any fetch:
 
 ```
-[error] unqualified id "skill:hello-rigger" — use `<catalog>/skill:hello-rigger` (see `agent-rigger ls`)
+[error] unqualified id "skill:hello-rigger" — use `<catalog>/skill:hello-rigger` (see `rigger ls`)
 ```
 
 ## Read the outcome
@@ -86,7 +86,7 @@ never leaves you with a half-removed artifact. Files that are replaced are backe
 In a script or CI job, pass `--yes` to accept the confirmation up front:
 
 ```
-agent-rigger update --yes
+rigger update --yes
 ```
 
 Without a TTY and without `--yes`, update exits `2` before any network access. See

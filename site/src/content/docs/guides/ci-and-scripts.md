@@ -44,10 +44,10 @@ Only `check` and `doctor` return `3`. For every other command, any non-zero code
 update sections never change the code. A gate that fails the build on drift:
 
 ```sh {4}
-agent-rigger check
+rigger check
 case $? in
   0) echo "harness in sync" ;;
-  3) echo "drift detected; run agent-rigger update"; exit 1 ;;
+  3) echo "drift detected; run rigger update"; exit 1 ;;
   *) echo "check failed"; exit 1 ;;
 esac
 ```
@@ -69,7 +69,7 @@ checkout, or scan:
 Always pin the ids in a script:
 
 ```
-agent-rigger install example/skill:hello-rigger example/agent:demo --yes
+rigger install example/skill:hello-rigger example/agent:demo --yes
 ```
 
 Re-running that exact command on an already-current machine is a no-op that exits `0`. The CLI
@@ -88,5 +88,5 @@ output anywhere (for example when capturing a TTY's logs to a file), set
 [`NO_COLOR`](/reference/glossary/#no_color):
 
 ```
-NO_COLOR=1 agent-rigger check
+NO_COLOR=1 rigger check
 ```

@@ -6,8 +6,8 @@ description: Uninstall manifest-recorded artifacts offline, replaying each insta
 ## Synopsis
 
 ```
-agent-rigger remove <id>... [--yes] [--scope=<user|project>] [--assistant=<claude|opencode>]
-agent-rigger <resource> remove <id>...
+rigger remove <id>... [--yes] [--scope=<user|project>] [--assistant=<claude|opencode>]
+rigger <resource> remove <id>...
 ```
 
 Uninstalls artifacts recorded in the [manifest](/reference/glossary/#manifest). It is manifest-first
@@ -82,7 +82,7 @@ installed.` when the manifest is empty).
 ## Example
 
 ```
-agent-rigger remove team/skill:spec-workflow
+rigger remove team/skill:spec-workflow
 ```
 
 See [exit codes](/reference/exit-codes) for the shared contract.

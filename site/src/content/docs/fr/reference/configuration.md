@@ -44,10 +44,15 @@ indentation :
 }
 ```
 
-Le `rigger config set` du commentaire d'en-tête n'est pas une commande livrée : il n'existe pas de
-verbe `config` dans la CLI aujourd'hui, et lancer `rigger config set` affiche
-`Unknown command: "config"` et sort en [`2`](/fr/reference/exit-codes/). Éditez le fichier
-directement en attendant que cette commande arrive.
+Le `rigger config set <key> <value>` du commentaire d'en-tête est une commande livrée. Seul le
+verbe `set` existe (pas de get/list/unset), et il valide avant d'écrire : les clés settables sont
+`defaultScope` (`user` | `project`), `authMethod` (`provider-cli` | `https` | `ssh`) et `assistants`
+(liste CSV d'assistants connus). `catalogs` n'est volontairement pas settable — c'est géré par
+`rigger catalog add` / `rigger catalog remove`, et `config set catalogs` le dit. Une clé inconnue ou
+une valeur hors énumération affiche un `[error]` actionnable et sort en
+[`2`](/fr/reference/exit-codes/) sans toucher au fichier ; une écriture réussie affiche
+`config: <key> set to "<value>"` avec le chemin cible. L'édition directe du fichier reste prise en
+charge.
 
 ### Champs
 

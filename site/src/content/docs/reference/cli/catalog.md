@@ -6,9 +6,9 @@ description: "Manage the configured catalog sources: list, add, and remove the r
 ## Synopsis
 
 ```
-agent-rigger catalog ls
-agent-rigger catalog add <name> <url>
-agent-rigger catalog remove <name>
+rigger catalog ls
+rigger catalog add <name> <url>
+rigger catalog remove <name>
 ```
 
 Manages the configured [catalog](/reference/glossary/#catalog) sources: the list of remote catalogs
@@ -29,7 +29,7 @@ artifacts. Each source is a name paired with a git url.
 Lists each configured source as `<name>  <url>`. With none configured, it prints:
 
 ```
-no catalog configured — run `agent-rigger init` or `catalog add <name> <url>`
+no catalog configured — run `rigger init` or `catalog add <name> <url>`
 ```
 
 ### catalog add
@@ -68,7 +68,7 @@ followed by usage.
 ## Example
 
 ```
-agent-rigger catalog add team https://gitlab.com/acme/rig-catalog.git
+rigger catalog add team https://gitlab.com/acme/rig-catalog.git
 ```
 
 See [exit codes](/reference/exit-codes) for the shared contract.

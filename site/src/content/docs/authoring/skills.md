@@ -132,7 +132,7 @@ Then install the catalog folder by path. In a non-interactive shell `--yes` is r
 every entry the source offers. Without it, the run exits `2` before touching the network:
 
 ```sh
-agent-rigger install /path/to/your-catalog --yes
+rigger install /path/to/your-catalog --yes
 ```
 
 ```

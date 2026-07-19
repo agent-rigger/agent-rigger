@@ -289,14 +289,14 @@ Enregistrez le catalog local par chemin et installez le guardrail par son
 [qualified id](/fr/reference/glossary/#qualified-id), en acceptant le plan avec `--yes` :
 
 ```sh
-agent-rigger catalog add cltest /path/to/your-catalog
-agent-rigger install cltest/guardrail:no-force-push --yes
+rigger catalog add cltest /path/to/your-catalog
+rigger install cltest/guardrail:no-force-push --yes
 ```
 
 Confirmez qu'il est bien appliqué :
 
 ```sh
-agent-rigger check
+rigger check
 ```
 
 ```
@@ -309,7 +309,7 @@ agent-rigger check
 Pour exercer un guardrail opencode, pilotez l'install pour cet assistant avec
 `--assistant opencode` ; son check rapporte sous `guardrails-opencode`. Dans toute session
 non-interactive (CI, la boucle sandbox ci-dessus), nommez toujours l'id et passez `--yes` : un
-`agent-rigger install` nu, sans id et sans TTY, n'a rien à sélectionner et ne peut pas continuer
+`rigger install` nu, sans id et sans TTY, n'a rien à sélectionner et ne peut pas continuer
 (voir [CI et scripts](/fr/guides/ci-and-scripts/)).
 
 Effacez le sandbox une fois terminé ; votre dépôt de catalog reste en place :

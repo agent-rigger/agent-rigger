@@ -6,9 +6,9 @@ description: Installez des artifacts de façon interactive, par qualified id, ou
 ## Synopsis
 
 ```
-agent-rigger install [--scope=<user|project>] [--assistant=<claude|opencode>]
-agent-rigger install <id...> [--yes] [--force] [--secret-env=<ref>=<VAR>]...
-agent-rigger install <url|path> [--yes] [--force]
+rigger install [--scope=<user|project>] [--assistant=<claude|opencode>]
+rigger install <id...> [--yes] [--force] [--secret-env=<ref>=<VAR>]...
+rigger install <url|path> [--yes] [--force]
 ```
 
 `install` ajoute des artifacts au poste courant pour un [assistant](/fr/reference/glossary/#assistant).
@@ -29,9 +29,9 @@ Un id non qualifié, un préfixe non configuré, et l'absence totale de catalog 
 avant tout accès réseau, tous sortent en `2` :
 
 ```
-[error] unqualified id "<id>" — use `<catalog>/<id>` (see `agent-rigger ls`)
-[error] catalog "<prefix>" not configured — see `agent-rigger catalog ls`
-[error] no catalog configured — run `agent-rigger init`
+[error] unqualified id "<id>" — use `<catalog>/<id>` (see `rigger ls`)
+[error] catalog "<prefix>" not configured — see `rigger catalog ls`
+[error] no catalog configured — run `rigger init`
 ```
 
 ## Flags
@@ -52,7 +52,7 @@ _à installer_, _à mettre à jour_ et _à jour_. Quand rien n'est actionnable, 
 et sort en `0` :
 
 ```
-✓ Everything already up-to-date for scope "<scope>" (<n> artifact(s) installed). Use `agent-rigger remove` to uninstall.
+✓ Everything already up-to-date for scope "<scope>" (<n> artifact(s) installed). Use `rigger remove` to uninstall.
 ```
 
 Ne rien sélectionner affiche `No artifacts selected — nothing to install.` et sort en `0`.
@@ -122,5 +122,5 @@ Voir [codes de sortie](/fr/reference/exit-codes) pour le contrat commun.
 ## Exemple
 
 ```
-agent-rigger install team/skill:spec-workflow --scope=project --yes
+rigger install team/skill:spec-workflow --scope=project --yes
 ```

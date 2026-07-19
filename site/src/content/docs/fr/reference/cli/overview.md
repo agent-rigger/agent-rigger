@@ -9,14 +9,15 @@ Le détail propre à chaque commande vit sur sa propre page.
 
 ## Deux binaires
 
-L'outil se distribue en deux binaires au comportement identique : `agent-rigger` et le plus court
-`rigger`. Tous les exemples ici emploient `agent-rigger` ; remplacez librement par `rigger`.
+L'outil se distribue en deux binaires au comportement identique : la commande canonique `rigger`
+et le nom de distribution `agent-rigger`. Chaque exemple ici emploie `rigger` ; `agent-rigger`
+fonctionne à l'identique en tant qu'alias de compatibilité.
 
 ## Grammaire
 
 ```
-agent-rigger <command> [options]
-agent-rigger <resource> <verb> [args] [options]
+rigger <command> [options]
+rigger <resource> <verb> [args] [options]
 ```
 
 Le premier token qui n'est pas un flag est la commande. Quand ce token est une ressource connue, le
@@ -24,7 +25,7 @@ deuxième token hors flag est un verbe et le reste constitue ses arguments.
 
 Ressources : `skill` `agent` `guardrail` `context` `plugin` `hook` `tool` `pack` (chacune accepte
 aussi son pluriel), plus `catalog`. Verbes : `ls` `add` `info` `check` `remove` `update`. Par
-exemple, `agent-rigger guardrails add jr/guardrail:claude` est la forme ressource d'une install
+exemple, `rigger guardrails add jr/guardrail:claude` est la forme ressource d'une install
 restreinte à la [nature](/fr/reference/glossary/#nature) `guardrail`.
 
 ## Flags globaux

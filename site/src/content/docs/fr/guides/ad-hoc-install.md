@@ -22,7 +22,7 @@ l'exécution sort en `2` avant tout fetch, voir
 [interactif vs non-interactif](#interactif-vs-non-interactif)) :
 
 ```
-agent-rigger install https://github.com/agent-rigger/agent-rigger-catalog-example.git --yes
+rigger install https://github.com/agent-rigger/agent-rigger-catalog-example.git --yes
 ```
 
 Le contenu est récupéré, [scanné](#le-contenu-est-scanné), puis affiché comme un
@@ -55,7 +55,7 @@ Indiquez un répertoire à la place. Un chemin absolu, un chemin relatif en `~/`
 `./` fonctionnent tous :
 
 ```
-agent-rigger install /path/to/agent-rigger-catalog-example --yes
+rigger install /path/to/agent-rigger-catalog-example --yes
 ```
 
 Le plan se lit pareil, seul le préfixe de [provenance](#le-préfixe-de-provenance) diffère :
@@ -78,7 +78,7 @@ formes que vous verrez :
 - un chemin local → `local-<name>`
 
 Ce préfixe n'est que de la provenance. Une install ad-hoc n'enregistre **pas** de catalog source,
-donc `agent-rigger catalog ls` et `agent-rigger ls` continuent de rapporter
+donc `rigger catalog ls` et `rigger ls` continuent de rapporter
 `no catalog configured` ensuite. Ce que vous avez obtenu, et d'où, vit dans le manifest sous l'id
 dérivé.
 
@@ -128,14 +128,14 @@ Comme aucun catalog n'est enregistré, `update` n'a rien à résoudre et refuse,
 
 ```
 [error] No catalog URL configured.
-  Run `agent-rigger init` to configure the catalog URL.
+  Run `rigger init` to configure the catalog URL.
 ```
 
 `check` ne refuse pas de la même façon. Comme `ls` et `catalog ls`, il traite un catalog manquant
 comme une information plutôt qu'une erreur, et sort en `0` :
 
 ```
-no catalog configured — run `agent-rigger init`
+no catalog configured — run `rigger init`
 ```
 
 Pour rafraîchir un artifact ad-hoc, relancez le même `install <url|path> --yes` : il re-récupère et
@@ -143,11 +143,11 @@ ré-applique. Pour désinstaller, utilisez [`remove`](/fr/guides/remove-artifact
 id dérivé (remove est hors ligne et lit le manifest, donc le préfixe dérivé lui suffit) :
 
 ```
-agent-rigger remove gh-agent-rigger-catalog-example/agent:demo --yes
+rigger remove gh-agent-rigger-catalog-example/agent:demo --yes
 ```
 
 Pour une source que vous voulez suivre dans le temps, ajoutez-la plutôt comme catalog
-(`agent-rigger catalog add <name> <url>`) et installez par qualified id, ce qui garde `update` et
+(`rigger catalog add <name> <url>`) et installez par qualified id, ce qui garde `update` et
 `check` fonctionnels. Voyez [installer depuis un catalog](/fr/guides/install-from-catalog/), et
 [travailler avec plusieurs catalogs](/fr/guides/multiple-catalogs/) si cela en fait votre deuxième
 source.

@@ -17,7 +17,7 @@ comprendre pourquoi le même artifact source prend une forme différente sur cha
 Passez `--assistant` sur toute commande qui écrit ou audite (`install`, `check`, `remove`, `update`) :
 
 ```
-agent-rigger install jr/skill:tdd-coach --assistant opencode --yes
+rigger install jr/skill:tdd-coach --assistant opencode --yes
 ```
 
 Le flag n'accepte que `claude` ou `opencode`, et il l'emporte sur tout le reste : un script qui le
@@ -51,7 +51,7 @@ manière à travers `install`, `check`, `remove` et `update`.
 
 ## Persister votre choix
 
-`agent-rigger init` écrit les assistants que vous choisissez dans `assistants[]` de votre
+`rigger init` écrit les assistants que vous choisissez dans `assistants[]` de votre
 configuration. Quand cette liste ne contient qu'une seule entrée, chaque commande la cible sans le
 flag, et la détection comme l'invite sont sautées. Configurez-le une bonne fois plutôt que de passer
 `--assistant` à chaque appel. Voyez [prise en main](/fr/start/getting-started/) pour le parcours de

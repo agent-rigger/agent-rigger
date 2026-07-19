@@ -126,7 +126,7 @@ ensembles que ses membres partagent réellement.
 
 ## Ce que voit l'installeur
 
-Pour la personne qui installe, un pack est une **sélection groupée**. `agent-rigger ls` le marque
+Pour la personne qui installe, un pack est une **sélection groupée**. `rigger ls` le marque
 comme pack et compte ses membres plutôt que de lister une nature :
 
 ```
@@ -173,14 +173,14 @@ dans [créer un catalog](/fr/authoring/create-a-catalog/).
 contre un home jetable pour que rien ne touche votre vrai `~/.claude`, lisez le plan, puis taggez une
 release. Deux chemins installent depuis votre copie de travail sans aller-retour par `catalog add` :
 
-- Enregistrez le dossier une fois sous un nom local et itérez : `agent-rigger catalog add myteam
-  "$(pwd)"`, puis `agent-rigger install myteam/pack:demo --yes`. La
+- Enregistrez le dossier une fois sous un nom local et itérez : `rigger catalog add myteam
+  "$(pwd)"`, puis `rigger install myteam/pack:demo --yes`. La
   [configuration du sandbox](/fr/authoring/create-a-catalog/#travailler-dans-un-sandbox-jetable)
   montre le home jetable `RIGGER_HOME` sur lequel cela s'appuie.
 - Ou installez le chemin local directement, sans enregistrement : voyez
   [installer depuis une URL ou un chemin local](/fr/guides/ad-hoc-install/).
 
-Passez toujours des ids explicites et `--yes` dans un shell non interactif : `agent-rigger install`
+Passez toujours des ids explicites et `--yes` dans un shell non interactif : `rigger install`
 sans id dans un script n'a aucun sélecteur vers lequel se rabattre ni aucun plan à confirmer. Résolvez
 le pack une fois contre le sandbox, confirmez que le plan liste chaque membre attendu et aucune erreur
 `Unknown catalog entry`, puis taggez la version sur laquelle votre équipe s'épingle.

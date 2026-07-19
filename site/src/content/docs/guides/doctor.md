@@ -14,7 +14,7 @@ purpose, then repair it under consent. For a first install, see
 Run doctor with no flags:
 
 ```
-agent-rigger doctor
+rigger doctor
 ```
 
 It runs two diagnostics in order. Phase 1 lists the external tools agent-rigger depends on and the
@@ -23,7 +23,7 @@ scan mode they buy you; phase 2 reads the installed state and reports anything t
 whole run is short:
 
 ```
---- agent-rigger doctor ---
+--- rigger doctor ---
 
 ✓ git (/opt/homebrew/bin/git)
 ✓ glab (/opt/homebrew/bin/glab)
@@ -56,7 +56,7 @@ ln -s ~/.claude/skills/_gone ~/.claude/skills/ghost-skill
 Run doctor again:
 
 ```
---- agent-rigger doctor ---
+--- rigger doctor ---
 
 ✓ git (/opt/homebrew/bin/git)
 ✓ glab (/opt/homebrew/bin/glab)
@@ -130,7 +130,7 @@ interactive `doctor --fix`:
 rm ~/.claude/skills/ghost-skill
 ```
 
-A final `agent-rigger doctor` should print `Installed state is healthy — no findings.` again.
+A final `rigger doctor` should print `Installed state is healthy — no findings.` again.
 
 ## Check remote sources with --remote
 
@@ -142,7 +142,7 @@ an [mcp](/reference/glossary/#mcp) server that is present on your host but track
 content, read-only, and compares it against your host:
 
 ```
-agent-rigger doctor --remote
+rigger doctor --remote
 ```
 
 The fetch is [fail-closed](/reference/glossary/#fail-closed--fail-open): any fetch error stops the

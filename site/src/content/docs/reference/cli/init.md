@@ -6,7 +6,7 @@ description: "Run the first-launch wizard: probe catalog access, record the conf
 ## Synopsis
 
 ```
-agent-rigger init [--yes] [--scope=<user|project>]
+rigger init [--yes] [--scope=<user|project>]
 ```
 
 `init` runs the first-launch wizard: it asks for a [catalog](/reference/glossary/#catalog)
@@ -91,5 +91,5 @@ See [exit codes](/reference/exit-codes) for the shared contract.
 ## Example
 
 ```
-agent-rigger init
+rigger init
 ```
