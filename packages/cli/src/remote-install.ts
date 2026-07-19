@@ -60,7 +60,7 @@ import type { CommandRunner } from '@agent-rigger/catalog/tool-check';
 import { buildAdapter } from './adapter-dispatch';
 import { CLI_COMMAND } from './cli';
 import type { InstallResult } from './cmd-install';
-import { runInstall } from './cmd-install';
+import { runInstall, targetsAssistant } from './cmd-install';
 import { materializeUnion } from './scan-staging';
 import { resolveSecretOverrides } from './secret-collect';
 
@@ -504,10 +504,20 @@ export async function runRemoteInstall(opts: {
       // - Claude plugins: from the remote catalog's marketplace URL.
       // remoteIds tells buildClaudeAdapter which entries to resolve from externalBaseDir.
       // Use qualified ids here to match the (potentially qualified) resolved entries.
+      //
+      // Filtered by targetsAssistant (opencode-pack-target-filter): `resolved`
+      // is the RAW pack expansion, ahead of the target-routing step 1b applies
+      // later inside runInstall. A pack legitimately carries one guardrail per
+      // target (e.g. one for claude, one for opencode); without this filter, the
+      // adapter about to be built for ONE assistant would see the OTHER
+      // assistant's sibling member too — wrongly tripping opencode's
+      // mono-guardrail policy (ADR-0021) on a mixed-target pack, or letting the
+      // claude builder's `.find()` silently resolve the wrong guardrail. Same
+      // predicate as step 1b, so both filters can never drift apart.
       const qualifiedRemoteEntryIds = new Set(remoteEntries.map((e) => qualify(e.id)));
       const remoteIds = new Set(
         resolved
-          .filter((e) => qualifiedRemoteEntryIds.has(e.id))
+          .filter((e) => qualifiedRemoteEntryIds.has(e.id) && targetsAssistant(e, assistant))
           .map((e) => e.id),
       );
 

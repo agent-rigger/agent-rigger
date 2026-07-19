@@ -231,6 +231,27 @@ async function isAdoptionDue(
 }
 
 // ---------------------------------------------------------------------------
+// targetsAssistant — shared target-routing predicate (E-targets, R1.5/R9.2)
+// ---------------------------------------------------------------------------
+
+/**
+ * Whether `entry` lists `assistantId` among its `targets`.
+ *
+ * The ONE predicate step 1b (below) uses to split a resolved selection into
+ * "belongs to this assistant" vs "skipped" — exported so that any OTHER call
+ * site computing an assistant-scoped id set from a raw resolved selection
+ * (remote-install.ts's `externalIds`, notably) applies the exact same rule
+ * instead of re-deriving it. A pack legitimately holds one member per target
+ * (e.g. one guardrail for claude, one for opencode); every caller that hands
+ * a resolved selection to a single-assistant adapter must filter by this
+ * predicate first, or a sibling-target member leaks into an adapter-level
+ * policy meant to reason about ONE target only (opencode-pack-target-filter).
+ */
+export function targetsAssistant(entry: { targets: string[] }, assistantId: string): boolean {
+  return entry.targets.includes(assistantId);
+}
+
+// ---------------------------------------------------------------------------
 // runInstall
 // ---------------------------------------------------------------------------
 
@@ -290,7 +311,7 @@ export async function runInstall(opts: RunInstallOptions): Promise<InstallResult
   const entries: ArtifactEntry[] = [];
   const skipped: { id: string; targets: string[] }[] = [];
   for (const e of resolved) {
-    if (e.targets.includes(adapter.id)) {
+    if (targetsAssistant(e, adapter.id)) {
       entries.push(e);
     } else {
       skipped.push({ id: e.id, targets: e.targets });
