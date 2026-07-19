@@ -326,7 +326,9 @@ non une réparation.
 
 Deux postures opposées dans le doute. _Fail-closed_ refuse — bloque l'install sur un finding, rejette
 un symlink suspect. _Fail-open_ laisse passer avec un avertissement. Par défaut : fail-closed sur les
-findings ; l'unique exception délibérée est l'absence de scanner (voir [warn-only](#warn-only)).
+findings ; deux exceptions délibérées laissent l'install se poursuivre sur un avertissement plutôt
+que de bloquer : les deux scanners absents (voir [warn-only](#warn-only)), et un seul scanner
+absent, où l'avertissement nomme l'outil manquant.
 
 #### warn-only
 

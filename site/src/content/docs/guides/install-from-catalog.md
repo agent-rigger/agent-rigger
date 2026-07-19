@@ -122,7 +122,7 @@ decide whether those files belong in version control:
 ## When the plan raises a scan warning
 
 Catalog content is [untrusted](/reference/glossary/#untrusted-content) and
-[scanned](/reference/glossary/#scan--scanner) before it reaches disk. Two outcomes need a decision.
+[scanned](/reference/glossary/#scan--scanner) before it reaches disk. Three outcomes need a decision.
 
 No scanner installed: the scan cannot run, so install proceeds and warns.
 
@@ -132,8 +132,19 @@ No scanner installed: the scan cannot run, so install proceeds and warns.
 
 If you want the content scanned, install gitleaks or trivy, then re-run.
 
+One scanner installed, nothing found: the tool that ran found nothing, but the other one is
+missing, so the scan only covers half the ground. Install proceeds and names the gap:
+
+```
+[warning] content partially scanned — trivy not installed (gitleaks ran); install trivy then re-run for a full scan; see `rigger doctor`
+```
+
+(The reverse holds too: with trivy installed and gitleaks missing, the warning names gitleaks as
+absent and trivy as the one that ran.) Install the missing tool if you want a full scan.
+
 A scanner found something: with a scanner present and a real finding, install stops and writes
-nothing.
+nothing — this takes priority even when the other scanner is missing, so a blocking finding never
+shows the partial-scan warning instead.
 
 ```
 Security scan blocked installation. Findings:

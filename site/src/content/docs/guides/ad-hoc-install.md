@@ -96,6 +96,14 @@ If no scanner is installed, the scan cannot run. The install proceeds and says s
 [warning] content not scanned — install gitleaks or trivy then re-run for a full scan; see `rigger doctor`
 ```
 
+If exactly one of gitleaks/trivy is installed and it finds nothing, the scan only covers half the
+ground: the install proceeds and the warning names the tool that is missing (a blocking finding
+from the tool that ran still takes priority over this warning):
+
+```
+[warning] content partially scanned — trivy not installed (gitleaks ran); install trivy then re-run for a full scan; see `rigger doctor`
+```
+
 For what the scan looks for and why ad-hoc content is treated as hostile, see
 [trust and security](/concepts/trust-and-security/).
 

@@ -102,6 +102,14 @@ signale :
 [warning] content not scanned — install gitleaks or trivy then re-run for a full scan; see `rigger doctor`
 ```
 
+Si exactement l'un de gitleaks/trivy est installé et ne trouve rien, le scan ne couvre que la
+moitié du terrain : l'install se poursuit et l'avertissement nomme l'outil manquant (un finding
+bloquant de l'outil qui a tourné prime toujours sur cet avertissement) :
+
+```
+[warning] content partially scanned — trivy not installed (gitleaks ran); install trivy then re-run for a full scan; see `rigger doctor`
+```
+
 Pour ce que cherche le scan et pourquoi le contenu ad-hoc est traité comme hostile, voyez
 [confiance et sécurité](/fr/concepts/trust-and-security/).
 

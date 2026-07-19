@@ -109,7 +109,7 @@ and it is the single override of the fail-closed gate on findings.
 <details>
 <summary>Diagram: The trust gates</summary>
 
-![The trust gates fetched content clears before anything is written, in execution order: provenance (HEAD sha re-verified against the resolved sha, refused with exit 2), scan (gitleaks and trivy, blocking finding exits 1 or warn-only when no scanner is installed), plan confirmation, and per-command consent recorded in a ledger — with --force covering only the scan gate and never the provenance gate.](../../../assets/diagrams/trust-gates.svg)
+![The trust gates fetched content clears before anything is written, in execution order: provenance (HEAD sha re-verified against the resolved sha, refused with exit 2), scan (gitleaks and trivy, blocking finding exits 1, warn-only when no scanner is installed, or a warning naming the missing tool when exactly one scanner is installed and finds nothing), plan confirmation, and per-command consent recorded in a ledger — with --force covering only the scan gate and never the provenance gate.](../../../assets/diagrams/trust-gates.svg)
 
 _The gates every fetched artifact clears before a byte is written. `--force` overrides only the scan gate; the provenance re-check is never bypassable. <small>Generated from packages/core/src/scan.ts, packages/catalog/src/fetch.ts, packages/core/src/consent.ts, packages/cli/src/remote-install.ts, 2026-07-12.</small>_
 

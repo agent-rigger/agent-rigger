@@ -312,8 +312,9 @@ a doctor finding describes something off in the local state and may or may not c
 
 Two opposite postures when in doubt. _Fail-closed_ refuses — it blocks the install on a finding,
 rejects a suspicious symlink. _Fail-open_ lets the action through with a warning. The default is
-fail-closed on findings; the one deliberate exception is a missing scanner (see
-[warn-only](#warn-only)).
+fail-closed on findings; two deliberate exceptions let the install proceed with a warning instead
+of blocking: both scanners missing (see [warn-only](#warn-only)), and exactly one scanner missing,
+where the warning names the absent tool.
 
 #### warn-only
 

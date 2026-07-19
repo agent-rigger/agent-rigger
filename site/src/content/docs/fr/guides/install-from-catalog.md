@@ -123,7 +123,7 @@ vous décidiez si ces fichiers ont leur place sous contrôle de version :
 ## Quand le plan lève un avertissement de scan
 
 Le contenu d'un catalog est [untrusted](/fr/reference/glossary/#untrusted-content) et
-[scanné](/fr/reference/glossary/#scan--scanner) avant d'atteindre le disque. Deux issues demandent
+[scanné](/fr/reference/glossary/#scan--scanner) avant d'atteindre le disque. Trois issues demandent
 une décision.
 
 Aucun scanner installé : le scan ne peut pas s'exécuter, donc install continue et avertit.
@@ -134,8 +134,20 @@ Aucun scanner installé : le scan ne peut pas s'exécuter, donc install continue
 
 Si vous voulez que le contenu soit scanné, installez gitleaks ou trivy, puis relancez.
 
+Un seul scanner installé, rien trouvé : l'outil présent n'a rien trouvé, mais l'autre manque, donc
+le scan ne couvre que la moitié du terrain. Install continue et nomme le manque :
+
+```
+[warning] content partially scanned — trivy not installed (gitleaks ran); install trivy then re-run for a full scan; see `rigger doctor`
+```
+
+(La réciproque vaut aussi : avec trivy installé et gitleaks absent, l'avertissement nomme gitleaks
+comme manquant et trivy comme celui qui a tourné.) Installez l'outil manquant si vous voulez un scan
+complet.
+
 Un scanner a trouvé quelque chose : avec un scanner présent et un finding réel, install s'arrête et
-n'écrit rien.
+n'écrit rien — ceci prime même quand l'autre scanner manque, si bien qu'un finding bloquant n'affiche
+jamais l'avertissement de scan partiel à la place.
 
 ```
 Security scan blocked installation. Findings:

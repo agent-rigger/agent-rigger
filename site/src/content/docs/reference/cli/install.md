@@ -83,8 +83,16 @@ When no scanner tool is installed, the scan degrades to warn-only and the instal
 [warning] content not scanned — install gitleaks or trivy then re-run for a full scan; see `rigger doctor`
 ```
 
+When exactly one of gitleaks/trivy is installed and it finds nothing, the scan is partial: the
+install proceeds and the warning names the missing tool (symmetric for either tool):
+
+```
+[warning] content partially scanned — trivy not installed (gitleaks ran); install trivy then re-run for a full scan; see `rigger doctor`
+```
+
 When a scanner is present and reports a blocking finding, the install stops (`ScanBlockedError`)
-unless `--force` is set.
+unless `--force` is set — this holds even with only one scanner installed, so a blocking finding
+always takes priority over the partial-scan warning.
 
 ### What `--force` does not bypass
 
