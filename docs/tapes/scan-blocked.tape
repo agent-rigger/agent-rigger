@@ -116,9 +116,9 @@ Enter
 # between the last output line and the returning `$` prompt (frame-cadence jitter).
 Sleep 2s
 Wait+Screen@60s /Re-run with --force/
-# 30s reading hold: the GIF lingers on the final state before looping (also
+# 10s reading hold: the GIF lingers on the final state before looping (also
 # absorbs the frame-cadence jitter the previous short settle covered).
-Sleep 30s
+Sleep 10s
 
 # --- hidden teardown: throwaway home removed (also on INT/TERM via setup trap) -
 # No final Show: a Show after `rm -rf` can capture it in the LAST GIF frame via

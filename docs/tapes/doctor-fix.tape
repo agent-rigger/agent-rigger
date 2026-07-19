@@ -78,8 +78,8 @@ Enter
 
 # Repairs applied: two [ ok  ] lines (adopt + unlink), exit 0.
 Wait+Screen /\[ ok/
-# 30s reading hold: the GIF lingers on the final state before looping.
-Sleep 30s
+# 10s reading hold: the GIF lingers on the final state before looping.
+Sleep 10s
 
 # --- hidden teardown (setup.sh EXIT/INT/TERM trap also removes $RIGGER_HOME) ---
 # No final Show: the same Hide/Show race (vhs#130) runs in reverse at teardown —
