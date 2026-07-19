@@ -3,10 +3,12 @@ import { defineConfig } from 'astro/config';
 import starlightLinksValidator from 'starlight-links-validator';
 
 export default defineConfig({
-  // Org-root deployment (site-deploy-github-pages): served at the domain root by
-  // the agent-rigger.github.io mirror, so no `base` path. Setting `site` lets the
-  // sitemap integration emit absolute URLs (the missing-`site` build WARN is gone).
-  site: 'https://agent-rigger.github.io',
+  // Custom-domain deployment (custom-domain-pages, 2026-07-19): served at the apex
+  // agent-rigger.dev by the agent-rigger.github.io mirror, so no `base` path. Setting
+  // `site` lets the sitemap integration emit absolute URLs. The CNAME that binds Pages
+  // to the domain lives in public/ so every deployed artifact carries it — a CNAME set
+  // only through the Pages UI would be wiped by the next CI deploy.
+  site: 'https://agent-rigger.dev',
   integrations: [
     starlight({
       title: 'agent-rigger',

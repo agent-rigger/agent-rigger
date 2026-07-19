@@ -203,35 +203,35 @@ These properties hold across all commands:
 
 ## Documentation
 
-Full documentation lives at **[agent-rigger.github.io](https://agent-rigger.github.io/)**
+Full documentation lives at **[agent-rigger.dev](https://agent-rigger.dev/)**
 (Astro/Starlight, English and French; source under [`site/`](./site)).
 
 **Getting started**
 
-- [What is agent-rigger?](https://agent-rigger.github.io/start/what-is-agent-rigger/)
-- [Installation](https://agent-rigger.github.io/start/installation/)
-- [Getting started (10-minute tutorial)](https://agent-rigger.github.io/start/getting-started/)
+- [What is agent-rigger?](https://agent-rigger.dev/start/what-is-agent-rigger/)
+- [Installation](https://agent-rigger.dev/start/installation/)
+- [Getting started (10-minute tutorial)](https://agent-rigger.dev/start/getting-started/)
 
 **Concepts**
 
-- [Core concepts](https://agent-rigger.github.io/concepts/core-concepts/) (catalog, manifest, store)
-- [Artifact natures](https://agent-rigger.github.io/concepts/artifact-natures/)
-- [Trust and security](https://agent-rigger.github.io/concepts/trust-and-security/)
+- [Core concepts](https://agent-rigger.dev/concepts/core-concepts/) (catalog, manifest, store)
+- [Artifact natures](https://agent-rigger.dev/concepts/artifact-natures/)
+- [Trust and security](https://agent-rigger.dev/concepts/trust-and-security/)
 
 **Guides**
 
-- [Install from a catalog](https://agent-rigger.github.io/guides/install-from-catalog/)
-- [Update artifacts](https://agent-rigger.github.io/guides/update-artifacts/)
-- [Remove artifacts](https://agent-rigger.github.io/guides/remove-artifacts/)
-- [CI and scripts](https://agent-rigger.github.io/guides/ci-and-scripts/)
+- [Install from a catalog](https://agent-rigger.dev/guides/install-from-catalog/)
+- [Update artifacts](https://agent-rigger.dev/guides/update-artifacts/)
+- [Remove artifacts](https://agent-rigger.dev/guides/remove-artifacts/)
+- [CI and scripts](https://agent-rigger.dev/guides/ci-and-scripts/)
 
 **Reference**
 
-- [CLI reference](https://agent-rigger.github.io/reference/cli/overview/) (every command and flag)
-- [catalog.json schema](https://agent-rigger.github.io/reference/catalog-schema/)
-- [Catalog repository layout](https://agent-rigger.github.io/reference/catalog-layout/)
-- [Exit codes](https://agent-rigger.github.io/reference/exit-codes/)
-- Glossary: [English](https://agent-rigger.github.io/reference/glossary/) · [Français](https://agent-rigger.github.io/fr/reference/glossary/)
+- [CLI reference](https://agent-rigger.dev/reference/cli/overview/) (every command and flag)
+- [catalog.json schema](https://agent-rigger.dev/reference/catalog-schema/)
+- [Catalog repository layout](https://agent-rigger.dev/reference/catalog-layout/)
+- [Exit codes](https://agent-rigger.dev/reference/exit-codes/)
+- Glossary: [English](https://agent-rigger.dev/reference/glossary/) · [Français](https://agent-rigger.dev/fr/reference/glossary/)
 
 ---
 

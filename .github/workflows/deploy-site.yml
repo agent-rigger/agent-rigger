@@ -3,8 +3,9 @@ name: Deploy site
 # Build the Starlight docs site and publish it to the org-root mirror repo.
 # GitHub serves an org root only from a repo named <org>.github.io, so the site
 # is built here (the source of truth) and pushed cross-repo to
-# agent-rigger/agent-rigger.github.io, which Pages serves at
-# https://agent-rigger.github.io/. The mirror is a pure build artifact.
+# agent-rigger/agent-rigger.github.io, which Pages serves at the custom domain
+# https://agent-rigger.dev/ (the CNAME travels in the build artifact, from
+# site/public/). The mirror is a pure build artifact.
 
 on:
   push:
