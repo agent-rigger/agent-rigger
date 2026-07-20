@@ -55,6 +55,7 @@ import type { Scanner } from '@agent-rigger/core/scan';
 import type { Scope } from '@agent-rigger/core/types';
 
 import { buildAdapter } from './adapter-dispatch';
+import { targetsAssistant } from './cmd-install';
 import { partitionForeignRequires, scanEntries } from './remote-install';
 import { ANSI, paint, shouldColor } from './ui';
 
@@ -312,7 +313,18 @@ export async function runUpdate(opts: RunUpdateOptions): Promise<UpdateResult> {
         // Skills / agents / guardrails / contexts / hooks all have a scanPath;
         // all are remote regardless.
         // remoteIds uses qualified ids; buildClaudeAdapter and versionFor key by them.
-        const remoteIds = new Set(resolved.map((e) => e.id));
+        //
+        // targetsAssistant filter: provably redundant TODAY (candidates come from
+        // the manifest already scoped by (scope, assistant), and packs are stored
+        // expanded — no sibling-target id can reach this set), but the adapter
+        // boundary invariant (see remote-install.ts remoteIds) says every resolved
+        // selection handed to a single-assistant adapter is target-filtered.
+        // Defence in depth: if a future change lets a pack id or a re-resolution
+        // reach this path, cross-target entries are dropped instead of tripping
+        // the mono-guardrail guard (or silently resolving the wrong guardrail).
+        const remoteIds = new Set(
+          resolved.filter((e) => targetsAssistant(e, assistant)).map((e) => e.id),
+        );
 
         // Build effectiveEntries map with qualified ids for hookSpec resolution
         // (maps qualified id → entry, merging qualifier on top of raw entries).
