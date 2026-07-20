@@ -236,18 +236,18 @@ function installGuardPlugin(
 describe('H13-1 — scanPathFor: plugin nature', () => {
   it('returns the plugins/ directory for an opencode-targeted plugin', () => {
     const baseDir = '/tmp/checkout';
-    expect(scanPathFor(OPENCODE_PLUGIN_ENTRY, baseDir)).toBe(path.join(baseDir, 'plugins'));
+    expect(scanPathFor(OPENCODE_PLUGIN_ENTRY, baseDir)).toEqual([path.join(baseDir, 'plugins')]);
   });
 
   it('returns the same plugins/ dir regardless of which plugin id is scanned', () => {
     const baseDir = '/tmp/checkout';
-    expect(scanPathFor(OPENCODE_PLUGIN_ENTRY, baseDir)).toBe(
+    expect(scanPathFor(OPENCODE_PLUGIN_ENTRY, baseDir)).toEqual(
       scanPathFor(OPENCODE_PLUGIN_ENTRY_2, baseDir),
     );
   });
 
-  it('returns null for a claude-only plugin (delegate-first: no module in checkout)', () => {
-    expect(scanPathFor(CLAUDE_PLUGIN_ENTRY, '/tmp/checkout')).toBeNull();
+  it('returns [] for a claude-only plugin (delegate-first: no module in checkout)', () => {
+    expect(scanPathFor(CLAUDE_PLUGIN_ENTRY, '/tmp/checkout')).toEqual([]);
   });
 
   it('returns the plugins/ directory for a dual-target plugin', () => {
@@ -259,13 +259,13 @@ describe('H13-1 — scanPathFor: plugin nature', () => {
       targets: ['claude', 'opencode'],
       scopes: ['user'],
     };
-    expect(scanPathFor(dualEntry, baseDir)).toBe(path.join(baseDir, 'plugins'));
+    expect(scanPathFor(dualEntry, baseDir)).toEqual([path.join(baseDir, 'plugins')]);
   });
 
   it('strips the source qualifier before deciding (qualified opencode plugin id)', () => {
     const baseDir = '/tmp/checkout';
     const qualified: CatalogEntry = { ...OPENCODE_PLUGIN_ENTRY, id: 'principal/plugin:guard' };
-    expect(scanPathFor(qualified, baseDir)).toBe(path.join(baseDir, 'plugins'));
+    expect(scanPathFor(qualified, baseDir)).toEqual([path.join(baseDir, 'plugins')]);
   });
 });
 

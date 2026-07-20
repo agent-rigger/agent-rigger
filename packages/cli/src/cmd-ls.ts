@@ -134,6 +134,11 @@ export async function runLs(opts: RunLsOptions): Promise<RunLsResult> {
     for (const a of manifest.artifacts) {
       if (a.scope !== scope) continue;
       const entryAssistant = a.assistant ?? 'claude';
+      // A lib entry writes assistant:'shared' (S2, lib-nature) — it has no
+      // single-assistant identity and is never routed to an adapter, so it is
+      // excluded from this per-assistant tally (T7 gives libs their own ls
+      // display).
+      if (entryAssistant === 'shared') continue;
       const existing = installedAssistants.get(a.id);
       if (existing === undefined) {
         installedAssistants.set(a.id, [entryAssistant]);

@@ -283,11 +283,12 @@ describe('scanPathFor(skill) === WriteOpLink.source (T4/T5 — union-coverage pr
         targets: ['claude'],
         scopes: ['user', 'project'],
       };
-      const gatePath = scanPathFor(catalogEntry, extDir);
-      expect(gatePath).not.toBeNull();
+      const gatePaths = scanPathFor(catalogEntry, extDir);
+      expect(gatePaths).toHaveLength(1);
+      const gatePath = gatePaths[0]!;
 
-      expect(linkOp.source).toBe(gatePath as string);
-      expect(path.resolve(linkOp.source)).toBe(path.resolve(gatePath as string));
+      expect(linkOp.source).toBe(gatePath);
+      expect(path.resolve(linkOp.source)).toBe(path.resolve(gatePath));
     } finally {
       await tmp.cleanup();
     }

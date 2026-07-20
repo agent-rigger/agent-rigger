@@ -184,7 +184,9 @@ function spyScanner(): { scanner: Scanner; calls: string[]; trees: string[][] } 
 describe('T3-1 — scanPathFor: guardrail nature', () => {
   it('returns guardrails/<name> for a "guardrail:"-prefixed id', () => {
     const baseDir = '/tmp/checkout';
-    expect(scanPathFor(GUARDRAIL_ENTRY, baseDir)).toBe(path.join(baseDir, 'guardrails', 'main'));
+    expect(scanPathFor(GUARDRAIL_ENTRY, baseDir)).toEqual([
+      path.join(baseDir, 'guardrails', 'main'),
+    ]);
   });
 
   it('returns guardrails/<id> for a legacy (unprefixed) guardrail id', () => {
@@ -196,38 +198,38 @@ describe('T3-1 — scanPathFor: guardrail nature', () => {
       targets: ['claude'],
       scopes: ['user'],
     };
-    expect(scanPathFor(legacy, baseDir)).toBe(
+    expect(scanPathFor(legacy, baseDir)).toEqual([
       path.join(baseDir, 'guardrails', 'guardrails-claude'),
-    );
+    ]);
   });
 
   it('strips the source qualifier before deriving the path', () => {
     const baseDir = '/tmp/checkout';
     const qualified: CatalogEntry = { ...GUARDRAIL_ENTRY, id: 'principal/guardrail:main' };
-    expect(scanPathFor(qualified, baseDir)).toBe(path.join(baseDir, 'guardrails', 'main'));
+    expect(scanPathFor(qualified, baseDir)).toEqual([path.join(baseDir, 'guardrails', 'main')]);
   });
 });
 
 describe('T3-1 — scanPathFor: context nature', () => {
   it('returns contexts/<name>/AGENTS.md for a "context:"-prefixed id', () => {
     const baseDir = '/tmp/checkout';
-    expect(scanPathFor(CONTEXT_ENTRY, baseDir)).toBe(
+    expect(scanPathFor(CONTEXT_ENTRY, baseDir)).toEqual([
       path.join(baseDir, 'contexts', 'main', 'AGENTS.md'),
-    );
+    ]);
   });
 
   it('strips the source qualifier before deriving the path', () => {
     const baseDir = '/tmp/checkout';
     const qualified: CatalogEntry = { ...CONTEXT_ENTRY, id: 'principal/context:main' };
-    expect(scanPathFor(qualified, baseDir)).toBe(
+    expect(scanPathFor(qualified, baseDir)).toEqual([
       path.join(baseDir, 'contexts', 'main', 'AGENTS.md'),
-    );
+    ]);
   });
 });
 
 describe('T3-1 — scanPathFor: mcp nature (regression guard — no branch by design)', () => {
-  it('returns null for mcp entries (covered via catalog.json instead, not a checkout)', () => {
-    expect(scanPathFor(MCP_LEAKY_ENTRY, '/tmp/checkout')).toBeNull();
+  it('returns [] for mcp entries (covered via catalog.json instead, not a checkout)', () => {
+    expect(scanPathFor(MCP_LEAKY_ENTRY, '/tmp/checkout')).toEqual([]);
   });
 });
 

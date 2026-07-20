@@ -350,7 +350,7 @@ describe('R27-4 — scanPathFor: hook nature → hooks/ directory', () => {
       event: 'PreToolUse',
       matcher: 'Bash',
     };
-    expect(scanPathFor(entry, baseDir)).toBe(path.join(baseDir, 'hooks'));
+    expect(scanPathFor(entry, baseDir)).toEqual([path.join(baseDir, 'hooks')]);
   });
 
   it('returns the same hooks/ dir regardless of which hook id is scanned', () => {
@@ -373,7 +373,7 @@ describe('R27-4 — scanPathFor: hook nature → hooks/ directory', () => {
       event: 'UserPromptSubmit',
       matcher: '*',
     };
-    expect(scanPathFor(entryA, baseDir)).toBe(scanPathFor(entryB, baseDir));
+    expect(scanPathFor(entryA, baseDir)).toEqual(scanPathFor(entryB, baseDir));
   });
 
   it('still returns the individual file path for skill nature', () => {
@@ -385,7 +385,7 @@ describe('R27-4 — scanPathFor: hook nature → hooks/ directory', () => {
       targets: ['claude'],
       scopes: ['user'],
     };
-    expect(scanPathFor(entry, baseDir)).toBe(path.join(baseDir, 'skills', 'demo'));
+    expect(scanPathFor(entry, baseDir)).toEqual([path.join(baseDir, 'skills', 'demo')]);
   });
 
   it('still returns the individual file path for agent nature', () => {
@@ -397,7 +397,7 @@ describe('R27-4 — scanPathFor: hook nature → hooks/ directory', () => {
       targets: ['claude'],
       scopes: ['user'],
     };
-    expect(scanPathFor(entry, baseDir)).toBe(path.join(baseDir, 'agents', 'demo.md'));
+    expect(scanPathFor(entry, baseDir)).toEqual([path.join(baseDir, 'agents', 'demo.md')]);
   });
 });
 

@@ -17,7 +17,7 @@
  */
 
 import { InvalidJsonError, writeJson } from './fs-json';
-import type { Assistant, Manifest, ManifestEntry, Scope } from './types';
+import type { Manifest, ManifestAssistant, ManifestEntry, Scope } from './types';
 
 // ---------------------------------------------------------------------------
 // Typed error
@@ -54,8 +54,14 @@ export class MalformedManifestError extends Error {
  * M3, with no `assistant` field) to 'claude'. Manifest identity is the triple
  * (id, scope, assistant): the same artifact can be installed for both claude and
  * opencode without one clobbering the other.
+ *
+ * The `?? 'claude'` fallback fires ONLY when `assistant` is absent (legacy
+ * entries) — a PRESENT value is always returned verbatim, `'shared'` included
+ * (S2, lib-nature): a lib entry always writes `assistant: 'shared'`, so it is
+ * never silently coerced into the 'claude' bucket. This is what makes
+ * `(id, scope, 'shared')` a stable global singleton identity for upsertEntry.
  */
-function entryAssistant(entry: ManifestEntry): Assistant {
+function entryAssistant(entry: ManifestEntry): ManifestAssistant {
   return entry.assistant ?? 'claude';
 }
 
@@ -201,7 +207,7 @@ export function findEntry(
   manifest: Manifest,
   id: string,
   scope: Scope,
-  assistant: Assistant = 'claude',
+  assistant: ManifestAssistant = 'claude',
 ): ManifestEntry | undefined {
   return manifest.artifacts.find(
     (e) => e.id === id && e.scope === scope && entryAssistant(e) === assistant,

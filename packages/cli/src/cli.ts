@@ -800,7 +800,12 @@ async function resolveManifestAssistant(opts: {
   for (const entry of manifest.artifacts) {
     if (entry.scope !== scope) continue;
     if (idFilter !== undefined && !idFilter.has(entry.id)) continue;
-    distinct.add(entry.assistant ?? 'claude');
+    const entryAssistant = entry.assistant ?? 'claude';
+    // A lib entry writes assistant:'shared' (S2, lib-nature) — it is never
+    // routed to an adapter, so it never counts toward "which assistant is this
+    // manifest for" here.
+    if (entryAssistant === 'shared') continue;
+    distinct.add(entryAssistant);
   }
 
   const [only] = distinct;

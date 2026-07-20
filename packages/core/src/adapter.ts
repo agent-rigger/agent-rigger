@@ -32,6 +32,13 @@ export interface AdapterEntry {
   scope: Scope;
   /** Applied payload from the manifest (set by the engine for remove/check). */
   applied?: AppliedPayload;
+  /**
+   * Ids of other manifest entries this entry depends on (R5), captured
+   * PRE-prune and qualified by the CLI. Opaque transport only: no adapter
+   * reads this — the engine copies it verbatim onto ManifestEntry.requires
+   * via buildManifestEntry. Absent when the entry declares no requires.
+   */
+  requires?: string[];
 }
 
 /**

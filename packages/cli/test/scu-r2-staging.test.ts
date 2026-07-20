@@ -82,6 +82,17 @@ const PLUGIN_OPENCODE: ArtifactEntry = {
   scopes: ['user'],
 };
 
+const LIB: ArtifactEntry = {
+  kind: 'artifact',
+  id: 'lib:rules-common',
+  nature: 'lib',
+  // Post-parse shape (ArtifactEntrySchema normalises an omitted `targets` to
+  // [] for lib entries, R1) — this fixture is a raw ArtifactEntry literal, not
+  // routed through the schema parser, so it mirrors that normalised shape.
+  targets: [],
+  scopes: ['user'],
+};
+
 // ---------------------------------------------------------------------------
 // Checkout fixture — every nature present, plus a NON-selected skill and a
 // shared hook lib the selected hooks never reference (R2 surface check).
@@ -120,6 +131,10 @@ async function makeCheckout(): Promise<Checkout> {
   // Shared lib the selected hooks never import — still part of the hooks/ surface.
   await writeFile(path.join(baseDir, 'hooks', '_shared', 'lib.ts'), 'export const lib = 1;\n');
   await writeFile(path.join(baseDir, 'plugins', 'mon-plugin', 'index.ts'), 'export default {};\n');
+  await writeFile(
+    path.join(baseDir, 'common', 'libs', 'rules-common', 'index.ts'),
+    'export const rulesCommon = 1;\n',
+  );
 
   const cleanup = async () => {
     await fs.rm(tmpParent, { recursive: true, force: true });
@@ -190,7 +205,7 @@ describe('R2: materializeUnion — exact multi-nature mirror', () => {
     const { baseDir, tmpParent } = await newCheckout();
 
     const { stagingDir, cleanup } = await materializeUnion({
-      entries: [SKILL, AGENT, GUARDRAIL, CONTEXT, HOOK_A, HOOK_B, PLUGIN_OPENCODE],
+      entries: [SKILL, AGENT, GUARDRAIL, CONTEXT, HOOK_A, HOOK_B, PLUGIN_OPENCODE, LIB],
       baseDir,
       tmpFactory: stagingIn(tmpParent),
     });
@@ -201,6 +216,7 @@ describe('R2: materializeUnion — exact multi-nature mirror', () => {
         [
           'agents/mon-agent.md',
           'catalog.json',
+          'common/libs/rules-common/index.ts',
           'contexts/mon-ctx/AGENTS.md',
           'guardrails/mon-guard/deny.json',
           'hooks/_shared/lib.ts',
@@ -210,6 +226,25 @@ describe('R2: materializeUnion — exact multi-nature mirror', () => {
           'skills/mon-skill/helper.ts',
         ].sort(),
       );
+    } finally {
+      await cleanup();
+    }
+  });
+});
+
+describe('R2: materializeUnion — lib nature stages at common/libs/<name> (T1, R2)', () => {
+  it('mirrors a selected lib at its direct common/libs/<name> checkout position, and nothing else', async () => {
+    const { baseDir, tmpParent } = await newCheckout();
+
+    const { stagingDir, cleanup } = await materializeUnion({
+      entries: [LIB],
+      baseDir,
+      tmpFactory: stagingIn(tmpParent),
+    });
+
+    try {
+      const leaves = await walkLeaves(stagingDir);
+      expect(leaves).toEqual(['catalog.json', 'common/libs/rules-common/index.ts']);
     } finally {
       await cleanup();
     }
@@ -336,17 +371,18 @@ describe('R2: materializeUnion — anti-traversal guard', () => {
   // m3 (scan-hardening, T4): the skill case above is one nature; prove the guard
   // holds for every OTHER nature whose scanPathFor path.joins a raw localId into
   // the checkout — agent (agents/<name>.md), guardrail (guardrails/<name>/),
-  // context (contexts/<name>/AGENTS.md). Each forged id survives localId as
-  // '../../../evil' (localId slices after the first '/'), so scanPathFor lands
-  // the target above the checkout and enqueue must reject it BEFORE any staging
-  // dir is created. mcp/tool have no checkout path (scanPathFor → null, never
-  // enqueued); hook/plugin path.join a constant dir name, not the id, so they
-  // carry no id-driven traversal surface — the natures below are the exhaustive
-  // id-derived set.
+  // context (contexts/<name>/AGENTS.md), lib (common/libs/<name>/, T1). Each
+  // forged id survives localId as '../../../evil' (localId slices after the
+  // first '/'), so scanPathFor lands the target above the checkout and enqueue
+  // must reject it BEFORE any staging dir is created. mcp/tool have no checkout
+  // path (scanPathFor → [], never enqueued); hook/plugin path.join a constant
+  // dir name, not the id, so they carry no id-driven traversal surface — the
+  // natures below are the exhaustive id-derived set.
   it.each([
     { nature: 'agent' as const, base: AGENT },
     { nature: 'guardrail' as const, base: GUARDRAIL },
     { nature: 'context' as const, base: CONTEXT },
+    { nature: 'lib' as const, base: LIB },
   ])(
     'throws before any staging for a forged $nature id that escapes the checkout',
     async ({ nature, base }) => {

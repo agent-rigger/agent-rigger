@@ -608,6 +608,97 @@ describe('ArtifactEntrySchema — all HookEvent values are valid', () => {
 });
 
 // ---------------------------------------------------------------------------
+// lib nature (R1, lib-nature) — no assistant target, requires[] only
+// ---------------------------------------------------------------------------
+
+describe('ArtifactEntrySchema — lib nature has no targets (R1)', () => {
+  it('accepts a lib entry with no targets field', () => {
+    const result = ArtifactEntrySchema.safeParse({
+      kind: 'artifact',
+      id: 'lib:rules-common',
+      nature: 'lib',
+      scopes: ['user'],
+    });
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    // Normalised to [] rather than undefined (R1) — every downstream reader of
+    // ArtifactEntry.targets keeps a plain Assistant[] (see schema.ts transform).
+    expect(result.data.targets).toEqual([]);
+  });
+
+  it('CatalogEntrySchema also accepts a lib entry with no targets', () => {
+    const result = CatalogEntrySchema.safeParse({
+      kind: 'artifact',
+      id: 'lib:rules-common',
+      nature: 'lib',
+      scopes: ['user'],
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('rejects a lib entry that declares targets', () => {
+    const result = ArtifactEntrySchema.safeParse({
+      kind: 'artifact',
+      id: 'lib:rules-common',
+      nature: 'lib',
+      targets: ['claude'],
+      scopes: ['user'],
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('names the entry and the rule when a lib declares targets', () => {
+    const result = ArtifactEntrySchema.safeParse({
+      kind: 'artifact',
+      id: 'lib:rules-common',
+      nature: 'lib',
+      targets: ['claude'],
+      scopes: ['user'],
+    });
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    const messages = result.error.issues.map((i) => i.message).join(' ');
+    expect(messages).toContain('lib:rules-common');
+  });
+
+  it('rejects a non-lib artifact with no targets (targets stays required elsewhere)', () => {
+    const result = ArtifactEntrySchema.safeParse({
+      kind: 'artifact',
+      id: 'skill:x',
+      nature: 'skill',
+      scopes: ['user'],
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('accepts a lib entry with a requires field (consumer→lib edge lives elsewhere)', () => {
+    const result = ArtifactEntrySchema.safeParse({
+      kind: 'artifact',
+      id: 'hook:guard-command',
+      nature: 'hook',
+      targets: ['claude'],
+      scopes: ['user'],
+      event: 'PreToolUse',
+      matcher: 'Bash',
+      requires: ['lib:rules-common'],
+    });
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    expect(result.data.requires).toEqual(['lib:rules-common']);
+  });
+
+  it('rejects a forged lib id attempting path traversal', () => {
+    const result = ArtifactEntrySchema.safeParse({
+      kind: 'artifact',
+      id: 'lib:../evil',
+      nature: 'lib',
+      scopes: ['user'],
+    });
+    expect(result.success).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // MetaSchema
 // ---------------------------------------------------------------------------
 

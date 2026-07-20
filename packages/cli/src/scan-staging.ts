@@ -97,9 +97,12 @@ export async function materializeUnion(opts: MaterializeUnionOpts): Promise<Unio
   };
   enqueue(path.join(baseDir, 'catalog.json'));
   for (const entry of entries) {
-    const scanPath = scanPathFor(entry, baseDir);
-    if (scanPath === null) continue; // mcp/tool/claude-only plugin: no checkout of its own.
-    enqueue(scanPath);
+    // scanPathFor returns [] for mcp/tool/claude-only plugin (no checkout of
+    // their own) and one path per checkout surface otherwise (R2/R9 — a future
+    // multi-target layout may enqueue more than one per entry).
+    for (const scanPath of scanPathFor(entry, baseDir)) {
+      enqueue(scanPath);
+    }
   }
 
   const stagingDir = tmpFactory

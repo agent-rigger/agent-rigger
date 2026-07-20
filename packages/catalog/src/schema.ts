@@ -22,7 +22,7 @@ import {
 // Nature constants + compile-time coherence check with core.Nature
 // ---------------------------------------------------------------------------
 
-/** The 8 natures of installable artefacts. */
+/** The 9 natures of installable artefacts. */
 const NATURES = [
   'plugin',
   'guardrail',
@@ -32,6 +32,7 @@ const NATURES = [
   'mcp',
   'tool',
   'hook',
+  'lib',
 ] as const;
 
 /**
@@ -263,8 +264,17 @@ export const ArtifactEntrySchema = CommonFieldsSchema.extend({
   /** Discriminator — always 'artifact' for this variant. */
   kind: z.literal('artifact'),
 
-  /** Artefact nature — one of the 8 domain categories. Required for artifacts. */
+  /** Artefact nature — one of the 9 domain categories. Required for artifacts. */
   nature: z.enum(NATURES),
+
+  /**
+   * Overrides CommonFieldsSchema.targets (required, min(1)) with an optional
+   * variant: a lib entry (R1, S3) targets no assistant at all — it is
+   * referenced by its consumers via requires[], never installed directly.
+   * The superRefine below enforces the actual invariant per-nature: absent
+   * for 'lib', a non-empty array for every other nature (unchanged behaviour).
+   */
+  targets: TargetsSchema.optional(),
 
   /**
    * Importance level. Signals whether the artefact is strictly needed or merely helpful.
@@ -352,7 +362,39 @@ export const ArtifactEntrySchema = CommonFieldsSchema.extend({
   if (data.nature === 'mcp' && data.config !== undefined) {
     checkMcpSecretRefsStrict(data.id, data.config, ctx);
   }
-});
+
+  // R1 / S3: a lib entry targets no assistant — it is referenced by its
+  // consumers via requires[], never installed directly (S7). Every other
+  // nature keeps the pre-existing invariant (non-empty targets, previously
+  // enforced structurally by CommonFieldsSchema before targets became
+  // optional above).
+  if (data.nature === 'lib') {
+    if (data.targets !== undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['targets'],
+        message: `lib entry "${data.id}" must not declare 'targets' — a lib nature `
+          + 'targets no assistant; it is referenced by its consumers via requires[]',
+      });
+    }
+  } else if (data.targets === undefined || data.targets.length === 0) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['targets'],
+      message: `entry "${data.id}" (nature '${data.nature}') requires a non-empty 'targets' array`,
+    });
+  }
+}).transform((data) => ({
+  ...data,
+  // Normalise the omitted-for-lib case to `[]` rather than `undefined` (R1):
+  // every OTHER downstream reader of ArtifactEntry.targets (scan-paths,
+  // remote-install, cmd-install, doctor-scan, ui…) keeps a plain `Assistant[]`
+  // to iterate/`.includes()` without a narrow-by-nature at every call site.
+  // The superRefine above already rejected any invalid shape (lib+targets,
+  // non-lib without targets), so by the time this runs `data.targets` is
+  // either a validated non-empty array or (lib only) absent.
+  targets: data.targets ?? [],
+}));
 
 /** Inferred type for an artifact entry. */
 export type ArtifactEntry = z.infer<typeof ArtifactEntrySchema>;
