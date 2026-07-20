@@ -51,6 +51,43 @@ describe('defaultRunner — real spawn, output capture', () => {
 });
 
 // ---------------------------------------------------------------------------
+// defaultRunner — captured output is capped (C5)
+//
+// A runaway or unexpectedly chatty command must never let defaultRunner
+// buffer unbounded memory. `yes | head -c <n>` produces exactly `<n>` bytes
+// of real, portable subprocess output (both `yes` and `head` are standard on
+// macOS + ubuntu) then the child exits on its own — no infinite process is
+// left running regardless of how much of its stdout we actually read.
+// ---------------------------------------------------------------------------
+
+describe('defaultRunner — captured output is capped', () => {
+  const TRUNCATION_MARKER = '\n…[truncated: output exceeded 1 MiB cap]';
+  const ONE_MIB = 1024 * 1024;
+
+  it('truncates stdout exceeding the 1 MiB cap and appends an explicit marker', async () => {
+    const result = await defaultRunner('yes | head -c 1200000');
+    expect((result.stdout ?? '').endsWith(TRUNCATION_MARKER)).toBe(true);
+    expect((result.stdout ?? '').length).toBeLessThan(1200000);
+  });
+
+  it('caps captured stdout at exactly 1 MiB before the truncation marker', async () => {
+    const result = await defaultRunner('yes | head -c 1200000');
+    expect((result.stdout ?? '').length - TRUNCATION_MARKER.length).toBe(ONE_MIB);
+  });
+
+  it('does not truncate (and does not append the marker) when output stays under the cap', async () => {
+    const result = await defaultRunner('printf hello-stdout');
+    expect(result.stdout).toBe('hello-stdout');
+    expect(result.stdout).not.toContain('truncated');
+  });
+
+  it('exit code is unaffected by stdout truncation', async () => {
+    const result = await defaultRunner('yes | head -c 1200000');
+    expect(result.exitCode).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // defaultRunner — fallback sh -c quoting
 // ---------------------------------------------------------------------------
 
