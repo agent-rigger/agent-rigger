@@ -37,7 +37,7 @@ import { resolveHome } from '@agent-rigger/core/paths';
 import type { Manifest, Scope } from '@agent-rigger/core/types';
 
 import type { ArtifactEntry, CatalogEntry } from '@agent-rigger/catalog';
-import { resolve } from '@agent-rigger/catalog/resolver';
+import { resolveWithEdges } from '@agent-rigger/catalog/resolver';
 import {
   checkTools,
   missingRecommended,
@@ -144,6 +144,16 @@ export interface RunInstallOptions {
   versionFor?: (
     entry: AdapterEntry,
   ) => { ref: string; sha: string };
+  /**
+   * Resolved requires per entry id (qualified), captured PRE-prune by the caller
+   * (remote-install R5/S4). When present, an entry's requires are taken from
+   * this map instead of the local resolveWithEdges result: the local one would
+   * be POST-prune (its catalog has cross-catalogue satisfied refs stripped by
+   * pruneSatisfiedRequires), which must never become the persisted edge. Absent
+   * for direct/local installs (no cross-catalogue prune), where the local
+   * resolution is itself pre-prune and authoritative.
+   */
+  requiresById?: Map<string, string[]>;
 }
 
 // ---------------------------------------------------------------------------
@@ -302,7 +312,15 @@ export async function runInstall(opts: RunInstallOptions): Promise<InstallResult
   // Step 1: Resolve selected ids → concrete artifact entries
   // -------------------------------------------------------------------------
 
-  const resolved: ArtifactEntry[] = resolve(selectedIds, catalog);
+  // Resolve WITH edges so each entry carries its resolved requires (own +
+  // pack-inherited, S4). requiresById (when the caller captured them pre-prune)
+  // overrides per id; otherwise the local resolution — itself pre-prune on this
+  // path, no cross-catalogue pruning happens here — is authoritative.
+  const resolvedWithEdges = resolveWithEdges(selectedIds, catalog);
+  const resolved: ArtifactEntry[] = resolvedWithEdges.map((r) => r.entry);
+  const localRequiresById = new Map(resolvedWithEdges.map((r) => [r.entry.id, r.requires]));
+  const requiresFor = (id: string): string[] =>
+    opts.requiresById?.get(id) ?? localRequiresById.get(id) ?? [];
 
   // -------------------------------------------------------------------------
   // Step 1b: Target routing — split by assistant compatibility (E-targets)
@@ -342,11 +360,15 @@ export async function runInstall(opts: RunInstallOptions): Promise<InstallResult
 
   const adapterEntries: AdapterEntry[] = entries
     .filter((e) => e.nature !== 'tool')
-    .map((e) => ({
-      id: e.id,
-      nature: e.nature,
-      scope,
-    }));
+    .map((e) => {
+      // Thread the resolved requires (S4/R5) onto the opaque AdapterEntry
+      // transport so buildManifestEntry persists them. Omit when none, per the
+      // AdapterEntry.requires convention (absent = declares no requires).
+      const requires = requiresFor(e.id);
+      return requires.length > 0
+        ? { id: e.id, nature: e.nature, scope, requires }
+        : { id: e.id, nature: e.nature, scope };
+    });
 
   // Read manifest once to determine action (install vs update) per entry.
   const manifest = await readManifest(manifestPath);

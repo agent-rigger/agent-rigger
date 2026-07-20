@@ -36,12 +36,13 @@ import {
   isUpdateAvailable,
   localId,
   mergeCatalogs,
+  qualifyRef,
   readCatalogDir,
   resolveVersion,
   type TmpDirFactory,
   withRemoteCheckout,
 } from '@agent-rigger/catalog';
-import { catalogPrefixOf, resolve } from '@agent-rigger/catalog/resolver';
+import { catalogPrefixOf, resolveWithEdges } from '@agent-rigger/catalog/resolver';
 import type { CommandRunner } from '@agent-rigger/catalog/tool-check';
 import type { Assistant } from '@agent-rigger/core';
 import { createCompositeScanner } from '@agent-rigger/core';
@@ -299,7 +300,13 @@ export async function runUpdate(opts: RunUpdateOptions): Promise<UpdateResult> {
           assistant,
         );
 
-        const rawResolved = resolve(rawStaleIds, effective, externallySatisfied);
+        // Resolve WITH edges (S4/R5): capture each entry's resolved requires
+        // (own + pack-inherited) PRE-prune. This is the backfill path (S6): a
+        // legacy entry with no edges gains them on the first update, which
+        // re-resolves. rawResolved reads `effective` (requires refs stay on
+        // requirers; only the resolve graph skips externallySatisfied refs).
+        const rawResolvedWithEdges = resolveWithEdges(rawStaleIds, effective, externallySatisfied);
+        const rawResolved = rawResolvedWithEdges.map((r) => r.entry);
 
         // Restore qualification: map raw resolved entries back to their manifest-qualified ids.
         // Build a lookup from local-id → qualified id for the stale set.
@@ -308,6 +315,19 @@ export async function runUpdate(opts: RunUpdateOptions): Promise<UpdateResult> {
           ...e,
           id: localToQualified.get(e.id) ?? e.id,
         }));
+
+        // Qualify the captured edges (qualifyRef idempotent: intra-catalogue
+        // refs gain the prefix, cross-catalogue refs stay intact), keyed by the
+        // manifest-qualified requirer id so adapterEntries can thread them onto
+        // AdapterEntry.requires for buildManifestEntry to persist.
+        const qualifyEdge = (ref: string): string =>
+          sourceName === undefined ? ref : qualifyRef(sourceName, ref);
+        const requiresByQualifiedId = new Map<string, string[]>(
+          rawResolvedWithEdges.map((r) => [
+            localToQualified.get(r.entry.id) ?? r.entry.id,
+            r.requires.map(qualifyEdge),
+          ]),
+        );
 
         // All stale entries sourced from the remote checkout.
         // Skills / agents / guardrails / contexts / hooks all have a scanPath;
@@ -397,9 +417,17 @@ export async function runUpdate(opts: RunUpdateOptions): Promise<UpdateResult> {
         });
 
         // AdapterEntries for remove+apply (exclude tool-nature entries).
+        // Thread the captured requires (S4/R5) onto the opaque AdapterEntry
+        // transport so buildManifestEntry backfills them (S6). Omit when none,
+        // per the AdapterEntry.requires convention.
         const adapterEntries = resolved
           .filter((e) => e.nature !== 'tool')
-          .map((e) => ({ id: e.id, nature: e.nature, scope }));
+          .map((e) => {
+            const requires = requiresByQualifiedId.get(e.id) ?? [];
+            return requires.length > 0
+              ? { id: e.id, nature: e.nature, scope, requires }
+              : { id: e.id, nature: e.nature, scope };
+          });
 
         // 3e. versionFor seam: remote (has checkout path) → real ref/sha, others → v0.0.0/''.
         const versionFor = (

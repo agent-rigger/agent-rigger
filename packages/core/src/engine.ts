@@ -1098,6 +1098,12 @@ function buildManifestEntry(
     installedAt: new Date().toISOString(),
     files,
     assistant,
+    // Copy the requires edges verbatim (S4/R5, lib-nature): the core never
+    // reads their semantics — it transports the qualified refs the CLI captured
+    // pre-prune. Absent when the entry declares none; present (even `[]`)
+    // replaces the previous edges wholesale, since upsertEntry replaces the
+    // entire entry (unlike the cumulative files/applied merge above).
+    ...(entry.requires === undefined ? {} : { requires: entry.requires }),
   };
 
   if (applied !== undefined) {

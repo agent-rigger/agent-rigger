@@ -54,7 +54,7 @@ import {
   type TmpDirFactory,
   withRemoteCheckout,
 } from '@agent-rigger/catalog';
-import { collectForeignRequires, resolve } from '@agent-rigger/catalog/resolver';
+import { collectForeignRequires, resolveWithEdges } from '@agent-rigger/catalog/resolver';
 import type { CommandRunner } from '@agent-rigger/catalog/tool-check';
 
 import { buildAdapter } from './adapter-dispatch';
@@ -472,7 +472,14 @@ export async function runRemoteInstall(opts: {
         assistant,
       );
 
-      const rawResolved = resolve(rawIds, rawEffective, externallySatisfied);
+      // Resolve WITH edges (S4/R5): capture each entry's resolved requires (own
+      // + pack-inherited) from the RAW resolution — i.e. PRE-prune. rawEffective
+      // still carries every requires ref (pruneSatisfiedRequires only touches
+      // `effective` below, which feeds runInstall's second resolve), so a
+      // cross-catalogue require already satisfied stays on its requirer's edges
+      // even though externallySatisfied skipped emitting the ref itself.
+      const rawResolvedWithEdges = resolveWithEdges(rawIds, rawEffective, externallySatisfied);
+      const rawResolved = rawResolvedWithEdges.map((r) => r.entry);
 
       // When a sourceName is provided, qualify all resolved entries so that the
       // manifest stores fully-qualified ids (e.g. 'principal/guardrail:main').
@@ -483,6 +490,15 @@ export async function runRemoteInstall(opts: {
       const resolved: ArtifactEntry[] = sourceName === undefined
         ? rawResolved
         : rawResolved.map((e) => ({ ...e, id: qualify(e.id) }));
+
+      // Qualify the captured edges with the SAME map that qualifies ids
+      // (qualifyRef is idempotent: intra-catalogue refs gain the prefix,
+      // cross-catalogue refs stay intact — R5 format `<catalog>/<nature>:<name>`).
+      // Keyed by qualified entry id so runInstall matches its AdapterEntry ids;
+      // this pre-prune map is the source of truth threaded via `requiresById`.
+      const requiresById = new Map<string, string[]>(
+        rawResolvedWithEdges.map((r) => [qualify(r.entry.id), r.requires.map(qualify)]),
+      );
 
       // Qualify the effective catalog using qualifyEntries so that pack members,
       // requires, and ids are ALL qualified (not just the top-level id field).
@@ -621,6 +637,11 @@ export async function runRemoteInstall(opts: {
         versionFor,
         toolRunner: runner,
         summary: opts.summary === true,
+        // Pre-prune, qualified edges (S4/R5): override runInstall's own
+        // (post-prune, `effective`-based) resolution so a satisfied
+        // cross-catalogue require persists on its requirer even though it was
+        // pruned from the install graph.
+        requiresById,
       });
 
       if (warnings.length === 0) {
