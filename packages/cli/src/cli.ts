@@ -539,8 +539,11 @@ Resources:
 Options:
   --scope=<user|project>        Installation scope (default: user).
   --assistant=<claude|opencode>
-                                 Target assistant (default: resolved from config/detection,
-                                 or prompted; see README § Assistants).
+                                 Target assistant for install/check/remove/update (default:
+                                 resolved from config/detection, or prompted; see README §
+                                 Assistants). On ls/info (read-only), it only scopes the
+                                 "[installed]" marker to that assistant — it never narrows
+                                 which entries are listed.
   --yes                         Skip confirmation prompt (non-interactive install only).
   --force                       Proceed despite blocking scan findings (install and update).
   --fix                         Repair the installed state (doctor only; consent-driven).

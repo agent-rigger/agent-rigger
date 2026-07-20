@@ -22,13 +22,12 @@ import type { Assistant } from '@agent-rigger/core';
 import type { Env } from '@agent-rigger/core/paths';
 import { resolveHome } from '@agent-rigger/core/paths';
 
+import { VALID_ASSISTANTS } from './config';
 import { CancelledError } from './ui';
 
 // ---------------------------------------------------------------------------
 // decideAssistant — pure
 // ---------------------------------------------------------------------------
-
-const VALID_ASSISTANTS = new Set<Assistant>(['claude', 'opencode']);
 
 /** Input to decideAssistant. */
 export interface DecideAssistantInput {

@@ -291,3 +291,35 @@ describe('cli-signal-help-naming ④: --force help documents install and update'
     expect(entry).not.toMatch(/\bonly\b/);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Anti-drift (micro-lot-mecanique A2): `ls --assistant` bounds only the
+// "[installed]" marker (cmd-ls.ts's real behaviour — a read-only filter, no
+// listing narrowed). The generic --assistant Options entry must say so
+// explicitly, so it can't be misread as a listing filter again — while still
+// naming the real targeting semantics on install/check/remove/update.
+// ---------------------------------------------------------------------------
+
+describe('micro-lot-mecanique A2: --assistant help distinguishes targeting from the ls/info filter', () => {
+  it('the Options --assistant entry names install/check/remove/update as the targeting surface, and ls/info as scoping "[installed]" only, never narrowing the listing', async () => {
+    const cap = makeCapture();
+    await runCli(['--help'], { print: cap.print, env: { RIGGER_HOME: '/nonexistent' } });
+    const usage = cap.lines.join('\n');
+
+    const optionsSection = usage.slice(usage.indexOf('Options:'), usage.indexOf('Examples:'));
+    const assistantEntry = optionsSection
+      .split(/\n(?=  --)/)
+      .find((block) => /^\s*--assistant\b/.test(block));
+
+    expect(assistantEntry).toBeDefined();
+    const entry = assistantEntry as string;
+    expect(entry).toContain('install');
+    expect(entry).toContain('check');
+    expect(entry).toContain('remove');
+    expect(entry).toContain('update');
+    expect(entry).toContain('ls');
+    expect(entry).toContain('info');
+    expect(entry).toContain('[installed]');
+    expect(entry).toMatch(/never narrows|not.*narrow|only scopes/);
+  });
+});
