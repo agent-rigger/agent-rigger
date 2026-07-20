@@ -36,6 +36,7 @@ import type {
   Report,
   Scope,
   WriteOp,
+  WriteOpWriteText,
 } from '@agent-rigger/core';
 import { assistantRoot, isReportOnly } from '@agent-rigger/core';
 import { assertNever } from '@agent-rigger/core/assert-never';
@@ -132,7 +133,13 @@ export interface RenderPlanOpts {
    * Pass `color: false` in tests to get deterministic plain-text output.
    */
   color?: boolean;
-  /** Maximum detail lines rendered per op before truncation. Defaults to 6. */
+  /**
+   * Maximum detail lines rendered per op before truncation. Defaults to 6.
+   * Governs merge-deny/merge-allow rule dumps only — a write-text op's diff
+   * body has its own fixed cap (W5, {@link DIFF_DISPLAY_CAP}), independent of
+   * this option, since a sane diff-display threshold (~40 lines) has nothing
+   * to do with the ~6-rule default that keeps a guardrail dump readable.
+   */
   maxDetail?: number;
   /**
    * Compact mode (plan-compact-summary D1/D2): collapse each artefact's op
@@ -414,6 +421,210 @@ function formatRemovalGroupDigest(c: RemovalOpCounts): string {
 }
 
 // ---------------------------------------------------------------------------
+// write-text line diff (W5) — real diff against the pre-install content
+// ---------------------------------------------------------------------------
+
+/**
+ * Lines of unchanged context kept around each change in a write-text diff
+ * (unified-diff convention). Not the same knob as {@link RenderPlanOpts.maxDetail}.
+ */
+const DIFF_CONTEXT = 3;
+
+/**
+ * Maximum number of diff display rows (context + additions + removals + gap
+ * markers) rendered before eliding the remainder with an explicit line — a
+ * single large rewritten file must not flood the rest of the plan out of view.
+ * Independent of {@link RenderPlanOpts.maxDetail} (that knob's ~6-rule default
+ * has nothing to do with a sane diff-display threshold).
+ */
+const DIFF_DISPLAY_CAP = 40;
+
+/**
+ * Guard against the O(n·m) LCS table on a pathological input (a huge
+ * generated file): above this many cells, skip the real diff and treat the
+ * whole file as replaced (all old lines removed, all new lines added) rather
+ * than allocate an oversized table. Ordinary context/skill/agent files never
+ * come close to this bound.
+ */
+const DIFF_MAX_CELLS = 4_000_000;
+
+/** One line-level diff operation between the pre-install and new content. */
+interface DiffOp {
+  kind: 'context' | 'add' | 'remove';
+  text: string;
+}
+
+/**
+ * Split write-text content into logical lines: a single trailing newline is
+ * not counted as an extra empty line (matches the pre-W5 line-count rule).
+ */
+function splitWriteLines(content: string): string[] {
+  return content === '' ? [] : content.replace(/\n$/, '').split('\n');
+}
+
+/**
+ * Line-level diff via the classic LCS dynamic-programming table (O(n·m) time
+ * and space). This is a plan-preview diff for config/context/skill files, not
+ * a general-purpose diff engine — {@link DIFF_MAX_CELLS} bounds the pathological case.
+ */
+function computeLineDiff(oldLines: string[], newLines: string[]): DiffOp[] {
+  const n = oldLines.length;
+  const m = newLines.length;
+
+  if ((n + 1) * (m + 1) > DIFF_MAX_CELLS) {
+    // Too large to LCS-diff cheaply — treat as a full replacement.
+    return [
+      ...oldLines.map((text): DiffOp => ({ kind: 'remove', text })),
+      ...newLines.map((text): DiffOp => ({ kind: 'add', text })),
+    ];
+  }
+
+  // dp[i][j] = length of the LCS of oldLines[i:] and newLines[j:]. i/j always
+  // stay within the bounds the two `for` loops below establish (n+1 rows of
+  // m+1 numbers each, filled 0), so the `?? 0` fallbacks below are never
+  // actually taken — they only satisfy noUncheckedIndexedAccess.
+  const dp: number[][] = Array.from(
+    { length: n + 1 },
+    () => Array.from({ length: m + 1 }, () => 0),
+  );
+
+  for (let i = n - 1; i >= 0; i--) {
+    const row = dp[i] ?? [];
+    const nextRow = dp[i + 1] ?? [];
+    for (let j = m - 1; j >= 0; j--) {
+      row[j] = oldLines[i] === newLines[j]
+        ? (nextRow[j + 1] ?? 0) + 1
+        : Math.max(nextRow[j] ?? 0, row[j + 1] ?? 0);
+    }
+  }
+
+  const ops: DiffOp[] = [];
+  let i = 0;
+  let j = 0;
+  for (; i < n && j < m;) {
+    const oldLine = oldLines[i] ?? '';
+    const newLine = newLines[j] ?? '';
+    if (oldLine === newLine) {
+      ops.push({ kind: 'context', text: oldLine });
+      i++;
+      j++;
+    } else {
+      const removeScore = dp[i + 1]?.[j] ?? 0;
+      const addScore = dp[i]?.[j + 1] ?? 0;
+      if (removeScore >= addScore) {
+        ops.push({ kind: 'remove', text: oldLine });
+        i++;
+      } else {
+        ops.push({ kind: 'add', text: newLine });
+        j++;
+      }
+    }
+  }
+  for (; i < n; i++) ops.push({ kind: 'remove', text: oldLines[i] ?? '' });
+  for (; j < m; j++) ops.push({ kind: 'add', text: newLines[j] ?? '' });
+  return ops;
+}
+
+/**
+ * A renderable diff row: a real diff op, or a collapsed run of `count`
+ * unchanged context lines dropped for being farther than {@link DIFF_CONTEXT}
+ * lines from any change.
+ */
+type DiffRow = DiffOp | { kind: 'gap'; count: number };
+
+/**
+ * Collapse a flat diff-op sequence into unified-diff display rows (contexte
+ * 3): a context line is kept only within {@link DIFF_CONTEXT} lines of a
+ * change; longer unchanged runs collapse into a single `gap` row.
+ */
+function windowDiffContext(ops: DiffOp[], context: number): DiffRow[] {
+  const keep = Array.from({ length: ops.length }, () => false);
+  ops.forEach((op, idx) => {
+    if (op.kind === 'context') return;
+    const from = Math.max(0, idx - context);
+    const to = Math.min(ops.length - 1, idx + context);
+    for (let k = from; k <= to; k++) keep[k] = true;
+  });
+
+  const rows: DiffRow[] = [];
+  let gapRun = 0;
+  ops.forEach((op, idx) => {
+    if (keep[idx] ?? false) {
+      if (gapRun > 0) {
+        rows.push({ kind: 'gap', count: gapRun });
+        gapRun = 0;
+      }
+      rows.push(op);
+    } else {
+      gapRun++;
+    }
+  });
+  if (gapRun > 0) rows.push({ kind: 'gap', count: gapRun });
+  return rows;
+}
+
+/**
+ * Render a write-text op's real diff body (W5): a unified diff (contexte 3)
+ * against `previous` — the pre-install content captured at plan time (lot2
+ * R6/FM6) — when that baseline is available. `previous === null` (file did
+ * not exist before) and `previous === undefined` (writer did not capture a
+ * baseline — e.g. the opencode agent/context handlers) both render every
+ * line as an addition: there is nothing on disk to diff against, so the new
+ * content in full is strictly more informative than the old first-N-lines
+ * preview it replaces.
+ *
+ * The `write +A / -B` header carries the UNCAPPED real add/remove totals —
+ * only the line dump below is capped at {@link DIFF_DISPLAY_CAP} with an
+ * explicit elision row, so a huge rewritten file cannot flood the plan.
+ */
+function renderWriteTextDiff(
+  op: WriteOpWriteText,
+  colorOn: boolean,
+): { header: string; lines: string[] } {
+  const newLines = splitWriteLines(op.content);
+  // Collapse the "no baseline captured" case (undefined) onto the "file did
+  // not exist" case (null) — both mean there is nothing on disk to diff
+  // against. The inline `=== null` checks below (not a separately stored
+  // boolean) are what let TypeScript narrow `previous` to `string` in the
+  // non-null branches without a non-null assertion.
+  const previous = op.previous ?? null;
+
+  const diffOps: DiffOp[] = previous === null
+    ? newLines.map((text): DiffOp => ({ kind: 'add', text }))
+    : computeLineDiff(splitWriteLines(previous), newLines);
+
+  const addCount = diffOps.filter((o) => o.kind === 'add').length;
+  const removeCount = diffOps.filter((o) => o.kind === 'remove').length;
+  const header = `  write  +${addCount} / -${removeCount}`;
+
+  // A brand-new file has no pre-install context to window around — every row
+  // is already a change, so windowing would be a no-op traversal.
+  const rows: DiffRow[] = previous === null ? diffOps : windowDiffContext(diffOps, DIFF_CONTEXT);
+
+  const capped = rows.slice(0, DIFF_DISPLAY_CAP);
+  const elided = rows.length - capped.length;
+
+  const lines: string[] = capped.map((row) => {
+    if (row.kind === 'add') return `     ${paint('+', ANSI.green, colorOn)} ${row.text}`;
+    if (row.kind === 'remove') return `     ${paint('-', ANSI.red, colorOn)} ${row.text}`;
+    if (row.kind === 'gap') {
+      return `     ${paint('⋮', ANSI.dim, colorOn)}  (${row.count} unchanged)`;
+    }
+    return `     ${paint('│', ANSI.dim, colorOn)} ${row.text}`;
+  });
+
+  if (elided > 0) {
+    lines.push(
+      `     ${paint('…', ANSI.dim, colorOn)} diff truncated (+${elided} more line${
+        elided > 1 ? 's' : ''
+      })`,
+    );
+  }
+
+  return { header, lines };
+}
+
+// ---------------------------------------------------------------------------
 // renderPlan — grouped terraform-style diff
 // ---------------------------------------------------------------------------
 
@@ -510,18 +721,20 @@ export function renderPlan(groups: PlanGroup[], opts: RenderPlanOpts = {}): stri
         }
         case 'write-text': {
           g.write++;
-          const contentLines = op.content === '' ? [] : op.content.replace(/\n$/, '').split('\n');
-          const lineCount = contentLines.length;
-          g.writeLines += lineCount;
-          lines.push(`  write  +${lineCount} / -0`);
-          const shownWrite = contentLines.slice(0, maxDetail);
-          const remainWrite = lineCount - shownWrite.length;
-          for (const l of shownWrite) {
-            lines.push(`     ${paint('│', ANSI.dim, colorOn)} ${l}`);
+          // writeLines feeds ONLY the summary digest's `(+lines)` suffix
+          // (D2) — a plain content line count, computed the same way
+          // regardless of mode so the digest never disagrees with itself.
+          g.writeLines += splitWriteLines(op.content).length;
+          if (summary) {
+            // Summary mode never renders the diff body — computing (and
+            // immediately discarding) a full LCS diff here would be wasted
+            // work; the tally above is all the digest needs (D1/D2, summary
+            // intouché).
+            break;
           }
-          if (remainWrite > 0) {
-            lines.push(`     ${paint('│', ANSI.dim, colorOn)} …`);
-          }
+          const diff = renderWriteTextDiff(op, colorOn);
+          lines.push(diff.header);
+          lines.push(...diff.lines);
           break;
         }
         case 'write-json': {
