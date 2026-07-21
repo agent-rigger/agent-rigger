@@ -94,7 +94,7 @@ describe('doctor-R4: fantôme de crash (scriptStore hooks)', () => {
         }),
       });
       const entry: AdapterEntry = { id: 'hook:guard', nature: 'hook', scope: 'user' };
-      await apply(adapter, [entry], 'user', env, manifestPath);
+      await apply({ adapter, entries: [entry], scope: 'user', env, manifestPath });
 
       // Simulate the crash: the hook entry is purged from the manifest and its
       // settings.json registration is gone too — only the shared scriptStore
@@ -190,7 +190,7 @@ describe('doctor-R4: store désigné par une entrée manifest vive → jamais fa
 
       const adapter = createClaudeAdapter({ denyRef: [], skillSource: () => skillSource });
       const entry: AdapterEntry = { id: 'skill:foo', nature: 'skill', scope: 'user' };
-      await apply(adapter, [entry], 'user', env, manifestPath);
+      await apply({ adapter, entries: [entry], scope: 'user', env, manifestPath });
 
       const store = path.join(resolveUserTargets(env).skillsDir, 'foo');
       const target = path.join(

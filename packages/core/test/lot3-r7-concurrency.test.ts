@@ -252,13 +252,13 @@ describe('engine.apply — lot3 R7 lock integration', () => {
     const adapter = makeWriteTextAdapter();
     let caught: unknown;
     try {
-      await apply(
+      await apply({
         adapter,
-        [{ id: 'context:x', nature: 'context', scope: 'user' }],
-        'user',
+        entries: [{ id: 'context:x', nature: 'context', scope: 'user' }],
+        scope: 'user',
         env,
         manifestPath,
-      );
+      });
     } catch (err) {
       caught = err;
     }
@@ -269,13 +269,13 @@ describe('engine.apply — lot3 R7 lock integration', () => {
 
   it('lot3-R7: apply releases its self-acquired lock on success', async () => {
     const adapter = makeWriteTextAdapter();
-    await apply(
+    await apply({
       adapter,
-      [{ id: 'context:x', nature: 'context', scope: 'user' }],
-      'user',
+      entries: [{ id: 'context:x', nature: 'context', scope: 'user' }],
+      scope: 'user',
       env,
       manifestPath,
-    );
+    });
     expect(await exists(lockPath)).toBe(false);
   });
 
@@ -285,15 +285,14 @@ describe('engine.apply — lot3 R7 lock integration', () => {
       const adapter = makeWriteTextAdapter();
       // Even though the lockfile exists (held by us), passing the handle skips
       // acquisition — this is the cmd-update single-hold path.
-      await apply(
+      await apply({
         adapter,
-        [{ id: 'context:held', nature: 'context', scope: 'user' }],
-        'user',
+        entries: [{ id: 'context:held', nature: 'context', scope: 'user' }],
+        scope: 'user',
         env,
         manifestPath,
-        undefined,
-        held,
-      );
+        lock: held,
+      });
       const m = await readManifest(manifestPath);
       expect(findEntry(m, 'context:held', 'user')).toBeDefined();
     } finally {
@@ -318,13 +317,13 @@ describe('engine re-read/merge — lot3 R7 lost update closed', () => {
     };
     const adapter = makeWriteTextAdapter(injectConcurrent);
 
-    await apply(
+    await apply({
       adapter,
-      [{ id: 'context:B', nature: 'context', scope: 'user' }],
-      'user',
+      entries: [{ id: 'context:B', nature: 'context', scope: 'user' }],
+      scope: 'user',
       env,
       manifestPath,
-    );
+    });
 
     const m = await readManifest(manifestPath);
     // BOTH survive: the concurrent A (re-read from disk) and B (replayed upsert).

@@ -141,7 +141,7 @@ describe('apply then check', () => {
     const adapter = makeDenyAdapter();
     const entries = [makeCatalogEntry(ENTRY_ID)];
 
-    await apply(adapter, entries, 'user', env, manifestPath);
+    await apply({ adapter, entries, scope: 'user', env, manifestPath });
     const report = await check(adapter, entries, 'user', env);
 
     expect(reportExitCode(report)).toBe(0);
@@ -152,7 +152,7 @@ describe('apply then check', () => {
     const adapter = makeDenyAdapter();
     const entries = [makeCatalogEntry(ENTRY_ID)];
 
-    await apply(adapter, entries, 'user', env, manifestPath);
+    await apply({ adapter, entries, scope: 'user', env, manifestPath });
 
     const raw = await readJson(targets.claudeSettings);
     const permissions = raw['permissions'] as Record<string, unknown>;
@@ -167,7 +167,7 @@ describe('apply then check', () => {
     const adapter = makeDenyAdapter();
     const entries = [makeCatalogEntry(ENTRY_ID)];
 
-    await apply(adapter, entries, 'user', env, manifestPath);
+    await apply({ adapter, entries, scope: 'user', env, manifestPath });
 
     const manifest = await readManifest(manifestPath);
     expect(manifest.artifacts).toHaveLength(1);
@@ -193,11 +193,11 @@ describe('idempotence: 2nd apply is no-op', () => {
     });
 
     // First apply: should create 1 backup
-    const result1 = await apply(adapter, entries, 'user', env, manifestPath);
+    const result1 = await apply({ adapter, entries, scope: 'user', env, manifestPath });
     const bakCountAfter1 = await countBakFiles(settingsDir);
 
     // Second apply: no new ops (adapter.plan returns []) → no new backup
-    const result2 = await apply(adapter, entries, 'user', env, manifestPath);
+    const result2 = await apply({ adapter, entries, scope: 'user', env, manifestPath });
     const bakCountAfter2 = await countBakFiles(settingsDir);
 
     expect(result1.backedUp.length).toBeGreaterThan(0);
@@ -209,10 +209,10 @@ describe('idempotence: 2nd apply is no-op', () => {
     const adapter = makeDenyAdapter();
     const entries = [makeCatalogEntry(ENTRY_ID)];
 
-    await apply(adapter, entries, 'user', env, manifestPath);
+    await apply({ adapter, entries, scope: 'user', env, manifestPath });
     const manifest1 = await readManifest(manifestPath);
 
-    await apply(adapter, entries, 'user', env, manifestPath);
+    await apply({ adapter, entries, scope: 'user', env, manifestPath });
     const manifest2 = await readManifest(manifestPath);
 
     // Same number of entries, same id
@@ -226,10 +226,10 @@ describe('idempotence: 2nd apply is no-op', () => {
     const adapter = makeDenyAdapter();
     const entries = [makeCatalogEntry(ENTRY_ID)];
 
-    await apply(adapter, entries, 'user', env, manifestPath);
+    await apply({ adapter, entries, scope: 'user', env, manifestPath });
     const content1 = await readJson(targets.claudeSettings);
 
-    await apply(adapter, entries, 'user', env, manifestPath);
+    await apply({ adapter, entries, scope: 'user', env, manifestPath });
     const content2 = await readJson(targets.claudeSettings);
 
     expect(content2).toEqual(content1);
@@ -247,8 +247,8 @@ describe('idempotence: 2nd apply is no-op', () => {
       permissions: { deny: [] },
     });
 
-    await apply(adapter, entries, 'user', env, manifestPath);
-    await apply(adapter, entries, 'user', env, manifestPath);
+    await apply({ adapter, entries, scope: 'user', env, manifestPath });
+    await apply({ adapter, entries, scope: 'user', env, manifestPath });
 
     const final = await readJson(targets.claudeSettings);
 
@@ -266,11 +266,11 @@ describe('idempotence: 2nd apply is no-op', () => {
       permissions: { deny: ['Read(./.env)'] },
     });
 
-    await apply(adapter, entries, 'user', env, manifestPath);
+    await apply({ adapter, entries, scope: 'user', env, manifestPath });
     const raw1 = await readJson(targets.claudeSettings);
     const deny1 = ((raw1['permissions'] as Record<string, unknown>)['deny']) as string[];
 
-    await apply(adapter, entries, 'user', env, manifestPath);
+    await apply({ adapter, entries, scope: 'user', env, manifestPath });
     const raw2 = await readJson(targets.claudeSettings);
     const deny2 = ((raw2['permissions'] as Record<string, unknown>)['deny']) as string[];
 
@@ -293,7 +293,7 @@ describe('apply result shape', () => {
     await fs.mkdir(path.dirname(targets.claudeSettings), { recursive: true });
     await writeJson(targets.claudeSettings, { permissions: { deny: [] } });
 
-    const result = await apply(adapter, entries, 'user', env, manifestPath);
+    const result = await apply({ adapter, entries, scope: 'user', env, manifestPath });
 
     expect(result).toHaveProperty('written');
     expect(result).toHaveProperty('backedUp');
@@ -306,7 +306,7 @@ describe('apply result shape', () => {
     const adapter = makeDenyAdapter();
     const entries = [makeCatalogEntry(ENTRY_ID)];
 
-    const result = await apply(adapter, entries, 'user', env, manifestPath);
+    const result = await apply({ adapter, entries, scope: 'user', env, manifestPath });
 
     expect(result.written).toContain(targets.claudeSettings);
   });
@@ -364,7 +364,7 @@ describe('apply() — single backup per file per run', () => {
     await fs.mkdir(settingsDir, { recursive: true });
     await writeJson(targets.claudeSettings, { permissions: { deny: [], allow: [] } });
 
-    const result = await apply(adapter, entries, 'user', env, manifestPath);
+    const result = await apply({ adapter, entries, scope: 'user', env, manifestPath });
 
     // Pre-fix: 6 backups. Post-fix: exactly 1.
     // Source of truth = the engine's own report, plus a direct readdir count
@@ -422,7 +422,7 @@ describe('apply() — warning-only merge-permission op (empty fragment)', () => 
     const adapter = makeWarningOnlyPermissionAdapter(opencodeJsonPath);
     const entries = [makeCatalogEntry('guardrail:main')];
 
-    const result = await apply(adapter, entries, 'user', env, manifestPath);
+    const result = await apply({ adapter, entries, scope: 'user', env, manifestPath });
 
     expect(result.written).toHaveLength(0);
     expect(result.backedUp).toHaveLength(0);

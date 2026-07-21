@@ -6,5 +6,6 @@
 export * from './diagnose';
 export * from './finding';
 export * from './repair';
+export * from './scanners/edge-integrity';
 export * from './scanners/lock';
 export * from './scanners/manifest-audit';

@@ -86,6 +86,7 @@ import type { DoctorContext, DoctorScanner, Finding } from '@agent-rigger/core';
 import type { Adapter, AdapterEntry } from '@agent-rigger/core/adapter';
 import { readManifest } from '@agent-rigger/core/manifest';
 import {
+  libsDir,
   resolveHome,
   resolveOpencodeProjectTargets,
   resolveOpencodeUserTargets,
@@ -937,8 +938,13 @@ function isDesignatedByManifestEntry(
  * filesystem truth (`storeReferenceCandidates`/`isStoreReferenced`, already
  * assistant-agnostic in `shared/store-refs.ts`).
  *
- * Named stores (skill/agent/plugin, one entry per basename under the skills/
- * agents/plugins store roots): R4 names TWO referents, checked independently —
+ * Named stores (skill/agent/plugin/lib, one entry per basename under the
+ * skills/agents/plugins/libs store roots — lib joins this family verbatim,
+ * R7 "orpheline détectée par doctor", disk half: a `libs/<name>` dir on disk
+ * that no manifest entry designates, e.g. a crash between `syncToStore` and
+ * the manifest write, R3's orphan-safe rollback covers the live-process
+ * case, this scanner covers what survives a hard crash). R4 names TWO
+ * referents, checked independently —
  * (1) a manifest entry whose store derives to this exact path
  * (`isDesignatedByManifestEntry`, keyed on the store's own nature), and (2) a
  * live symlink resolving to it, via `storeReferenceCandidates` ELARGI with
@@ -972,6 +978,7 @@ export function createPhantomScanner(): DoctorScanner {
       { nature: 'skill', root: skillsStore },
       { nature: 'agent', root: path.join(path.dirname(skillsStore), 'agents') },
       { nature: 'plugin', root: path.join(path.dirname(skillsStore), 'plugins') },
+      { nature: 'lib', root: libsDir(ctx.env) },
     ];
 
     for (const { nature, root } of namedStoreRoots) {
@@ -1041,6 +1048,15 @@ export interface HygieneScannerOptions {
  * exact atomic-write siblings `fs-json.ts` produces), and inside each
  * store root itself (`backupDir`'s sibling convention — `<store>.bak-...`
  * lives ALONGSIDE `<store>`, i.e. inside the store root, not its parent).
+ *
+ * `libsDir(env)` joins this list for the same reason (R7): the engine's lib
+ * materialisation channel calls `backupDir(dest)` on a divergent re-install
+ * (`dest = libsDir(env)/<name>`, engine.ts), so `<name>.bak-...` siblings
+ * land directly inside `libsDir(env)` itself — libs/ is NOT a shared store
+ * (design.md §Surfaces R7 correction: no `sharedStore` entry, the engine's
+ * per-lib channel owns backup+removal) — this scan root exists purely so
+ * R7's age + keep-last-N retention can see those siblings, same as every
+ * other named store root above.
  */
 function hygieneScanDirs(env: Env, cwd: string): string[] {
   const skillsStore = resolveUserTargets(env).skillsDir;
@@ -1054,6 +1070,7 @@ function hygieneScanDirs(env: Env, cwd: string): string[] {
       skillsStore,
       path.join(path.dirname(skillsStore), 'agents'),
       path.join(path.dirname(skillsStore), 'plugins'),
+      libsDir(env),
       hooksStoreDir(env),
     ]),
   ];

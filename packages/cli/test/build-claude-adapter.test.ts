@@ -3,8 +3,9 @@
  *
  * Verifies (post-B-iii — no artifactsDir):
  * 1. Skills require externalBaseDir — throw when not in externalIds.
- * 2. With externalIds + externalBaseDir → external skill resolves to externalBaseDir/skills/<name>.
- * 3. Agent external source resolves to externalBaseDir/agents/<name>.md.
+ * 2. With externalIds + externalBaseDir → external skill resolves to
+ *    externalBaseDir/common/skills/<name> (post-cutover layout, R9).
+ * 3. Agent external source resolves to externalBaseDir/common/agents/<name>.md.
  * 4. hookSpec resolves from effectiveEntries when external.
  * 5. External guardrail denyRef is loaded from checkout dir.
  * 6. External context agentsContent is loaded from checkout dir.
@@ -49,17 +50,17 @@ async function makeExternalBaseDir(
 ): Promise<string> {
   const extDir = path.join(baseDir, 'external');
   for (const name of skillNames) {
-    const skillDir = path.join(extDir, 'skills', name);
+    const skillDir = path.join(extDir, 'common', 'skills', name);
     await fs.mkdir(skillDir, { recursive: true });
     await fs.writeFile(path.join(skillDir, 'SKILL.md'), `# ${name}\nExternal fixture.`);
   }
   for (const name of agentNames) {
-    const agentDir = path.join(extDir, 'agents');
+    const agentDir = path.join(extDir, 'common', 'agents');
     await fs.mkdir(agentDir, { recursive: true });
     await fs.writeFile(path.join(agentDir, `${name}.md`), `# ${name}\nExternal agent.`);
   }
   if (hookNames.length > 0) {
-    const hooksDir = path.join(extDir, 'hooks');
+    const hooksDir = path.join(extDir, 'claude', 'hooks');
     await fs.mkdir(hooksDir, { recursive: true });
     for (const name of hookNames) {
       await fs.writeFile(path.join(hooksDir, `${name}.ts`), '// hook script');
@@ -83,7 +84,7 @@ async function makeCheckoutDir(
 ): Promise<string> {
   const checkoutDir = path.join(baseDir, 'checkout');
   if (opts.guardrailName !== undefined) {
-    const grDir = path.join(checkoutDir, 'guardrails', opts.guardrailName);
+    const grDir = path.join(checkoutDir, 'claude', 'guardrails', opts.guardrailName);
     await fs.mkdir(grDir, { recursive: true });
     if (opts.guardrailDeny !== undefined) {
       await fs.writeFile(
@@ -99,7 +100,7 @@ async function makeCheckoutDir(
     }
   }
   if (opts.contextName !== undefined && opts.agentsMdContent !== undefined) {
-    const ctxDir = path.join(checkoutDir, 'contexts', opts.contextName);
+    const ctxDir = path.join(checkoutDir, 'claude', 'contexts', opts.contextName);
     await fs.mkdir(ctxDir, { recursive: true });
     await fs.writeFile(path.join(ctxDir, 'AGENTS.md'), opts.agentsMdContent);
   }
@@ -167,7 +168,7 @@ describe('buildClaudeAdapter — with externalIds + externalBaseDir', () => {
     const linkOp = ops.find((op): op is WriteOpLink => op.kind === 'link');
     expect(linkOp).toBeDefined();
 
-    const expectedSrc = path.join(externalBaseDir, 'skills', 'x');
+    const expectedSrc = path.join(externalBaseDir, 'common', 'skills', 'x');
     expect(linkOp!.source).toBe(expectedSrc);
   });
 
@@ -204,7 +205,7 @@ describe('buildClaudeAdapter — with externalIds + externalBaseDir', () => {
     const linkOp = ops.find((op): op is WriteOpLink => op.kind === 'link');
     expect(linkOp).toBeDefined();
 
-    const expectedSrc = path.join(externalBaseDir, 'agents', 'senior-fullstack.md');
+    const expectedSrc = path.join(externalBaseDir, 'common', 'agents', 'senior-fullstack.md');
     expect(linkOp!.source).toBe(expectedSrc);
   });
 });
@@ -254,7 +255,7 @@ describe('buildClaudeAdapter — hookSpec with effectiveEntries (B-iii)', () => 
     expect(mergeOp.event).toBe('PreToolUse');
     expect(mergeOp.matcher).toBe('Bash');
     expect(mergeOp.timeout).toBe(10);
-    expect(mergeOp.scriptSource).toBe(path.join(externalBaseDir, 'hooks'));
+    expect(mergeOp.scriptSource).toBe(path.join(externalBaseDir, 'claude', 'hooks'));
   });
 
   it('throws for unknown hook not in effectiveEntries (empty map)', async () => {

@@ -36,18 +36,20 @@ import {
   isUpdateAvailable,
   localId,
   mergeCatalogs,
+  qualifyRef,
   readCatalogDir,
   resolveVersion,
   type TmpDirFactory,
   withRemoteCheckout,
 } from '@agent-rigger/catalog';
-import { catalogPrefixOf, resolve } from '@agent-rigger/catalog/resolver';
+import { catalogPrefixOf, resolveWithEdges } from '@agent-rigger/catalog/resolver';
 import type { CommandRunner } from '@agent-rigger/catalog/tool-check';
 import type { Assistant } from '@agent-rigger/core';
 import { createCompositeScanner } from '@agent-rigger/core';
 import { assertSafeArtifactName } from '@agent-rigger/core/artifact-name';
 import { apply, remove } from '@agent-rigger/core/engine';
-import { readManifest } from '@agent-rigger/core/manifest';
+import type { LinkOptions } from '@agent-rigger/core/linker';
+import { readManifest, upsertEntry, writeManifest } from '@agent-rigger/core/manifest';
 import type { Env } from '@agent-rigger/core/paths';
 import { acquireRunLock } from '@agent-rigger/core/run-lock';
 import { constantScanner } from '@agent-rigger/core/scan';
@@ -56,7 +58,13 @@ import type { Scope } from '@agent-rigger/core/types';
 
 import { buildAdapter } from './adapter-dispatch';
 import { targetsAssistant } from './cmd-install';
-import { partitionForeignRequires, scanEntries } from './remote-install';
+import {
+  assertSymlinkCapable,
+  buildLibMaterializations,
+  collectRequiredLibIds,
+  partitionForeignRequires,
+  scanEntries,
+} from './remote-install';
 import { ANSI, paint, shouldColor } from './ui';
 
 /**
@@ -106,6 +114,15 @@ export interface RunUpdateOptions {
    * untouched, never updated as a side effect.
    */
   assistant?: Assistant;
+  /**
+   * Injectable symlink implementation forwarded to the R4 pre-flight probe
+   * (assertSymlinkCapable / probeSymlinkSupport, shared with runRemoteInstall
+   * — see remote-install.ts) — tests force a rejection to simulate a host
+   * without symlink support. Defaults to the real `fs.symlink`. This seam
+   * only decides whether the pre-flight throws; it never reaches the real
+   * per-artefact install writes.
+   */
+  symlink?: LinkOptions['symlink'];
 }
 
 export interface UpdateResult {
@@ -221,7 +238,18 @@ export async function runUpdate(opts: RunUpdateOptions): Promise<UpdateResult> {
 
     if (entry === undefined) {
       skippedIds.push(id);
-      skipReasons.set(id, 'not installed');
+      // T7 (differed from T3): a lib entry always writes assistant:'shared'
+      // (S2) so the lookup above — scoped to THIS update's (scope, assistant)
+      // — never matches it, installed or not. 'not installed' would be
+      // misleading for an id that IS installed; name the real reason instead.
+      // The skip itself is unchanged (S5 exemption pin: update never becomes
+      // a direct-lib-update path) — only the message changes.
+      skipReasons.set(
+        id,
+        localId(id).startsWith('lib:')
+          ? 'a lib is updated through the artifacts that require it'
+          : 'not installed',
+      );
       continue;
     }
 
@@ -245,6 +273,20 @@ export async function runUpdate(opts: RunUpdateOptions): Promise<UpdateResult> {
 
   const outputParts: string[] = [];
   let updatedIds: string[] = [];
+
+  // Edge backfill set (finding 6): up-to-date entries with NO persisted
+  // `requires` field (legacy, installed before the edge graph shipped). They
+  // never reach the stale remove+apply path below, so their edges were never
+  // backfilled and the doctor `no-edges` finding stayed inextinguishable
+  // despite advising `rigger update`. Backfilled from the catalogue further
+  // down, manifest-only (no file re-pose). An entry with an explicit
+  // `requires: []` is already resolved and is skipped.
+  const backfillIds = upToDateIds.filter((id) => {
+    const e = manifest.artifacts.find(
+      (a) => a.id === id && a.scope === scope && (a.assistant ?? 'claude') === assistant,
+    );
+    return e !== undefined && e.requires === undefined;
+  });
 
   // Step 3 — transactional update for stale entries.
   if (staleIds.length > 0) {
@@ -299,7 +341,13 @@ export async function runUpdate(opts: RunUpdateOptions): Promise<UpdateResult> {
           assistant,
         );
 
-        const rawResolved = resolve(rawStaleIds, effective, externallySatisfied);
+        // Resolve WITH edges (S4/R5): capture each entry's resolved requires
+        // (own + pack-inherited) PRE-prune. This is the backfill path (S6): a
+        // legacy entry with no edges gains them on the first update, which
+        // re-resolves. rawResolved reads `effective` (requires refs stay on
+        // requirers; only the resolve graph skips externallySatisfied refs).
+        const rawResolvedWithEdges = resolveWithEdges(rawStaleIds, effective, externallySatisfied);
+        const rawResolved = rawResolvedWithEdges.map((r) => r.entry);
 
         // Restore qualification: map raw resolved entries back to their manifest-qualified ids.
         // Build a lookup from local-id → qualified id for the stale set.
@@ -308,6 +356,19 @@ export async function runUpdate(opts: RunUpdateOptions): Promise<UpdateResult> {
           ...e,
           id: localToQualified.get(e.id) ?? e.id,
         }));
+
+        // Qualify the captured edges (qualifyRef idempotent: intra-catalogue
+        // refs gain the prefix, cross-catalogue refs stay intact), keyed by the
+        // manifest-qualified requirer id so adapterEntries can thread them onto
+        // AdapterEntry.requires for buildManifestEntry to persist.
+        const qualifyEdge = (ref: string): string =>
+          sourceName === undefined ? ref : qualifyRef(sourceName, ref);
+        const requiresByQualifiedId = new Map<string, string[]>(
+          rawResolvedWithEdges.map((r) => [
+            localToQualified.get(r.entry.id) ?? r.entry.id,
+            r.requires.map(qualifyEdge),
+          ]),
+        );
 
         // All stale entries sourced from the remote checkout.
         // Skills / agents / guardrails / contexts / hooks all have a scanPath;
@@ -343,6 +404,35 @@ export async function runUpdate(opts: RunUpdateOptions): Promise<UpdateResult> {
           scanner,
           force,
         });
+
+        // R4 pre-flight (D4): shared with runRemoteInstall (remote-install.ts,
+        // see assertSymlinkCapable's docblock) — a stale opencode plugin
+        // re-posed by THIS update goes through the exact same linkOrCopy call
+        // as a fresh install. If the catalogue bump being applied ADDED a lib
+        // requirement to an already-copy-installed plugin, the update must
+        // refuse for the same reason a fresh install would — and it MUST do
+        // so here, before remove() below deletes the old copy: a refusal
+        // raised only at apply() would leave the artifact destroyed with
+        // nothing safely re-posed in its place, the exact silent-breakage
+        // scenario R4 exists to prevent. libIds is computed independently of
+        // the later `libs` (built after buildAdapter) so the gate can run
+        // this early, right after the scan gate (same relative position as
+        // runRemoteInstall) and well before the remove/apply block.
+        const libIdsForPreflight = collectRequiredLibIds(
+          resolved.filter((e) => e.nature === 'lib').map((e) => qualifyEdge(e.id)),
+          requiresByQualifiedId,
+          manifest,
+        );
+        await assertSymlinkCapable(
+          resolved,
+          requiresByQualifiedId,
+          libIdsForPreflight,
+          assistant,
+          scope,
+          env,
+          process.cwd(),
+          opts.symlink,
+        );
 
         // R5 (lot 6, D5): replay every stale mcp entry's previously-resolved
         // secretRefs from the manifest, so the re-render (mcpSource) reuses
@@ -396,16 +486,58 @@ export async function runUpdate(opts: RunUpdateOptions): Promise<UpdateResult> {
           ...(Object.keys(secretOverrides).length === 0 ? {} : { secretOverrides }),
         });
 
-        // AdapterEntries for remove+apply (exclude tool-nature entries).
+        // Lib materialisations (R3): a stale consumer's requires can pull a lib
+        // into `resolved`. It is re-materialised by the engine's parallel
+        // channel (apply({ libs })) — at the SAME call point, under the single
+        // lock, so update has no second orchestration site. `source` is the
+        // checkout path (scanPathFor('lib')[0], the pinned scanned path, R2);
+        // requires are the backfilled edges (S6). This is also where a legacy
+        // entry whose require points a lib gains its edge on the first update.
+        //
+        // Qualify the lib id the SAME way install does (qualifyRef): a lib is
+        // pulled transitively, never a stale candidate, so localToQualified
+        // (stale set only) leaves it local — the materialised entry id must be
+        // `<catalog>/lib:<name>`, matching the install path AND the consumer's
+        // backfilled edge, or the two would split the refcount.
+        const libs = buildLibMaterializations(
+          resolved
+            .filter((e) => e.nature === 'lib')
+            .map((e) => ({ ...e, id: qualifyEdge(e.id) })),
+          dir,
+          requiresByQualifiedId,
+        );
+
+        // AdapterEntries for remove+apply — exclude tool AND lib natures (S3: a
+        // lib never reaches the adapter's remove/plan, which would raise
+        // UnsupportedNatureError). Thread the captured requires (S4/R5) onto the
+        // opaque AdapterEntry transport so buildManifestEntry backfills them
+        // (S6). ALWAYS attach the array, even empty (review T8 fix, tech-lead
+        // option A): this is the update path's own backfill write — omitting
+        // `[]` here would make the S6 promise ("backfilled at the first
+        // update") a permanent no-op for every zero-dependency legacy entry,
+        // since the manifest would keep reading `requires: undefined` after
+        // re-resolution just as it did before. `undefined` on a manifest
+        // entry must mean ONLY "never re-resolved since this change shipped".
         const adapterEntries = resolved
-          .filter((e) => e.nature !== 'tool')
-          .map((e) => ({ id: e.id, nature: e.nature, scope }));
+          .filter((e) => e.nature !== 'tool' && e.nature !== 'lib')
+          .map((e) => ({
+            id: e.id,
+            nature: e.nature,
+            scope,
+            requires: requiresByQualifiedId.get(e.id) ?? [],
+          }));
 
         // 3e. versionFor seam: remote (has checkout path) → real ref/sha, others → v0.0.0/''.
+        // A lib is remote content too but excluded from remoteIds (targets: [],
+        // S3): union the lib ids into the version-eligible set so it is stamped
+        // with the real catalogue ref/sha (else a permanent doctor missing-sha,
+        // re-stamped '' by every update). remoteIds itself is untouched; the
+        // 'shared' assistant keeps a lib a non-candidate for direct update.
+        const remoteVersionIds = new Set([...remoteIds, ...libs.map((l) => l.id)]);
         const versionFor = (
           entry: { id: string },
         ): { ref: string; sha: string } => {
-          if (remoteIds.has(entry.id)) {
+          if (remoteVersionIds.has(entry.id)) {
             return { ref: remote.ref, sha: remote.sha };
           }
           return { ref: 'v0.0.0', sha: '' };
@@ -463,8 +595,19 @@ export async function runUpdate(opts: RunUpdateOptions): Promise<UpdateResult> {
           // 3h. Remove old (targets absent → plan will produce link ops in apply).
           await remove(adapter, adapterEntries, scope, env, manifestPath, undefined, lock);
 
-          // 3i. Apply fresh content from checkout dir + upsert manifest with ref/sha.
-          await apply(adapter, adapterEntries, scope, env, manifestPath, versionFor, lock);
+          // 3i. Apply fresh content from checkout dir + upsert manifest with
+          // ref/sha, re-materialising any lib pulled by the stale set on the
+          // engine's parallel channel (R3) under this same lock.
+          await apply({
+            adapter,
+            entries: adapterEntries,
+            scope,
+            env,
+            manifestPath,
+            versionFor,
+            lock,
+            ...(libs.length > 0 ? { libs } : {}),
+          });
         } finally {
           await lock.release();
         }
@@ -496,6 +639,87 @@ export async function runUpdate(opts: RunUpdateOptions): Promise<UpdateResult> {
       outputParts.push('--- Update ---');
       for (const id of staleIds) {
         outputParts.push(outcomeLine('[updated]', ANSI.green, id, `→ ${remote.ref}`));
+      }
+    }
+  }
+
+  // Step 3b — edge backfill (finding 6). Its own checkout, independent of the
+  // stale pipeline, so a legacy up-to-date entry's edges get recorded even when
+  // nothing is stale. Manifest-only: no file is re-posed, no scan runs.
+  if (backfillIds.length > 0) {
+    const backfilled = await withRemoteCheckout(
+      catalogUrl,
+      remote.ref,
+      remote.isTag,
+      runner,
+      { tmpFactory, expectedSha: remote.sha },
+      async (dir): Promise<{ applied: string[]; unresolvable: string[] }> => {
+        const { entries: remoteEntries } = await readCatalogDir(dir);
+        const { entries: effective } = mergeCatalogs([], remoteEntries);
+        const sourceName = catalogPrefixOf(backfillIds[0] ?? '');
+        const qualifyEdge = (ref: string): string =>
+          sourceName === undefined ? ref : qualifyRef(sourceName, ref);
+        const localToQualified = new Map(backfillIds.map((qid) => [localId(qid), qid]));
+
+        // Resolve each entry's edges independently and defensively: a poisoned
+        // release (a newly-added, unsatisfiable foreign require) or an entry no
+        // longer in the catalogue must not abort the whole update — that entry
+        // is left un-backfilled (doctor still flags it) while the others are
+        // fixed. An id that could not be re-resolved is surfaced below, never
+        // swallowed silently (the user who followed the finding's advice must
+        // learn why it persists).
+        const edgesByQualified = new Map<string, string[]>();
+        for (const qid of backfillIds) {
+          try {
+            const resolved = resolveWithEdges([localId(qid)], effective, new Set());
+            const own = resolved.find((r) => localToQualified.get(r.entry.id) === qid);
+            if (own !== undefined) {
+              edgesByQualified.set(qid, own.requires.map(qualifyEdge));
+            }
+          } catch {
+            // Unresolvable entry — reported (not backfilled) via `unresolvable`.
+          }
+        }
+        const unresolvable = backfillIds.filter((id) => !edgesByQualified.has(id));
+
+        // Manifest-only upsert under the run lock (no file writes). Re-read
+        // inside the lock so a concurrent writer's entries survive.
+        const applied: string[] = [];
+        const lock = await acquireRunLock(manifestPath);
+        try {
+          let m = await readManifest(manifestPath);
+          for (const id of backfillIds) {
+            const edges = edgesByQualified.get(id);
+            if (edges === undefined) continue;
+            const target = m.artifacts.find(
+              (e) => e.id === id && e.scope === scope && (e.assistant ?? 'claude') === assistant,
+            );
+            if (target === undefined || target.requires !== undefined) continue;
+            m = upsertEntry(m, { ...target, requires: edges });
+            applied.push(id);
+          }
+          if (applied.length > 0) await writeManifest(manifestPath, m);
+        } finally {
+          await lock.release();
+        }
+        return { applied, unresolvable };
+      },
+    );
+
+    if (backfilled.applied.length > 0 || backfilled.unresolvable.length > 0) {
+      outputParts.push('--- Edge backfill ---');
+      for (const id of backfilled.applied) {
+        outputParts.push(outcomeLine('[backfilled]', ANSI.dim, id, 'requires edges recorded'));
+      }
+      for (const id of backfilled.unresolvable) {
+        outputParts.push(
+          outcomeLine(
+            '[skipped]',
+            ANSI.yellow,
+            id,
+            'edges could not be re-resolved (catalog entry missing?); the doctor finding will persist',
+          ),
+        );
       }
     }
   }

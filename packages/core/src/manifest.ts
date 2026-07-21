@@ -17,7 +17,7 @@
  */
 
 import { InvalidJsonError, writeJson } from './fs-json';
-import type { Assistant, Manifest, ManifestEntry, Scope } from './types';
+import type { Manifest, ManifestAssistant, ManifestEntry, Scope } from './types';
 
 // ---------------------------------------------------------------------------
 // Typed error
@@ -54,8 +54,14 @@ export class MalformedManifestError extends Error {
  * M3, with no `assistant` field) to 'claude'. Manifest identity is the triple
  * (id, scope, assistant): the same artifact can be installed for both claude and
  * opencode without one clobbering the other.
+ *
+ * The `?? 'claude'` fallback fires ONLY when `assistant` is absent (legacy
+ * entries) — a PRESENT value is always returned verbatim, `'shared'` included
+ * (S2, lib-nature): a lib entry always writes `assistant: 'shared'`, so it is
+ * never silently coerced into the 'claude' bucket. This is what makes
+ * `(id, scope, 'shared')` a stable global singleton identity for upsertEntry.
  */
-function entryAssistant(entry: ManifestEntry): Assistant {
+function entryAssistant(entry: ManifestEntry): ManifestAssistant {
   return entry.assistant ?? 'claude';
 }
 
@@ -201,11 +207,76 @@ export function findEntry(
   manifest: Manifest,
   id: string,
   scope: Scope,
-  assistant: Assistant = 'claude',
+  assistant: ManifestAssistant = 'claude',
 ): ManifestEntry | undefined {
   return manifest.artifacts.find(
     (e) => e.id === id && e.scope === scope && entryAssistant(e) === assistant,
   );
+}
+
+// ---------------------------------------------------------------------------
+// Lib singleton identity (S2, lib-nature) — the ONE place (id,'user','shared')
+// is named, so no call site re-hardcodes the triple (adversarial-close F4).
+// ---------------------------------------------------------------------------
+
+/**
+ * The scope every lib manifest entry is recorded under. A lib is scope-agnostic
+ * (S2): it lives once, globally, regardless of which consumer transaction (any
+ * scope, any assistant) pulled it in.
+ */
+export const LIB_SCOPE = 'user' as const satisfies Scope;
+
+/**
+ * The assistant sentinel every lib manifest entry is recorded under (S2): a lib
+ * is depended upon, never routed to an adapter, so it carries no per-assistant
+ * identity. Together with LIB_SCOPE this makes `(id, LIB_SCOPE, LIB_ASSISTANT)`
+ * the stable global-singleton identity of a lib.
+ */
+export const LIB_ASSISTANT = 'shared' as const satisfies ManifestAssistant;
+
+/**
+ * The manifest identity triple of the lib `id` (S2) — the single assembly point
+ * of the `(id, 'user', 'shared')` singleton, consumed by the engine's lib
+ * materialise/remove channel (upsert/remove mutations).
+ */
+export function libManifestIdentity(
+  id: string,
+): { id: string; scope: Scope; assistant: ManifestAssistant } {
+  return { id, scope: LIB_SCOPE, assistant: LIB_ASSISTANT };
+}
+
+/**
+ * Find the installed lib entry for `id` at its singleton identity (S2), or
+ * `undefined` when the lib is not installed. Thin, intentional wrapper over
+ * findEntry so no call site re-hardcodes the `'user'`/`'shared'` literals.
+ */
+export function findLibEntry(manifest: Manifest, id: string): ManifestEntry | undefined {
+  return findEntry(manifest, id, LIB_SCOPE, LIB_ASSISTANT);
+}
+
+// ---------------------------------------------------------------------------
+// requiresIndex — the persisted requires graph, inverted
+// ---------------------------------------------------------------------------
+
+/**
+ * Invert the persisted `requires` edges of `entries` into a map from a required
+ * ref to the ids that require it (R5/R6/R7). The single primitive behind the
+ * three requires-graph consumers — cmd-remove's refcount-block and GC-lib checks
+ * and the doctor edge-integrity scanner — so "who still requires X" is computed
+ * one way. Keys are the persisted require refs VERBATIM (qualified as stored, no
+ * localId reduction) — the exact posture every consumer already took, so their
+ * lookups match by the same string identity a lib's singleton entry carries.
+ */
+export function requiresIndex(entries: ManifestEntry[]): Map<string, Set<string>> {
+  const index = new Map<string, Set<string>>();
+  for (const entry of entries) {
+    for (const req of entry.requires ?? []) {
+      const requirers = index.get(req) ?? new Set<string>();
+      requirers.add(entry.id);
+      index.set(req, requirers);
+    }
+  }
+  return index;
 }
 
 // ---------------------------------------------------------------------------

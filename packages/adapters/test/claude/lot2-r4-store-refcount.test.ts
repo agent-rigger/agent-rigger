@@ -124,9 +124,9 @@ describe('lot2-R4 — cross-scope claude skill refcount', () => {
     const projectDir = await makeProjectDir('rigger-r4-proj-');
     const originalCwd = process.cwd();
     try {
-      await apply(adapter, [userEntry], 'user', env, manifestPath);
+      await apply({ adapter, entries: [userEntry], scope: 'user', env, manifestPath });
       process.chdir(projectDir);
-      await apply(adapter, [projectEntry], 'project', env, manifestPath);
+      await apply({ adapter, entries: [projectEntry], scope: 'project', env, manifestPath });
 
       const store = skillStorePath('foo');
       const userTarget = skillTargetPath('foo');
@@ -168,8 +168,8 @@ describe('lot2-R4 — cross-assistant refcount (claude → opencode)', () => {
     const opencodeAdapter = createOpencodeAdapter({ skillSource: () => srcDir });
     const entry: AdapterEntry = { id: 'skill:shared', nature: 'skill', scope: 'user' };
 
-    await apply(claudeAdapter, [entry], 'user', env, manifestPath);
-    await apply(opencodeAdapter, [entry], 'user', env, manifestPath);
+    await apply({ adapter: claudeAdapter, entries: [entry], scope: 'user', env, manifestPath });
+    await apply({ adapter: opencodeAdapter, entries: [entry], scope: 'user', env, manifestPath });
 
     const store = skillStorePath('shared');
     const opencodeTarget = path.join(resolveOpencodeUserTargets(env).skillsDir, 'shared');
@@ -205,9 +205,9 @@ describe('lot2-R4 — agents store (.md) refcount between scopes', () => {
     const projectDir = await makeProjectDir('rigger-r4-agent-proj-');
     const originalCwd = process.cwd();
     try {
-      await apply(adapter, [userEntry], 'user', env, manifestPath);
+      await apply({ adapter, entries: [userEntry], scope: 'user', env, manifestPath });
       process.chdir(projectDir);
-      await apply(adapter, [projectEntry], 'project', env, manifestPath);
+      await apply({ adapter, entries: [projectEntry], scope: 'project', env, manifestPath });
 
       const store = agentStorePath('reviewer');
       const projectTarget = path.join(projectDir, '.claude', 'agents', 'reviewer.md');
@@ -240,7 +240,7 @@ describe('lot2-R4 — dangling symlink: audit tells the truth, install repairs',
     const adapter = createClaudeAdapter({ denyRef: [], skillSource: () => srcDir });
     const entry: AdapterEntry = { id: 'skill:broken', nature: 'skill', scope: 'user' };
 
-    await apply(adapter, [entry], 'user', env, manifestPath);
+    await apply({ adapter, entries: [entry], scope: 'user', env, manifestPath });
 
     // Pre-existing broken state: the store is gone, the symlink dangles.
     const store = skillStorePath('broken');
@@ -253,7 +253,7 @@ describe('lot2-R4 — dangling symlink: audit tells the truth, install repairs',
     expect(reportExitCode(broken)).toBe(3);
 
     // install replaces the dangling link with a healthy installation.
-    await apply(adapter, [entry], 'user', env, manifestPath);
+    await apply({ adapter, entries: [entry], scope: 'user', env, manifestPath });
     expect(await exists(store)).toBe(true);
     const md = await fs.readFile(path.join(target, 'SKILL.md'), 'utf8');
     expect(md).toContain('broken');
@@ -268,7 +268,7 @@ describe('lot2-R4 — dangling symlink: audit tells the truth, install repairs',
     const opencodeAdapter = createOpencodeAdapter({ skillSource: () => srcDir });
     const entry: AdapterEntry = { id: 'skill:oc-broken', nature: 'skill', scope: 'user' };
 
-    await apply(opencodeAdapter, [entry], 'user', env, manifestPath);
+    await apply({ adapter: opencodeAdapter, entries: [entry], scope: 'user', env, manifestPath });
 
     const store = skillStorePath('oc-broken');
     await fs.rm(store, { recursive: true, force: true });
@@ -282,7 +282,7 @@ describe('lot2-R4 — dangling symlink: audit tells the truth, install repairs',
     const adapter = createClaudeAdapter({ denyRef: [], agentSource: () => agentFile });
     const entry: AdapterEntry = { id: 'agent:ghost', nature: 'agent', scope: 'user' };
 
-    await apply(adapter, [entry], 'user', env, manifestPath);
+    await apply({ adapter, entries: [entry], scope: 'user', env, manifestPath });
     await fs.rm(agentStorePath('ghost'), { force: true });
 
     const report = await check(adapter, [entry], 'user', env, manifestPath);
@@ -310,9 +310,9 @@ describe('lot2-R4 — one manifest entry, several folded targets (R1 mergeFiles)
     const originalCwd = process.cwd();
     try {
       process.chdir(projA);
-      await apply(adapter, [projectEntry], 'project', env, manifestPath);
+      await apply({ adapter, entries: [projectEntry], scope: 'project', env, manifestPath });
       process.chdir(projB);
-      await apply(adapter, [projectEntry], 'project', env, manifestPath);
+      await apply({ adapter, entries: [projectEntry], scope: 'project', env, manifestPath });
 
       const store = skillStorePath('folded');
       const targetA = path.join(projA, '.claude', 'skills', 'folded');
@@ -347,9 +347,9 @@ describe('lot2-R4 — candidates enumerated from manifest files, not process.cwd
     const projB = await makeProjectDir('rigger-r4-projB-');
     const originalCwd = process.cwd();
     try {
-      await apply(adapter, [userEntry], 'user', env, manifestPath);
+      await apply({ adapter, entries: [userEntry], scope: 'user', env, manifestPath });
       process.chdir(projA);
-      await apply(adapter, [projectEntry], 'project', env, manifestPath);
+      await apply({ adapter, entries: [projectEntry], scope: 'project', env, manifestPath });
 
       // Remove the USER entry from an UNRELATED cwd (projB): the projA symlink
       // is not enumerable from the cwd — only the manifest `files` know it.

@@ -8,7 +8,7 @@
 // Primitives
 // ---------------------------------------------------------------------------
 
-/** 8 natures of installable artefacts. */
+/** 9 natures of installable artefacts. */
 export type Nature =
   | 'plugin'
   | 'guardrail'
@@ -17,7 +17,8 @@ export type Nature =
   | 'agent'
   | 'mcp'
   | 'tool'
-  | 'hook';
+  | 'hook'
+  | 'lib';
 
 /** Installation scope: user-level (~/) or project-level (cwd). */
 export type Scope = 'user' | 'project';
@@ -31,6 +32,17 @@ export type Scope = 'user' | 'project';
  * dispatch reject it at runtime with an actionable error.
  */
 export type Assistant = 'claude' | 'opencode' | 'copilot';
+
+/**
+ * The assistant axis of a manifest entry — widens `Assistant` with `'shared'`
+ * (S2, lib-nature). A lib entry always writes `assistant: 'shared'`: its
+ * materialisation is a single store shared by every assistant, never routed to
+ * an adapter, so `scope` + `assistant` stay constant and the manifest triple
+ * `(id, scope, assistant)` is a global singleton for that lib (design.md §2).
+ * `Assistant` itself — the type adapters receive — is unchanged; only the
+ * manifest's identity axis widens.
+ */
+export type ManifestAssistant = Assistant | 'shared';
 
 // ---------------------------------------------------------------------------
 // opencode value types (types-only — shared engine↔adapter vocabulary)
@@ -259,8 +271,21 @@ export interface ManifestEntry {
   /**
    * Target assistant this entry was installed for (M3).
    * Optional for backward-compat: absent on legacy entries → treated as 'claude'.
+   * Widened to ManifestAssistant (S2): a lib entry always writes 'shared' — the
+   * sentinel is never coerced to 'claude' (manifest.ts's entryAssistant only
+   * defaults an ABSENT field; a present value, 'shared' included, is returned
+   * verbatim).
    */
-  assistant?: Assistant;
+  assistant?: ManifestAssistant;
+  /**
+   * Ids of other manifest entries this entry depends on (R5) — captured
+   * PRE-prune and qualified at install time (S4), including edges inherited
+   * from a pack. Opaque here: core transports the value, never interprets it
+   * (buildManifestEntry copies it verbatim from AdapterEntry.requires /
+   * LibMaterialization.requires). Optional, tolerant reads — absent on
+   * manifests written before this change, backfilled by `rigger update` (S6).
+   */
+  requires?: string[];
 }
 
 /**
@@ -270,6 +295,29 @@ export interface ManifestEntry {
 export interface Manifest {
   version: number;
   artifacts: ManifestEntry[];
+}
+
+// ---------------------------------------------------------------------------
+// LibMaterialization — descriptor for the engine's lib-materialisation channel
+// ---------------------------------------------------------------------------
+
+/**
+ * Descriptor for one lib the engine materialises on a channel parallel to the
+ * adapter loop (R3, design.md §1) — never an AdapterEntry, never seen by
+ * `adapter.plan/audit/planRemove`. `source` is the checkout-relative position
+ * (`scanPathFor('lib')[0]`, computed CLI-side — the core never derives a
+ * checkout layout); `requires` is opaque here, copied verbatim onto the
+ * resulting `ManifestEntry.requires`.
+ */
+export interface LibMaterialization {
+  /** Qualified catalog id (e.g. "jr/lib:rules-common"). */
+  id: string;
+  /** Bare lib name — the store dir under libsDir(env) is named after it. */
+  name: string;
+  /** Checkout-relative source path to sync from (destructive-atomic, no-deref). */
+  source: string;
+  /** Edges to persist verbatim on the resulting ManifestEntry.requires. */
+  requires: string[];
 }
 
 // ---------------------------------------------------------------------------
@@ -368,6 +416,16 @@ export interface WriteOpLink {
   source: string;
   store: string;
   target: string;
+  /**
+   * When true, this artefact is only correct as a REAL symlink: the copy
+   * fallback would leave a relative import unresolved at runtime (R4,
+   * lib-nature — an opencode plugin whose entry `requires` a shared lib,
+   * whose `../libs/<name>/…` import resolves against the store, not a copy).
+   * The apply seam (applySkill) verifies `link()` returned method 'symlink'
+   * and fails closed — undoing the just-posed copy — when it did not. Absent/
+   * false on every other link op, whose copy fallback stays strictly intact.
+   */
+  requiresSymlink?: boolean;
 }
 
 /**

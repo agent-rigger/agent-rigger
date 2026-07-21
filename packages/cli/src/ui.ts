@@ -1259,6 +1259,12 @@ export function renderRepairOutcomes(
 export interface RenderEntryInfoOpts {
   /** Whether this entry is installed in the manifest. */
   installed?: boolean;
+  /**
+   * Ids of installed entries whose persisted `requires` edge names this id
+   * (R8, lib-nature) — e.g. every consumer currently pulling in a lib.
+   * Rendered as a "used by:" line when non-empty; omitted otherwise.
+   */
+  dependents?: string[];
 }
 
 /**
@@ -1272,6 +1278,7 @@ export interface RenderEntryInfoOpts {
  *     level:    required | recommended   (artifact only, when present)
  *     requires: id1, id2, ...            (artifact only, when present)
  *     members:  id1, id2, ...            (pack only)
+ *     used by:  id1, id2, ...            (when dependents is non-empty, R8)
  *
  * No emoji.
  */
@@ -1296,6 +1303,10 @@ export function renderEntryInfo(entry: CatalogEntry, opts: RenderEntryInfoOpts =
 
   if (entry.kind === 'pack') {
     lines.push(`  members:  ${entry.members.join(', ')}`);
+  }
+
+  if (opts.dependents !== undefined && opts.dependents.length > 0) {
+    lines.push(`  used by:  ${opts.dependents.join(', ')}`);
   }
 
   return lines.join('\n');

@@ -121,7 +121,7 @@ async function makeTmpDir(prefix: string): Promise<{ dir: string; cleanup: () =>
 
 async function makeExternalSkillFixture(baseDir: string, name: string): Promise<string> {
   const extDir = path.join(baseDir, 'external');
-  const skillDir = path.join(extDir, 'skills', name);
+  const skillDir = path.join(extDir, 'common', 'skills', name);
   await fs.mkdir(skillDir, { recursive: true });
   await fs.writeFile(path.join(skillDir, 'SKILL.md'), `# ${name}\nFixture.`);
   return extDir;
@@ -283,11 +283,12 @@ describe('scanPathFor(skill) === WriteOpLink.source (T4/T5 — union-coverage pr
         targets: ['claude'],
         scopes: ['user', 'project'],
       };
-      const gatePath = scanPathFor(catalogEntry, extDir);
-      expect(gatePath).not.toBeNull();
+      const gatePaths = scanPathFor(catalogEntry, extDir);
+      expect(gatePaths).toHaveLength(1);
+      const gatePath = gatePaths[0]!;
 
-      expect(linkOp.source).toBe(gatePath as string);
-      expect(path.resolve(linkOp.source)).toBe(path.resolve(gatePath as string));
+      expect(linkOp.source).toBe(gatePath);
+      expect(path.resolve(linkOp.source)).toBe(path.resolve(gatePath));
     } finally {
       await tmp.cleanup();
     }
@@ -327,9 +328,9 @@ async function makeRemoteEnv(): Promise<{
     'utf8',
   );
 
-  await fs.mkdir(path.join(contentDir, 'skills', 'remote-demo'), { recursive: true });
+  await fs.mkdir(path.join(contentDir, 'common', 'skills', 'remote-demo'), { recursive: true });
   await fs.writeFile(
-    path.join(contentDir, 'skills', 'remote-demo', 'SKILL.md'),
+    path.join(contentDir, 'common', 'skills', 'remote-demo', 'SKILL.md'),
     '# Remote Demo Skill\n\nFixture.',
     'utf8',
   );
@@ -410,7 +411,7 @@ describe('runRemoteInstall — union gate scans once, apply served a constant ve
     // second call (R1). The scanned tree is the union: catalog.json + the skill.
     expect(calls).toHaveLength(1);
     expect(trees[0]).toContain('catalog.json');
-    expect(trees[0]).toContain('skills/remote-demo/SKILL.md');
+    expect(trees[0]).toContain('common/skills/remote-demo/SKILL.md');
   });
 
   it('the skill is actually written to the store (apply really ran, not skipped)', async () => {
@@ -488,9 +489,9 @@ describe('runUpdate — union gate scans once, apply served a constant verdict (
         JSON.stringify({ meta: { name: 't4-update-catalog' }, entries: [REMOTE_SKILL_ENTRY] }),
         'utf8',
       );
-      await fs.mkdir(path.join(contentDir, 'skills', 'remote-demo'), { recursive: true });
+      await fs.mkdir(path.join(contentDir, 'common', 'skills', 'remote-demo'), { recursive: true });
       await fs.writeFile(
-        path.join(contentDir, 'skills', 'remote-demo', 'SKILL.md'),
+        path.join(contentDir, 'common', 'skills', 'remote-demo', 'SKILL.md'),
         '# Remote Demo Skill v2\n\nUpdated fixture.',
         'utf8',
       );
@@ -548,7 +549,7 @@ describe('runUpdate — union gate scans once, apply served a constant verdict (
       // catalog.json + the stale skill; apply-time is served a constant verdict.
       expect(calls).toHaveLength(1);
       expect(trees[0]).toContain('catalog.json');
-      expect(trees[0]).toContain('skills/remote-demo/SKILL.md');
+      expect(trees[0]).toContain('common/skills/remote-demo/SKILL.md');
     } finally {
       await fs.rm(homeDir, { recursive: true, force: true }).catch(() => {});
       await fs.rm(contentDir, { recursive: true, force: true }).catch(() => {});

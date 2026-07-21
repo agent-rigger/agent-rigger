@@ -97,9 +97,9 @@ async function makePrincipalEnv(): Promise<{
   );
 
   for (const name of ['bar', 'a']) {
-    await fs.mkdir(path.join(contentDir, 'skills', name), { recursive: true });
+    await fs.mkdir(path.join(contentDir, 'common', 'skills', name), { recursive: true });
     await fs.writeFile(
-      path.join(contentDir, 'skills', name, 'SKILL.md'),
+      path.join(contentDir, 'common', 'skills', name, 'SKILL.md'),
       `# skill ${name}\n`,
       'utf8',
     );
@@ -432,8 +432,12 @@ async function makeSourceCheckout(opts: {
     'utf8',
   );
   for (const name of opts.skillDirs) {
-    await fs.mkdir(path.join(contentDir, 'skills', name), { recursive: true });
-    await fs.writeFile(path.join(contentDir, 'skills', name, 'SKILL.md'), `# ${name}\n`, 'utf8');
+    await fs.mkdir(path.join(contentDir, 'common', 'skills', name), { recursive: true });
+    await fs.writeFile(
+      path.join(contentDir, 'common', 'skills', name, 'SKILL.md'),
+      `# ${name}\n`,
+      'utf8',
+    );
   }
 
   const runner: CommandRunner = (_cmd, args) => {

@@ -748,7 +748,13 @@ describe('engine round-trip — fully-conflicting install creates no phantom man
     // ...but the engine must treat it as "nothing to apply": no write, no
     // manifest entry — a recorded applied:{} would flip check to a vacuous
     // 'present' and make remove a permanent silent no-op (phantom entry).
-    const applyResult = await apply(adapter, [entry], 'user', env, manifestPath);
+    const applyResult = await apply({
+      adapter,
+      entries: [entry],
+      scope: 'user',
+      env,
+      manifestPath,
+    });
     expect(applyResult.written).toHaveLength(0);
     const manifest = await readManifest(manifestPath);
     expect(findEntry(manifest, 'guardrail:main', 'user', 'opencode')).toBeUndefined();

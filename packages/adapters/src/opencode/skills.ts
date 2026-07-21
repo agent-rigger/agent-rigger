@@ -36,8 +36,11 @@ import {
   link,
   removeStoreIfUnreferenced,
   resolvesToStore,
+  symlinkRemediationHint,
+  unlink,
   unlinkTarget,
 } from '@agent-rigger/core/linker';
+import type { LinkOptions } from '@agent-rigger/core/linker';
 import {
   resolveOpencodeProjectTargets,
   resolveOpencodeUserTargets,
@@ -76,6 +79,43 @@ export class SkillScanBlockedError extends Error {
     this.name = 'SkillScanBlockedError';
     this.source = source;
     this.findings = findings;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// SymlinkRequiredError
+// ---------------------------------------------------------------------------
+
+/**
+ * Thrown by applySkill when a link op flagged `requiresSymlink` (R4, lib-nature
+ * — an opencode plugin whose entry requires a shared lib) is posed via the copy
+ * fallback instead of a real symlink. This is the fail-closed AT THE POINT OF
+ * POSE (Finding 3, adversarial-close): the CLI pre-flight (assertSymlinkCapable)
+ * is a probe that a wrong-filesystem or a pruned cross-catalogue lib can slip
+ * past, so the pose itself is the last, authoritative gate — a plain copy leaves
+ * the plugin's `../libs/<name>/…` import unresolved at runtime ("Cannot find
+ * module"), the exact silent breakage the stock forbids.
+ *
+ * applySkill undoes the just-posed copy (target + store) BEFORE throwing — the
+ * engine records a link compensation only AFTER adapter.apply returns, so a
+ * throw from within apply leaves this op's own bytes uncompensated. Removing the
+ * store here is sound: a host that cannot symlink now could not have symlinked
+ * before either, so no valid symlink reference to this store exists anywhere,
+ * and a fresh install's store is this run's own write. The engine's
+ * transactional rollback (ADR-0027) then undoes the rest of the run.
+ */
+export class SymlinkRequiredError extends Error {
+  /** The install target that could only be posed as a copy. */
+  readonly target: string;
+
+  constructor(target: string) {
+    super(
+      `Cannot install "${target}": this system does not support symlinks, but this `
+        + 'artefact requires one (it depends on a shared lib whose relative import would '
+        + `be left unresolved by a plain copy). ${symlinkRemediationHint()}`,
+    );
+    this.name = 'SymlinkRequiredError';
+    this.target = target;
   }
 }
 
@@ -394,17 +434,24 @@ export async function applyRemoveSkill(
  *    and do NOT write anything.
  * 2. Call link(op.source, op.store, op.target) — syncs source to store, then
  *    creates a symlink (or copy fallback) from target to store.
+ * 3. When the op is flagged `requiresSymlink` (R4, lib-nature) and link() fell
+ *    back to a COPY, undo the just-posed target + store and throw
+ *    SymlinkRequiredError — the fail-closed at the point of pose (Finding 3).
  *
  * Ops of any other kind are ignored (forward-compatibility).
  *
  * @param ops      Write operations (only 'link' kind are processed).
  * @param env      Injectable env (kept for interface symmetry).
  * @param scanner  Security scanner — stubScanner by default (M0: always passes).
+ * @param linkOpts Injectable LinkOptions forwarded to link() — tests force the
+ *                 copy fallback to exercise the requiresSymlink gate. Production
+ *                 omits it (the real fs.symlink is used).
  */
 export async function applySkill(
   ops: WriteOp[],
   _env: Env,
   scanner: Scanner = stubScanner,
+  linkOpts?: LinkOptions,
 ): Promise<void> {
   for (const op of ops) {
     if (op.kind !== 'link') {
@@ -417,6 +464,14 @@ export async function applySkill(
       throw new SkillScanBlockedError(linkOp.source, verdict.findings ?? []);
     }
 
-    await link(linkOp.source, linkOp.store, linkOp.target);
+    const result = await link(linkOp.source, linkOp.store, linkOp.target, linkOpts);
+    if (linkOp.requiresSymlink === true && result.method !== 'symlink') {
+      // Fail closed AT THE POSE: a plain copy would leave the artefact's
+      // relative lib import unresolved. Undo this op's own bytes (target +
+      // store) — the engine only compensates a link op once apply returns —
+      // then throw; the engine's rollback undoes the rest of the run.
+      await unlink(linkOp.target, linkOp.store);
+      throw new SymlinkRequiredError(linkOp.target);
+    }
   }
 }

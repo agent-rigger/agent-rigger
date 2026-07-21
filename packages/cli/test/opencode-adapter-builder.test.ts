@@ -54,7 +54,7 @@ async function makeCheckoutDir(
   const checkoutDir = path.join(baseDir, 'checkout');
 
   if (opts.guardrailName !== undefined) {
-    const grDir = path.join(checkoutDir, 'guardrails', opts.guardrailName);
+    const grDir = path.join(checkoutDir, 'opencode', 'guardrails', opts.guardrailName);
     await fs.mkdir(grDir, { recursive: true });
     // The native opencode descriptor is written only when provided — omitting it
     // simulates a guardrail directory that ships no permission.json (hard error).
@@ -70,19 +70,19 @@ async function makeCheckoutDir(
   }
 
   if (opts.contextName !== undefined && opts.agentsMdContent !== undefined) {
-    const ctxDir = path.join(checkoutDir, 'contexts', opts.contextName);
+    const ctxDir = path.join(checkoutDir, 'opencode', 'contexts', opts.contextName);
     await fs.mkdir(ctxDir, { recursive: true });
     await fs.writeFile(path.join(ctxDir, 'AGENTS.md'), opts.agentsMdContent);
   }
 
   for (const name of opts.skillNames ?? []) {
-    const skillDir = path.join(checkoutDir, 'skills', name);
+    const skillDir = path.join(checkoutDir, 'common', 'skills', name);
     await fs.mkdir(skillDir, { recursive: true });
     await fs.writeFile(path.join(skillDir, 'SKILL.md'), `# ${name}\nExternal fixture.`);
   }
 
   for (const name of opts.agentNames ?? []) {
-    const agentDir = path.join(checkoutDir, 'agents');
+    const agentDir = path.join(checkoutDir, 'common', 'agents');
     await fs.mkdir(agentDir, { recursive: true });
     await fs.writeFile(
       path.join(agentDir, `${name}.md`),
@@ -91,7 +91,7 @@ async function makeCheckoutDir(
   }
 
   for (const plugin of opts.pluginFiles ?? []) {
-    const pluginsDir = path.join(checkoutDir, 'plugins');
+    const pluginsDir = path.join(checkoutDir, 'opencode', 'plugins');
     await fs.mkdir(pluginsDir, { recursive: true });
     await fs.writeFile(path.join(pluginsDir, `${plugin.name}.${plugin.ext}`), '// plugin module');
   }
@@ -156,7 +156,7 @@ describe('buildOpencodeAdapter — skill/agent/plugin external source resolution
 
     const linkOp = ops.find((op): op is WriteOpLink => op.kind === 'link');
     expect(linkOp).toBeDefined();
-    expect(linkOp!.source).toBe(path.join(externalBaseDir, 'skills', 'x'));
+    expect(linkOp!.source).toBe(path.join(externalBaseDir, 'common', 'skills', 'x'));
   });
 
   it('throws when skill not in externalIds (no fallback)', async () => {
@@ -217,7 +217,7 @@ describe('buildOpencodeAdapter — skill/agent/plugin external source resolution
 
     const linkOp = ops.find((op): op is WriteOpLink => op.kind === 'link');
     expect(linkOp).toBeDefined();
-    expect(linkOp!.source).toBe(path.join(externalBaseDir, 'plugins', 'guard.ts'));
+    expect(linkOp!.source).toBe(path.join(externalBaseDir, 'opencode', 'plugins', 'guard.ts'));
   });
 
   it('throws an actionable error when the plugin file is absent from externalBaseDir/plugins/', async () => {

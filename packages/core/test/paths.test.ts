@@ -4,6 +4,7 @@ import path from 'node:path';
 
 import {
   assistantRoot,
+  libsDir,
   resolveHome,
   resolveProjectTargets,
   resolveUserTargets,
@@ -88,6 +89,37 @@ describe('resolveUserTargets', () => {
     for (const value of Object.values(targets)) {
       expect(value.startsWith(realHome)).toBe(false);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// libsDir — store-side root for lib materialisations (T1, R3 dest)
+// ---------------------------------------------------------------------------
+
+describe('libsDir', () => {
+  const ISOLATED_HOME = '/tmp/rigger-test-home';
+  const env = { RIGGER_HOME: ISOLATED_HOME };
+
+  it('resolves to ~/.config/agent-rigger/libs (sibling of skillsDir, same store root)', () => {
+    const targets = resolveUserTargets(env);
+    expect(libsDir(env)).toBe(path.join(path.dirname(targets.skillsDir), 'libs'));
+    expect(libsDir(env)).toBe(
+      path.join(ISOLATED_HOME, '.config', 'agent-rigger', 'libs'),
+    );
+  });
+
+  it('returns an absolute path', () => {
+    expect(path.isAbsolute(libsDir(env))).toBe(true);
+  });
+
+  it('never touches the real home directory (RIGGER_HOME is isolated)', () => {
+    const realHome = os.homedir();
+    expect(libsDir(env).startsWith(realHome)).toBe(false);
+  });
+
+  it('defaults to Bun.env when no env is passed (same resolution seam as resolveHome)', () => {
+    // Smoke check only: must not throw and must return an absolute path.
+    expect(path.isAbsolute(libsDir())).toBe(true);
   });
 });
 

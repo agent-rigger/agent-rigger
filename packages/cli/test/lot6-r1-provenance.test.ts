@@ -79,9 +79,9 @@ async function makeMismatchEnv(opts: { headSha: string }): Promise<{
     JSON.stringify({ meta: { name: 'lot6-r1-catalog' }, entries: [REMOTE_SKILL_ENTRY] }),
     'utf8',
   );
-  await fs.mkdir(path.join(contentDir, 'skills', 'remote-demo'), { recursive: true });
+  await fs.mkdir(path.join(contentDir, 'common', 'skills', 'remote-demo'), { recursive: true });
   await fs.writeFile(
-    path.join(contentDir, 'skills', 'remote-demo', 'SKILL.md'),
+    path.join(contentDir, 'common', 'skills', 'remote-demo', 'SKILL.md'),
     '# Remote Demo Skill\n',
     'utf8',
   );

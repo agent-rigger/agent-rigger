@@ -127,7 +127,13 @@ describe('opencode mcp — project-scope lifecycle through the real engine', () 
       expect(checkBefore.entries[0]!.state).toBe('missing');
 
       // APPLY — writes the project opencode.json and records a manifest entry.
-      const applyResult = await apply(adapter, [PROJECT_ENTRY], 'project', env, manifestPath);
+      const applyResult = await apply({
+        adapter,
+        entries: [PROJECT_ENTRY],
+        scope: 'project',
+        env,
+        manifestPath,
+      });
       expect(applyResult.written).toContain(targets.opencodeJson);
 
       const checkAfter = await check(adapter, [PROJECT_ENTRY], 'project', env, manifestPath);
@@ -150,7 +156,13 @@ describe('opencode mcp — project-scope lifecycle through the real engine', () 
       expect(mcpMerged[SERVER_ID]).toEqual(SERVER_CONFIG);
 
       // IDEMPOTENCE — a 2nd engine apply writes nothing, and the 2nd plan is [].
-      const applyAgain = await apply(adapter, [PROJECT_ENTRY], 'project', env, manifestPath);
+      const applyAgain = await apply({
+        adapter,
+        entries: [PROJECT_ENTRY],
+        scope: 'project',
+        env,
+        manifestPath,
+      });
       expect(applyAgain.written).toHaveLength(0);
       const replan = await adapter.plan(PROJECT_ENTRY, 'project', env);
       expect(replan).toHaveLength(0);
@@ -206,7 +218,7 @@ describe('opencode mcp — env-indirection secret round-trips verbatim', () => {
     const prevToken = process.env['SOME_TOKEN'];
     process.env['SOME_TOKEN'] = SENTINEL;
     try {
-      await apply(adapter, [SECRET_ENTRY], 'user', env, manifestPath);
+      await apply({ adapter, entries: [SECRET_ENTRY], scope: 'user', env, manifestPath });
 
       // On disk: the env-ref is preserved literally; the real value never appears.
       const rawAfterApply = await fs.readFile(targets.opencodeJson, 'utf-8');

@@ -119,7 +119,7 @@ describe('lot2-R3 — runRemove on a drifted target (manifest entry, real direct
     const adapter = createClaudeAdapter({ denyRef: [], skillSource: () => srcDir });
     const entry: AdapterEntry = { id: 'skill:drifted', nature: 'skill', scope: 'user' };
 
-    await apply(adapter, [entry], 'user', env, manifestPath);
+    await apply({ adapter, entries: [entry], scope: 'user', env, manifestPath });
 
     // The user deleted the symlink and recreated a real directory.
     const target = skillTargetPath('drifted');
@@ -158,7 +158,7 @@ describe('lot2-R3 — runRemove on a legitimate install', () => {
     const adapter = createClaudeAdapter({ denyRef: [], skillSource: () => srcDir });
     const entry: AdapterEntry = { id: 'skill:legit', nature: 'skill', scope: 'user' };
 
-    await apply(adapter, [entry], 'user', env, manifestPath);
+    await apply({ adapter, entries: [entry], scope: 'user', env, manifestPath });
 
     const store = path.join(targets.skillsDir, 'legit');
 

@@ -78,14 +78,20 @@ async function makeTmpHome(): Promise<{ dir: string; env: Env; cleanup: () => Pr
  */
 async function makeCheckoutDir(baseDir: string): Promise<string> {
   const checkoutDir = path.join(baseDir, 'checkout');
-  await fs.mkdir(path.join(checkoutDir, 'hooks', '_shared'), { recursive: true });
+  await fs.mkdir(path.join(checkoutDir, 'claude', 'hooks', '_shared'), { recursive: true });
   for (const name of HOOK_NAMES) {
-    await fs.writeFile(path.join(checkoutDir, 'hooks', `${name}.ts`), `// stub ${name}`);
+    await fs.writeFile(path.join(checkoutDir, 'claude', 'hooks', `${name}.ts`), `// stub ${name}`);
   }
-  await fs.writeFile(path.join(checkoutDir, 'hooks', '_shared', 'hook-lib.ts'), '// stub lib');
+  await fs.writeFile(
+    path.join(checkoutDir, 'claude', 'hooks', '_shared', 'hook-lib.ts'),
+    '// stub lib',
+  );
 
-  await fs.mkdir(path.join(checkoutDir, 'skills', 'demo'), { recursive: true });
-  await fs.writeFile(path.join(checkoutDir, 'skills', 'demo', 'SKILL.md'), '# demo skill');
+  await fs.mkdir(path.join(checkoutDir, 'common', 'skills', 'demo'), { recursive: true });
+  await fs.writeFile(
+    path.join(checkoutDir, 'common', 'skills', 'demo', 'SKILL.md'),
+    '# demo skill',
+  );
 
   return checkoutDir;
 }
@@ -127,7 +133,7 @@ afterEach(async () => {
 
 /** Install the 4 hooks through the engine + drop a runtime log in the store. */
 async function installAllHooks(): Promise<void> {
-  await apply(adapter, hookEntries(HOOK_IDS), 'user', env, manifestPath);
+  await apply({ adapter, entries: hookEntries(HOOK_IDS), scope: 'user', env, manifestPath });
   await fs.writeFile(path.join(scriptStore, 'guard-command.log'), 'runtime log line\n');
 }
 
@@ -214,13 +220,13 @@ describe('lot2-R7 — the scriptStore is kept while hooks remain at the manifest
 describe('lot2-R7 — a remove run that touched no hook leaves the scriptStore alone', () => {
   it('lot2-R7: removing a non-hook entry never deletes a scriptStore the manifest does not track', async () => {
     // Only a skill at the manifest (no hook-nature entries at all)...
-    await apply(
+    await apply({
       adapter,
-      [{ id: 'skill:demo', nature: 'skill', scope: 'user' }],
-      'user',
+      entries: [{ id: 'skill:demo', nature: 'skill', scope: 'user' }],
+      scope: 'user',
       env,
       manifestPath,
-    );
+    });
     // ...while a stale scriptStore sits on disk (legacy truncated manifest:
     // hooks still active in settings.json but no longer tracked).
     await fs.mkdir(path.join(scriptStore, '_shared'), { recursive: true });

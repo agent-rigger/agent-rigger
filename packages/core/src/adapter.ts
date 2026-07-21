@@ -32,6 +32,16 @@ export interface AdapterEntry {
   scope: Scope;
   /** Applied payload from the manifest (set by the engine for remove/check). */
   applied?: AppliedPayload;
+  /**
+   * Ids of other manifest entries this entry depends on (R5), captured
+   * PRE-prune and qualified by the CLI. Primarily opaque transport — the engine
+   * copies it verbatim onto ManifestEntry.requires via buildManifestEntry. The
+   * one adapter that reads it is the opencode plugin nature (R4, lib-nature): a
+   * plugin whose requires name a `lib:` is only correct as a real symlink, so
+   * its plan flags the pose `requiresSymlink` and its audit fails a copy — both
+   * decided from this field. Absent when the entry declares no requires.
+   */
+  requires?: string[];
 }
 
 /**

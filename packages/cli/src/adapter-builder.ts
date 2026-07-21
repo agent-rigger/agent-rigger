@@ -40,7 +40,12 @@ import { resolveUserTargets } from '@agent-rigger/core/paths';
 import type { Scanner } from '@agent-rigger/core/scan';
 import { stubScanner } from '@agent-rigger/core/scan';
 
-import { type CatalogEntry, localId } from '@agent-rigger/catalog';
+import {
+  type CatalogEntry,
+  CHECKOUT_CLAUDE,
+  CHECKOUT_COMMON,
+  localId,
+} from '@agent-rigger/catalog';
 
 import { renderMcpConfig } from './mcp-source';
 
@@ -193,9 +198,10 @@ async function resolvePluginLedgerMarketplace(
  *                         source should be resolved from externalBaseDir.
  *                         Both fields must be provided together for the seam to activate.
  * @param externalBaseDir  Absolute path to the root of a remote checkout. Expected
- *                         layout: skills/<name>/, agents/<name>.md,
- *                         hooks/<name>.ts, guardrails/<n>/deny.json + allow.json,
- *                         contexts/<n>/AGENTS.md.
+ *                         post-cutover layout (R9): common/skills/<name>/,
+ *                         common/agents/<name>.md, claude/hooks/<name>.ts,
+ *                         claude/guardrails/<n>/deny.json + allow.json,
+ *                         claude/contexts/<n>/AGENTS.md.
  * @param catalogUrl       URL of the content repo (used as the marketplace URL for
  *                         external plugin installs). When provided alongside externalIds,
  *                         plugin entries in externalIds use this URL as their marketplace
@@ -235,11 +241,12 @@ export interface BuildClaudeAdapterOpts {
 /**
  * Build a ClaudeAdapter.
  *
- * All artifact content comes from externalBaseDir when externalIds are present:
- * - denyRef       : loaded from <externalBaseDir>/guardrails/<n>/deny.json
- * - agentsContent : loaded from <externalBaseDir>/contexts/<n>/AGENTS.md
- * - skillSource   : resolves id → <externalBaseDir>/skills/<id>
- * - agentSource   : resolves id → <externalBaseDir>/agents/<agentId>.md
+ * All artifact content comes from externalBaseDir when externalIds are present
+ * (post-cutover layout, R9):
+ * - denyRef       : loaded from <externalBaseDir>/claude/guardrails/<n>/deny.json
+ * - agentsContent : loaded from <externalBaseDir>/claude/contexts/<n>/AGENTS.md
+ * - skillSource   : resolves id → <externalBaseDir>/common/skills/<id>
+ * - agentSource   : resolves id → <externalBaseDir>/common/agents/<agentId>.md
  * - hookSpec      : resolves hook entries to ResolvedHook using effectiveEntries map
  *
  * For remove/check without a checkout: pass `manifest` in opts. The adapter
@@ -285,7 +292,7 @@ export async function buildClaudeAdapter(
       ? local.replace(/^guardrail:/, '')
       : local;
     assertSafeArtifactName(name, externalGuardrailId);
-    const guardrailDir = path.join(opts.externalBaseDir, 'guardrails', name);
+    const guardrailDir = path.join(opts.externalBaseDir, CHECKOUT_CLAUDE, 'guardrails', name);
     const [extDeny, extAllow] = await Promise.all([
       loadCanonicalDeny(path.join(guardrailDir, 'deny.json')),
       loadCanonicalAllow(path.join(guardrailDir, 'allow.json')),
@@ -322,7 +329,7 @@ export async function buildClaudeAdapter(
       : local;
     assertSafeArtifactName(name, externalContextId);
     agentsContent = await readText(
-      path.join(opts.externalBaseDir, 'contexts', name, 'AGENTS.md'),
+      path.join(opts.externalBaseDir, CHECKOUT_CLAUDE, 'contexts', name, 'AGENTS.md'),
     );
   } else {
     agentsContent = '';
@@ -386,7 +393,7 @@ export async function buildClaudeAdapter(
     assertSafeArtifactName(name, entry.id);
 
     if (opts?.externalIds?.has(entry.id) === true && opts.externalBaseDir !== undefined) {
-      const hooksDir = path.join(opts.externalBaseDir, 'hooks');
+      const hooksDir = path.join(opts.externalBaseDir, CHECKOUT_CLAUDE, 'hooks');
       const scriptStore = hookScriptStorePath(env);
       const command = `bun run ${scriptStore}/${name}.ts`;
 
@@ -454,7 +461,7 @@ export async function buildClaudeAdapter(
         opts?.externalIds?.has(entry.id) === true
         && opts.externalBaseDir !== undefined
       ) {
-        return path.join(opts.externalBaseDir, 'skills', name);
+        return path.join(opts.externalBaseDir, CHECKOUT_COMMON, 'skills', name);
       }
       throw new Error(
         `skillSource: skill "${entry.id}" is not in externalIds. `
@@ -468,7 +475,7 @@ export async function buildClaudeAdapter(
         opts?.externalIds?.has(entry.id) === true
         && opts.externalBaseDir !== undefined
       ) {
-        return path.join(opts.externalBaseDir, 'agents', name + '.md');
+        return path.join(opts.externalBaseDir, CHECKOUT_COMMON, 'agents', name + '.md');
       }
       throw new Error(
         `agentSource: agent "${entry.id}" is not in externalIds. `

@@ -80,7 +80,7 @@ describe('doctor-R3: pendant tracké', () => {
       const adapter = createClaudeAdapter({ denyRef: [], skillSource: () => src });
       const entry: AdapterEntry = { id: 'skill:foo', nature: 'skill', scope: 'user' };
 
-      await apply(adapter, [entry], 'user', env, manifestPath);
+      await apply({ adapter, entries: [entry], scope: 'user', env, manifestPath });
 
       // Delete only the STORE — the symlink remains, now dangling.
       await fs.rm(path.join(resolveUserTargets(env).skillsDir, 'foo'), {
@@ -116,7 +116,7 @@ describe('doctor-R3: pendant non tracké', () => {
       const adapter = createClaudeAdapter({ denyRef: [], skillSource: () => src });
       const entry: AdapterEntry = { id: 'skill:foo', nature: 'skill', scope: 'user' };
 
-      await apply(adapter, [entry], 'user', env, manifestPath);
+      await apply({ adapter, entries: [entry], scope: 'user', env, manifestPath });
       await fs.rm(path.join(resolveUserTargets(env).skillsDir, 'foo'), {
         recursive: true,
         force: true,

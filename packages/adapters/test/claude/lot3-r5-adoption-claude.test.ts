@@ -113,11 +113,11 @@ describe('lot3 R5 — guardrail adoption', () => {
     const entry: AdapterEntry = { id: 'guardrails-claude', nature: 'guardrail', scope: 'user' };
 
     // Install normally, then lose the manifest (M2 reset).
-    await apply(adapter, [entry], 'user', env, manifestPath);
+    await apply({ adapter, entries: [entry], scope: 'user', env, manifestPath });
     await wipeManifest(manifestPath);
 
     // Re-install: plan is empty (rules present) → adoption records the entry.
-    const result = await apply(adapter, [entry], 'user', env, manifestPath);
+    const result = await apply({ adapter, entries: [entry], scope: 'user', env, manifestPath });
 
     expect(result.adopted).toContain('guardrails-claude');
     expect(result.written).toHaveLength(0);
@@ -136,9 +136,9 @@ describe('lot3 R5 — guardrail adoption', () => {
     const adapter = createClaudeAdapter({ denyRef: REF_DENY });
     const entry: AdapterEntry = { id: 'guardrails-claude', nature: 'guardrail', scope: 'user' };
 
-    await apply(adapter, [entry], 'user', env, manifestPath);
+    await apply({ adapter, entries: [entry], scope: 'user', env, manifestPath });
     await wipeManifest(manifestPath);
-    await apply(adapter, [entry], 'user', env, manifestPath);
+    await apply({ adapter, entries: [entry], scope: 'user', env, manifestPath });
 
     const report = await check(adapter, [entry], 'user', env, manifestPath);
     expect(reportExitCode(report)).toBe(0);
@@ -168,7 +168,7 @@ describe('lot3 R5 — guardrail adoption', () => {
       JSON.stringify({ permissions: { deny: [REF_DENY[0]] } }, null, 2),
     );
 
-    const result = await apply(adapter, [entry], 'user', env, manifestPath);
+    const result = await apply({ adapter, entries: [entry], scope: 'user', env, manifestPath });
     // A real install happened (missing rules merged) — not an adoption.
     expect(result.adopted).toHaveLength(0);
   });
@@ -184,10 +184,10 @@ describe('lot3 R5 — skill adoption', () => {
     const adapter = createClaudeAdapter({ denyRef: [], skillSource: () => srcDir });
     const entry: AdapterEntry = { id: 'skill:foo', nature: 'skill', scope: 'user' };
 
-    await apply(adapter, [entry], 'user', env, manifestPath);
+    await apply({ adapter, entries: [entry], scope: 'user', env, manifestPath });
     await wipeManifest(manifestPath);
 
-    const result = await apply(adapter, [entry], 'user', env, manifestPath);
+    const result = await apply({ adapter, entries: [entry], scope: 'user', env, manifestPath });
 
     expect(result.adopted).toContain('skill:foo');
     const target = path.join(path.dirname(targets.claudeSettings), 'skills', 'foo');
@@ -206,7 +206,7 @@ describe('lot3 R5 — skill adoption', () => {
     await fs.mkdir(target, { recursive: true });
     await fs.writeFile(path.join(target, 'SKILL.md'), '# not rigger content\n');
 
-    const result = await apply(adapter, [entry], 'user', env, manifestPath);
+    const result = await apply({ adapter, entries: [entry], scope: 'user', env, manifestPath });
 
     expect(result.adopted).toHaveLength(0);
     expect(findEntry(result.manifest, 'skill:bar', 'user', 'claude')).toBeUndefined();
@@ -228,10 +228,10 @@ describe('lot3 R5 — hook adoption', () => {
     const adapter = createClaudeAdapter({ denyRef: [], hookSpec: () => hookSpec });
     const entry: AdapterEntry = { id: 'hook:guard', nature: 'hook', scope: 'user' };
 
-    await apply(adapter, [entry], 'user', env, manifestPath);
+    await apply({ adapter, entries: [entry], scope: 'user', env, manifestPath });
     await wipeManifest(manifestPath);
 
-    const result = await apply(adapter, [entry], 'user', env, manifestPath);
+    const result = await apply({ adapter, entries: [entry], scope: 'user', env, manifestPath });
 
     expect(result.adopted).toContain('hook:guard');
     const recorded = findEntry(result.manifest, 'hook:guard', 'user', 'claude');
@@ -281,7 +281,7 @@ describe('lot3 R5 — plugin adoption', () => {
     });
     const entry: AdapterEntry = { id: 'plugin:my-plugin', nature: 'plugin', scope: 'user' };
 
-    const result = await apply(adapter, [entry], 'user', env, manifestPath);
+    const result = await apply({ adapter, entries: [entry], scope: 'user', env, manifestPath });
 
     expect(result.adopted).toContain('plugin:my-plugin');
     const recorded = findEntry(result.manifest, 'plugin:my-plugin', 'user', 'claude');
@@ -318,7 +318,7 @@ describe('lot3 R5 — context FM6 baseline guard', () => {
     await fs.writeFile(targets.agentsMd, CANONICAL_AGENTS);
     await fs.writeFile(targets.claudeMd, '# My CLAUDE.md\n');
 
-    const result = await apply(adapter, [entry], 'user', env, manifestPath);
+    const result = await apply({ adapter, entries: [entry], scope: 'user', env, manifestPath });
 
     const recorded = findEntry(result.manifest, 'context-claude', 'user', 'claude');
     const applied = recorded?.applied as { kind?: string; previous?: unknown } | undefined;
@@ -337,7 +337,7 @@ describe('lot3 R5 — context FM6 baseline guard', () => {
     await fs.writeFile(targets.agentsMd, CANONICAL_AGENTS);
     await fs.writeFile(targets.claudeMd, '# My CLAUDE.md\n');
 
-    await apply(adapter, [entry], 'user', env, manifestPath);
+    await apply({ adapter, entries: [entry], scope: 'user', env, manifestPath });
     const removeResult = await remove(adapter, [entry], 'user', env, manifestPath);
 
     // AGENTS.md is DELETED (no restore baseline), never "restored" to canonical.
@@ -355,7 +355,7 @@ describe('lot3 R5 — context FM6 baseline guard', () => {
     await fs.writeFile(targets.claudeMd, `# My CLAUDE.md\n${managedBlock(USER_IMPORT_TARGET)}`);
 
     // Plan is empty (fully present) → adoption branch.
-    const result = await apply(adapter, [entry], 'user', env, manifestPath);
+    const result = await apply({ adapter, entries: [entry], scope: 'user', env, manifestPath });
 
     expect(result.adopted).toContain('context-claude');
     const recorded = findEntry(result.manifest, 'context-claude', 'user', 'claude');

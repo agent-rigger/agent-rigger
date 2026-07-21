@@ -38,7 +38,7 @@ describe('buildAdapter', () => {
 
   it('forwards opts.externalIds/externalBaseDir to the opencode builder', async () => {
     const externalBaseDir = path.join(tmp, 'checkout');
-    const skillDir = path.join(externalBaseDir, 'skills', 'x');
+    const skillDir = path.join(externalBaseDir, 'common', 'skills', 'x');
     await fs.mkdir(skillDir, { recursive: true });
     await fs.writeFile(path.join(skillDir, 'SKILL.md'), '# x');
 
@@ -56,7 +56,7 @@ describe('buildAdapter', () => {
 
   it('forwards opts.externalIds/externalBaseDir to the claude builder', async () => {
     const externalBaseDir = path.join(tmp, 'checkout');
-    const skillDir = path.join(externalBaseDir, 'skills', 'x');
+    const skillDir = path.join(externalBaseDir, 'common', 'skills', 'x');
     await fs.mkdir(skillDir, { recursive: true });
     await fs.writeFile(path.join(skillDir, 'SKILL.md'), '# x');
 

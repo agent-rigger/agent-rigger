@@ -173,7 +173,7 @@ describe('lot2-R3 — engine.remove leaves an unmanaged opencode target alone', 
     const adapter = createOpencodeAdapter({ skillSource: () => srcDir });
     const entry: AdapterEntry = { id: 'skill:kept', nature: 'skill', scope: 'user' };
 
-    await apply(adapter, [entry], 'user', env, manifestPath);
+    await apply({ adapter, entries: [entry], scope: 'user', env, manifestPath });
 
     const target = targetPath('kept');
     await fs.rm(target, { recursive: true, force: true });

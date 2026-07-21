@@ -159,16 +159,16 @@ async function makeEnv(): Promise<Fixture> {
   );
 
   // skill:a — clean.
-  await fs.mkdir(path.join(contentDir, 'skills', 'a'), { recursive: true });
+  await fs.mkdir(path.join(contentDir, 'common', 'skills', 'a'), { recursive: true });
   await fs.writeFile(
-    path.join(contentDir, 'skills', 'a', 'SKILL.md'),
+    path.join(contentDir, 'common', 'skills', 'a', 'SKILL.md'),
     '# skill a\nnothing to see here\n',
     'utf8',
   );
   // skill:autre — the secret lives here, and NOWHERE else.
-  await fs.mkdir(path.join(contentDir, 'skills', 'autre'), { recursive: true });
+  await fs.mkdir(path.join(contentDir, 'common', 'skills', 'autre'), { recursive: true });
   await fs.writeFile(
-    path.join(contentDir, 'skills', 'autre', 'SKILL.md'),
+    path.join(contentDir, 'common', 'skills', 'autre', 'SKILL.md'),
     `# skill autre\nconst token = "${FROZEN_PAT}";\n`,
     'utf8',
   );
@@ -261,7 +261,7 @@ describe('m9: inverse control — selecting the leaking skill blocks (mock actua
 
     expect(caught).toBeInstanceOf(ScanBlockedError);
     const err = caught as ScanBlockedError;
-    expect(err.findings.some((f) => f.includes('skills/autre/SKILL.md'))).toBe(true);
+    expect(err.findings.some((f) => f.includes('common/skills/autre/SKILL.md'))).toBe(true);
     // Fail-closed: nothing written.
     const manifest = await readManifest(fixture.manifestPath);
     expect(findEntry(manifest, 'skill:autre', 'user', 'claude')).toBeUndefined();

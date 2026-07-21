@@ -135,9 +135,9 @@ async function makeUpdateEnv(): Promise<{
       'utf8',
     );
 
-    await fs.mkdir(path.join(tmpDir, 'skills', 'remote-demo'), { recursive: true });
+    await fs.mkdir(path.join(tmpDir, 'common', 'skills', 'remote-demo'), { recursive: true });
     await fs.writeFile(
-      path.join(tmpDir, 'skills', 'remote-demo', 'SKILL.md'),
+      path.join(tmpDir, 'common', 'skills', 'remote-demo', 'SKILL.md'),
       `# Remote Demo Skill ${currentTag}\nContent for ${currentTag}.`,
       'utf8',
     );

@@ -113,17 +113,17 @@ async function makeAtomicityEnv(): Promise<AtomicityEnv> {
   );
 
   // Write skill fixture
-  await fs.mkdir(path.join(contentDir, 'skills', 'demo'), { recursive: true });
+  await fs.mkdir(path.join(contentDir, 'common', 'skills', 'demo'), { recursive: true });
   await fs.writeFile(
-    path.join(contentDir, 'skills', 'demo', 'SKILL.md'),
+    path.join(contentDir, 'common', 'skills', 'demo', 'SKILL.md'),
     '# Demo Skill\n\nAtomicity test fixture.',
     'utf8',
   );
 
   // Write agent fixture
-  await fs.mkdir(path.join(contentDir, 'agents'), { recursive: true });
+  await fs.mkdir(path.join(contentDir, 'common', 'agents'), { recursive: true });
   await fs.writeFile(
-    path.join(contentDir, 'agents', 'demo.md'),
+    path.join(contentDir, 'common', 'agents', 'demo.md'),
     '# Demo Agent\n\nAtomicity test fixture.',
     'utf8',
   );

@@ -187,13 +187,13 @@ describe('lot3-R4: rollback identity is the (id, scope, assistant) triple', () =
       });
 
       await expect(
-        apply(
+        apply({
           adapter,
-          [entry('cat/foo', 'skill'), entry('cat/bar', 'context')],
-          'user',
+          entries: [entry('cat/foo', 'skill'), entry('cat/bar', 'context')],
+          scope: 'user',
           env,
           manifestPath,
-        ),
+        }),
       ).rejects.toBeInstanceOf(RollbackTestError);
 
       // Fresh opencode symlink compensated (defect #1: scope-only snapshot skipped it).
@@ -229,13 +229,13 @@ describe('lot3-R4: rollback identity is the (id, scope, assistant) triple', () =
       });
 
       await expect(
-        apply(
+        apply({
           adapter,
-          [entry('cat/foo', 'skill'), entry('cat/bar', 'context')],
-          'user',
+          entries: [entry('cat/foo', 'skill'), entry('cat/bar', 'context')],
+          scope: 'user',
           env,
           manifestPath,
-        ),
+        }),
       ).rejects.toBeInstanceOf(RollbackTestError);
 
       // Tier 1: a tracked re-install of the same identity is left in place.
@@ -266,13 +266,13 @@ describe('lot3-R4: rollback identity is the (id, scope, assistant) triple', () =
       });
 
       await expect(
-        apply(
+        apply({
           adapter,
-          [entry('cat/foo', 'skill'), entry('cat/bar', 'context')],
-          'user',
+          entries: [entry('cat/foo', 'skill'), entry('cat/bar', 'context')],
+          scope: 'user',
           env,
           manifestPath,
-        ),
+        }),
       ).rejects.toBeInstanceOf(RollbackTestError);
 
       // The fresh opencode symlink is compensated…

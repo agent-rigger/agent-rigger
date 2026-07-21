@@ -86,7 +86,7 @@ describe('ClaudeAdapter — guardrail e2e via engine', () => {
   it('check exits 0 after apply (rules present)', async () => {
     const adapter = createClaudeAdapter({ denyRef: REF_DENY });
 
-    await apply(adapter, [GUARDRAIL_ENTRY], 'user', env, manifestPath);
+    await apply({ adapter, entries: [GUARDRAIL_ENTRY], scope: 'user', env, manifestPath });
     const report = await check(adapter, [GUARDRAIL_ENTRY], 'user', env);
 
     expect(reportExitCode(report)).toBe(0);
@@ -100,11 +100,23 @@ describe('ClaudeAdapter — guardrail e2e via engine', () => {
     await fs.mkdir(path.dirname(targets.claudeSettings), { recursive: true });
     await writeJson(targets.claudeSettings, { permissions: { deny: [] }, model: 'sonnet' });
 
-    const result1 = await apply(adapter, [GUARDRAIL_ENTRY], 'user', env, manifestPath);
+    const result1 = await apply({
+      adapter,
+      entries: [GUARDRAIL_ENTRY],
+      scope: 'user',
+      env,
+      manifestPath,
+    });
     expect(result1.written.length).toBeGreaterThan(0);
     expect(result1.backedUp.length).toBeGreaterThan(0);
 
-    const result2 = await apply(adapter, [GUARDRAIL_ENTRY], 'user', env, manifestPath);
+    const result2 = await apply({
+      adapter,
+      entries: [GUARDRAIL_ENTRY],
+      scope: 'user',
+      env,
+      manifestPath,
+    });
     expect(result2.written).toHaveLength(0);
     expect(result2.backedUp).toHaveLength(0);
   });
@@ -119,7 +131,7 @@ describe('ClaudeAdapter — guardrail e2e via engine', () => {
       permissions: { deny: [], allowedTools: ['bash'] },
     });
 
-    await apply(adapter, [GUARDRAIL_ENTRY], 'user', env, manifestPath);
+    await apply({ adapter, entries: [GUARDRAIL_ENTRY], scope: 'user', env, manifestPath });
 
     const result = await readJson(targets.claudeSettings);
     expect(result['model']).toBe('claude-opus');
@@ -135,8 +147,8 @@ describe('ClaudeAdapter — guardrail e2e via engine', () => {
   it('deny rules are not duplicated after 2 applies', async () => {
     const adapter = createClaudeAdapter({ denyRef: REF_DENY });
 
-    await apply(adapter, [GUARDRAIL_ENTRY], 'user', env, manifestPath);
-    await apply(adapter, [GUARDRAIL_ENTRY], 'user', env, manifestPath);
+    await apply({ adapter, entries: [GUARDRAIL_ENTRY], scope: 'user', env, manifestPath });
+    await apply({ adapter, entries: [GUARDRAIL_ENTRY], scope: 'user', env, manifestPath });
 
     const result = await readJson(targets.claudeSettings);
     const deny = ((result['permissions'] as Record<string, unknown>)['deny']) as string[];

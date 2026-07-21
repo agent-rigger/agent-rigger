@@ -161,6 +161,15 @@ export interface OpencodeAdapterConfig {
    * entries are processed.
    */
   pluginSource?: (entry: AdapterEntry) => string;
+  /**
+   * Injectable symlink implementation forwarded to the real `link()` pose
+   * inside applySkill (R4, lib-nature). Defaults to the real `fs.symlink`
+   * (linkOrCopy's own default). Tests inject a failing symlink to force the
+   * copy fallback and exercise the requiresSymlink fail-closed at the pose —
+   * a seam distinct from the CLI pre-flight probe (assertSymlinkCapable),
+   * which never reaches this call. Never set in production.
+   */
+  linkSymlink?: (target: string, dest: string) => Promise<void>;
 }
 
 // ---------------------------------------------------------------------------
@@ -412,9 +421,13 @@ export function createOpencodeAdapter(config: OpencodeAdapterConfig): Adapter {
   // into op.content at plan time) — applyContext is generic enough to reuse as-is.
   // 'link' is shared by skill AND plugin (applySkill is nature-agnostic: scan
   // op.source, then link store→target) — no dedicated plugin apply fn needed.
+  // linkOpts carries the injectable symlink seam to applySkill's real link()
+  // pose (R4 requiresSymlink fail-closed, lib-nature). Built once; omitted
+  // entirely in production so linkOrCopy uses its own fs.symlink default.
+  const linkOpts = config.linkSymlink === undefined ? undefined : { symlink: config.linkSymlink };
   const opKindHandlers = new Map<WriteOp['kind'], OpKindApply>([
     ['write-text', (ops, env) => applyContext(ops, env)],
-    ['link', (ops, env) => applySkill(ops, env, scanner)],
+    ['link', (ops, env) => applySkill(ops, env, scanner, linkOpts)],
     ['merge-permission', (ops, env) => applyGuardrail(ops, env)],
     ['merge-mcp', (ops, env) => applyMcp(ops, env)],
   ]);

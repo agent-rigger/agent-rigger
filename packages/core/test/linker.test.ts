@@ -28,6 +28,9 @@
  *   symlink throws.
  * - link: composes syncToStore + linkOrCopy, is idempotent on a second call,
  *   and propagates opts.symlink through to the linkOrCopy fallback.
+ * - probeSymlinkSupport (lib-nature T4, R4): reports true on a real symlink
+ *   success, false when the injected symlink rejects, and always tears its
+ *   scratch directory down either way.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
@@ -35,7 +38,13 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
-import { link, linkOrCopy, SymlinkInContentError, syncToStore } from '../src/linker';
+import {
+  link,
+  linkOrCopy,
+  probeSymlinkSupport,
+  SymlinkInContentError,
+  syncToStore,
+} from '../src/linker';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -563,5 +572,69 @@ describe('link — compose syncToStore + linkOrCopy', () => {
     expect(result.method).toBe('copy');
     const stat = await fs.lstat(target);
     expect(stat.isSymbolicLink()).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// probeSymlinkSupport
+// ---------------------------------------------------------------------------
+
+describe('probeSymlinkSupport', () => {
+  it('returns true when the real fs.symlink succeeds (default, no opts)', async () => {
+    expect(await probeSymlinkSupport()).toBe(true);
+  });
+
+  it('returns false when the injected symlink rejects', async () => {
+    const supported = await probeSymlinkSupport({
+      symlink: () => Promise.reject(new Error('ENOSYS: symlink not supported')),
+    });
+    expect(supported).toBe(false);
+  });
+
+  it('leaves no rigger-symlink-probe-* directory behind on success', async () => {
+    await probeSymlinkSupport();
+    const entries = await fs.readdir(os.tmpdir());
+    const leftover = entries.filter((n) => n.startsWith('rigger-symlink-probe-'));
+    expect(leftover).toEqual([]);
+  });
+
+  it('leaves no rigger-symlink-probe-* directory behind even when the symlink rejects', async () => {
+    await probeSymlinkSupport({ symlink: () => Promise.reject(new Error('no symlinks')) });
+    const entries = await fs.readdir(os.tmpdir());
+    const leftover = entries.filter((n) => n.startsWith('rigger-symlink-probe-'));
+    expect(leftover).toEqual([]);
+  });
+
+  it('scratches under scratchParentDir (same-filesystem probe) when it exists', async () => {
+    let observedLinkPath = '';
+    await probeSymlinkSupport({
+      scratchParentDir: tmp.dir,
+      symlink: (target, dest) => {
+        observedLinkPath = dest;
+        return fs.symlink(target, dest);
+      },
+    });
+    expect(observedLinkPath.startsWith(tmp.dir)).toBe(true);
+  });
+
+  it('falls back to os.tmpdir() when scratchParentDir does not exist', async () => {
+    const missingDir = path.join(tmp.dir, 'does-not-exist');
+    let observedLinkPath = '';
+    await probeSymlinkSupport({
+      scratchParentDir: missingDir,
+      symlink: (target, dest) => {
+        observedLinkPath = dest;
+        return fs.symlink(target, dest);
+      },
+    });
+    expect(observedLinkPath.startsWith(missingDir)).toBe(false);
+    expect(observedLinkPath.startsWith(os.tmpdir())).toBe(true);
+  });
+
+  it('never creates scratchParentDir itself when it does not exist yet', async () => {
+    const missingDir = path.join(tmp.dir, 'never-created');
+    await probeSymlinkSupport({ scratchParentDir: missingDir });
+    const stat = await fs.lstat(missingDir).catch(() => null);
+    expect(stat).toBeNull();
   });
 });

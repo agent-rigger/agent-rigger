@@ -119,10 +119,22 @@ afterEach(async () => {
 describe('lot2-R1: hook migration on matcher change', () => {
   it('lot2-R1: catalog v2 changes the matcher — one rigger entry remains and remove cleans everything', async () => {
     // v1 install.
-    await apply(makeAdapter(V1), [makeEntry()], 'user', env, manifestPath);
+    await apply({
+      adapter: makeAdapter(V1),
+      entries: [makeEntry()],
+      scope: 'user',
+      env,
+      manifestPath,
+    });
 
     // Catalog v2 changes the matcher → re-install migrates in the SAME run.
-    const result = await apply(makeAdapter(V2_MATCHER), [makeEntry()], 'user', env, manifestPath);
+    const result = await apply({
+      adapter: makeAdapter(V2_MATCHER),
+      entries: [makeEntry()],
+      scope: 'user',
+      env,
+      manifestPath,
+    });
 
     const settings = await readJson(targets.claudeSettings);
     expect(hasHook(settings, V2_MATCHER)).toBe(true);
@@ -153,9 +165,21 @@ describe('lot2-R1: hook migration on matcher change', () => {
 
 describe('lot2-R1: hook migration on command change', () => {
   it('lot2-R1: catalog v2 changes the command — old command retired in the same run, remove cleans everything', async () => {
-    await apply(makeAdapter(V1), [makeEntry()], 'user', env, manifestPath);
+    await apply({
+      adapter: makeAdapter(V1),
+      entries: [makeEntry()],
+      scope: 'user',
+      env,
+      manifestPath,
+    });
 
-    const result = await apply(makeAdapter(V2_COMMAND), [makeEntry()], 'user', env, manifestPath);
+    const result = await apply({
+      adapter: makeAdapter(V2_COMMAND),
+      entries: [makeEntry()],
+      scope: 'user',
+      env,
+      manifestPath,
+    });
 
     const settings = await readJson(targets.claudeSettings);
     expect(hasHook(settings, V2_COMMAND)).toBe(true);
@@ -182,10 +206,22 @@ describe('lot2-R1: hook migration on command change', () => {
 
 describe('lot2-R1: unchanged hook spec stays a no-op', () => {
   it('lot2-R1: re-install with the same spec is a no-op (no write, no backup, file untouched)', async () => {
-    await apply(makeAdapter(V1), [makeEntry()], 'user', env, manifestPath);
+    await apply({
+      adapter: makeAdapter(V1),
+      entries: [makeEntry()],
+      scope: 'user',
+      env,
+      manifestPath,
+    });
     const before = await fs.readFile(targets.claudeSettings, 'utf8');
 
-    const result = await apply(makeAdapter(V1), [makeEntry()], 'user', env, manifestPath);
+    const result = await apply({
+      adapter: makeAdapter(V1),
+      entries: [makeEntry()],
+      scope: 'user',
+      env,
+      manifestPath,
+    });
 
     expect(result.written).toEqual([]);
     expect(result.backedUp).toEqual([]);
@@ -200,10 +236,22 @@ describe('lot2-R1: unchanged hook spec stays a no-op', () => {
 
 describe('lot2-R1: migration run creates a backup', () => {
   it('lot2-R1: a .bak of settings.json captures the pre-migration state', async () => {
-    await apply(makeAdapter(V1), [makeEntry()], 'user', env, manifestPath);
+    await apply({
+      adapter: makeAdapter(V1),
+      entries: [makeEntry()],
+      scope: 'user',
+      env,
+      manifestPath,
+    });
     const preMigration = await fs.readFile(targets.claudeSettings, 'utf8');
 
-    const result = await apply(makeAdapter(V2_MATCHER), [makeEntry()], 'user', env, manifestPath);
+    const result = await apply({
+      adapter: makeAdapter(V2_MATCHER),
+      entries: [makeEntry()],
+      scope: 'user',
+      env,
+      manifestPath,
+    });
 
     const bak = result.backedUp.find((p) => p.includes('settings.json.bak-'));
     expect(bak).toBeDefined();

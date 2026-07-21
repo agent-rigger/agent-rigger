@@ -144,17 +144,17 @@ async function makeTmpDir(prefix = 'rigger-h4-'): Promise<{
  */
 async function makeCheckoutDir(baseDir: string): Promise<string> {
   const checkoutDir = path.join(baseDir, 'checkout');
-  await fs.mkdir(path.join(checkoutDir, 'hooks', '_shared'), { recursive: true });
+  await fs.mkdir(path.join(checkoutDir, 'claude', 'hooks', '_shared'), { recursive: true });
 
   // Stub guard scripts (content doesn't matter — syncToStore just copies them)
   for (const name of ['guard-command', 'guard-secret', 'guard-write-secret', 'guard-prompt']) {
     await fs.writeFile(
-      path.join(checkoutDir, 'hooks', `${name}.ts`),
+      path.join(checkoutDir, 'claude', 'hooks', `${name}.ts`),
       `// stub ${name}`,
     );
   }
   await fs.writeFile(
-    path.join(checkoutDir, 'hooks', '_shared', 'hook-lib.ts'),
+    path.join(checkoutDir, 'claude', 'hooks', '_shared', 'hook-lib.ts'),
     '// stub hook-lib',
   );
 
@@ -312,7 +312,13 @@ describe('buildClaudeAdapter hookSpec — hook:guard-secret install/remove lifec
     // manifest is R7's counter (scripts are copies, no symlink refcount).
     const ops = await adapter.plan(ENTRY, 'user', env);
     const command = (ops[0] as { command: string }).command;
-    await engineApply(adapter, [ENTRY], 'user', env, targets.stateJson);
+    await engineApply({
+      adapter,
+      entries: [ENTRY],
+      scope: 'user',
+      env,
+      manifestPath: targets.stateJson,
+    });
 
     const hookSpec = {
       event: 'PreToolUse',

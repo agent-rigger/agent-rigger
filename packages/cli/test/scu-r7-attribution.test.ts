@@ -107,9 +107,9 @@ async function makeEnv(): Promise<Fixture> {
     'utf8',
   );
   for (const name of ['a', 'b']) {
-    await fs.mkdir(path.join(contentDir, 'skills', name), { recursive: true });
+    await fs.mkdir(path.join(contentDir, 'common', 'skills', name), { recursive: true });
     await fs.writeFile(
-      path.join(contentDir, 'skills', name, 'SKILL.md'),
+      path.join(contentDir, 'common', 'skills', name, 'SKILL.md'),
       `# skill ${name}\nAWS_KEY=AKIAIOSFODNN7EXAMPLE\n`,
       'utf8',
     );
@@ -183,7 +183,7 @@ describe('R7: attribution — two leaking skills aggregate into one ScanBlockedE
     try {
       await install(
         ['skill:a', 'skill:b'],
-        leakyStagingScanner(['skills/a/SKILL.md', 'skills/b/SKILL.md']),
+        leakyStagingScanner(['common/skills/a/SKILL.md', 'common/skills/b/SKILL.md']),
       );
     } catch (e) {
       caught = e;
@@ -193,8 +193,8 @@ describe('R7: attribution — two leaking skills aggregate into one ScanBlockedE
     const err = caught as ScanBlockedError;
 
     // One error, two distinct checkout-relative attributions (R3 scénario 2 + R7).
-    expect(err.findings.some((f) => f.includes('skills/a/SKILL.md'))).toBe(true);
-    expect(err.findings.some((f) => f.includes('skills/b/SKILL.md'))).toBe(true);
+    expect(err.findings.some((f) => f.includes('common/skills/a/SKILL.md'))).toBe(true);
+    expect(err.findings.some((f) => f.includes('common/skills/b/SKILL.md'))).toBe(true);
     // The staging temp dir must NOT leak into the finding — attribution is
     // checkout-relative, not absolute.
     expect(err.message).not.toContain(fixture.contentDir);
@@ -202,7 +202,7 @@ describe('R7: attribution — two leaking skills aggregate into one ScanBlockedE
   });
 
   it('writes nothing when blocked (fail-closed)', async () => {
-    await install(['skill:a', 'skill:b'], leakyStagingScanner(['skills/a/SKILL.md'])).catch(
+    await install(['skill:a', 'skill:b'], leakyStagingScanner(['common/skills/a/SKILL.md'])).catch(
       () => {},
     );
 

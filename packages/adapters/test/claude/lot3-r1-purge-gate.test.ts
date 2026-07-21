@@ -123,7 +123,7 @@ describe('engine.remove — lot3 R1 reclaims the orphan store on re-remove', () 
     const adapter = createClaudeAdapter({ denyRef: [], skillSource: () => srcDir });
     const entry: AdapterEntry = { id: 'skill:reclaim', nature: 'skill', scope: 'user' };
 
-    await apply(adapter, [entry], 'user', env, manifestPath);
+    await apply({ adapter, entries: [entry], scope: 'user', env, manifestPath });
 
     const target = skillTargetPath('reclaim');
     const store = skillStorePath('reclaim');
@@ -147,7 +147,7 @@ describe('engine.remove — lot3 R1 reclaims the orphan store on re-remove', () 
     const adapter = createClaudeAdapter({ denyRef: [], skillSource: () => srcDir });
     const entry: AdapterEntry = { id: 'skill:idem', nature: 'skill', scope: 'user' };
 
-    await apply(adapter, [entry], 'user', env, manifestPath);
+    await apply({ adapter, entries: [entry], scope: 'user', env, manifestPath });
     await remove(adapter, [entry], 'user', env, manifestPath);
 
     const result2 = await remove(adapter, [entry], 'user', env, manifestPath);

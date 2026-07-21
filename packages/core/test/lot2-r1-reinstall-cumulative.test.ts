@@ -250,13 +250,19 @@ describe('lot2-R1: drift repair cumulates the applied payload', () => {
     const adapter = makeGuardrailAdapter({ deny: [DENY_A, DENY_B], allow: [] });
 
     // First install: empty settings → delta is the full canonical set.
-    await apply(adapter, [makeEntry(ID)], 'user', env, manifestPath);
+    await apply({ adapter, entries: [makeEntry(ID)], scope: 'user', env, manifestPath });
 
     // User drift: hand-delete DENY_A from settings.json.
     await userRemovesRule(targets.claudeSettings, 'deny', DENY_A);
 
     // Repair install: the plan delta is [DENY_A] only.
-    const result = await apply(adapter, [makeEntry(ID)], 'user', env, manifestPath);
+    const result = await apply({
+      adapter,
+      entries: [makeEntry(ID)],
+      scope: 'user',
+      env,
+      manifestPath,
+    });
 
     // settings.json carries both rules again.
     const settings = await readJson(targets.claudeSettings);
@@ -290,11 +296,17 @@ describe('lot2-R1: no orphaned allow rule after remove', () => {
 
     // v1 install.
     const v1 = makeGuardrailAdapter({ deny: [], allow: [ALLOW_X] });
-    await apply(v1, [makeEntry(ID)], 'user', env, manifestPath);
+    await apply({ adapter: v1, entries: [makeEntry(ID)], scope: 'user', env, manifestPath });
 
     // Catalog v2 adds ALLOW_Y → re-install plans the delta [ALLOW_Y].
     const v2 = makeGuardrailAdapter({ deny: [], allow: [ALLOW_X, ALLOW_Y] });
-    const result = await apply(v2, [makeEntry(ID)], 'user', env, manifestPath);
+    const result = await apply({
+      adapter: v2,
+      entries: [makeEntry(ID)],
+      scope: 'user',
+      env,
+      manifestPath,
+    });
 
     const entryAfter = findEntry(result.manifest, ID, 'user', 'claude');
     expect(entryAfter?.applied).toEqual({
@@ -320,10 +332,16 @@ describe('lot2-R1: catalog update cumulates deny rules', () => {
     const ID = 'main/guardrail:deny-v2';
 
     const v1 = makeGuardrailAdapter({ deny: [DENY_A], allow: [] });
-    await apply(v1, [makeEntry(ID)], 'user', env, manifestPath);
+    await apply({ adapter: v1, entries: [makeEntry(ID)], scope: 'user', env, manifestPath });
 
     const v2 = makeGuardrailAdapter({ deny: [DENY_A, DENY_B], allow: [] });
-    const result = await apply(v2, [makeEntry(ID)], 'user', env, manifestPath);
+    const result = await apply({
+      adapter: v2,
+      entries: [makeEntry(ID)],
+      scope: 'user',
+      env,
+      manifestPath,
+    });
 
     const entryAfter = findEntry(result.manifest, ID, 'user', 'claude');
     expect(entryAfter?.applied).toEqual({
@@ -348,9 +366,9 @@ describe('lot2-R1: check audits against the cumulative payload', () => {
     const adapter = makeGuardrailAdapter({ deny: [DENY_A, DENY_B], allow: [] });
 
     // Install → user deletes DENY_A → repair install (applied = union [A, B]).
-    await apply(adapter, [makeEntry(ID)], 'user', env, manifestPath);
+    await apply({ adapter, entries: [makeEntry(ID)], scope: 'user', env, manifestPath });
     await userRemovesRule(targets.claudeSettings, 'deny', DENY_A);
-    await apply(adapter, [makeEntry(ID)], 'user', env, manifestPath);
+    await apply({ adapter, entries: [makeEntry(ID)], scope: 'user', env, manifestPath });
 
     // User then deletes DENY_B — a rule whose delta belonged to the FIRST run.
     await userRemovesRule(targets.claudeSettings, 'deny', DENY_B);
@@ -374,11 +392,17 @@ describe('lot2-R1: opencode permission fragments cumulate per leaf', () => {
 
     // v1: one bash leaf.
     const v1 = makePermissionAdapter({ bash: { 'rm -rf *': 'deny' } });
-    await apply(v1, [makeEntry(ID)], 'user', env, manifestPath);
+    await apply({ adapter: v1, entries: [makeEntry(ID)], scope: 'user', env, manifestPath });
 
     // v2 adds a webfetch leaf → re-install plans only the missing leaf.
     const v2 = makePermissionAdapter({ bash: { 'rm -rf *': 'deny' }, webfetch: 'ask' });
-    const result = await apply(v2, [makeEntry(ID)], 'user', env, manifestPath);
+    const result = await apply({
+      adapter: v2,
+      entries: [makeEntry(ID)],
+      scope: 'user',
+      env,
+      manifestPath,
+    });
 
     // applied is the per-leaf fusion of both fragments.
     const entryAfter = findEntry(result.manifest, ID, 'user', 'opencode');
@@ -404,10 +428,16 @@ describe('lot2-R1: merge respects the triple identity', () => {
 
     // Same id installed for BOTH assistants — two distinct manifest entries.
     const claudeV1 = makeGuardrailAdapter({ deny: [DENY_A], allow: [] });
-    await apply(claudeV1, [makeEntry(ID)], 'user', env, manifestPath);
+    await apply({ adapter: claudeV1, entries: [makeEntry(ID)], scope: 'user', env, manifestPath });
 
     const opencode = makePermissionAdapter({ bash: { 'rm -rf *': 'deny' } });
-    const afterOpencode = await apply(opencode, [makeEntry(ID)], 'user', env, manifestPath);
+    const afterOpencode = await apply({
+      adapter: opencode,
+      entries: [makeEntry(ID)],
+      scope: 'user',
+      env,
+      manifestPath,
+    });
     const opencodeSnapshot = structuredClone(
       findEntry(afterOpencode.manifest, ID, 'user', 'opencode'),
     );
@@ -415,7 +445,13 @@ describe('lot2-R1: merge respects the triple identity', () => {
 
     // Re-install claude with an enriched canonical set.
     const claudeV2 = makeGuardrailAdapter({ deny: [DENY_A, DENY_B], allow: [] });
-    const result = await apply(claudeV2, [makeEntry(ID)], 'user', env, manifestPath);
+    const result = await apply({
+      adapter: claudeV2,
+      entries: [makeEntry(ID)],
+      scope: 'user',
+      env,
+      manifestPath,
+    });
 
     // Only the (user, claude) entry was merged…
     const claudeEntry = findEntry(result.manifest, ID, 'user', 'claude');

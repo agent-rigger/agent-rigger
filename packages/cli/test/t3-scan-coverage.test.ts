@@ -182,12 +182,15 @@ function spyScanner(): { scanner: Scanner; calls: string[]; trees: string[][] } 
 // ---------------------------------------------------------------------------
 
 describe('T3-1 — scanPathFor: guardrail nature', () => {
-  it('returns guardrails/<name> for a "guardrail:"-prefixed id', () => {
+  it('returns one <assistant>/guardrails/<name> dir per target (bi-target, R9)', () => {
     const baseDir = '/tmp/checkout';
-    expect(scanPathFor(GUARDRAIL_ENTRY, baseDir)).toBe(path.join(baseDir, 'guardrails', 'main'));
+    expect(scanPathFor(GUARDRAIL_ENTRY, baseDir)).toEqual([
+      path.join(baseDir, 'claude', 'guardrails', 'main'),
+      path.join(baseDir, 'opencode', 'guardrails', 'main'),
+    ]);
   });
 
-  it('returns guardrails/<id> for a legacy (unprefixed) guardrail id', () => {
+  it('returns <assistant>/guardrails/<id> for a legacy (unprefixed) guardrail id', () => {
     const baseDir = '/tmp/checkout';
     const legacy: CatalogEntry = {
       kind: 'artifact',
@@ -196,38 +199,43 @@ describe('T3-1 — scanPathFor: guardrail nature', () => {
       targets: ['claude'],
       scopes: ['user'],
     };
-    expect(scanPathFor(legacy, baseDir)).toBe(
-      path.join(baseDir, 'guardrails', 'guardrails-claude'),
-    );
+    expect(scanPathFor(legacy, baseDir)).toEqual([
+      path.join(baseDir, 'claude', 'guardrails', 'guardrails-claude'),
+    ]);
   });
 
   it('strips the source qualifier before deriving the path', () => {
     const baseDir = '/tmp/checkout';
     const qualified: CatalogEntry = { ...GUARDRAIL_ENTRY, id: 'principal/guardrail:main' };
-    expect(scanPathFor(qualified, baseDir)).toBe(path.join(baseDir, 'guardrails', 'main'));
+    expect(scanPathFor(qualified, baseDir)).toEqual([
+      path.join(baseDir, 'claude', 'guardrails', 'main'),
+      path.join(baseDir, 'opencode', 'guardrails', 'main'),
+    ]);
   });
 });
 
 describe('T3-1 — scanPathFor: context nature', () => {
-  it('returns contexts/<name>/AGENTS.md for a "context:"-prefixed id', () => {
+  it('returns one <assistant>/contexts/<name>/AGENTS.md per target (bi-target, R9/S8)', () => {
     const baseDir = '/tmp/checkout';
-    expect(scanPathFor(CONTEXT_ENTRY, baseDir)).toBe(
-      path.join(baseDir, 'contexts', 'main', 'AGENTS.md'),
-    );
+    expect(scanPathFor(CONTEXT_ENTRY, baseDir)).toEqual([
+      path.join(baseDir, 'claude', 'contexts', 'main', 'AGENTS.md'),
+      path.join(baseDir, 'opencode', 'contexts', 'main', 'AGENTS.md'),
+    ]);
   });
 
   it('strips the source qualifier before deriving the path', () => {
     const baseDir = '/tmp/checkout';
     const qualified: CatalogEntry = { ...CONTEXT_ENTRY, id: 'principal/context:main' };
-    expect(scanPathFor(qualified, baseDir)).toBe(
-      path.join(baseDir, 'contexts', 'main', 'AGENTS.md'),
-    );
+    expect(scanPathFor(qualified, baseDir)).toEqual([
+      path.join(baseDir, 'claude', 'contexts', 'main', 'AGENTS.md'),
+      path.join(baseDir, 'opencode', 'contexts', 'main', 'AGENTS.md'),
+    ]);
   });
 });
 
 describe('T3-1 — scanPathFor: mcp nature (regression guard — no branch by design)', () => {
-  it('returns null for mcp entries (covered via catalog.json instead, not a checkout)', () => {
-    expect(scanPathFor(MCP_LEAKY_ENTRY, '/tmp/checkout')).toBeNull();
+  it('returns [] for mcp entries (covered via catalog.json instead, not a checkout)', () => {
+    expect(scanPathFor(MCP_LEAKY_ENTRY, '/tmp/checkout')).toEqual([]);
   });
 });
 
@@ -255,29 +263,34 @@ async function makeEnv(entries: CatalogEntry[]): Promise<Fixture> {
     'utf8',
   );
 
-  // guardrails/main/ fixture
-  const guardrailDir = path.join(contentDir, 'guardrails', 'main');
-  await fs.mkdir(guardrailDir, { recursive: true });
+  // Bi-target guardrail fixture (post-cutover, R9): claude deny/allow under
+  // claude/, opencode permission under opencode/ — one dir per assistant.
+  const claudeGuardrailDir = path.join(contentDir, 'claude', 'guardrails', 'main');
+  const opencodeGuardrailDir = path.join(contentDir, 'opencode', 'guardrails', 'main');
+  await fs.mkdir(claudeGuardrailDir, { recursive: true });
+  await fs.mkdir(opencodeGuardrailDir, { recursive: true });
   await fs.writeFile(
-    path.join(guardrailDir, 'deny.json'),
+    path.join(claudeGuardrailDir, 'deny.json'),
     JSON.stringify({ deny: ['Read(~/.ssh/**)'] }),
     'utf8',
   );
   await fs.writeFile(
-    path.join(guardrailDir, 'allow.json'),
+    path.join(claudeGuardrailDir, 'allow.json'),
     JSON.stringify({ allow: [] }),
     'utf8',
   );
   await fs.writeFile(
-    path.join(guardrailDir, 'permission.json'),
+    path.join(opencodeGuardrailDir, 'permission.json'),
     JSON.stringify({ edit: 'ask' }),
     'utf8',
   );
 
-  // contexts/main/AGENTS.md fixture
-  const contextDir = path.join(contentDir, 'contexts', 'main');
-  await fs.mkdir(contextDir, { recursive: true });
-  await fs.writeFile(path.join(contextDir, 'AGENTS.md'), '# Fixture context\n', 'utf8');
+  // Bi-target context fixture: one AGENTS.md per assistant dir (S8).
+  for (const assistant of ['claude', 'opencode']) {
+    const contextDir = path.join(contentDir, assistant, 'contexts', 'main');
+    await fs.mkdir(contextDir, { recursive: true });
+    await fs.writeFile(path.join(contextDir, 'AGENTS.md'), '# Fixture context\n', 'utf8');
+  }
 
   const env: Env = { RIGGER_HOME: homeDir };
   const manifestPath = path.join(homeDir, '.config', 'agent-rigger', 'state.json');
@@ -400,14 +413,16 @@ describe('T3-3 — guardrail-only selection (from a multi-nature catalog)', () =
     });
 
     // One scan over the union staging; its tree is exactly catalog.json plus the
-    // full guardrails/main surface — contexts/main (present in the checkout but
-    // NOT selected) is absent, re-verifying R2 scope by the staging content.
+    // full guardrails/main surface — one dir per target for this bi-target
+    // guardrail (R9), claude deny/allow + opencode permission. contexts/main
+    // (present in the checkout but NOT selected) is absent, re-verifying R2
+    // scope by the staging content.
     expect(calls).toHaveLength(1);
     expect(trees[0]).toEqual([
       'catalog.json',
-      'guardrails/main/allow.json',
-      'guardrails/main/deny.json',
-      'guardrails/main/permission.json',
+      'claude/guardrails/main/allow.json',
+      'claude/guardrails/main/deny.json',
+      'opencode/guardrails/main/permission.json',
     ]);
   });
 });
@@ -508,9 +523,9 @@ describe('T3-5 — update parity: runUpdate scans catalog.json too', () => {
         JSON.stringify({ meta: { name: 't3-update-catalog' }, entries: [SKILL_ENTRY] }),
         'utf8',
       );
-      await fs.mkdir(path.join(tmpDir, 'skills', 'remote-demo'), { recursive: true });
+      await fs.mkdir(path.join(tmpDir, 'common', 'skills', 'remote-demo'), { recursive: true });
       await fs.writeFile(
-        path.join(tmpDir, 'skills', 'remote-demo', 'SKILL.md'),
+        path.join(tmpDir, 'common', 'skills', 'remote-demo', 'SKILL.md'),
         `# Remote Demo Skill ${currentTag}\n`,
         'utf8',
       );
@@ -547,7 +562,7 @@ describe('T3-5 — update parity: runUpdate scans catalog.json too', () => {
       // catalog.json and the stale skill's checkout surface.
       expect(calls).toHaveLength(1);
       expect(trees[0]).toContain('catalog.json');
-      expect(trees[0]).toContain('skills/remote-demo/SKILL.md');
+      expect(trees[0]).toContain('common/skills/remote-demo/SKILL.md');
     } finally {
       await fs.rm(homeDir, { recursive: true, force: true });
       for (const d of tmpDirsCreated) {

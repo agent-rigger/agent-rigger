@@ -121,7 +121,7 @@ describe('doctor-D2: règle guardrail non tracée identique au canon → finding
       const denyRef = ['Bash(rm -rf /)', 'Bash(curl evil.sh)'];
       const adapter = createClaudeAdapter({ denyRef });
       const entry: AdapterEntry = { id: 'guardrail:secu', nature: 'guardrail', scope: 'user' };
-      await apply(adapter, [entry], 'user', env, manifestPath);
+      await apply({ adapter, entries: [entry], scope: 'user', env, manifestPath });
       // Present at the host, tracked by nothing.
       await wipeManifest();
 
@@ -165,7 +165,7 @@ describe('doctor-D2: guardrail divergent du canon → silence', () => {
       const denyRef = ['Bash(rm -rf /)', 'Bash(curl evil.sh)'];
       const adapter = createClaudeAdapter({ denyRef });
       const entry: AdapterEntry = { id: 'guardrail:secu', nature: 'guardrail', scope: 'user' };
-      await apply(adapter, [entry], 'user', env, manifestPath);
+      await apply({ adapter, entries: [entry], scope: 'user', env, manifestPath });
       await wipeManifest();
 
       // The host drifted away from the canon — one canon rule is gone.
@@ -192,7 +192,7 @@ describe('doctor-D2: guardrail divergent du canon → silence', () => {
       const denyRef = ['Bash(rm -rf /)'];
       const adapter = createClaudeAdapter({ denyRef });
       const entry: AdapterEntry = { id: 'guardrail:secu', nature: 'guardrail', scope: 'user' };
-      await apply(adapter, [entry], 'user', env, manifestPath);
+      await apply({ adapter, entries: [entry], scope: 'user', env, manifestPath });
       await wipeManifest();
 
       // The host holds the canon rule AND an extra, user-authored rule: the host
@@ -225,7 +225,7 @@ describe('doctor-D2: guardrail divergent du canon → silence', () => {
       const allowRef = ['Bash(ls:*)'];
       const adapter = createClaudeAdapter({ denyRef, allowRef });
       const entry: AdapterEntry = { id: 'guardrail:secu', nature: 'guardrail', scope: 'user' };
-      await apply(adapter, [entry], 'user', env, manifestPath);
+      await apply({ adapter, entries: [entry], scope: 'user', env, manifestPath });
       await wipeManifest();
 
       // Deny coincides exactly, but the host allow set carries an extra rule on
@@ -259,7 +259,7 @@ describe('doctor-D2: guardrail divergent du canon → silence', () => {
       const allowRef = ['Bash(ls:*)'];
       const adapter = createClaudeAdapter({ denyRef, allowRef });
       const entry: AdapterEntry = { id: 'guardrail:secu', nature: 'guardrail', scope: 'user' };
-      await apply(adapter, [entry], 'user', env, manifestPath);
+      await apply({ adapter, entries: [entry], scope: 'user', env, manifestPath });
       await wipeManifest();
 
       const canon = makeCanon({
@@ -295,7 +295,7 @@ describe('doctor-D2: guardrail tracé au manifest → pas un host-diff', () => {
       const adapter = createClaudeAdapter({ denyRef });
       const entry: AdapterEntry = { id: 'guardrail:secu', nature: 'guardrail', scope: 'user' };
       // apply keeps the manifest entry — the element is tracked.
-      await apply(adapter, [entry], 'user', env, manifestPath);
+      await apply({ adapter, entries: [entry], scope: 'user', env, manifestPath });
 
       const canon = makeCanon({
         entries: [guardrailEntry('guardrail:secu')],
@@ -318,7 +318,7 @@ describe('doctor-D2: guardrail tracé au manifest → pas un host-diff', () => {
       const denyRef = ['Bash(rm -rf /)'];
       const adapter = createClaudeAdapter({ denyRef });
       const entry: AdapterEntry = { id: 'guardrail:secu', nature: 'guardrail', scope: 'user' };
-      await apply(adapter, [entry], 'user', env, manifestPath);
+      await apply({ adapter, entries: [entry], scope: 'user', env, manifestPath });
 
       // The canon carries the fully-qualified id; the manifest has the local one.
       const canon = makeCanon({
@@ -349,7 +349,7 @@ describe('doctor-D2: context sans signature disque', () => {
       const agentsContent = '# Team context\nCanonical block posted by rigger.\n';
       const adapter = createClaudeAdapter({ denyRef: [], agentsContent });
       const entry: AdapterEntry = { id: 'context:team', nature: 'context', scope: 'user' };
-      await apply(adapter, [entry], 'user', env, manifestPath);
+      await apply({ adapter, entries: [entry], scope: 'user', env, manifestPath });
       await wipeManifest();
 
       const canon = makeCanon({
@@ -379,7 +379,7 @@ describe('doctor-D2: context sans signature disque', () => {
       const agentsContent = '# Team context\nCanonical block posted by rigger.\n';
       const adapter = createClaudeAdapter({ denyRef: [], agentsContent });
       const entry: AdapterEntry = { id: 'context:team', nature: 'context', scope: 'user' };
-      await apply(adapter, [entry], 'user', env, manifestPath);
+      await apply({ adapter, entries: [entry], scope: 'user', env, manifestPath });
       await wipeManifest();
 
       // Hand-edit the live AGENTS.md away from the canon block.
@@ -430,7 +430,7 @@ describe('doctor-D2: opencode guardrail permission — les deux assistants', () 
       const adapter = createOpencodeAdapter({ permission: OC_PERMISSION });
       const entry: AdapterEntry = { id: 'guardrail:secu', nature: 'guardrail', scope: 'user' };
       // The real engine writes exactly what an install would into opencode.json.
-      await apply(adapter, [entry], 'user', env, manifestPath);
+      await apply({ adapter, entries: [entry], scope: 'user', env, manifestPath });
       // Present at the host, tracked by nothing.
       await wipeManifest();
 
@@ -543,7 +543,7 @@ describe('doctor-D2: opencode guardrail permission — les deux assistants', () 
       const adapter = createOpencodeAdapter({ permission: OC_PERMISSION });
       const entry: AdapterEntry = { id: 'guardrail:secu', nature: 'guardrail', scope: 'user' };
       // apply keeps the manifest entry (assistant stamped 'opencode') — tracked.
-      await apply(adapter, [entry], 'user', env, manifestPath);
+      await apply({ adapter, entries: [entry], scope: 'user', env, manifestPath });
 
       const canon = makeCanon({
         entries: [opencodeGuardrailEntry('guardrail:secu')],
@@ -597,7 +597,7 @@ describe('doctor-D2: scoping', () => {
       const denyRef = ['Bash(rm -rf /)'];
       const adapter = createClaudeAdapter({ denyRef });
       const entry: AdapterEntry = { id: 'guardrail:secu', nature: 'guardrail', scope: 'user' };
-      await apply(adapter, [entry], 'user', env, manifestPath);
+      await apply({ adapter, entries: [entry], scope: 'user', env, manifestPath });
       await wipeManifest();
 
       // Canon element targets opencode only — the claude scanner ignores it.
@@ -628,7 +628,7 @@ describe('doctor-D2: scoping', () => {
     try {
       const adapter = createClaudeAdapter({ denyRef: ['Bash(rm -rf /)'] });
       const entry: AdapterEntry = { id: 'guardrail:secu', nature: 'guardrail', scope: 'user' };
-      await apply(adapter, [entry], 'user', env, manifestPath);
+      await apply({ adapter, entries: [entry], scope: 'user', env, manifestPath });
       await wipeManifest();
 
       const findings = await createHostDiffScanner(adapter, 'claude', [])(

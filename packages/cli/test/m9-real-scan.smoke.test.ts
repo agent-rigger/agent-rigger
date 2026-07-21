@@ -60,8 +60,8 @@ describe.skipIf(GITLEAKS_ABSENT)('m9 real gitleaks: out-of-selection secret neve
     // and gitleaks' realpath-resolved File relativise cleanly.
     tmpParent = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'rig-m9-real-')));
     baseDir = path.join(tmpParent, 'checkout');
-    await fs.mkdir(path.join(baseDir, 'skills', 'a'), { recursive: true });
-    await fs.mkdir(path.join(baseDir, 'skills', 'autre'), { recursive: true });
+    await fs.mkdir(path.join(baseDir, 'common', 'skills', 'a'), { recursive: true });
+    await fs.mkdir(path.join(baseDir, 'common', 'skills', 'autre'), { recursive: true });
 
     await fs.writeFile(
       path.join(baseDir, 'catalog.json'),
@@ -69,12 +69,12 @@ describe.skipIf(GITLEAKS_ABSENT)('m9 real gitleaks: out-of-selection secret neve
       'utf8',
     );
     await fs.writeFile(
-      path.join(baseDir, 'skills', 'a', 'SKILL.md'),
+      path.join(baseDir, 'common', 'skills', 'a', 'SKILL.md'),
       '# skill a\nnothing to see here\n',
       'utf8',
     );
     await fs.writeFile(
-      path.join(baseDir, 'skills', 'autre', 'SKILL.md'),
+      path.join(baseDir, 'common', 'skills', 'autre', 'SKILL.md'),
       `# skill autre\nconst token = "${FROZEN_PAT}";\n`,
       'utf8',
     );
@@ -109,6 +109,6 @@ describe.skipIf(GITLEAKS_ABSENT)('m9 real gitleaks: out-of-selection secret neve
 
     expect(caught).toBeInstanceOf(ScanBlockedError);
     const err = caught as ScanBlockedError;
-    expect(err.findings.some((f) => f.includes('skills/autre/SKILL.md'))).toBe(true);
+    expect(err.findings.some((f) => f.includes('common/skills/autre/SKILL.md'))).toBe(true);
   });
 });

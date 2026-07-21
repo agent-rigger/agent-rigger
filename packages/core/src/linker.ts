@@ -1,13 +1,18 @@
 /**
  * Store-and-link mechanics for agent-rigger.
  *
- * Three operations:
+ * Four operations:
  *
- * 1. syncToStore  — mirror a source (file or directory) into the managed store
- *                   (the single physical copy).
- * 2. linkOrCopy   — ensure a target path points at the store via a symlink;
- *                   falls back to a plain copy when symlinks are unavailable.
- * 3. link         — compose both steps and return a result summary.
+ * 1. syncToStore         — mirror a source (file or directory) into the managed
+ *                          store (the single physical copy).
+ * 2. linkOrCopy          — ensure a target path points at the store via a symlink;
+ *                          falls back to a plain copy when symlinks are unavailable.
+ * 3. link                — compose both steps and return a result summary.
+ * 4. probeSymlinkSupport — capability probe: can this host create a symlink at
+ *                          all, without touching any rigger-managed path (R4,
+ *                          lib-nature — a CLI pre-flight refuses loudly instead
+ *                          of letting linkOrCopy's silent fallback ship a broken
+ *                          install for a symlink-dependent artefact).
  *
  * Design invariants:
  * - No process.exit(), no while loops.
@@ -20,12 +25,15 @@ import {
   cp,
   lstat,
   mkdir,
+  mkdtemp,
   readdir,
   readFile,
   readlink,
   rm,
   symlink as fsSymlink,
+  writeFile,
 } from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 
 // ---------------------------------------------------------------------------
@@ -468,4 +476,92 @@ export async function link(
   const method = await linkOrCopy(storePath, targetPath, opts);
 
   return { method, store: storePath, target: targetPath };
+}
+
+// ---------------------------------------------------------------------------
+// symlinkRemediationHint
+// ---------------------------------------------------------------------------
+
+/**
+ * The actionable remediation sentence appended to every "cannot symlink" error
+ * (R4, lib-nature). The Developer Mode / W1 roadmap hint is Windows-specific, so
+ * it is shown ONLY on win32 (adversarial-close, finding 5): on macOS/Linux the
+ * cause is never Developer Mode — it is a filesystem permission, a network
+ * mount, or a sandbox — so those hosts get a generic cause plus `rigger doctor`.
+ *
+ * @param platform  Host platform id (defaults to process.platform); injectable
+ *                  so tests can assert both branches without spawning a VM.
+ */
+export function symlinkRemediationHint(platform: string = process.platform): string {
+  if (platform === 'win32') {
+    return 'On Windows, enable Developer Mode (Settings > Privacy & security > For '
+      + 'developers) to allow symlink creation, then retry. Native support without '
+      + 'Developer Mode is tracked on the roadmap (W1).';
+  }
+  return 'This filesystem does not allow symlinks here — likely a permissions '
+    + 'restriction, a network mount, or a sandbox. Run `rigger doctor` to diagnose.';
+}
+
+// ---------------------------------------------------------------------------
+// probeSymlinkSupport
+// ---------------------------------------------------------------------------
+
+/** Options for probeSymlinkSupport — extends LinkOptions with a scratch-location seam. */
+export interface ProbeSymlinkOptions extends LinkOptions {
+  /**
+   * Existing directory to scratch under, so the probe runs on the SAME
+   * filesystem the real pose will write to (e.g. the rigger config dir,
+   * parent of the plugin store) instead of os.tmpdir()'s — which can be a
+   * different mount (network-mounted HOME, container bind mount) with
+   * different symlink support. Falls back to os.tmpdir() when absent, or
+   * when the directory does not exist yet (e.g. a first-ever install,
+   * before the config dir is created) — the probe never creates it itself.
+   */
+  scratchParentDir?: string;
+}
+
+/**
+ * Probe whether the host can create a real symlink, without touching any
+ * rigger-managed path.
+ *
+ * Creates a throwaway file + symlink pair under a fresh directory — under
+ * `opts.scratchParentDir` when it already exists (same filesystem as the
+ * real pose), else `os.tmpdir()` — attempts the symlink via `opts.symlink`
+ * (defaulting to the real `fs.symlink`, the same default `linkOrCopy` uses),
+ * and reports success or failure. Always tears the scratch directory down —
+ * success or failure — because this is a pure capability probe, never an
+ * install operation; the caller-supplied `scratchParentDir` itself is never
+ * created if absent, only read (lstat) to decide the fallback.
+ *
+ * Used by the CLI's R4 pre-flight (D4, lib-nature): an opencode plugin whose
+ * `requires` include a lib can ONLY be installed via a real symlink —
+ * `linkOrCopy`'s silent copy-fallback would pose the plugin as a byte copy
+ * whose relative import (`../libs/<name>/...`) resolves against the copy's
+ * own directory instead of the store, breaking at runtime ("Cannot find
+ * module"). Probing once, before any write, lets the CLI refuse loudly
+ * instead of shipping that broken install through the silent fallback.
+ *
+ * @param opts.symlink           Injectable symlink implementation (tests force failure).
+ * @param opts.scratchParentDir  Existing directory to scratch under (same-filesystem probe).
+ */
+export async function probeSymlinkSupport(opts?: ProbeSymlinkOptions): Promise<boolean> {
+  const requestedParent = opts?.scratchParentDir;
+  const parentExists = requestedParent !== undefined
+    && (await lstat(requestedParent).then(() => true).catch(() => false));
+  const parent = parentExists && requestedParent !== undefined ? requestedParent : os.tmpdir();
+
+  const scratchDir = await mkdtemp(path.join(parent, 'rigger-symlink-probe-'));
+  const targetFile = path.join(scratchDir, 'target');
+  const linkFile = path.join(scratchDir, 'link');
+  const symlinkFn = opts?.symlink ?? ((target: string, dest: string) => fsSymlink(target, dest));
+
+  try {
+    await writeFile(targetFile, '');
+    await symlinkFn(targetFile, linkFile);
+    return true;
+  } catch {
+    return false;
+  } finally {
+    await rm(scratchDir, { recursive: true, force: true });
+  }
 }

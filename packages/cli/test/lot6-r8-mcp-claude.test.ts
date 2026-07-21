@@ -187,7 +187,7 @@ describe('lot6-R8: secretRefs lands on the manifest applied payload, real value 
       });
 
       const manifestPath = path.join(tmp.dir, '.config', 'agent-rigger', 'state.json');
-      await apply(adapter, [ENTRY], 'user', env, manifestPath);
+      await apply({ adapter, entries: [ENTRY], scope: 'user', env, manifestPath });
 
       const manifest = await readManifest(manifestPath);
       const stored = manifest.artifacts.find((a) => a.id === 'mcp:github');

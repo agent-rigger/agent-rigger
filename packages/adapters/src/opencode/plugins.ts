@@ -80,6 +80,26 @@ export function pluginName(entry: AdapterEntry): string {
 }
 
 // ---------------------------------------------------------------------------
+// requiresLib
+// ---------------------------------------------------------------------------
+
+/**
+ * True when the entry declares an edge to a shared lib (R4, lib-nature). The
+ * nature is encoded in the ref prefix (`lib:<name>`, qualified as
+ * `<catalog>/lib:<name>`), so a manifest/catalog lookup is unnecessary — the
+ * same local qualifier-strip `pluginName` uses is enough. This is the ONE place
+ * an opencode nature reads `AdapterEntry.requires`: a plugin that depends on a
+ * lib is only correct as a real symlink (its `../libs/<name>/…` import resolves
+ * against the store), so its pose and audit must both fail closed on a copy.
+ */
+export function requiresLib(entry: AdapterEntry): boolean {
+  return (entry.requires ?? []).some((ref) => {
+    const local = ref.includes('/') ? ref.slice(ref.indexOf('/') + 1) : ref;
+    return local.startsWith('lib:');
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Path resolution helpers
 // ---------------------------------------------------------------------------
 
@@ -138,6 +158,12 @@ async function findInstalledFile(dir: string, name: string): Promise<string | un
  *   `present` on a dead link (the file/plugin is NOT usable). `lstat`+`stat`
  *   mirrors the skill/agent handlers' truthful-audit contract (R4): a dead
  *   link must be reported broken and repairable, not silently `present`.
+ * - 'missing' ALSO when the match is a PLAIN COPY (not a symlink) and the entry
+ *   requires a lib (R4, lib-nature, Finding 3): the copy's `../libs/<name>/…`
+ *   import resolves against the copy's own directory, not the store — broken at
+ *   runtime. Reported broken-and-repairable (a symlink-capable reinstall heals
+ *   it) so `check` surfaces it (exit 3) instead of vouching for it. A copy of a
+ *   lib-FREE plugin stays `present` — the copy fallback is legitimate there.
  *
  * Read-only: no filesystem writes.
  *
@@ -177,6 +203,17 @@ export async function auditPlugin(
         detail: `dangling symlink: ${targetPath}`,
       };
     }
+  } else if (requiresLib(entry)) {
+    // Plain copy of a plugin that requires a shared lib (R4, Finding 3): the
+    // copy's relative lib import cannot resolve — broken. Reported as a
+    // repairable `missing` (a symlink-capable reinstall re-poses it as a link).
+    return {
+      id: entry.id,
+      nature: 'plugin',
+      state: 'missing',
+      detail: `copy-installed but requires a shared lib — its relative import cannot `
+        + `resolve; reinstall on a symlink-capable host: ${targetPath}`,
+    };
   }
 
   return { id: entry.id, nature: 'plugin', state: 'present' };
@@ -218,7 +255,11 @@ export async function planPlugin(
   const store = resolveStorePath(fileName, env);
   const target = path.join(resolveTargetDir(scope, env, cwd), fileName);
 
-  const op: WriteOpLink = { kind: 'link', source, store, target };
+  // Flag the pose as symlink-required when the entry depends on a lib (R4,
+  // Finding 3): applySkill then fails closed if link() falls back to a copy.
+  const op: WriteOpLink = requiresLib(entry)
+    ? { kind: 'link', source, store, target, requiresSymlink: true }
+    : { kind: 'link', source, store, target };
   return [op];
 }
 

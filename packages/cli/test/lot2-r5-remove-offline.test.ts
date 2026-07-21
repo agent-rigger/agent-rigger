@@ -131,9 +131,9 @@ async function makeAdHocEnv(): Promise<{
     'utf8',
   );
 
-  await fs.mkdir(path.join(contentDir, 'skills', 'remote-demo'), { recursive: true });
+  await fs.mkdir(path.join(contentDir, 'common', 'skills', 'remote-demo'), { recursive: true });
   await fs.writeFile(
-    path.join(contentDir, 'skills', 'remote-demo', 'SKILL.md'),
+    path.join(contentDir, 'common', 'skills', 'remote-demo', 'SKILL.md'),
     '# Remote Demo\n\nOffline remove test skill.',
     'utf8',
   );
@@ -197,7 +197,7 @@ async function makeConfiguredEnv(): Promise<{
       path.join(catalogDir, 'catalog.json'),
       JSON.stringify({ meta: { name: 'r5-cfg-catalog' }, entries: [GUARDRAIL_ENTRY] }),
     );
-    const guardrailDir = path.join(catalogDir, 'guardrails', 'main');
+    const guardrailDir = path.join(catalogDir, 'claude', 'guardrails', 'main');
     await fs.mkdir(guardrailDir, { recursive: true });
     await Bun.write(
       path.join(guardrailDir, 'deny.json'),

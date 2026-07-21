@@ -126,7 +126,14 @@ describe('apply() with versionFor', () => {
 
     const customVersion = { ref: 'v1.2.0', sha: 'abc123' };
 
-    await apply(adapter, entries, 'user', env, manifestPath, () => customVersion);
+    await apply({
+      adapter,
+      entries,
+      scope: 'user',
+      env,
+      manifestPath,
+      versionFor: () => customVersion,
+    });
 
     const manifest = await readManifest(manifestPath);
     const artifact = manifest.artifacts.find((a) => a.id === 'guardrails-claude');
@@ -146,7 +153,7 @@ describe('apply() with versionFor', () => {
       return { ref: 'v2.0.0', sha: 'deadbeef' };
     };
 
-    await apply(adapter, entries, 'user', env, manifestPath, versionFor);
+    await apply({ adapter, entries, scope: 'user', env, manifestPath, versionFor });
 
     expect(calledWith).toHaveLength(1);
     expect(calledWith[0]!.id).toBe('guardrails-claude');
@@ -156,10 +163,17 @@ describe('apply() with versionFor', () => {
     const adapter = makeDenyAdapter();
     const entries = [makeCatalogEntry('guardrails-claude')];
 
-    await apply(adapter, entries, 'user', env, manifestPath, () => ({
-      ref: 'v1.0.0',
-      sha: 'cafebabe',
-    }));
+    await apply({
+      adapter,
+      entries,
+      scope: 'user',
+      env,
+      manifestPath,
+      versionFor: () => ({
+        ref: 'v1.0.0',
+        sha: 'cafebabe',
+      }),
+    });
 
     const manifest = await readManifest(manifestPath);
     const artifact = manifest.artifacts.find((a) => a.id === 'guardrails-claude');
@@ -179,7 +193,7 @@ describe('apply() without versionFor', () => {
     const adapter = makeDenyAdapter();
     const entries = [makeCatalogEntry('guardrails-claude')];
 
-    await apply(adapter, entries, 'user', env, manifestPath);
+    await apply({ adapter, entries, scope: 'user', env, manifestPath });
 
     const manifest = await readManifest(manifestPath);
     const artifact = manifest.artifacts.find((a) => a.id === 'guardrails-claude');

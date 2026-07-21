@@ -135,9 +135,9 @@ async function makeIsolatedEnv(): Promise<IsolatedEnv> {
       JSON.stringify({ meta: { name: 'lot6-r2-catalog' }, entries: [REMOTE_SKILL_ENTRY] }),
       'utf8',
     );
-    await fs.mkdir(path.join(tmpDir, 'skills', 'remote-demo'), { recursive: true });
+    await fs.mkdir(path.join(tmpDir, 'common', 'skills', 'remote-demo'), { recursive: true });
     await fs.writeFile(
-      path.join(tmpDir, 'skills', 'remote-demo', 'SKILL.md'),
+      path.join(tmpDir, 'common', 'skills', 'remote-demo', 'SKILL.md'),
       `# Remote Demo Skill\n${currentTag}@${currentSha} content.`,
       'utf8',
     );

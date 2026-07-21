@@ -29,7 +29,7 @@ import type { Assistant } from '@agent-rigger/core';
 import type { AdapterEntry } from '@agent-rigger/core/adapter';
 import { UnsafeArtifactNameError } from '@agent-rigger/core/artifact-name';
 import { InvalidJsonError } from '@agent-rigger/core/fs-json';
-import { MalformedManifestError } from '@agent-rigger/core/manifest';
+import { LIB_ASSISTANT, MalformedManifestError } from '@agent-rigger/core/manifest';
 import type { Env } from '@agent-rigger/core/paths';
 import { resolveUserTargets } from '@agent-rigger/core/paths';
 import { ConcurrentRunError } from '@agent-rigger/core/run-lock';
@@ -61,9 +61,10 @@ import { handleConfig } from './cmd-config';
 import { runDoctor, runDoctorState } from './cmd-doctor';
 import { runInit } from './cmd-init';
 import type { CatalogProposal } from './cmd-init';
+import { ExplicitLibInstallError } from './cmd-install';
 import type { RunLsResult } from './cmd-ls';
 import { RESOURCE_NATURE_MAP, runLs } from './cmd-ls';
-import { NotInstalledError, runRemove } from './cmd-remove';
+import { NotInstalledError, RequiredByError, runRemove } from './cmd-remove';
 import { NO_UPDATE_CANDIDATES_MSG, runUpdate } from './cmd-update';
 import { LegacyConfigError, loadConfig } from './config';
 import { auditableGovernanceIds, type CatalogGovernanceMeta } from './governance';
@@ -73,6 +74,7 @@ import {
   ForeignRequireUnsatisfiedError,
   runRemoteInstall,
   ScanBlockedError,
+  SymlinkUnavailableError,
 } from './remote-install';
 import {
   InvalidSecretEnvFlagError,
@@ -526,6 +528,7 @@ Resource commands (available verbs: ls, add, info, check, remove, update):
                            Update without confirmation prompt.
   remove <id...>           Uninstall ids (any resource type).
   remove <id...> --yes     Uninstall without confirmation prompt.
+  remove <id...> --force   Uninstall even if still required by another entry (loud warning).
 
 Resources:
   skill | skills           Workflow skills.
@@ -545,7 +548,8 @@ Options:
                                  "[installed]" marker to that assistant — it never narrows
                                  which entries are listed.
   --yes                         Skip confirmation prompt (non-interactive install only).
-  --force                       Proceed despite blocking scan findings (install and update).
+  --force                       Proceed despite blocking scan findings (install, update) or
+                                the refcount gate — remove a still-required entry (remove).
   --fix                         Repair the installed state (doctor only; consent-driven).
   --remote                      Read configured catalog content for the differential (doctor
                                 only; read-only, fail-closed).
@@ -803,7 +807,12 @@ async function resolveManifestAssistant(opts: {
   for (const entry of manifest.artifacts) {
     if (entry.scope !== scope) continue;
     if (idFilter !== undefined && !idFilter.has(entry.id)) continue;
-    distinct.add(entry.assistant ?? 'claude');
+    const entryAssistant = entry.assistant ?? 'claude';
+    // A lib entry writes assistant:'shared' (S2, lib-nature) — it is never
+    // routed to an adapter, so it never counts toward "which assistant is this
+    // manifest for" here.
+    if (entryAssistant === LIB_ASSISTANT) continue;
+    distinct.add(entryAssistant);
   }
 
   const [only] = distinct;
@@ -1172,7 +1181,10 @@ async function runInteractiveProposeInstall(
   const recommended = new Set(partitionMetaIds(sourceName, catalog.meta.recommended ?? []).own);
 
   // catalog.entries are already qualified (fetchCatalogFn returns qualified entries).
-  const selectedIds = await selectArtifactsWithDefaults(catalog.entries, {
+  // R8/S7: a lib is never offered for direct selection — it installs only
+  // through the consumer(s) that require it (resolved post-selection, D1).
+  const pickerEntries = catalog.entries.filter((e) => e.kind !== 'artifact' || e.nature !== 'lib');
+  const selectedIds = await selectArtifactsWithDefaults(pickerEntries, {
     required,
     recommended,
   });
@@ -1753,6 +1765,64 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
 }
 
 // ---------------------------------------------------------------------------
+// PREFIX_TO_NATURE — id-prefix → nature inference for external ids (R8.4)
+// ---------------------------------------------------------------------------
+
+/**
+ * Infers an artifact's nature from its qualified-id prefix, for ids absent
+ * from the local catalog (`<resource> update`/`remove` validation on an
+ * external id — see the `update` verb below). Exported so the R8.4
+ * exhaustiveness test can assert, for every nature in NATURES, that it is
+ * either covered here or a declared exclusion — never a silent gap.
+ *
+ * Declared exclusions (pre-existing, out of scope for lib-nature T7 — this
+ * change adds `lib:` only, it does not audit-and-fix the rest of the CLI
+ * surface): `hook:` and `mcp:` have no entry here today. Their absence isn't a
+ * false-positive risk — an id with either prefix just falls through as
+ * "unknown prefix" (see the loop below), letting the callee (runUpdate)
+ * handle it directly instead of being validated against `natureMapped` early.
+ */
+export const PREFIX_TO_NATURE: Record<string, string> = {
+  'skill:': 'skill',
+  'agent:': 'agent',
+  'guardrail:': 'guardrail',
+  'context:': 'context',
+  'plugin:': 'plugin',
+  'tool:': 'tool',
+  'pack:': 'pack',
+  'lib:': 'lib',
+};
+
+// ---------------------------------------------------------------------------
+// ADAPTER_CHECK_NATURES — natures the `check` verb routes through an adapter (R8.4)
+// ---------------------------------------------------------------------------
+
+/**
+ * Natures whose catalog entries `<resource> check` filters and hands to
+ * `runCheck`/an assistant adapter (`AdapterEntry.nature`). `pack` and `lib`
+ * are rejected before ever reaching this list — packs are bundles (existing
+ * guard), a lib has no per-assistant state to check (R8/S3 guard added
+ * alongside it) — so neither is a member here, nor a "silent" omission.
+ *
+ * `hook` is a declared PRE-EXISTING exclusion: `check` already works for hook
+ * entries at runtime (the filter below is a plain string equality on
+ * `entry.nature`, unaffected by this type-level list), but `hook` was never
+ * added to it. Left frozen — fixing the rest of the CLI's hook/mcp coverage
+ * is out of scope for lib-nature T7.
+ */
+export const ADAPTER_CHECK_NATURES = [
+  'plugin',
+  'guardrail',
+  'context',
+  'skill',
+  'agent',
+  'mcp',
+  'tool',
+] as const;
+
+type AdapterCheckNature = (typeof ADAPTER_CHECK_NATURES)[number];
+
+// ---------------------------------------------------------------------------
 // handleResourceCommand — route <resource> <verb> [ids...]
 // ---------------------------------------------------------------------------
 
@@ -1978,6 +2048,7 @@ async function handleResourceCommand(opts: ResourceCommandOpts): Promise<number>
     const canonicalId = entry.id;
     const targets = resolveUserTargets(env);
     let installed = false;
+    let dependents: string[] = [];
     try {
       const { readManifest } = await import('@agent-rigger/core/manifest');
       const manifest = await readManifest(targets.stateJson);
@@ -1987,11 +2058,25 @@ async function handleResourceCommand(opts: ResourceCommandOpts): Promise<number>
           && a.scope === scope
           && (assistantFilter === undefined || (a.assistant ?? 'claude') === assistantFilter),
       );
+      // R8: installed dependents — entries whose persisted `requires` edge
+      // (S4, pre-prune, qualified) names this id. Meaningful today for a lib
+      // (S2: a global 'shared' entry, never itself in a consumer's own
+      // requires), but reads generically off ManifestEntry.requires so any
+      // future required-by-others nature gets this for free. Dedup: a
+      // consumer installed for two assistants has two manifest entries
+      // sharing the same id and the same edge — list it once.
+      dependents = [
+        ...new Set(
+          manifest.artifacts
+            .filter((a) => a.scope === scope && (a.requires ?? []).includes(canonicalId))
+            .map((a) => a.id),
+        ),
+      ];
     } catch {
       installed = false;
     }
 
-    print(renderEntryInfo(entry, { installed }));
+    print(renderEntryInfo(entry, { installed, dependents }));
     return 0;
   }
 
@@ -2004,6 +2089,16 @@ async function handleResourceCommand(opts: ResourceCommandOpts): Promise<number>
       return 2;
     }
 
+    // R8/S3: a lib is never routed to an adapter (no per-assistant state to
+    // check) — reject before the adapterNature cast below would otherwise
+    // silently narrow an unhandled 'lib' string through it.
+    if (natureMapped === 'lib') {
+      print(
+        '[error] "libs check" is not supported — a lib has no per-assistant state; check a consumer instead.',
+      );
+      return 2;
+    }
+
     const effectiveCatalog = await resolveEffectiveCatalog(env, print, deps.remote);
 
     if (effectiveCatalog.length === 0) {
@@ -2011,14 +2106,7 @@ async function handleResourceCommand(opts: ResourceCommandOpts): Promise<number>
     }
 
     // Filter catalog to get artifact entries of this nature
-    const adapterNature = natureMapped as
-      | 'plugin'
-      | 'guardrail'
-      | 'context'
-      | 'skill'
-      | 'agent'
-      | 'mcp'
-      | 'tool';
+    const adapterNature = natureMapped as AdapterCheckNature;
     const filteredEntries: AdapterEntry[] = effectiveCatalog
       .filter((e) => e.kind === 'artifact' && e.nature === adapterNature)
       .map((e) => ({ id: e.id, nature: adapterNature, scope }));
@@ -2085,16 +2173,8 @@ async function handleResourceCommand(opts: ResourceCommandOpts): Promise<number>
         if (natureMapped === 'pack') return catalogEntry.kind !== 'pack';
         return catalogEntry.kind !== 'artifact' || catalogEntry.nature !== natureMapped;
       }
-      // For external ids not in catalog: infer nature from known prefixes (qualified form).
-      const PREFIX_TO_NATURE: Record<string, string> = {
-        'skill:': 'skill',
-        'agent:': 'agent',
-        'guardrail:': 'guardrail',
-        'context:': 'context',
-        'plugin:': 'plugin',
-        'tool:': 'tool',
-        'pack:': 'pack',
-      };
+      // For external ids not in catalog: infer nature from known prefixes
+      // (qualified form) — PREFIX_TO_NATURE, module-level (R8.4 exhaustiveness).
       // Strip qualifier to get local part for prefix inference.
       const localPart = localId(id);
       for (const [prefix, nature] of Object.entries(PREFIX_TO_NATURE)) {
@@ -2403,7 +2483,13 @@ async function handleInstall(opts: HandleInstallOpts): Promise<number> {
   }
 
   const effectiveFull = await resolveEffectiveCatalogFull(env, print, deps.remote);
-  const effective = effectiveFull.entries;
+  // R8/S7: exclude libs from both interactive picker feeds fed by `effective`
+  // below (the status-grouped picker and the flat fallback) — a lib installs
+  // only through the consumer(s) that require it, never by direct selection;
+  // selecting a consumer still resolves and materialises the lib (D1).
+  const effective = effectiveFull.entries.filter(
+    (e) => e.kind !== 'artifact' || e.nature !== 'lib',
+  );
 
   if (effectiveFull.allSourcesFailed) {
     // Every configured source failed to fetch (R1 offline): same intent,
@@ -2628,7 +2714,13 @@ async function handleAdHocInstall(opts: HandleAdHocInstallOpts): Promise<number>
   const remoteCatalog = await fetchRemoteCatalog({ url: source, run: runner, tmpFactory });
 
   // Step 2: qualify entries so the picker shows fully-qualified ids.
-  const qualifiedEntries = qualifyEntries(derivedPrefix, remoteCatalog.entries);
+  // R8/S7: exclude libs from both consumers below (the --yes select-all and
+  // the interactive picker) — a lib installs only through the consumer(s)
+  // that require it, resolved post-selection when runRemoteInstall re-fetches
+  // and resolves the full catalog in Step 4 (D1); never by direct selection.
+  const qualifiedEntries = qualifyEntries(derivedPrefix, remoteCatalog.entries).filter(
+    (e) => e.kind !== 'artifact' || e.nature !== 'lib',
+  );
 
   // Step 3: select which entries to install.
   let selectedIds: string[];
@@ -2650,7 +2742,16 @@ async function handleAdHocInstall(opts: HandleAdHocInstallOpts): Promise<number>
   }
 
   if (selectedIds.length === 0) {
-    print('Remote catalog is empty — nothing to install.');
+    // R8/S7: `qualifiedEntries` above filtered out every lib — if that's the
+    // ONLY reason it's empty (the raw catalog wasn't), "empty" would be a lie:
+    // the catalog has content, it's just never directly selectable.
+    const catalogHasOnlyLibs = remoteCatalog.entries.length > 0 && qualifiedEntries.length === 0;
+    print(
+      catalogHasOnlyLibs
+        ? 'Remote catalog contains only libraries — libs are installed through the artifacts '
+          + 'that require them; nothing directly installable.'
+        : 'Remote catalog is empty — nothing to install.',
+    );
     return 0;
   }
 
@@ -2759,6 +2860,9 @@ async function handleRemove(opts: HandleRemoveOpts): Promise<number> {
     selectedIds: ids,
     confirm,
     summary: flags['summary'] === true,
+    // R6 --force: bypass the refcount gate with a loud warning instead of a
+    // refusal (same noisy semantics as the scan --force).
+    force: flags['force'] === true,
   });
 
   print(result.output);
@@ -3139,6 +3243,13 @@ function handleError(err: unknown, print: (msg: string) => void): number {
     return 2;
   }
 
+  if (err instanceof RequiredByError) {
+    // R6: a remove refused because a remaining entry still requires one of the
+    // targets. Validation refusal → exit 2, dependents named in the message.
+    print(`[error] ${err.message}`);
+    return 2;
+  }
+
   if (err instanceof DependencyCycleError) {
     print(`[error] Dependency cycle: ${err.message}`);
     return 2;
@@ -3148,6 +3259,25 @@ function handleError(err: unknown, print: (msg: string) => void): number {
     // R3 (lot 6, D3): a cross-catalogue require is not installed for this
     // scope/assistant. Actionable — names the requirer, the chain, and the
     // exact command to run first. Nothing was resolved/scanned/written.
+    print(`[error] ${err.message}`);
+    return 2;
+  }
+
+  if (err instanceof ExplicitLibInstallError) {
+    // S7 (lib-nature): a lib was named explicitly on install. A lib is a shared
+    // dependency installed only through its consumers — an invalid selection,
+    // like an unknown entry or a cross-catalogue miss (exit 2, validation).
+    // Nothing was resolved/scanned/written.
+    print(`[error] ${err.message}`);
+    return 2;
+  }
+
+  if (err instanceof SymlinkUnavailableError) {
+    // R4/D4 (lib-nature): an opencode plugin requiring a lib was refused
+    // BEFORE any write because this host cannot create symlinks — sibling of
+    // the other pre-resolution validation errors above (exit 2). The message
+    // itself already names the cause, the blocking plugin, its lib
+    // dependency, and the actionable fix (Developer Mode / roadmap W1).
     print(`[error] ${err.message}`);
     return 2;
   }

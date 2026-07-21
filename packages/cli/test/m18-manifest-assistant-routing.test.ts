@@ -76,15 +76,19 @@ function makeGuardrailTmpFactory(dir: string): TmpDirFactory {
       path.join(dir, 'catalog.json'),
       JSON.stringify({ meta: { name: 'm18-test-catalog' }, entries: [GUARDRAIL_ENTRY] }),
     );
-    const guardrailDir = path.join(dir, 'guardrails', 'main');
-    await fs.mkdir(guardrailDir, { recursive: true });
+    // Bi-target guardrail: claude deny/allow under claude/, opencode permission
+    // under opencode/ (post-cutover, R9 — one dir per assistant).
+    const claudeGuardrailDir = path.join(dir, 'claude', 'guardrails', 'main');
+    const opencodeGuardrailDir = path.join(dir, 'opencode', 'guardrails', 'main');
+    await fs.mkdir(claudeGuardrailDir, { recursive: true });
+    await fs.mkdir(opencodeGuardrailDir, { recursive: true });
     await Bun.write(
-      path.join(guardrailDir, 'deny.json'),
+      path.join(claudeGuardrailDir, 'deny.json'),
       JSON.stringify({ deny: ['Bash(rm -rf *)'] }),
     );
-    await Bun.write(path.join(guardrailDir, 'allow.json'), JSON.stringify({ allow: [] }));
+    await Bun.write(path.join(claudeGuardrailDir, 'allow.json'), JSON.stringify({ allow: [] }));
     await Bun.write(
-      path.join(guardrailDir, 'permission.json'),
+      path.join(opencodeGuardrailDir, 'permission.json'),
       JSON.stringify({
         $schema: 'https://opencode.ai/config.json',
         permission: { bash: { 'rm -rf *': 'deny' } },

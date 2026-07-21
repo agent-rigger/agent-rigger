@@ -107,8 +107,12 @@ async function makeInitEnv(
   for (const e of entries) {
     if (e.kind === 'artifact' && e.nature === 'skill') {
       const name = e.id.replace(/^skill:/, '');
-      await fs.mkdir(path.join(contentDir, 'skills', name), { recursive: true });
-      await fs.writeFile(path.join(contentDir, 'skills', name, 'SKILL.md'), `# ${name}\n`, 'utf8');
+      await fs.mkdir(path.join(contentDir, 'common', 'skills', name), { recursive: true });
+      await fs.writeFile(
+        path.join(contentDir, 'common', 'skills', name, 'SKILL.md'),
+        `# ${name}\n`,
+        'utf8',
+      );
     }
   }
 

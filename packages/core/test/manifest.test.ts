@@ -417,3 +417,40 @@ describe('manifest identity keyed by assistant', () => {
     expect(findEntry(m, 'skill:x', 'user', 'opencode')).toBeUndefined();
   });
 });
+
+// ---------------------------------------------------------------------------
+// ManifestAssistant sentinel 'shared' (S2, lib-nature) — never coerced
+// ---------------------------------------------------------------------------
+
+describe('manifest identity — "shared" sentinel (S2) is never coerced to claude', () => {
+  const libEntry: ManifestEntry = { ...makeEntry('lib:rules-common', 'user'), assistant: 'shared' };
+
+  it('findEntry resolves a "shared" entry only under the "shared" assistant', () => {
+    let m = emptyManifest();
+    m = upsertEntry(m, libEntry);
+    expect(findEntry(m, 'lib:rules-common', 'user', 'shared')).toEqual(libEntry);
+    // Never silently answers the legacy default ('claude') for a lib entry.
+    expect(findEntry(m, 'lib:rules-common', 'user', 'claude')).toBeUndefined();
+  });
+
+  it('upsertEntry treats (id, scope, "shared") as a global singleton identity', () => {
+    let m = emptyManifest();
+    m = upsertEntry(m, libEntry);
+    const reInstalled: ManifestEntry = { ...libEntry, sha: 'newsha' };
+    m = upsertEntry(m, reInstalled);
+    // One entry, not two — the second transaction replaces, never duplicates.
+    expect(m.artifacts).toHaveLength(1);
+    expect(m.artifacts[0]!.sha).toBe('newsha');
+  });
+
+  it('a "shared" lib entry coexists with a claude entry of the same bare id+scope', () => {
+    let m = emptyManifest();
+    const claudeSameId: ManifestEntry = {
+      ...makeEntry('lib:rules-common', 'user'),
+      assistant: 'claude',
+    };
+    m = upsertEntry(m, libEntry);
+    m = upsertEntry(m, claudeSameId);
+    expect(m.artifacts).toHaveLength(2);
+  });
+});

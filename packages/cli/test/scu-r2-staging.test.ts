@@ -82,6 +82,17 @@ const PLUGIN_OPENCODE: ArtifactEntry = {
   scopes: ['user'],
 };
 
+const LIB: ArtifactEntry = {
+  kind: 'artifact',
+  id: 'lib:rules-common',
+  nature: 'lib',
+  // Post-parse shape (ArtifactEntrySchema normalises an omitted `targets` to
+  // [] for lib entries, R1) — this fixture is a raw ArtifactEntry literal, not
+  // routed through the schema parser, so it mirrors that normalised shape.
+  targets: [],
+  scopes: ['user'],
+};
+
 // ---------------------------------------------------------------------------
 // Checkout fixture — every nature present, plus a NON-selected skill and a
 // shared hook lib the selected hooks never reference (R2 surface check).
@@ -109,17 +120,36 @@ async function makeCheckout(): Promise<Checkout> {
   await fs.mkdir(baseDir, { recursive: true });
 
   await writeFile(path.join(baseDir, 'catalog.json'), '{"meta":{"name":"scu"},"entries":[]}\n');
-  await writeFile(path.join(baseDir, 'skills', 'mon-skill', 'SKILL.md'), '# mon-skill\n');
-  await writeFile(path.join(baseDir, 'skills', 'mon-skill', 'helper.ts'), 'export const x = 1;\n');
+  await writeFile(path.join(baseDir, 'common', 'skills', 'mon-skill', 'SKILL.md'), '# mon-skill\n');
+  await writeFile(
+    path.join(baseDir, 'common', 'skills', 'mon-skill', 'helper.ts'),
+    'export const x = 1;\n',
+  );
   // NON-selected content — must never leak into a staging built without it.
-  await writeFile(path.join(baseDir, 'skills', 'autre', 'SKILL.md'), '# autre (secret)\n');
-  await writeFile(path.join(baseDir, 'agents', 'mon-agent.md'), '# mon-agent\n');
-  await writeFile(path.join(baseDir, 'guardrails', 'mon-guard', 'deny.json'), '{"deny":[]}\n');
-  await writeFile(path.join(baseDir, 'contexts', 'mon-ctx', 'AGENTS.md'), '# ctx\n');
-  await writeFile(path.join(baseDir, 'hooks', 'guard.ts'), 'export const guard = 1;\n');
+  await writeFile(
+    path.join(baseDir, 'common', 'skills', 'autre', 'SKILL.md'),
+    '# autre (secret)\n',
+  );
+  await writeFile(path.join(baseDir, 'common', 'agents', 'mon-agent.md'), '# mon-agent\n');
+  await writeFile(
+    path.join(baseDir, 'claude', 'guardrails', 'mon-guard', 'deny.json'),
+    '{"deny":[]}\n',
+  );
+  await writeFile(path.join(baseDir, 'claude', 'contexts', 'mon-ctx', 'AGENTS.md'), '# ctx\n');
+  await writeFile(path.join(baseDir, 'claude', 'hooks', 'guard.ts'), 'export const guard = 1;\n');
   // Shared lib the selected hooks never import — still part of the hooks/ surface.
-  await writeFile(path.join(baseDir, 'hooks', '_shared', 'lib.ts'), 'export const lib = 1;\n');
-  await writeFile(path.join(baseDir, 'plugins', 'mon-plugin', 'index.ts'), 'export default {};\n');
+  await writeFile(
+    path.join(baseDir, 'claude', 'hooks', '_shared', 'lib.ts'),
+    'export const lib = 1;\n',
+  );
+  await writeFile(
+    path.join(baseDir, 'opencode', 'plugins', 'mon-plugin', 'index.ts'),
+    'export default {};\n',
+  );
+  await writeFile(
+    path.join(baseDir, 'common', 'libs', 'rules-common', 'index.ts'),
+    'export const rulesCommon = 1;\n',
+  );
 
   const cleanup = async () => {
     await fs.rm(tmpParent, { recursive: true, force: true });
@@ -190,7 +220,7 @@ describe('R2: materializeUnion — exact multi-nature mirror', () => {
     const { baseDir, tmpParent } = await newCheckout();
 
     const { stagingDir, cleanup } = await materializeUnion({
-      entries: [SKILL, AGENT, GUARDRAIL, CONTEXT, HOOK_A, HOOK_B, PLUGIN_OPENCODE],
+      entries: [SKILL, AGENT, GUARDRAIL, CONTEXT, HOOK_A, HOOK_B, PLUGIN_OPENCODE, LIB],
       baseDir,
       tmpFactory: stagingIn(tmpParent),
     });
@@ -199,17 +229,37 @@ describe('R2: materializeUnion — exact multi-nature mirror', () => {
       const leaves = await walkLeaves(stagingDir);
       expect(leaves).toEqual(
         [
-          'agents/mon-agent.md',
+          'common/agents/mon-agent.md',
           'catalog.json',
-          'contexts/mon-ctx/AGENTS.md',
-          'guardrails/mon-guard/deny.json',
-          'hooks/_shared/lib.ts',
-          'hooks/guard.ts',
-          'plugins/mon-plugin/index.ts',
-          'skills/mon-skill/SKILL.md',
-          'skills/mon-skill/helper.ts',
+          'common/libs/rules-common/index.ts',
+          'claude/contexts/mon-ctx/AGENTS.md',
+          'claude/guardrails/mon-guard/deny.json',
+          'claude/hooks/_shared/lib.ts',
+          'claude/hooks/guard.ts',
+          'opencode/plugins/mon-plugin/index.ts',
+          'common/skills/mon-skill/SKILL.md',
+          'common/skills/mon-skill/helper.ts',
         ].sort(),
       );
+    } finally {
+      await cleanup();
+    }
+  });
+});
+
+describe('R2: materializeUnion — lib nature stages at common/libs/<name> (T1, R2)', () => {
+  it('mirrors a selected lib at its direct common/libs/<name> checkout position, and nothing else', async () => {
+    const { baseDir, tmpParent } = await newCheckout();
+
+    const { stagingDir, cleanup } = await materializeUnion({
+      entries: [LIB],
+      baseDir,
+      tmpFactory: stagingIn(tmpParent),
+    });
+
+    try {
+      const leaves = await walkLeaves(stagingDir);
+      expect(leaves).toEqual(['catalog.json', 'common/libs/rules-common/index.ts']);
     } finally {
       await cleanup();
     }
@@ -228,7 +278,11 @@ describe('R2: materializeUnion — dedup of shared surfaces', () => {
 
     try {
       const leaves = await walkLeaves(stagingDir);
-      expect(leaves).toEqual(['catalog.json', 'hooks/_shared/lib.ts', 'hooks/guard.ts']);
+      expect(leaves).toEqual([
+        'catalog.json',
+        'claude/hooks/_shared/lib.ts',
+        'claude/hooks/guard.ts',
+      ]);
     } finally {
       await cleanup();
     }
@@ -247,11 +301,11 @@ describe('R2: materializeUnion — non-selected content is absent', () => {
 
     try {
       const leaves = await walkLeaves(stagingDir);
-      expect(leaves).not.toContain('skills/autre/SKILL.md');
+      expect(leaves).not.toContain('common/skills/autre/SKILL.md');
       expect(leaves).toEqual([
         'catalog.json',
-        'skills/mon-skill/SKILL.md',
-        'skills/mon-skill/helper.ts',
+        'common/skills/mon-skill/SKILL.md',
+        'common/skills/mon-skill/helper.ts',
       ].sort());
     } finally {
       await cleanup();
@@ -262,7 +316,7 @@ describe('R2: materializeUnion — non-selected content is absent', () => {
 describe('R2: materializeUnion — symlink copied verbatim (dereference:false)', () => {
   it('mirrors a symlink inside a selected skill as a symlink, not its target content', async () => {
     const { baseDir, tmpParent } = await newCheckout();
-    await fs.symlink('SKILL.md', path.join(baseDir, 'skills', 'mon-skill', 'link.md'));
+    await fs.symlink('SKILL.md', path.join(baseDir, 'common', 'skills', 'mon-skill', 'link.md'));
 
     const { stagingDir, cleanup } = await materializeUnion({
       entries: [SKILL],
@@ -271,7 +325,9 @@ describe('R2: materializeUnion — symlink copied verbatim (dereference:false)',
     });
 
     try {
-      const stat = await fs.lstat(path.join(stagingDir, 'skills', 'mon-skill', 'link.md'));
+      const stat = await fs.lstat(
+        path.join(stagingDir, 'common', 'skills', 'mon-skill', 'link.md'),
+      );
       expect(stat.isSymbolicLink()).toBe(true);
     } finally {
       await cleanup();
@@ -321,7 +377,7 @@ describe('R2: materializeUnion — anti-traversal guard', () => {
   it('throws before any staging is created when a forged id escapes the checkout (../ traversal)', async () => {
     const { baseDir, tmpParent } = await newCheckout();
     // localId strips up to the first '/', so the surviving name is '../../../evil'
-    // → path.join(baseDir, 'skills', '../../../evil') lands above the checkout.
+    // → path.join(baseDir, 'common', 'skills', '../../../evil') lands above the checkout.
     const evil: ArtifactEntry = { ...SKILL, id: 'skill:x/../../../evil' };
     const { factory, created } = recordingStagingIn(tmpParent);
 
@@ -336,17 +392,18 @@ describe('R2: materializeUnion — anti-traversal guard', () => {
   // m3 (scan-hardening, T4): the skill case above is one nature; prove the guard
   // holds for every OTHER nature whose scanPathFor path.joins a raw localId into
   // the checkout — agent (agents/<name>.md), guardrail (guardrails/<name>/),
-  // context (contexts/<name>/AGENTS.md). Each forged id survives localId as
-  // '../../../evil' (localId slices after the first '/'), so scanPathFor lands
-  // the target above the checkout and enqueue must reject it BEFORE any staging
-  // dir is created. mcp/tool have no checkout path (scanPathFor → null, never
-  // enqueued); hook/plugin path.join a constant dir name, not the id, so they
-  // carry no id-driven traversal surface — the natures below are the exhaustive
-  // id-derived set.
+  // context (contexts/<name>/AGENTS.md), lib (common/libs/<name>/, T1). Each
+  // forged id survives localId as '../../../evil' (localId slices after the
+  // first '/'), so scanPathFor lands the target above the checkout and enqueue
+  // must reject it BEFORE any staging dir is created. mcp/tool have no checkout
+  // path (scanPathFor → [], never enqueued); hook/plugin path.join a constant
+  // dir name, not the id, so they carry no id-driven traversal surface — the
+  // natures below are the exhaustive id-derived set.
   it.each([
     { nature: 'agent' as const, base: AGENT },
     { nature: 'guardrail' as const, base: GUARDRAIL },
     { nature: 'context' as const, base: CONTEXT },
+    { nature: 'lib' as const, base: LIB },
   ])(
     'throws before any staging for a forged $nature id that escapes the checkout',
     async ({ nature, base }) => {

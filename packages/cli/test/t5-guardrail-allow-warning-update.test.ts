@@ -136,7 +136,7 @@ async function makeIsolatedEnv(): Promise<IsolatedEnv> {
       'utf8',
     );
 
-    const guardrailDir = path.join(tmpDir, 'guardrails', GUARDRAIL_NAME);
+    const guardrailDir = path.join(tmpDir, 'claude', 'guardrails', GUARDRAIL_NAME);
     await fs.mkdir(guardrailDir, { recursive: true });
     await fs.writeFile(
       path.join(guardrailDir, 'deny.json'),

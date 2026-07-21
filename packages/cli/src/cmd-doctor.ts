@@ -34,6 +34,7 @@ import {
   diagnose,
   type DoctorContext,
   type DoctorScanner,
+  edgeIntegrityScanner,
   type Finding,
   isReportOnly,
   manifestAuditScanner,
@@ -438,6 +439,11 @@ async function runStateRepairs(
  * grouped right after untracked (same "untracked" class — untracked host-diff
  * D2 + divergent mcp D3). When `canons` is undefined (no `--remote`), no
  * host-diff scanner exists in the run and the pipeline is byte-identical to v1.
+ *
+ * `edgeIntegrityScanner` (T8, R7/S6) rides right after `manifestAuditScanner`
+ * — same "manifest" class, same assistant-agnostic/manifest-only posture,
+ * unconditional (no `--remote` gate): broken requires edges, orphaned libs,
+ * and legacy entries pending the requires backfill.
  */
 function assembleScanners(
   adapters: Map<Assistant, Adapter>,
@@ -459,6 +465,7 @@ function assembleScanners(
   return [
     createLockScanner(),
     manifestAuditScanner,
+    edgeIntegrityScanner,
     ...appliedDrift,
     ...untracked,
     ...hostDiff,

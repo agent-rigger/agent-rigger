@@ -121,13 +121,13 @@ describe('engine.apply — lot3 R5 adoption', () => {
       files: ['/home/user/.claude/settings.json'],
     });
 
-    const result = await apply(
+    const result = await apply({
       adapter,
-      [{ id: 'guardrails-claude', nature: 'guardrail', scope: 'user' }],
-      'user',
+      entries: [{ id: 'guardrails-claude', nature: 'guardrail', scope: 'user' }],
+      scope: 'user',
       env,
       manifestPath,
-    );
+    });
 
     expect(result.adopted).toContain('guardrails-claude');
     expect(result.written).toHaveLength(0);
@@ -144,13 +144,13 @@ describe('engine.apply — lot3 R5 adoption', () => {
       files: ['/x/settings.json'],
     });
 
-    await apply(
+    await apply({
       adapter,
-      [{ id: 'guardrails-claude', nature: 'guardrail', scope: 'user' }],
-      'user',
+      entries: [{ id: 'guardrails-claude', nature: 'guardrail', scope: 'user' }],
+      scope: 'user',
       env,
       manifestPath,
-    );
+    });
 
     const persisted = await readManifest(manifestPath);
     const entry = findEntry(persisted, 'guardrails-claude', 'user', 'claude');
@@ -160,13 +160,13 @@ describe('engine.apply — lot3 R5 adoption', () => {
   it('lot3-R5: adopt returning undefined records nothing', async () => {
     const adapter = makeAdoptingAdapter(undefined);
 
-    const result = await apply(
+    const result = await apply({
       adapter,
-      [{ id: 'skill:x', nature: 'skill', scope: 'user' }],
-      'user',
+      entries: [{ id: 'skill:x', nature: 'skill', scope: 'user' }],
+      scope: 'user',
       env,
       manifestPath,
-    );
+    });
 
     expect(result.adopted).toHaveLength(0);
     expect(findEntry(result.manifest, 'skill:x', 'user', 'claude')).toBeUndefined();
@@ -178,13 +178,13 @@ describe('engine.apply — lot3 R5 adoption', () => {
   it('lot3-R5: an adopted payload-less nature records files with no applied field', async () => {
     const adapter = makeAdoptingAdapter({ files: [] });
 
-    const result = await apply(
+    const result = await apply({
       adapter,
-      [{ id: 'plugin:foo', nature: 'plugin', scope: 'user' }],
-      'user',
+      entries: [{ id: 'plugin:foo', nature: 'plugin', scope: 'user' }],
+      scope: 'user',
       env,
       manifestPath,
-    );
+    });
 
     expect(result.adopted).toContain('plugin:foo');
     const entry = findEntry(result.manifest, 'plugin:foo', 'user', 'claude');
@@ -210,13 +210,13 @@ describe('engine.apply — lot3 R5 adoption', () => {
     });
     await writeManifest(manifestPath, manifest);
 
-    const result = await apply(
+    const result = await apply({
       adapter,
-      [{ id: 'guardrails-claude', nature: 'guardrail', scope: 'user' }],
-      'user',
+      entries: [{ id: 'guardrails-claude', nature: 'guardrail', scope: 'user' }],
+      scope: 'user',
       env,
       manifestPath,
-    );
+    });
 
     expect(adapter.adoptCalls).toBe(0);
     expect(result.adopted).toHaveLength(0);
@@ -229,13 +229,13 @@ describe('engine.apply — lot3 R5 adoption', () => {
   it('lot3-R5: an adapter WITHOUT adopt keeps the legacy empty-plan no-op', async () => {
     const adapter = makeNoAdoptAdapter();
 
-    const result = await apply(
+    const result = await apply({
       adapter,
-      [{ id: 'skill:x', nature: 'skill', scope: 'user' }],
-      'user',
+      entries: [{ id: 'skill:x', nature: 'skill', scope: 'user' }],
+      scope: 'user',
       env,
       manifestPath,
-    );
+    });
 
     expect(result.adopted).toHaveLength(0);
     expect(result.manifest.artifacts).toHaveLength(0);
@@ -244,14 +244,14 @@ describe('engine.apply — lot3 R5 adoption', () => {
   it('lot3-R5: adoption honours the versionFor seam for ref/sha', async () => {
     const adapter = makeAdoptingAdapter({ applied: GUARDRAIL_APPLIED, files: ['/x'] });
 
-    const result = await apply(
+    const result = await apply({
       adapter,
-      [{ id: 'guardrails-claude', nature: 'guardrail', scope: 'user' }],
-      'user',
+      entries: [{ id: 'guardrails-claude', nature: 'guardrail', scope: 'user' }],
+      scope: 'user',
       env,
       manifestPath,
-      () => ({ ref: 'v9.9.9', sha: 'cafebabe' }),
-    );
+      versionFor: () => ({ ref: 'v9.9.9', sha: 'cafebabe' }),
+    });
 
     const entry = findEntry(result.manifest, 'guardrails-claude', 'user', 'claude');
     expect(entry?.ref).toBe('v9.9.9');

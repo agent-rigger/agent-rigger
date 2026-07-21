@@ -1,3 +1,4 @@
+export * from './checkout-prefixes';
 export * from './effective';
 export * from './fetch';
 export * from './qualify';

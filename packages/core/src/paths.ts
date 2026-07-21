@@ -125,6 +125,24 @@ export function resolveUserTargets(env: Env = Bun.env): UserTargets {
 }
 
 // ---------------------------------------------------------------------------
+// libsDir — store-side root for lib materialisations (R3, engine dest)
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolve the store-side directory where lib materialisations live:
+ * `~/.config/agent-rigger/libs/` — the same patron as `skillsDir` (sibling
+ * under the shared config dir), exposed as a standalone function because the
+ * engine's lib-materialisation channel (R3) calls it directly (`libsDir(env)`)
+ * rather than through the `UserTargets` bag: unlike a per-assistant target,
+ * a lib's store dir is assistant-agnostic (S2 — sentinel 'shared').
+ */
+export function libsDir(env: Env = Bun.env): string {
+  const home = resolveHome(env);
+  const configDir = path.join(home, '.config', 'agent-rigger');
+  return path.join(configDir, 'libs');
+}
+
+// ---------------------------------------------------------------------------
 // Project-scope targets
 // ---------------------------------------------------------------------------
 

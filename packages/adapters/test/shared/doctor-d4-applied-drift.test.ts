@@ -89,7 +89,7 @@ describe('doctor-D4: règles guardrail éditées après install → drift', () =
       const adapter = createClaudeAdapter({ denyRef });
       const entry: AdapterEntry = { id: 'guardrail:secu', nature: 'guardrail', scope: 'user' };
 
-      await apply(adapter, [entry], 'user', env, manifestPath);
+      await apply({ adapter, entries: [entry], scope: 'user', env, manifestPath });
 
       // A user drops one of the applied deny rules by hand — the payload no
       // longer matches the live config.
@@ -128,7 +128,7 @@ describe('doctor-D4: une règle utilisateur en plus → silence', () => {
       const adapter = createClaudeAdapter({ denyRef });
       const entry: AdapterEntry = { id: 'guardrail:secu', nature: 'guardrail', scope: 'user' };
 
-      await apply(adapter, [entry], 'user', env, manifestPath);
+      await apply({ adapter, entries: [entry], scope: 'user', env, manifestPath });
 
       // Every applied rule is still present; the user simply added more — their
       // territory, silence (D4 design table "sous-ensemble voulu").
@@ -158,7 +158,7 @@ describe('doctor-D4: bloc context modifié → drift', () => {
       const adapter = createClaudeAdapter({ denyRef: [], agentsContent });
       const entry: AdapterEntry = { id: 'context:team', nature: 'context', scope: 'user' };
 
-      await apply(adapter, [entry], 'user', env, manifestPath);
+      await apply({ adapter, entries: [entry], scope: 'user', env, manifestPath });
 
       // The live AGENTS.md diverges from the applied block.
       const agentsMdPath = resolveUserTargets(env).agentsMd;
@@ -277,7 +277,7 @@ describe('doctor-D4: config vivante conforme → aucun finding', () => {
       const adapter = createClaudeAdapter({ denyRef: ['Bash(rm -rf /)'] });
       const entry: AdapterEntry = { id: 'guardrail:secu', nature: 'guardrail', scope: 'user' };
 
-      await apply(adapter, [entry], 'user', env, manifestPath);
+      await apply({ adapter, entries: [entry], scope: 'user', env, manifestPath });
 
       const findings = await createAppliedDriftScanner(adapter, 'claude')(
         ctxFor(manifestPath, env),
