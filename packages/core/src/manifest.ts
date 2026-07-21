@@ -215,6 +215,71 @@ export function findEntry(
 }
 
 // ---------------------------------------------------------------------------
+// Lib singleton identity (S2, lib-nature) — the ONE place (id,'user','shared')
+// is named, so no call site re-hardcodes the triple (adversarial-close F4).
+// ---------------------------------------------------------------------------
+
+/**
+ * The scope every lib manifest entry is recorded under. A lib is scope-agnostic
+ * (S2): it lives once, globally, regardless of which consumer transaction (any
+ * scope, any assistant) pulled it in.
+ */
+export const LIB_SCOPE = 'user' as const satisfies Scope;
+
+/**
+ * The assistant sentinel every lib manifest entry is recorded under (S2): a lib
+ * is depended upon, never routed to an adapter, so it carries no per-assistant
+ * identity. Together with LIB_SCOPE this makes `(id, LIB_SCOPE, LIB_ASSISTANT)`
+ * the stable global-singleton identity of a lib.
+ */
+export const LIB_ASSISTANT = 'shared' as const satisfies ManifestAssistant;
+
+/**
+ * The manifest identity triple of the lib `id` (S2) — the single assembly point
+ * of the `(id, 'user', 'shared')` singleton, consumed by the engine's lib
+ * materialise/remove channel (upsert/remove mutations).
+ */
+export function libManifestIdentity(
+  id: string,
+): { id: string; scope: Scope; assistant: ManifestAssistant } {
+  return { id, scope: LIB_SCOPE, assistant: LIB_ASSISTANT };
+}
+
+/**
+ * Find the installed lib entry for `id` at its singleton identity (S2), or
+ * `undefined` when the lib is not installed. Thin, intentional wrapper over
+ * findEntry so no call site re-hardcodes the `'user'`/`'shared'` literals.
+ */
+export function findLibEntry(manifest: Manifest, id: string): ManifestEntry | undefined {
+  return findEntry(manifest, id, LIB_SCOPE, LIB_ASSISTANT);
+}
+
+// ---------------------------------------------------------------------------
+// requiresIndex — the persisted requires graph, inverted
+// ---------------------------------------------------------------------------
+
+/**
+ * Invert the persisted `requires` edges of `entries` into a map from a required
+ * ref to the ids that require it (R5/R6/R7). The single primitive behind the
+ * three requires-graph consumers — cmd-remove's refcount-block and GC-lib checks
+ * and the doctor edge-integrity scanner — so "who still requires X" is computed
+ * one way. Keys are the persisted require refs VERBATIM (qualified as stored, no
+ * localId reduction) — the exact posture every consumer already took, so their
+ * lookups match by the same string identity a lib's singleton entry carries.
+ */
+export function requiresIndex(entries: ManifestEntry[]): Map<string, Set<string>> {
+  const index = new Map<string, Set<string>>();
+  for (const entry of entries) {
+    for (const req of entry.requires ?? []) {
+      const requirers = index.get(req) ?? new Set<string>();
+      requirers.add(entry.id);
+      index.set(req, requirers);
+    }
+  }
+  return index;
+}
+
+// ---------------------------------------------------------------------------
 // detectDrift
 // ---------------------------------------------------------------------------
 

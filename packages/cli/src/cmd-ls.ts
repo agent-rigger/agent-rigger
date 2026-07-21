@@ -15,7 +15,7 @@
 
 import type { CatalogEntry } from '@agent-rigger/catalog';
 import type { Assistant } from '@agent-rigger/core';
-import { readManifest } from '@agent-rigger/core/manifest';
+import { LIB_ASSISTANT, readManifest } from '@agent-rigger/core/manifest';
 import type { Env } from '@agent-rigger/core/paths';
 import { resolveUserTargets } from '@agent-rigger/core/paths';
 import type { Scope } from '@agent-rigger/core/types';
@@ -142,7 +142,7 @@ export async function runLs(opts: RunLsOptions): Promise<RunLsResult> {
     for (const a of manifest.artifacts) {
       if (a.scope !== scope) continue;
       const entryAssistant = a.assistant ?? 'claude';
-      if (entryAssistant === 'shared') {
+      if (entryAssistant === LIB_ASSISTANT) {
         installedLibIds.add(a.id);
         continue;
       }

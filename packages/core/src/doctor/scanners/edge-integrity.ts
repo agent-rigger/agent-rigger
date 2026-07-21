@@ -24,7 +24,7 @@
  * (design.md §"Surfaces de cycle de vie", R7).
  */
 
-import { readManifest } from '../../manifest';
+import { readManifest, requiresIndex } from '../../manifest';
 import { manifestBrokenEdge, manifestNoEdges, manifestOrphanLib } from '../finding';
 import type { DoctorContext, DoctorScanner, Finding } from '../finding';
 
@@ -41,7 +41,7 @@ export const edgeIntegrityScanner: DoctorScanner = async (
   // singleton, so id-only matching is exact for it; for other natures this is
   // the same by-id posture the R6 gate already takes).
   const installedIds = new Set(manifest.artifacts.map((entry) => entry.id));
-  const requiredIds = new Set(manifest.artifacts.flatMap((entry) => entry.requires ?? []));
+  const requiredIds = new Set(requiresIndex(manifest.artifacts).keys());
 
   for (const entry of manifest.artifacts) {
     for (const ref of entry.requires ?? []) {

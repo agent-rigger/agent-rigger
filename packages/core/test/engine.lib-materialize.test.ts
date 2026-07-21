@@ -394,4 +394,46 @@ describe('R3 rollback-orphan-safe — a failing entry after a fresh lib', () => 
     const manifest = await readManifest(manifestPath);
     expect(manifest.artifacts).toHaveLength(0);
   });
+
+  it('RESTORES a divergent lib re-sync to the original when a later entry fails (F5a)', async () => {
+    const source = await makeLibSource('rules-common', { 'index.ts': 'v1\n' });
+    const okAdapter = makeRecordingAdapter('claude', {});
+    const lib: LibMaterialization = {
+      id: 'jr/lib:rules-common',
+      name: 'rules-common',
+      source,
+      requires: [],
+    };
+
+    // Install #1 → v1 on disk (the pre-run original).
+    await apply({ adapter: okAdapter, entries: [], scope: 'user', env, manifestPath, libs: [lib] });
+    expect(await readText(path.join(libDest('rules-common'), 'index.ts'))).toBe('v1\n');
+
+    // The catalog bumps to v2 AND a consumer entry fails during apply.
+    await writeText(path.join(source, 'index.ts'), 'v2\n');
+    const failing = makeRecordingAdapter('claude', {
+      'jr/hook:guard': [writeTextOp(path.join(home, 'boom.md'), FAIL_SENTINEL)],
+    });
+
+    await expect(
+      apply({
+        adapter: failing,
+        entries: [consumer('jr/hook:guard')],
+        scope: 'user',
+        env,
+        manifestPath,
+        libs: [lib],
+      }),
+    ).rejects.toBeInstanceOf(ConsumerFailError);
+
+    // The store the run divergently re-synced to v2 is RESTORED to the ORIGINAL
+    // v1 (F5a): the backupDir paid before the destructive re-sync must be used
+    // by the rollback, not left orphaned next to a re-synced store.
+    expect(await readText(path.join(libDest('rules-common'), 'index.ts'))).toBe('v1\n');
+    // The failing run never persisted: the consumer is absent, the lib entry
+    // survives from install #1 unchanged.
+    const manifest = await readManifest(manifestPath);
+    expect(manifest.artifacts.some((e) => e.id === 'jr/hook:guard')).toBe(false);
+    expect(manifest.artifacts.some((e) => e.id === 'jr/lib:rules-common')).toBe(true);
+  });
 });

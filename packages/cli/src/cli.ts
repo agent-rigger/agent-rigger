@@ -29,7 +29,7 @@ import type { Assistant } from '@agent-rigger/core';
 import type { AdapterEntry } from '@agent-rigger/core/adapter';
 import { UnsafeArtifactNameError } from '@agent-rigger/core/artifact-name';
 import { InvalidJsonError } from '@agent-rigger/core/fs-json';
-import { MalformedManifestError } from '@agent-rigger/core/manifest';
+import { LIB_ASSISTANT, MalformedManifestError } from '@agent-rigger/core/manifest';
 import type { Env } from '@agent-rigger/core/paths';
 import { resolveUserTargets } from '@agent-rigger/core/paths';
 import { ConcurrentRunError } from '@agent-rigger/core/run-lock';
@@ -808,7 +808,7 @@ async function resolveManifestAssistant(opts: {
     // A lib entry writes assistant:'shared' (S2, lib-nature) — it is never
     // routed to an adapter, so it never counts toward "which assistant is this
     // manifest for" here.
-    if (entryAssistant === 'shared') continue;
+    if (entryAssistant === LIB_ASSISTANT) continue;
     distinct.add(entryAssistant);
   }
 

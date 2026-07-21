@@ -248,7 +248,7 @@ describe('R4 scenario 1 â€” opencode plugin + requires-lib, no symlink support â
     ).rejects.toBeInstanceOf(SymlinkUnavailableError);
   });
 
-  it('names the blocking plugin and its lib dependency, with an actionable Developer Mode / W1 hint', async () => {
+  it('names the blocking plugin and its lib dependency, with a platform-appropriate remediation hint', async () => {
     const noSymlink = noSymlinkHost();
     let caught: unknown;
     try {
@@ -275,8 +275,15 @@ describe('R4 scenario 1 â€” opencode plugin + requires-lib, no symlink support â
     expect(err.pluginId).toBe('principal/plugin:guard');
     expect(err.libId).toBe('principal/lib:rules-common');
     expect(err.message).toMatch(/symlink/i);
-    expect(err.message).toMatch(/Developer Mode/);
-    expect(err.message).toMatch(/W1/);
+    // The remediation hint is platform-conditional (adversarial-close finding 5):
+    // Developer Mode / W1 on Windows, a generic cause + `rigger doctor` elsewhere.
+    if (process.platform === 'win32') {
+      expect(err.message).toMatch(/Developer Mode/);
+      expect(err.message).toMatch(/W1/);
+    } else {
+      expect(err.message).toMatch(/rigger doctor/);
+      expect(err.message).not.toMatch(/Developer Mode/);
+    }
   });
 
   it('writes NOTHING before throwing â€” plugin store, plugin target, lib dir, and manifest all stay absent/empty', async () => {

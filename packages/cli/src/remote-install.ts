@@ -33,6 +33,7 @@
  * - exactOptionalPropertyTypes: never assigns undefined to optional fields.
  */
 
+import { lstat } from 'node:fs/promises';
 import path from 'node:path';
 
 import type { PluginRunner } from '@agent-rigger/adapters';
@@ -40,9 +41,12 @@ import type { Assistant } from '@agent-rigger/core';
 import { createCompositeScanner } from '@agent-rigger/core';
 import { assertSafeArtifactName } from '@agent-rigger/core/artifact-name';
 import type { LinkOptions } from '@agent-rigger/core/linker';
-import { probeSymlinkSupport } from '@agent-rigger/core/linker';
-import { findEntry, readManifest } from '@agent-rigger/core/manifest';
-import { libsDir } from '@agent-rigger/core/paths';
+import { probeSymlinkSupport, symlinkRemediationHint } from '@agent-rigger/core/linker';
+import { findEntry, findLibEntry, readManifest } from '@agent-rigger/core/manifest';
+import {
+  resolveOpencodeProjectTargets,
+  resolveOpencodeUserTargets,
+} from '@agent-rigger/core/paths';
 import type { Env } from '@agent-rigger/core/paths';
 import { constantScanner } from '@agent-rigger/core/scan';
 import type { Scanner } from '@agent-rigger/core/scan';
@@ -163,7 +167,7 @@ export function partitionForeignRequires(
 
   const foreign = collectForeignRequires(rawIds, rawEffective, sourceName);
   for (const fr of foreign) {
-    if (findEntry(manifest, fr.ref, scope, assistant) !== undefined) {
+    if (isForeignRequireSatisfied(fr.ref, manifest, scope, assistant)) {
       externallySatisfied.add(fr.ref);
       continue;
     }
@@ -172,6 +176,70 @@ export function partitionForeignRequires(
   }
 
   return externallySatisfied;
+}
+
+/**
+ * True when a cross-catalogue `requires` ref is already installed for this
+ * transaction.
+ *
+ * A NON-lib ref is satisfied by an exact `(ref, scope, assistant)` manifest
+ * entry (R3/D3 — a skill installed for the other assistant or scope does NOT
+ * satisfy it).
+ *
+ * A LIB ref is the exception (S2, lib-nature): a lib is a global singleton
+ * recorded `(ref, 'user', 'shared')`, NEVER under a consumer's `(scope,
+ * assistant)`. Looking it up with the run's assistant therefore always missed —
+ * a cross-catalogue plugin whose lib dependency WAS installed wrongly failed
+ * `ForeignRequireUnsatisfiedError` (adversarial-close F2, prerequisite): the
+ * gate could not even be reached. A lib ref is satisfied by its singleton
+ * entry, matching where a lib actually lives.
+ */
+function isForeignRequireSatisfied(
+  ref: string,
+  manifest: Manifest,
+  scope: Scope,
+  assistant: Assistant,
+): boolean {
+  if (localId(ref).startsWith('lib:')) {
+    return findLibEntry(manifest, ref)?.nature === 'lib';
+  }
+  return findEntry(manifest, ref, scope, assistant) !== undefined;
+}
+
+// ---------------------------------------------------------------------------
+// collectRequiredLibIds — the lib ids the R4 pre-flight must gate on (F2)
+// ---------------------------------------------------------------------------
+
+/**
+ * Every lib id a resolved selection depends on, for the R4 pre-flight — the
+ * union of (a) the libs materialised THIS run and (b) libs ALREADY installed
+ * that a pre-prune `requires` edge names (adversarial-close F2).
+ *
+ * (b) is the fix: a cross-catalogue lib satisfied by the manifest is pruned out
+ * of this run's `libs` (never re-materialised), yet a plugin that requires it
+ * still needs a real symlink. Without it, `findSymlinkDependentPlugin` saw an
+ * empty lib set for exactly that plugin and the gate stayed silent, shipping a
+ * copy whose lib import breaks at runtime. A lib is the global singleton
+ * `(ref, 'user', 'shared')` (S2), so that is where the lookup reads.
+ *
+ * Shared by both orchestrators (runRemoteInstall, runUpdate) so the gate's lib
+ * set is computed one way — no drift between install and update.
+ */
+export function collectRequiredLibIds(
+  inRunLibIds: Iterable<string>,
+  requiresById: Map<string, string[]>,
+  manifest: Manifest,
+): Set<string> {
+  const libIds = new Set<string>(inRunLibIds);
+  for (const refs of requiresById.values()) {
+    for (const ref of refs) {
+      if (libIds.has(ref) || !localId(ref).startsWith('lib:')) continue;
+      if (findLibEntry(manifest, ref)?.nature === 'lib') {
+        libIds.add(ref);
+      }
+    }
+  }
+  return libIds;
 }
 
 /**
@@ -223,9 +291,7 @@ export class SymlinkUnavailableError extends Error {
     super(
       `Cannot install "${pluginId}": this system does not support symlinks, but it requires `
         + `"${libId}" (a shared lib) — a plain copy would leave its import unresolved at `
-        + 'runtime ("Cannot find module"). On Windows, enable Developer Mode (Settings > '
-        + 'Privacy & security > For developers) to allow symlink creation, then retry. '
-        + 'Native support without Developer Mode is tracked on the roadmap (W1).',
+        + `runtime ("Cannot find module"). ${symlinkRemediationHint()}`,
     );
     this.name = 'SymlinkUnavailableError';
     this.pluginId = pluginId;
@@ -277,17 +343,24 @@ function findSymlinkDependentPlugin(
  * (never even probes) when `assistant !== 'opencode'` — the claude plugin
  * nature delegates to the native CLI, never `linkOrCopy`.
  *
- * The probe itself runs on the SAME filesystem the real pose will use
- * (`libsDir(env)`'s parent — the rigger config dir, sibling of the plugin
- * store) rather than os.tmpdir(), so its verdict isn't skewed by a
- * filesystem mismatch (network-mounted HOME, container bind mount) between
- * where the probe runs and where the real symlink would be created.
+ * The probe itself runs on the SAME filesystem the REAL symlink target of THIS
+ * scope will use — the parent of the scope's opencode pluginDir (project:
+ * `<cwd>/.opencode`, user: `~/.config/opencode`), NOT the rigger home (F1,
+ * adversarial-close): the project pluginDir can sit on a different mount than
+ * HOME (WSL: an ext4 HOME vs a /mnt/c project), and a host that symlinks under
+ * HOME but not under the project mount must still be refused. When that parent
+ * does not exist yet (a fresh project, before `.opencode/` is created) the probe
+ * walks up to the nearest EXISTING ancestor rather than stepping onto a
+ * different filesystem via os.tmpdir() (the T4 §fallback-tmpdir lesson).
  *
- * @param resolved     Qualified resolved selection.
+ * @param resolved      Qualified resolved selection.
  * @param requiresById  Qualified, pre-prune requires per qualified entry id.
- * @param libIds        Qualified ids of every lib in the resolved selection.
+ * @param libIds        Qualified ids of every lib the selection may require
+ *                      (in-run + already-installed cross-catalogue — F2).
  * @param assistant     This run's target assistant.
- * @param env           Injectable env — resolves the same-filesystem scratch dir.
+ * @param scope         This run's install scope — selects the real pluginDir.
+ * @param env           Injectable env — resolves the user-scope pluginDir.
+ * @param cwd           Working directory — resolves the project-scope pluginDir.
  * @param symlink       Injectable symlink implementation forwarded to the probe (tests).
  */
 export async function assertSymlinkCapable(
@@ -295,7 +368,9 @@ export async function assertSymlinkCapable(
   requiresById: Map<string, string[]>,
   libIds: Set<string>,
   assistant: Assistant,
+  scope: Scope,
   env: Env,
+  cwd: string = process.cwd(),
   symlink?: LinkOptions['symlink'],
 ): Promise<void> {
   if (assistant !== 'opencode') return;
@@ -303,7 +378,11 @@ export async function assertSymlinkCapable(
   const dependent = findSymlinkDependentPlugin(resolved, requiresById, libIds, assistant);
   if (dependent === undefined) return;
 
-  const scratchParentDir = path.dirname(libsDir(env));
+  const pluginDir = scope === 'project'
+    ? resolveOpencodeProjectTargets(cwd).pluginDir
+    : resolveOpencodeUserTargets(env).pluginDir;
+  const scratchParentDir = await nearestExistingDir(path.dirname(pluginDir));
+
   const supported = await probeSymlinkSupport({
     scratchParentDir,
     ...(symlink === undefined ? {} : { symlink }),
@@ -311,6 +390,20 @@ export async function assertSymlinkCapable(
   if (!supported) {
     throw new SymlinkUnavailableError(dependent.pluginId, dependent.libId);
   }
+}
+
+/**
+ * Nearest existing directory at or above `start` — walks parents until one
+ * exists (the filesystem root always does, so this terminates). Recursion, not
+ * a while loop (design invariant). Used to keep the symlink probe on the target
+ * filesystem when the scope's `.opencode/` parent has not been created yet.
+ */
+async function nearestExistingDir(start: string): Promise<string> {
+  const exists = await lstat(start).then(() => true).catch(() => false);
+  if (exists) return start;
+  const parent = path.dirname(start);
+  if (parent === start) return start;
+  return nearestExistingDir(parent);
 }
 
 // ---------------------------------------------------------------------------
@@ -754,8 +847,17 @@ export async function runRemoteInstall(opts: {
       // torn down in its own `finally`. Never gated behind --force: this is
       // a structural runtime-correctness refusal, not a scan policy. Shared
       // with runUpdate (cmd-update.ts) — see assertSymlinkCapable's docblock.
-      const libIds = new Set(libs.map((l) => l.id));
-      await assertSymlinkCapable(resolved, requiresById, libIds, assistant, env, opts.symlink);
+      const libIds = collectRequiredLibIds(libs.map((l) => l.id), requiresById, manifest);
+      await assertSymlinkCapable(
+        resolved,
+        requiresById,
+        libIds,
+        assistant,
+        scope,
+        env,
+        process.cwd(),
+        opts.symlink,
+      );
 
       // Build effectiveEntries map for hookSpec resolution (qualified ids).
       const effectiveEntries = new Map(effective.map((e) => [e.id, e]));

@@ -106,6 +106,7 @@ export {
   planSkill as planOpencodeSkill,
   skillName as opencodeSkillName,
   SkillScanBlockedError as OpencodeSkillScanBlockedError,
+  SymlinkRequiredError,
 } from './opencode/skills';
 export {
   createAppliedDriftScanner,

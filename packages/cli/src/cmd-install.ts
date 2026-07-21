@@ -182,14 +182,25 @@ export interface RunInstallOptions {
 export class ExplicitLibInstallError extends Error {
   /** The explicitly-selected lib id (as the user typed it). */
   readonly libId: string;
+  /** Real consumers (ids whose `requires` names the lib), for the actionable hint. */
+  readonly consumers: string[];
 
-  constructor(libId: string) {
+  constructor(libId: string, consumers: string[] = []) {
+    // Name real consumers when the catalogue reveals them (adversarial-close
+    // finding 12) — an abstract "install a consumer" is unactionable when the
+    // user does not know which ones exist. Capped at 3 + ellipsis.
+    const hint = consumers.length === 0
+      ? 'Install a consumer instead.'
+      : `Install a consumer instead (e.g. ${consumers.slice(0, 3).map((c) => `"${c}"`).join(', ')}${
+        consumers.length > 3 ? ', …' : ''
+      }).`;
     super(
       `"${libId}" is a lib and cannot be installed directly — a lib is installed `
-        + 'through the artifacts that require it. Install a consumer instead.',
+        + `through the artifacts that require it. ${hint}`,
     );
     this.name = 'ExplicitLibInstallError';
     this.libId = libId;
+    this.consumers = consumers;
   }
 }
 
@@ -355,7 +366,13 @@ export async function runInstall(opts: RunInstallOptions): Promise<InstallResult
 
   const explicitLib = selectedIds.find((id) => localId(id).startsWith('lib:'));
   if (explicitLib !== undefined) {
-    throw new ExplicitLibInstallError(explicitLib);
+    // The catalogue is in hand: name the entries whose `requires` reaches this
+    // lib so the error points at a real consumer to install (finding 12).
+    const consumers = catalog
+      .filter((e) => (e.requires ?? []).some((r) => localId(r) === localId(explicitLib)))
+      .map((e) => e.id)
+      .sort();
+    throw new ExplicitLibInstallError(explicitLib, consumers);
   }
 
   // -------------------------------------------------------------------------

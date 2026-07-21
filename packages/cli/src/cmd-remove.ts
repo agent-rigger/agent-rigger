@@ -26,7 +26,7 @@ import { localId } from '@agent-rigger/catalog';
 import type { Adapter, AdapterEntry } from '@agent-rigger/core/adapter';
 import type { SharedNatureStore } from '@agent-rigger/core/engine';
 import { enrichWithApplied, remove } from '@agent-rigger/core/engine';
-import { findEntry, readManifest } from '@agent-rigger/core/manifest';
+import { findEntry, findLibEntry, readManifest, requiresIndex } from '@agent-rigger/core/manifest';
 import type { Env } from '@agent-rigger/core/paths';
 import { resolveHome } from '@agent-rigger/core/paths';
 import type { Manifest, ManifestEntry, RemovalOpUnlink, Scope } from '@agent-rigger/core/types';
@@ -202,19 +202,15 @@ function computeRefcountBlocks(manifest: Manifest, removedEntries: ManifestEntry
   const removedIds = new Set(removedEntries.map((e) => e.id));
   const remainingIds = new Set(remaining.map((e) => e.id));
 
-  const blockMap = new Map<string, Set<string>>();
-  for (const r of remaining) {
-    for (const req of r.requires ?? []) {
-      if (removedIds.has(req) && !remainingIds.has(req)) {
-        const deps = blockMap.get(req) ?? new Set<string>();
-        deps.add(r.id);
-        blockMap.set(req, deps);
-      }
+  // Who among the SURVIVING entries still requires a removed-and-now-gone id.
+  const index = requiresIndex(remaining);
+  const blocks: RemoveBlock[] = [];
+  for (const [req, requirers] of index) {
+    if (removedIds.has(req) && !remainingIds.has(req)) {
+      blocks.push({ id: req, dependents: [...requirers].sort() });
     }
   }
-  return [...blockMap.entries()]
-    .map(([id, deps]) => ({ id, dependents: [...deps].sort() }))
-    .sort((a, b) => a.id.localeCompare(b.id));
+  return blocks.sort((a, b) => a.id.localeCompare(b.id));
 }
 
 /**
@@ -227,12 +223,13 @@ function computeGcLibs(manifest: Manifest, removedEntries: ManifestEntry[]): Man
   const removedKeys = new Set(removedEntries.map(manifestEntryKey));
   const remaining = manifest.artifacts.filter((e) => !removedKeys.has(manifestEntryKey(e)));
   const removedReqIds = new Set(removedEntries.flatMap((e) => e.requires ?? []));
+  const stillRequired = requiresIndex(remaining);
 
   return remaining.filter(
     (lib) =>
       lib.nature === 'lib'
       && removedReqIds.has(lib.id)
-      && !remaining.some((r) => (r.requires ?? []).includes(lib.id)),
+      && !stillRequired.has(lib.id),
   );
 }
 
@@ -325,7 +322,7 @@ export async function runRemove(opts: RunRemoveOptions): Promise<RemoveCommandRe
   for (const id of selectedIds) {
     const isLib = localId(id).startsWith('lib:');
     const entry = isLib
-      ? findEntry(manifest, id, 'user', 'shared')
+      ? findLibEntry(manifest, id)
       : findEntry(manifest, id, scope, adapter.id);
     if (entry === undefined) {
       const installedIds = [...new Set(manifest.artifacts.map((e) => e.id))];

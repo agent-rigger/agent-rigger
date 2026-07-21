@@ -479,6 +479,30 @@ export async function link(
 }
 
 // ---------------------------------------------------------------------------
+// symlinkRemediationHint
+// ---------------------------------------------------------------------------
+
+/**
+ * The actionable remediation sentence appended to every "cannot symlink" error
+ * (R4, lib-nature). The Developer Mode / W1 roadmap hint is Windows-specific, so
+ * it is shown ONLY on win32 (adversarial-close, finding 5): on macOS/Linux the
+ * cause is never Developer Mode — it is a filesystem permission, a network
+ * mount, or a sandbox — so those hosts get a generic cause plus `rigger doctor`.
+ *
+ * @param platform  Host platform id (defaults to process.platform); injectable
+ *                  so tests can assert both branches without spawning a VM.
+ */
+export function symlinkRemediationHint(platform: string = process.platform): string {
+  if (platform === 'win32') {
+    return 'On Windows, enable Developer Mode (Settings > Privacy & security > For '
+      + 'developers) to allow symlink creation, then retry. Native support without '
+      + 'Developer Mode is tracked on the roadmap (W1).';
+  }
+  return 'This filesystem does not allow symlinks here — likely a permissions '
+    + 'restriction, a network mount, or a sandbox. Run `rigger doctor` to diagnose.';
+}
+
+// ---------------------------------------------------------------------------
 // probeSymlinkSupport
 // ---------------------------------------------------------------------------
 

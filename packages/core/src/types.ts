@@ -416,6 +416,16 @@ export interface WriteOpLink {
   source: string;
   store: string;
   target: string;
+  /**
+   * When true, this artefact is only correct as a REAL symlink: the copy
+   * fallback would leave a relative import unresolved at runtime (R4,
+   * lib-nature — an opencode plugin whose entry `requires` a shared lib,
+   * whose `../libs/<name>/…` import resolves against the store, not a copy).
+   * The apply seam (applySkill) verifies `link()` returned method 'symlink'
+   * and fails closed — undoing the just-posed copy — when it did not. Absent/
+   * false on every other link op, whose copy fallback stays strictly intact.
+   */
+  requiresSymlink?: boolean;
 }
 
 /**

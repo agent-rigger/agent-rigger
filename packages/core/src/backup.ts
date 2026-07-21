@@ -96,6 +96,29 @@ export async function restore(backupPath: string, originalPath: string): Promise
 }
 
 /**
+ * Restore a DIRECTORY (or single-file store) from its backup: replace whatever
+ * is now at `originalPath` with the backed-up tree at `backupPath`. The
+ * directory counterpart of restore() (which is byte-for-a-single-file only),
+ * used by the engine's transactional rollback to undo a divergent lib store
+ * re-sync (backupDir was paid before the destructive syncToStore).
+ *
+ * Staged: copy the backup into a sibling tmp, remove the original, then
+ * rename(2) the tmp into place — a crash mid-restore never leaves a half-merged
+ * tree under the store's real name.
+ */
+export async function restoreDir(backupPath: string, originalPath: string): Promise<void> {
+  const tmp = `${originalPath}.restore-${randomUUID().slice(0, 8)}`;
+  try {
+    await cp(backupPath, tmp, { recursive: true });
+    await rm(originalPath, { recursive: true, force: true });
+    await rename(tmp, originalPath);
+  } catch (err) {
+    await rm(tmp, { recursive: true, force: true });
+    throw err;
+  }
+}
+
+/**
  * Delete `filePath` if it exists; no-op when absent. Used by the engine's
  * transactional rollback to remove files that were newly created during a
  * failed apply() run (no backup existed for them).

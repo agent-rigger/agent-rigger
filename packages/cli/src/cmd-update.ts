@@ -49,7 +49,7 @@ import { createCompositeScanner } from '@agent-rigger/core';
 import { assertSafeArtifactName } from '@agent-rigger/core/artifact-name';
 import { apply, remove } from '@agent-rigger/core/engine';
 import type { LinkOptions } from '@agent-rigger/core/linker';
-import { readManifest } from '@agent-rigger/core/manifest';
+import { readManifest, upsertEntry, writeManifest } from '@agent-rigger/core/manifest';
 import type { Env } from '@agent-rigger/core/paths';
 import { acquireRunLock } from '@agent-rigger/core/run-lock';
 import { constantScanner } from '@agent-rigger/core/scan';
@@ -61,6 +61,7 @@ import { targetsAssistant } from './cmd-install';
 import {
   assertSymlinkCapable,
   buildLibMaterializations,
+  collectRequiredLibIds,
   partitionForeignRequires,
   scanEntries,
 } from './remote-install';
@@ -273,6 +274,20 @@ export async function runUpdate(opts: RunUpdateOptions): Promise<UpdateResult> {
   const outputParts: string[] = [];
   let updatedIds: string[] = [];
 
+  // Edge backfill set (finding 6): up-to-date entries with NO persisted
+  // `requires` field (legacy, installed before the edge graph shipped). They
+  // never reach the stale remove+apply path below, so their edges were never
+  // backfilled and the doctor `no-edges` finding stayed inextinguishable
+  // despite advising `rigger update`. Backfilled from the catalogue further
+  // down, manifest-only (no file re-pose). An entry with an explicit
+  // `requires: []` is already resolved and is skipped.
+  const backfillIds = upToDateIds.filter((id) => {
+    const e = manifest.artifacts.find(
+      (a) => a.id === id && a.scope === scope && (a.assistant ?? 'claude') === assistant,
+    );
+    return e !== undefined && e.requires === undefined;
+  });
+
   // Step 3 — transactional update for stale entries.
   if (staleIds.length > 0) {
     const checkoutResult = await withRemoteCheckout(
@@ -403,15 +418,19 @@ export async function runUpdate(opts: RunUpdateOptions): Promise<UpdateResult> {
         // the later `libs` (built after buildAdapter) so the gate can run
         // this early, right after the scan gate (same relative position as
         // runRemoteInstall) and well before the remove/apply block.
-        const libIdsForPreflight = new Set(
+        const libIdsForPreflight = collectRequiredLibIds(
           resolved.filter((e) => e.nature === 'lib').map((e) => qualifyEdge(e.id)),
+          requiresByQualifiedId,
+          manifest,
         );
         await assertSymlinkCapable(
           resolved,
           requiresByQualifiedId,
           libIdsForPreflight,
           assistant,
+          scope,
           env,
+          process.cwd(),
           opts.symlink,
         );
 
@@ -620,6 +639,87 @@ export async function runUpdate(opts: RunUpdateOptions): Promise<UpdateResult> {
       outputParts.push('--- Update ---');
       for (const id of staleIds) {
         outputParts.push(outcomeLine('[updated]', ANSI.green, id, `→ ${remote.ref}`));
+      }
+    }
+  }
+
+  // Step 3b — edge backfill (finding 6). Its own checkout, independent of the
+  // stale pipeline, so a legacy up-to-date entry's edges get recorded even when
+  // nothing is stale. Manifest-only: no file is re-posed, no scan runs.
+  if (backfillIds.length > 0) {
+    const backfilled = await withRemoteCheckout(
+      catalogUrl,
+      remote.ref,
+      remote.isTag,
+      runner,
+      { tmpFactory, expectedSha: remote.sha },
+      async (dir): Promise<{ applied: string[]; unresolvable: string[] }> => {
+        const { entries: remoteEntries } = await readCatalogDir(dir);
+        const { entries: effective } = mergeCatalogs([], remoteEntries);
+        const sourceName = catalogPrefixOf(backfillIds[0] ?? '');
+        const qualifyEdge = (ref: string): string =>
+          sourceName === undefined ? ref : qualifyRef(sourceName, ref);
+        const localToQualified = new Map(backfillIds.map((qid) => [localId(qid), qid]));
+
+        // Resolve each entry's edges independently and defensively: a poisoned
+        // release (a newly-added, unsatisfiable foreign require) or an entry no
+        // longer in the catalogue must not abort the whole update — that entry
+        // is left un-backfilled (doctor still flags it) while the others are
+        // fixed. An id that could not be re-resolved is surfaced below, never
+        // swallowed silently (the user who followed the finding's advice must
+        // learn why it persists).
+        const edgesByQualified = new Map<string, string[]>();
+        for (const qid of backfillIds) {
+          try {
+            const resolved = resolveWithEdges([localId(qid)], effective, new Set());
+            const own = resolved.find((r) => localToQualified.get(r.entry.id) === qid);
+            if (own !== undefined) {
+              edgesByQualified.set(qid, own.requires.map(qualifyEdge));
+            }
+          } catch {
+            // Unresolvable entry — reported (not backfilled) via `unresolvable`.
+          }
+        }
+        const unresolvable = backfillIds.filter((id) => !edgesByQualified.has(id));
+
+        // Manifest-only upsert under the run lock (no file writes). Re-read
+        // inside the lock so a concurrent writer's entries survive.
+        const applied: string[] = [];
+        const lock = await acquireRunLock(manifestPath);
+        try {
+          let m = await readManifest(manifestPath);
+          for (const id of backfillIds) {
+            const edges = edgesByQualified.get(id);
+            if (edges === undefined) continue;
+            const target = m.artifacts.find(
+              (e) => e.id === id && e.scope === scope && (e.assistant ?? 'claude') === assistant,
+            );
+            if (target === undefined || target.requires !== undefined) continue;
+            m = upsertEntry(m, { ...target, requires: edges });
+            applied.push(id);
+          }
+          if (applied.length > 0) await writeManifest(manifestPath, m);
+        } finally {
+          await lock.release();
+        }
+        return { applied, unresolvable };
+      },
+    );
+
+    if (backfilled.applied.length > 0 || backfilled.unresolvable.length > 0) {
+      outputParts.push('--- Edge backfill ---');
+      for (const id of backfilled.applied) {
+        outputParts.push(outcomeLine('[backfilled]', ANSI.dim, id, 'requires edges recorded'));
+      }
+      for (const id of backfilled.unresolvable) {
+        outputParts.push(
+          outcomeLine(
+            '[skipped]',
+            ANSI.yellow,
+            id,
+            'edges could not be re-resolved (catalog entry missing?); the doctor finding will persist',
+          ),
+        );
       }
     }
   }

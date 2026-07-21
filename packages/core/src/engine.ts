@@ -25,9 +25,18 @@ import path from 'node:path';
 
 import type { Adapter, AdapterEntry } from './adapter';
 import { mergeApplied, mergeFiles } from './applied-merge';
-import { backup, backupDir, removeDir, removeFile, restore } from './backup';
+import { backup, backupDir, removeDir, removeFile, restore, restoreDir } from './backup';
 import { contentMatchesStore, syncToStore } from './linker';
-import { findEntry, readManifest, upsertEntry, writeManifest } from './manifest';
+import {
+  findEntry,
+  findLibEntry,
+  LIB_ASSISTANT,
+  LIB_SCOPE,
+  libManifestIdentity,
+  readManifest,
+  upsertEntry,
+  writeManifest,
+} from './manifest';
 import { mergePermission } from './opencode-json';
 import { libsDir } from './paths';
 import type { Env } from './paths';
@@ -424,6 +433,14 @@ async function applyInner(
   const createdDirs = new Set<string>();
   const seenDirs = new Set<string>();
 
+  // Divergent lib store re-syncs (F5a): dest → its backupDir path. A lib whose
+  // on-disk store diverged from the checkout is backed up BEFORE a destructive
+  // re-sync; if a later entry fails, the rollback must RESTORE the original from
+  // that backup (the fresh-lib case is orphan-safe via createdDirs; this
+  // already-present case would otherwise leave the store re-synced with the
+  // paid backup unused). First-wins per dest.
+  const libResyncBackups = new Map<string, string>();
+
   try {
     // -----------------------------------------------------------------------
     // Lib materialisation channel (R3, design.md §1) — PARALLEL to the adapter
@@ -455,6 +472,11 @@ async function applyInner(
         const dirBak = await backupDir(dest);
         if (dirBak !== null) {
           allBackedUp.push(dirBak);
+          // Register for rollback restoration (F5a): a later failure must undo
+          // this re-sync back to the backed-up original. First-wins per dest.
+          if (!libResyncBackups.has(dest)) {
+            libResyncBackups.set(dest, dirBak);
+          }
         }
         await syncToStore(lib.source, dest);
       }
@@ -467,12 +489,12 @@ async function applyInner(
       // real lib, which is depended upon but depends on nothing).
       const libVersion = versionFor === undefined
         ? undefined
-        : versionFor({ id: lib.id, nature: 'lib', scope: 'user' });
+        : versionFor({ id: lib.id, nature: 'lib', scope: LIB_SCOPE });
       const libEntry = buildManifestEntry(
-        { id: lib.id, nature: 'lib', scope: 'user', requires: lib.requires },
-        'user',
+        { id: lib.id, nature: 'lib', scope: LIB_SCOPE, requires: lib.requires },
+        LIB_SCOPE,
         [dest],
-        'shared',
+        LIB_ASSISTANT,
         libVersion,
       );
       manifest = upsertEntry(manifest, libEntry);
@@ -670,17 +692,24 @@ async function applyInner(
     //   2. shared dirs created this run (hook scriptStore) → remove
     //   3. non-path side effects of fresh installs (link, plugin) → compensate
     //      via adapter.applyRemove, replayed in REVERSE order
+    //   4. divergent lib store re-syncs (F5a) → restore the backed-up original
     // Any failure is aggregated onto err.rollbackFailures so a resulting
     // inconsistent disk state is observable rather than silent.
     const fileFailures = await rollbackApply(rollbackLedger);
     const dirFailures = await rollbackCreatedDirs(createdDirs);
+    const libResyncFailures = await rollbackLibResyncs(libResyncBackups);
     const compFailures = await rollbackCompensations(
       adapter,
       compensations,
       env,
       preRunManifestFiles,
     );
-    const rollbackFailures = [...fileFailures, ...dirFailures, ...compFailures];
+    const rollbackFailures = [
+      ...fileFailures,
+      ...dirFailures,
+      ...libResyncFailures,
+      ...compFailures,
+    ];
     if (rollbackFailures.length > 0 && err instanceof Error) {
       (err as Error & { rollbackFailures?: RollbackFailure[] }).rollbackFailures = rollbackFailures;
     }
@@ -763,6 +792,30 @@ async function rollbackCreatedDirs(dirs: Set<string>): Promise<RollbackFailure[]
     const dir = tracked[i];
     if (result.status === 'rejected' && dir !== undefined) {
       failures.push({ path: dir, cause: result.reason });
+    }
+  });
+  return failures;
+}
+
+/**
+ * Restore each divergently re-synced lib store (F5a) from its backupDir. The
+ * fourth rollback layer: a lib whose store was already present but diverged from
+ * the checkout is destructively re-synced under a paid backupDir; a later
+ * failure must put the original tree back. Best-effort and resilient
+ * (allSettled), mirroring the other layers — failures surface on
+ * err.rollbackFailures rather than aborting the rollback.
+ */
+async function rollbackLibResyncs(backups: Map<string, string>): Promise<RollbackFailure[]> {
+  const tracked = [...backups.entries()];
+  const results = await Promise.allSettled(
+    tracked.map(([dest, bak]) => restoreDir(bak, dest)),
+  );
+
+  const failures: RollbackFailure[] = [];
+  results.forEach((result, i) => {
+    const tracking = tracked[i];
+    if (result.status === 'rejected' && tracking !== undefined) {
+      failures.push({ path: tracking[0], cause: result.reason });
     }
   });
   return failures;
@@ -928,7 +981,7 @@ async function removeInner(
       // refcount gate (cmd-remove) already refused the removal if it was still
       // required, so reaching here means the convergence is safe.
       if (entry.nature === 'lib') {
-        const libEntry = findEntry(manifest, entry.id, 'user', 'shared');
+        const libEntry = findLibEntry(manifest, entry.id);
         if (libEntry === undefined) {
           // Absent from the manifest → idempotent no-op (never installed or
           // already removed), same contract as the adapter "not installed" path.
@@ -942,7 +995,7 @@ async function removeInner(
           // adapter phantom purge above.
           allPurged.push(entry.id);
           removedNatures.add('lib');
-          mutations.push({ kind: 'remove', id: entry.id, scope: 'user', assistant: 'shared' });
+          mutations.push({ kind: 'remove', ...libManifestIdentity(entry.id) });
           manifest = await persistMerged(manifestPath, mutations);
           continue;
         }
@@ -955,7 +1008,7 @@ async function removeInner(
         await Promise.all(libDirs.map((d) => removeDir(d)));
         allRemoved.push(entry.id);
         removedNatures.add('lib');
-        mutations.push({ kind: 'remove', id: entry.id, scope: 'user', assistant: 'shared' });
+        mutations.push({ kind: 'remove', ...libManifestIdentity(entry.id) });
         manifest = await persistMerged(manifestPath, mutations);
         continue;
       }
@@ -1391,8 +1444,22 @@ export function enrichWithApplied(
     return entry;
   }
   const manifestEntry = findEntry(manifest, entry.id, entry.scope, assistant);
-  if (manifestEntry === undefined || manifestEntry.applied === undefined) {
+  if (manifestEntry === undefined) {
     return entry;
   }
-  return { ...entry, applied: manifestEntry.applied };
+  // Backfill the `requires` edges from the manifest when the caller's entry
+  // carries none (R4, lib-nature: `check`/doctor build audit entries from the
+  // catalog, which drops requires — the opencode plugin audit needs the edge to
+  // flag a copy-installed lib-dependent plugin). Never override a requires the
+  // entry already holds (apply threads the fresh, re-resolved edges), only fill
+  // the undefined case. Independent of `applied`, which may legitimately be
+  // absent (a plugin install records none).
+  const withRequires: AdapterEntry = entry.requires === undefined
+      && manifestEntry.requires !== undefined
+    ? { ...entry, requires: manifestEntry.requires }
+    : entry;
+  if (manifestEntry.applied === undefined) {
+    return withRequires;
+  }
+  return { ...withRequires, applied: manifestEntry.applied };
 }
