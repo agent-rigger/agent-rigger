@@ -57,7 +57,7 @@ import type { Scope } from '@agent-rigger/core/types';
 
 import { buildAdapter } from './adapter-dispatch';
 import { targetsAssistant } from './cmd-install';
-import { partitionForeignRequires, scanEntries } from './remote-install';
+import { buildLibMaterializations, partitionForeignRequires, scanEntries } from './remote-install';
 import { ANSI, paint, shouldColor } from './ui';
 
 /**
@@ -416,12 +416,34 @@ export async function runUpdate(opts: RunUpdateOptions): Promise<UpdateResult> {
           ...(Object.keys(secretOverrides).length === 0 ? {} : { secretOverrides }),
         });
 
-        // AdapterEntries for remove+apply (exclude tool-nature entries).
-        // Thread the captured requires (S4/R5) onto the opaque AdapterEntry
-        // transport so buildManifestEntry backfills them (S6). Omit when none,
-        // per the AdapterEntry.requires convention.
+        // Lib materialisations (R3): a stale consumer's requires can pull a lib
+        // into `resolved`. It is re-materialised by the engine's parallel
+        // channel (apply({ libs })) — at the SAME call point, under the single
+        // lock, so update has no second orchestration site. `source` is the
+        // checkout path (scanPathFor('lib')[0], the pinned scanned path, R2);
+        // requires are the backfilled edges (S6). This is also where a legacy
+        // entry whose require points a lib gains its edge on the first update.
+        //
+        // Qualify the lib id the SAME way install does (qualifyRef): a lib is
+        // pulled transitively, never a stale candidate, so localToQualified
+        // (stale set only) leaves it local — the materialised entry id must be
+        // `<catalog>/lib:<name>`, matching the install path AND the consumer's
+        // backfilled edge, or the two would split the refcount.
+        const libs = buildLibMaterializations(
+          resolved
+            .filter((e) => e.nature === 'lib')
+            .map((e) => ({ ...e, id: qualifyEdge(e.id) })),
+          dir,
+          requiresByQualifiedId,
+        );
+
+        // AdapterEntries for remove+apply — exclude tool AND lib natures (S3: a
+        // lib never reaches the adapter's remove/plan, which would raise
+        // UnsupportedNatureError). Thread the captured requires (S4/R5) onto the
+        // opaque AdapterEntry transport so buildManifestEntry backfills them
+        // (S6). Omit when none, per the AdapterEntry.requires convention.
         const adapterEntries = resolved
-          .filter((e) => e.nature !== 'tool')
+          .filter((e) => e.nature !== 'tool' && e.nature !== 'lib')
           .map((e) => {
             const requires = requiresByQualifiedId.get(e.id) ?? [];
             return requires.length > 0
@@ -430,10 +452,16 @@ export async function runUpdate(opts: RunUpdateOptions): Promise<UpdateResult> {
           });
 
         // 3e. versionFor seam: remote (has checkout path) → real ref/sha, others → v0.0.0/''.
+        // A lib is remote content too but excluded from remoteIds (targets: [],
+        // S3): union the lib ids into the version-eligible set so it is stamped
+        // with the real catalogue ref/sha (else a permanent doctor missing-sha,
+        // re-stamped '' by every update). remoteIds itself is untouched; the
+        // 'shared' assistant keeps a lib a non-candidate for direct update.
+        const remoteVersionIds = new Set([...remoteIds, ...libs.map((l) => l.id)]);
         const versionFor = (
           entry: { id: string },
         ): { ref: string; sha: string } => {
-          if (remoteIds.has(entry.id)) {
+          if (remoteVersionIds.has(entry.id)) {
             return { ref: remote.ref, sha: remote.sha };
           }
           return { ref: 'v0.0.0', sha: '' };
@@ -491,8 +519,19 @@ export async function runUpdate(opts: RunUpdateOptions): Promise<UpdateResult> {
           // 3h. Remove old (targets absent → plan will produce link ops in apply).
           await remove(adapter, adapterEntries, scope, env, manifestPath, undefined, lock);
 
-          // 3i. Apply fresh content from checkout dir + upsert manifest with ref/sha.
-          await apply(adapter, adapterEntries, scope, env, manifestPath, versionFor, lock);
+          // 3i. Apply fresh content from checkout dir + upsert manifest with
+          // ref/sha, re-materialising any lib pulled by the stale set on the
+          // engine's parallel channel (R3) under this same lock.
+          await apply({
+            adapter,
+            entries: adapterEntries,
+            scope,
+            env,
+            manifestPath,
+            versionFor,
+            lock,
+            ...(libs.length > 0 ? { libs } : {}),
+          });
         } finally {
           await lock.release();
         }

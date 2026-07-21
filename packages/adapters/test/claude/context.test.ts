@@ -327,7 +327,13 @@ describe('ClaudeAdapter — context e2e via engine', () => {
     const targets = resolveUserTargets(env);
     const adapter = createClaudeAdapter({ denyRef: [], agentsContent: AGENTS_CONTENT });
 
-    await apply(adapter, [CONTEXT_ENTRY], 'user', env, targets.stateJson);
+    await apply({
+      adapter,
+      entries: [CONTEXT_ENTRY],
+      scope: 'user',
+      env,
+      manifestPath: targets.stateJson,
+    });
     const report = await check(adapter, [CONTEXT_ENTRY], 'user', env);
 
     expect(reportExitCode(report)).toBe(0);
@@ -338,8 +344,20 @@ describe('ClaudeAdapter — context e2e via engine', () => {
     const targets = resolveUserTargets(env);
     const adapter = createClaudeAdapter({ denyRef: [], agentsContent: AGENTS_CONTENT });
 
-    await apply(adapter, [CONTEXT_ENTRY], 'user', env, targets.stateJson);
-    const result2 = await apply(adapter, [CONTEXT_ENTRY], 'user', env, targets.stateJson);
+    await apply({
+      adapter,
+      entries: [CONTEXT_ENTRY],
+      scope: 'user',
+      env,
+      manifestPath: targets.stateJson,
+    });
+    const result2 = await apply({
+      adapter,
+      entries: [CONTEXT_ENTRY],
+      scope: 'user',
+      env,
+      manifestPath: targets.stateJson,
+    });
 
     expect(result2.written).toHaveLength(0);
   });

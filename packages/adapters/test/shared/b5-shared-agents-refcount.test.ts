@@ -134,8 +134,20 @@ describe('B5: AGENTS.md shared between opencode and claude (project scope)', () 
 
       // opencode first (writes AGENTS.md), then claude (adds the CLAUDE.md import
       // block over already-matching content — still a non-empty plan).
-      await apply(opencode, [SHARED_ENTRY], 'project', env, stateJson);
-      await apply(claude, [SHARED_ENTRY], 'project', env, stateJson);
+      await apply({
+        adapter: opencode,
+        entries: [SHARED_ENTRY],
+        scope: 'project',
+        env,
+        manifestPath: stateJson,
+      });
+      await apply({
+        adapter: claude,
+        entries: [SHARED_ENTRY],
+        scope: 'project',
+        env,
+        manifestPath: stateJson,
+      });
 
       // Both manifest entries reference the same <cwd>/AGENTS.md.
       const manifest = await readManifest(stateJson);
@@ -174,8 +186,20 @@ describe('B5: AGENTS.md shared between opencode and claude (project scope)', () 
       const opencode = createOpencodeAdapter({ agentsContent: CANONICAL });
       const claude = createClaudeAdapter({ denyRef: [], agentsContent: CANONICAL });
 
-      await apply(opencode, [SHARED_ENTRY], 'project', env, stateJson);
-      await apply(claude, [SHARED_ENTRY], 'project', env, stateJson);
+      await apply({
+        adapter: opencode,
+        entries: [SHARED_ENTRY],
+        scope: 'project',
+        env,
+        manifestPath: stateJson,
+      });
+      await apply({
+        adapter: claude,
+        entries: [SHARED_ENTRY],
+        scope: 'project',
+        env,
+        manifestPath: stateJson,
+      });
 
       // Remove opencode: the shared file is protected by the claude reference.
       await remove(opencode, [SHARED_ENTRY], 'project', env, stateJson);

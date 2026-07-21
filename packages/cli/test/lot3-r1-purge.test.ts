@@ -86,7 +86,7 @@ function makeHookAdapter() {
 describe('runRemove — lot3 R1 purge of a hand-removed hook', () => {
   it('lot3-R1: a hook removed from settings.json is purged, listed, without confirmation; check exits 0', async () => {
     const adapter = makeHookAdapter();
-    await apply(adapter, [HOOK_ENTRY], 'user', env, manifestPath);
+    await apply({ adapter, entries: [HOOK_ENTRY], scope: 'user', env, manifestPath });
 
     // The user deletes the hook from settings.json by hand.
     const settings = await readJson(targets.claudeSettings);
@@ -118,7 +118,7 @@ describe('runRemove — lot3 R1 purge of a hand-removed hook', () => {
 
   it('lot3-R1: a hook edited by hand is purged with the edited-or-removed warning', async () => {
     const adapter = makeHookAdapter();
-    await apply(adapter, [HOOK_ENTRY], 'user', env, manifestPath);
+    await apply({ adapter, entries: [HOOK_ENTRY], scope: 'user', env, manifestPath });
 
     // The user edits the hook command in settings.json — the canonical spec no
     // longer matches anything (hasHook is command-strict), yet a mutant hook

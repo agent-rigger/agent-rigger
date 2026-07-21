@@ -135,7 +135,13 @@ describe('opencode skill — full lifecycle via engine (user scope)', () => {
 
     // 2. apply → store filled, symlink created, scanner ran through the engine
     //    path, manifest entry recorded with the reversible 'link' payload.
-    const applyResult = await apply(adapter, [entry], 'user', env, manifestPath);
+    const applyResult = await apply({
+      adapter,
+      entries: [entry],
+      scope: 'user',
+      env,
+      manifestPath,
+    });
     expect(applyResult.written).toContain(target);
     expect(scanner.calls).toEqual([srcDir]); // scan-before-install ran once
     expect(await exists(store)).toBe(true);
@@ -159,7 +165,7 @@ describe('opencode skill — full lifecycle via engine (user scope)', () => {
     // 4. 2nd apply → idempotent no-op: nothing written, scanner not called again
     //    (a non-idempotent re-install would re-scan and re-write here).
     const scanCountBeforeSecondApply = scanner.calls.length;
-    const apply2 = await apply(adapter, [entry], 'user', env, manifestPath);
+    const apply2 = await apply({ adapter, entries: [entry], scope: 'user', env, manifestPath });
     expect(apply2.written).toHaveLength(0);
     expect(scanner.calls.length).toBe(scanCountBeforeSecondApply);
     expect(await exists(target)).toBe(true);
@@ -215,8 +221,8 @@ describe('opencode skill — shared-store ref-counting via engine (H7, ADR-0020 
     const claudeUserTarget = path.join(tmp.dir, '.claude', 'skills', 'shared');
 
     // Install opencode user + project through the engine (real manifest round-trip).
-    await apply(adapter, [userEntry], 'user', env, manifestPath);
-    await apply(adapter, [projectEntry], 'project', env, manifestPath);
+    await apply({ adapter, entries: [userEntry], scope: 'user', env, manifestPath });
+    await apply({ adapter, entries: [projectEntry], scope: 'project', env, manifestPath });
     // Add a claude reference to the SAME physical store. Not expressible via the
     // opencode adapter, so it is created through the claude handler — exactly one
     // more symlink onto the shared store, no new store.

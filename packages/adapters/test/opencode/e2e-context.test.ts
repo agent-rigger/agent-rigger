@@ -254,7 +254,7 @@ describe('opencode context e2e — engine round-trip at user scope', () => {
     const adapter = createOpencodeAdapter({ agentsContent: CANONICAL });
 
     // --- install via engine ------------------------------------------------
-    await apply(adapter, [CONTEXT_ENTRY], 'user', env, stateJson);
+    await apply({ adapter, entries: [CONTEXT_ENTRY], scope: 'user', env, manifestPath: stateJson });
 
     // File written with canonical content.
     expect(await readText(agentsMd)).toBe(CANONICAL);

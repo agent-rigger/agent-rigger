@@ -82,11 +82,11 @@ describe('lot2-R1: opencode guardrail re-install cumulates and remove reverses (
   it('lot2-R1: install v1 then v2 then remove — both leaves leave opencode.json', async () => {
     // v1 install: one bash pattern leaf.
     const v1 = createOpencodeAdapter({ permission: V1_PERMISSION });
-    await apply(v1, [ENTRY], 'user', env, manifestPath);
+    await apply({ adapter: v1, entries: [ENTRY], scope: 'user', env, manifestPath });
 
     // v2 install: the catalog adds a webfetch leaf — the plan is the DELTA.
     const v2 = createOpencodeAdapter({ permission: V2_PERMISSION });
-    await apply(v2, [ENTRY], 'user', env, manifestPath);
+    await apply({ adapter: v2, entries: [ENTRY], scope: 'user', env, manifestPath });
 
     // The manifest trace is the CUMULATIVE fragment.
     const manifest = await readManifest(manifestPath);
@@ -111,9 +111,9 @@ describe('lot2-R1: opencode guardrail re-install cumulates and remove reverses (
 
   it('lot2-R1: one hand-edited leaf never blocks the removal of the others (drift variant)', async () => {
     const v1 = createOpencodeAdapter({ permission: V1_PERMISSION });
-    await apply(v1, [ENTRY], 'user', env, manifestPath);
+    await apply({ adapter: v1, entries: [ENTRY], scope: 'user', env, manifestPath });
     const v2 = createOpencodeAdapter({ permission: V2_PERMISSION });
-    await apply(v2, [ENTRY], 'user', env, manifestPath);
+    await apply({ adapter: v2, entries: [ENTRY], scope: 'user', env, manifestPath });
 
     // User drift: webfetch ask → allow, edited by hand in opencode.json.
     const settings = await readJson(opencodeJsonPath);
@@ -149,7 +149,7 @@ describe('lot2-R1: opencode guardrail re-install cumulates and remove reverses (
 
   it('lot3-R1: a fully hand-removed fragment plans no destructive op and PURGES the phantom entry', async () => {
     const v1 = createOpencodeAdapter({ permission: V1_PERMISSION });
-    await apply(v1, [ENTRY], 'user', env, manifestPath);
+    await apply({ adapter: v1, entries: [ENTRY], scope: 'user', env, manifestPath });
 
     // User removes the whole permission key by hand.
     const settings = await readJson(opencodeJsonPath);

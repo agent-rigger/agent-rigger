@@ -238,7 +238,7 @@ describe('lot2-R3 — engine.remove leaves unmanaged targets alone', () => {
     const adapter = createClaudeAdapter({ denyRef: [], skillSource: () => srcDir });
     const entry: AdapterEntry = { id: 'skill:kept', nature: 'skill', scope: 'user' };
 
-    await apply(adapter, [entry], 'user', env, manifestPath);
+    await apply({ adapter, entries: [entry], scope: 'user', env, manifestPath });
 
     const target = skillTargetPath('kept');
     await fs.rm(target, { recursive: true, force: true });
@@ -263,7 +263,7 @@ describe('lot2-R3 — engine.remove leaves unmanaged targets alone', () => {
     const adapter = createClaudeAdapter({ denyRef: [], skillSource: () => srcDir });
     const entry: AdapterEntry = { id: 'skill:foreign-e2e', nature: 'skill', scope: 'user' };
 
-    await apply(adapter, [entry], 'user', env, manifestPath);
+    await apply({ adapter, entries: [entry], scope: 'user', env, manifestPath });
 
     const target = skillTargetPath('foreign-e2e');
     const otherDir = path.join(tmp.dir, 'elsewhere');
@@ -334,7 +334,7 @@ describe('lot2-R3 — copy-fallback installs stay removable', () => {
     const adapter = createClaudeAdapter({ denyRef: [], skillSource: () => srcDir });
     const entry: AdapterEntry = { id: 'skill:copied', nature: 'skill', scope: 'user' };
 
-    await apply(adapter, [entry], 'user', env, manifestPath);
+    await apply({ adapter, entries: [entry], scope: 'user', env, manifestPath });
 
     // Simulate the linkOrCopy COPY FALLBACK (symlink unavailable): the target
     // is a plain copy of the store, byte for byte.
@@ -367,7 +367,7 @@ describe('lot2-R3 — check reports the drifted target the remove gate refused',
     const adapter = createClaudeAdapter({ denyRef: [], skillSource: () => srcDir });
     const entry: AdapterEntry = { id: 'skill:visible', nature: 'skill', scope: 'user' };
 
-    await apply(adapter, [entry], 'user', env, manifestPath);
+    await apply({ adapter, entries: [entry], scope: 'user', env, manifestPath });
 
     // User replaces the install symlink with a real directory.
     const target = skillTargetPath('visible');
@@ -402,7 +402,7 @@ describe('lot2-R3 — engine.remove backs up the store before deletion', () => {
     const adapter = createClaudeAdapter({ denyRef: [], skillSource: () => srcDir });
     const entry: AdapterEntry = { id: 'skill:backed', nature: 'skill', scope: 'user' };
 
-    await apply(adapter, [entry], 'user', env, manifestPath);
+    await apply({ adapter, entries: [entry], scope: 'user', env, manifestPath });
 
     // User edits the skill through the symlink — the edit lives in the store.
     const store = skillStorePath('backed');
@@ -427,7 +427,7 @@ describe('lot2-R3 — engine.remove backs up the store before deletion', () => {
     const adapter = createClaudeAdapter({ denyRef: [], agentSource: () => agentFile });
     const entry: AdapterEntry = { id: 'agent:backed-agent', nature: 'agent', scope: 'user' };
 
-    await apply(adapter, [entry], 'user', env, manifestPath);
+    await apply({ adapter, entries: [entry], scope: 'user', env, manifestPath });
 
     const store = agentStorePath('backed-agent');
     const result = await remove(adapter, [entry], 'user', env, manifestPath);

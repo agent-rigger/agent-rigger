@@ -157,7 +157,13 @@ describe('opencode agent E2E — user scope via core engine', () => {
     expect(await Bun.file(targetPath).exists()).toBe(false);
 
     // --- 2. apply: writes the translated file + records the manifest entry. ---
-    const applyResult = await apply(adapter, [entry], 'user', env, manifestPath);
+    const applyResult = await apply({
+      adapter,
+      entries: [entry],
+      scope: 'user',
+      env,
+      manifestPath,
+    });
     expect(applyResult.written).toContain(targetPath);
 
     // File exists on disk with the TRANSLATED frontmatter (end-to-end F0-agents-2).
@@ -181,7 +187,7 @@ describe('opencode agent E2E — user scope via core engine', () => {
 
     // --- 4. idempotence: plan is [] and a second apply writes nothing. ---
     expect(await adapter.plan(entry, 'user', env)).toHaveLength(0);
-    const reapply = await apply(adapter, [entry], 'user', env, manifestPath);
+    const reapply = await apply({ adapter, entries: [entry], scope: 'user', env, manifestPath });
     expect(reapply.written).toEqual([]);
     // Content unchanged by the no-op apply.
     expect(await fs.readFile(targetPath, 'utf-8')).toBe(written);

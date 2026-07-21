@@ -96,7 +96,7 @@ describe('doctor-R1: cible conforme non tracée → adoptable', () => {
       const adapter = createClaudeAdapter({ denyRef: [], skillSource: () => src });
       const entry: AdapterEntry = { id: 'skill:foo', nature: 'skill', scope: 'user' };
 
-      await apply(adapter, [entry], 'user', env, manifestPath);
+      await apply({ adapter, entries: [entry], scope: 'user', env, manifestPath });
       await wipeManifest(manifestPath);
 
       const scanner = createUntrackedScanner(adapter, 'claude');
@@ -126,7 +126,7 @@ describe('doctor-R1: cible conforme non tracée → adoptable', () => {
       const adapter = createClaudeAdapter({ denyRef: [], agentSource: () => agentFile });
       const entry: AdapterEntry = { id: 'agent:reviewer', nature: 'agent', scope: 'user' };
 
-      await apply(adapter, [entry], 'user', env, manifestPath);
+      await apply({ adapter, entries: [entry], scope: 'user', env, manifestPath });
       await wipeManifest(manifestPath);
 
       const findings = await createUntrackedScanner(adapter, 'claude')(ctxFor(manifestPath, env));
@@ -150,7 +150,7 @@ describe('doctor-R1: cible conforme non tracée → adoptable', () => {
       const adapter = createOpencodeAdapter({ pluginSource: () => pluginFile });
       const entry: AdapterEntry = { id: 'plugin:myplugin', nature: 'plugin', scope: 'user' };
 
-      await apply(adapter, [entry], 'user', env, manifestPath);
+      await apply({ adapter, entries: [entry], scope: 'user', env, manifestPath });
       await wipeManifest(manifestPath);
 
       const findings = await createUntrackedScanner(adapter, 'opencode')(
@@ -187,7 +187,7 @@ describe('doctor-R1: amputation de masse — même route', () => {
       const fooEntry: AdapterEntry = { id: 'skill:foo', nature: 'skill', scope: 'user' };
       const barEntry: AdapterEntry = { id: 'skill:bar', nature: 'skill', scope: 'user' };
 
-      await apply(adapter, [fooEntry, barEntry], 'user', env, manifestPath);
+      await apply({ adapter, entries: [fooEntry, barEntry], scope: 'user', env, manifestPath });
       await wipeManifest(manifestPath);
 
       const findings = await createUntrackedScanner(adapter, 'claude')(ctxFor(manifestPath, env));
@@ -216,7 +216,7 @@ describe('doctor-R1: cible driftée non tracée → report-only', () => {
       const adapter = createClaudeAdapter({ denyRef: [], skillSource: () => src });
       const entry: AdapterEntry = { id: 'skill:foo', nature: 'skill', scope: 'user' };
 
-      await apply(adapter, [entry], 'user', env, manifestPath);
+      await apply({ adapter, entries: [entry], scope: 'user', env, manifestPath });
       await wipeManifest(manifestPath);
 
       // Replace the symlink with a REAL directory of foreign content — the
@@ -282,7 +282,7 @@ describe('doctor-R1: exclusions absolues du scan', () => {
       const adapter = createClaudeAdapter({ denyRef: [], skillSource: () => src });
       const entry: AdapterEntry = { id: 'skill:foo', nature: 'skill', scope: 'user' };
 
-      await apply(adapter, [entry], 'user', env, manifestPath);
+      await apply({ adapter, entries: [entry], scope: 'user', env, manifestPath });
       await wipeManifest(manifestPath);
 
       const skillsDir = path.join(

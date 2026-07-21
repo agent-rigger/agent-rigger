@@ -148,11 +148,11 @@ describe('lot3 R5 — opencode permission adoption', () => {
     const entry: AdapterEntry = { id: 'guardrails-opencode', nature: 'guardrail', scope: 'user' };
 
     // Install normally, then lose the manifest (M2 reset).
-    await apply(adapter, [entry], 'user', env, manifestPath);
+    await apply({ adapter, entries: [entry], scope: 'user', env, manifestPath });
     await wipeManifest(manifestPath);
 
     // Re-install: plan is empty (rules present) → adoption records the entry.
-    const result = await apply(adapter, [entry], 'user', env, manifestPath);
+    const result = await apply({ adapter, entries: [entry], scope: 'user', env, manifestPath });
 
     expect(result.adopted).toContain('guardrails-opencode');
     expect(result.written).toHaveLength(0);
@@ -167,9 +167,9 @@ describe('lot3 R5 — opencode permission adoption', () => {
     const adapter = createOpencodeAdapter({ permission: REF_PERMISSION });
     const entry: AdapterEntry = { id: 'guardrails-opencode', nature: 'guardrail', scope: 'user' };
 
-    await apply(adapter, [entry], 'user', env, manifestPath);
+    await apply({ adapter, entries: [entry], scope: 'user', env, manifestPath });
     await wipeManifest(manifestPath);
-    await apply(adapter, [entry], 'user', env, manifestPath);
+    await apply({ adapter, entries: [entry], scope: 'user', env, manifestPath });
 
     const report = await check(adapter, [entry], 'user', env, manifestPath);
     expect(reportExitCode(report)).toBe(0);
@@ -189,7 +189,7 @@ describe('lot3 R5 — opencode permission adoption', () => {
       permission: { read: { '.env.local': 'deny', '.env.example': 'allow' } },
     });
 
-    const result = await apply(adapter, [entry], 'user', env, manifestPath);
+    const result = await apply({ adapter, entries: [entry], scope: 'user', env, manifestPath });
     expect(result.adopted).toHaveLength(0);
   });
 });
@@ -208,7 +208,7 @@ describe('lot3 R5 — opencode mcp adoption (FM5 deep-equal)', () => {
     // Seed opencode.json with the server config == canonical.
     await writeJson(targets.opencodeJson, { mcp: { context7: CANONICAL_MCP } });
 
-    const result = await apply(adapter, [entry], 'user', env, manifestPath);
+    const result = await apply({ adapter, entries: [entry], scope: 'user', env, manifestPath });
 
     expect(result.adopted).toContain('mcp:context7');
     const recorded = findEntry(result.manifest, 'mcp:context7', 'user', 'opencode');
@@ -226,7 +226,7 @@ describe('lot3 R5 — opencode mcp adoption (FM5 deep-equal)', () => {
     // Seed opencode.json with the SAME server id but a PERSONAL divergent config.
     await writeJson(targets.opencodeJson, { mcp: { context7: DIVERGENT_MCP } });
 
-    const result = await apply(adapter, [entry], 'user', env, manifestPath);
+    const result = await apply({ adapter, entries: [entry], scope: 'user', env, manifestPath });
 
     // The server key is present → plan is empty; but the deep-equal gate fails,
     // so nothing is adopted — the manifest must never claim the user's config.
@@ -254,10 +254,10 @@ describe('lot3 R5 — opencode skill adoption', () => {
     const adapter = createOpencodeAdapter({ skillSource: () => srcDir });
     const entry: AdapterEntry = { id: 'skill:foo', nature: 'skill', scope: 'user' };
 
-    await apply(adapter, [entry], 'user', env, manifestPath);
+    await apply({ adapter, entries: [entry], scope: 'user', env, manifestPath });
     await wipeManifest(manifestPath);
 
-    const result = await apply(adapter, [entry], 'user', env, manifestPath);
+    const result = await apply({ adapter, entries: [entry], scope: 'user', env, manifestPath });
 
     expect(result.adopted).toContain('skill:foo');
     const target = path.join(targets.skillsDir, 'foo');
@@ -275,7 +275,7 @@ describe('lot3 R5 — opencode skill adoption', () => {
     await fs.mkdir(target, { recursive: true });
     await fs.writeFile(path.join(target, 'SKILL.md'), '# not rigger content\n');
 
-    const result = await apply(adapter, [entry], 'user', env, manifestPath);
+    const result = await apply({ adapter, entries: [entry], scope: 'user', env, manifestPath });
 
     expect(result.adopted).toHaveLength(0);
     expect(findEntry(result.manifest, 'skill:bar', 'user', 'opencode')).toBeUndefined();
@@ -292,10 +292,10 @@ describe('lot3 R5 — opencode agent adoption', () => {
     const adapter = createOpencodeAdapter({ agentSource: () => src });
     const entry: AdapterEntry = { id: 'agent:reviewer', nature: 'agent', scope: 'user' };
 
-    await apply(adapter, [entry], 'user', env, manifestPath);
+    await apply({ adapter, entries: [entry], scope: 'user', env, manifestPath });
     await wipeManifest(manifestPath);
 
-    const result = await apply(adapter, [entry], 'user', env, manifestPath);
+    const result = await apply({ adapter, entries: [entry], scope: 'user', env, manifestPath });
 
     expect(result.adopted).toContain('agent:reviewer');
     const target = path.join(targets.agentsDir, 'reviewer.md');
@@ -317,10 +317,10 @@ describe('lot3 R5 — opencode plugin adoption', () => {
     const adapter = createOpencodeAdapter({ pluginSource: () => src });
     const entry: AdapterEntry = { id: 'plugin:enforce-tests', nature: 'plugin', scope: 'user' };
 
-    await apply(adapter, [entry], 'user', env, manifestPath);
+    await apply({ adapter, entries: [entry], scope: 'user', env, manifestPath });
     await wipeManifest(manifestPath);
 
-    const result = await apply(adapter, [entry], 'user', env, manifestPath);
+    const result = await apply({ adapter, entries: [entry], scope: 'user', env, manifestPath });
 
     expect(result.adopted).toContain('plugin:enforce-tests');
     // The installed file carries the source module's extension (.ts).
@@ -370,7 +370,7 @@ describe('lot3 R5 — opencode context adoption (FM6)', () => {
     await fs.mkdir(path.dirname(targets.agentsMd), { recursive: true });
     await fs.writeFile(targets.agentsMd, CANONICAL_AGENTS);
 
-    const result = await apply(adapter, [entry], 'user', env, manifestPath);
+    const result = await apply({ adapter, entries: [entry], scope: 'user', env, manifestPath });
 
     expect(result.adopted).toContain('context-opencode');
     const recorded = findEntry(result.manifest, 'context-opencode', 'user', 'opencode');

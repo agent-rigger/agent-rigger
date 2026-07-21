@@ -176,7 +176,13 @@ describe('rollback: link ops (skills/agents)', () => {
     });
 
     await expect(
-      apply(adapter, [entry('skill', 'skill'), entry('bad', 'context')], 'user', env, manifestPath),
+      apply({
+        adapter,
+        entries: [entry('skill', 'skill'), entry('bad', 'context')],
+        scope: 'user',
+        env,
+        manifestPath,
+      }),
     ).rejects.toBeInstanceOf(CompError);
 
     expect(await exists(target)).toBe(false); // symlink removed
@@ -208,7 +214,13 @@ describe('rollback: link ops (skills/agents)', () => {
     });
 
     await expect(
-      apply(adapter, [entry('skill', 'skill'), entry('bad', 'context')], 'user', env, manifestPath),
+      apply({
+        adapter,
+        entries: [entry('skill', 'skill'), entry('bad', 'context')],
+        scope: 'user',
+        env,
+        manifestPath,
+      }),
     ).rejects.toBeInstanceOf(CompError);
 
     // Tier 1: a tracked re-install is left in place (not unlinked).
@@ -229,13 +241,13 @@ describe('rollback: plugin-install', () => {
     });
 
     await expect(
-      apply(
+      apply({
         adapter,
-        [entry('plugin', 'plugin'), entry('bad', 'context')],
-        'user',
+        entries: [entry('plugin', 'plugin'), entry('bad', 'context')],
+        scope: 'user',
         env,
         manifestPath,
-      ),
+      }),
     ).rejects.toBeInstanceOf(CompError);
 
     expect(pluginInstalls).toEqual(['my-plugin']);
@@ -250,13 +262,13 @@ describe('rollback: plugin-install', () => {
 
     let caught: unknown;
     try {
-      await apply(
+      await apply({
         adapter,
-        [entry('plugin', 'plugin'), entry('bad', 'context')],
-        'user',
+        entries: [entry('plugin', 'plugin'), entry('bad', 'context')],
+        scope: 'user',
         env,
         manifestPath,
-      );
+      });
     } catch (err) {
       caught = err;
     }
@@ -287,7 +299,13 @@ describe('rollback: hook scriptStore (shared dir)', () => {
     });
 
     await expect(
-      apply(adapter, [entry('hook', 'hook'), entry('bad', 'context')], 'user', env, manifestPath),
+      apply({
+        adapter,
+        entries: [entry('hook', 'hook'), entry('bad', 'context')],
+        scope: 'user',
+        env,
+        manifestPath,
+      }),
     ).rejects.toBeInstanceOf(CompError);
 
     expect(await exists(scriptStore)).toBe(false); // freshly-created store removed
@@ -310,7 +328,13 @@ describe('rollback: hook scriptStore (shared dir)', () => {
     });
 
     await expect(
-      apply(adapter, [entry('hook', 'hook'), entry('bad', 'context')], 'user', env, manifestPath),
+      apply({
+        adapter,
+        entries: [entry('hook', 'hook'), entry('bad', 'context')],
+        scope: 'user',
+        env,
+        manifestPath,
+      }),
     ).rejects.toBeInstanceOf(CompError);
 
     // Shared store left intact (not removed by rollback); the preserved log survives.
@@ -334,13 +358,13 @@ describe('rollback: happy path leaves everything installed', () => {
       plugin: [pluginOp('ok-plugin')],
     });
 
-    const result = await apply(
+    const result = await apply({
       adapter,
-      [entry('skill', 'skill'), entry('plugin', 'plugin')],
-      'user',
+      entries: [entry('skill', 'skill'), entry('plugin', 'plugin')],
+      scope: 'user',
       env,
       manifestPath,
-    );
+    });
 
     expect(await exists(target)).toBe(true);
     expect(await exists(store)).toBe(true);

@@ -312,7 +312,13 @@ describe('buildClaudeAdapter hookSpec — hook:guard-secret install/remove lifec
     // manifest is R7's counter (scripts are copies, no symlink refcount).
     const ops = await adapter.plan(ENTRY, 'user', env);
     const command = (ops[0] as { command: string }).command;
-    await engineApply(adapter, [ENTRY], 'user', env, targets.stateJson);
+    await engineApply({
+      adapter,
+      entries: [ENTRY],
+      scope: 'user',
+      env,
+      manifestPath: targets.stateJson,
+    });
 
     const hookSpec = {
       event: 'PreToolUse',

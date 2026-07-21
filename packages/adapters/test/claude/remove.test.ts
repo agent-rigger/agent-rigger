@@ -697,7 +697,7 @@ describe('engine.remove — guardrail end-to-end', () => {
     const entry: AdapterEntry = { id: 'guardrails-claude', nature: 'guardrail', scope: 'user' };
 
     // Install
-    await apply(adapter, [entry], 'user', env, manifestPath);
+    await apply({ adapter, entries: [entry], scope: 'user', env, manifestPath });
     const afterInstall = await readJson(targets.claudeSettings);
     const deny1 = ((afterInstall['permissions'] as Record<string, unknown>)['deny']) as string[];
     expect(deny1).toContain(REF_DENY[0]!);
@@ -716,7 +716,7 @@ describe('engine.remove — guardrail end-to-end', () => {
     const adapter = createClaudeAdapter({ denyRef: REF_DENY });
     const entry: AdapterEntry = { id: 'guardrails-claude', nature: 'guardrail', scope: 'user' };
 
-    await apply(adapter, [entry], 'user', env, manifestPath);
+    await apply({ adapter, entries: [entry], scope: 'user', env, manifestPath });
     const result = await remove(adapter, [entry], 'user', env, manifestPath);
 
     expect(result.backedUp.length).toBeGreaterThan(0);
@@ -726,7 +726,7 @@ describe('engine.remove — guardrail end-to-end', () => {
     const adapter = createClaudeAdapter({ denyRef: REF_DENY });
     const entry: AdapterEntry = { id: 'guardrails-claude', nature: 'guardrail', scope: 'user' };
 
-    await apply(adapter, [entry], 'user', env, manifestPath);
+    await apply({ adapter, entries: [entry], scope: 'user', env, manifestPath });
     await remove(adapter, [entry], 'user', env, manifestPath);
 
     const { readManifest } = await import('@agent-rigger/core/manifest');
@@ -741,7 +741,7 @@ describe('engine.remove — guardrail end-to-end', () => {
     const adapter = createClaudeAdapter({ denyRef: REF_DENY });
     const entry: AdapterEntry = { id: 'guardrails-claude', nature: 'guardrail', scope: 'user' };
 
-    await apply(adapter, [entry], 'user', env, manifestPath);
+    await apply({ adapter, entries: [entry], scope: 'user', env, manifestPath });
     await remove(adapter, [entry], 'user', env, manifestPath);
 
     // Second remove: planRemove must return [] (rules are gone)
@@ -754,7 +754,7 @@ describe('engine.remove — guardrail end-to-end', () => {
     const adapter = createClaudeAdapter({ denyRef: REF_DENY });
     const entry: AdapterEntry = { id: 'guardrails-claude', nature: 'guardrail', scope: 'user' };
 
-    await apply(adapter, [entry], 'user', env, manifestPath);
+    await apply({ adapter, entries: [entry], scope: 'user', env, manifestPath });
     await remove(adapter, [entry], 'user', env, manifestPath);
 
     const report = await check(adapter, [entry], 'user', env);
@@ -772,7 +772,7 @@ describe('engine.remove — context end-to-end', () => {
     const adapter = createClaudeAdapter({ denyRef: [], agentsContent: AGENTS_CONTENT });
     const entry: AdapterEntry = { id: 'context-claude', nature: 'context', scope: 'user' };
 
-    await apply(adapter, [entry], 'user', env, manifestPath);
+    await apply({ adapter, entries: [entry], scope: 'user', env, manifestPath });
     await remove(adapter, [entry], 'user', env, manifestPath);
 
     const agentsExists = await fs.lstat(targets.agentsMd).then(() => true).catch(() => false);
@@ -790,7 +790,7 @@ describe('engine.remove — context end-to-end', () => {
     await fs.mkdir(path.dirname(targets.claudeMd), { recursive: true });
     await writeText(targets.claudeMd, '# My personal config\n@MY-OTHER.md\n');
 
-    await apply(adapter, [entry], 'user', env, manifestPath);
+    await apply({ adapter, entries: [entry], scope: 'user', env, manifestPath });
     await remove(adapter, [entry], 'user', env, manifestPath);
 
     const claudeMd = await readText(targets.claudeMd);
@@ -810,7 +810,7 @@ describe('engine.remove — skill end-to-end', () => {
     const adapter = createClaudeAdapter({ denyRef: [], skillSource });
     const entry: AdapterEntry = { id: 'skill:e2e-skill', nature: 'skill', scope: 'user' };
 
-    await apply(adapter, [entry], 'user', env, manifestPath);
+    await apply({ adapter, entries: [entry], scope: 'user', env, manifestPath });
 
     const expectedTarget = path.join(path.dirname(targets.claudeSettings), 'skills', 'e2e-skill');
     const expectedStore = path.join(targets.skillsDir, 'e2e-skill');
@@ -830,7 +830,7 @@ describe('engine.remove — skill end-to-end', () => {
     const adapter = createClaudeAdapter({ denyRef: [], skillSource });
     const entry: AdapterEntry = { id: 'skill:idempotent-skill', nature: 'skill', scope: 'user' };
 
-    await apply(adapter, [entry], 'user', env, manifestPath);
+    await apply({ adapter, entries: [entry], scope: 'user', env, manifestPath });
     await remove(adapter, [entry], 'user', env, manifestPath);
 
     const result2 = await remove(adapter, [entry], 'user', env, manifestPath);
@@ -847,7 +847,7 @@ describe('non-regression — existing operations unaffected', () => {
     const adapter = createClaudeAdapter({ denyRef: REF_DENY });
     const entry: AdapterEntry = { id: 'guardrails-claude', nature: 'guardrail', scope: 'user' };
 
-    await apply(adapter, [entry], 'user', env, manifestPath);
+    await apply({ adapter, entries: [entry], scope: 'user', env, manifestPath });
     const report = await check(adapter, [entry], 'user', env);
 
     expect(reportExitCode(report)).toBe(0);
@@ -860,7 +860,7 @@ describe('non-regression — existing operations unaffected', () => {
     const adapter = createClaudeAdapter({ denyRef: [], skillSource });
     const entry: AdapterEntry = { id: 'skill:check-skill', nature: 'skill', scope: 'user' };
 
-    await apply(adapter, [entry], 'user', env, manifestPath);
+    await apply({ adapter, entries: [entry], scope: 'user', env, manifestPath });
     const report = await check(adapter, [entry], 'user', env);
 
     expect(reportExitCode(report)).toBe(0);

@@ -152,7 +152,13 @@ describe('opencode plugin e2e — user scope via core engine', () => {
 
       // 2. Apply installs the module: the write targets the symlink path, and the
       //    security scanner is invoked through the engine path with the source.
-      const applied = await apply(adapter, [entry], 'user', env, targets.stateJson);
+      const applied = await apply({
+        adapter,
+        entries: [entry],
+        scope: 'user',
+        env,
+        manifestPath: targets.stateJson,
+      });
       expect(applied.written).toContain(target);
       expect(scanner.calls).toEqual([srcFile]);
 
@@ -176,7 +182,13 @@ describe('opencode plugin e2e — user scope via core engine', () => {
       expect(after.entries[0]!.state).toBe('present');
 
       // 6. Second apply is a no-op (idempotent): nothing written, scanner untouched.
-      const applied2 = await apply(adapter, [entry], 'user', env, targets.stateJson);
+      const applied2 = await apply({
+        adapter,
+        entries: [entry],
+        scope: 'user',
+        env,
+        manifestPath: targets.stateJson,
+      });
       expect(applied2.written).toHaveLength(0);
       expect(scanner.calls).toEqual([srcFile]);
 
@@ -199,7 +211,7 @@ describe('opencode plugin e2e — user scope via core engine', () => {
     const targets = resolveUserTargets(env);
     const adapter = createOpencodeAdapter({ pluginSource, scanner: makeSpyScanner() });
 
-    await apply(adapter, [entry], 'user', env, targets.stateJson);
+    await apply({ adapter, entries: [entry], scope: 'user', env, manifestPath: targets.stateJson });
 
     // A file the user hand-placed next to the managed plugin (its basename does
     // not collide with the managed plugin name).

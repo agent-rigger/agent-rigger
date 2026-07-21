@@ -124,7 +124,7 @@ describe('rollback: newly-created files', () => {
     });
 
     await expect(
-      apply(adapter, [entry('good'), entry('bad')], 'user', env, manifestPath),
+      apply({ adapter, entries: [entry('good'), entry('bad')], scope: 'user', env, manifestPath }),
     ).rejects.toBeInstanceOf(RollbackTestError);
 
     expect(await exists(fileA)).toBe(false); // orphan deleted
@@ -140,7 +140,7 @@ describe('rollback: newly-created files', () => {
     });
 
     await expect(
-      apply(adapter, [entry('bad')], 'user', env, manifestPath),
+      apply({ adapter, entries: [entry('bad')], scope: 'user', env, manifestPath }),
     ).rejects.toBeInstanceOf(RollbackTestError);
 
     expect(await exists(fileB)).toBe(false); // partial write cleaned
@@ -164,7 +164,7 @@ describe('rollback: pre-existing files', () => {
     });
 
     await expect(
-      apply(adapter, [entry('good'), entry('bad')], 'user', env, manifestPath),
+      apply({ adapter, entries: [entry('good'), entry('bad')], scope: 'user', env, manifestPath }),
     ).rejects.toBeInstanceOf(RollbackTestError);
 
     expect(await readText(fileA)).toBe('ORIGINAL'); // restored, not 'MODIFIED'
@@ -182,7 +182,13 @@ describe('rollback: pre-existing files', () => {
     });
 
     await expect(
-      apply(adapter, [entry('e1'), entry('e2'), entry('e3')], 'user', env, manifestPath),
+      apply({
+        adapter,
+        entries: [entry('e1'), entry('e2'), entry('e3')],
+        scope: 'user',
+        env,
+        manifestPath,
+      }),
     ).rejects.toBeInstanceOf(RollbackTestError);
 
     // First-backup-wins → restored to ORIGINAL, not V1.
@@ -204,7 +210,7 @@ describe('rollback: manifest', () => {
     });
 
     await expect(
-      apply(adapter, [entry('good'), entry('bad')], 'user', env, manifestPath),
+      apply({ adapter, entries: [entry('good'), entry('bad')], scope: 'user', env, manifestPath }),
     ).rejects.toBeInstanceOf(RollbackTestError);
 
     const manifest = await readManifest(manifestPath);
@@ -224,7 +230,13 @@ describe('rollback: manifest', () => {
     });
 
     await expect(
-      apply(adapter, [entry('good')], 'user', env, badManifestPath),
+      apply({
+        adapter,
+        entries: [entry('good')],
+        scope: 'user',
+        env,
+        manifestPath: badManifestPath,
+      }),
     ).rejects.toBeTruthy();
 
     expect(await exists(fileA)).toBe(false); // rolled back despite adapter success
@@ -245,7 +257,7 @@ describe('rollback: error propagation', () => {
     });
 
     await expect(
-      apply(adapter, [entry('good'), entry('bad')], 'user', env, manifestPath),
+      apply({ adapter, entries: [entry('good'), entry('bad')], scope: 'user', env, manifestPath }),
     ).rejects.toBeInstanceOf(RollbackTestError);
 
     // Side effect of rollback also happened.
@@ -300,7 +312,13 @@ describe('rollback: happy path unaffected', () => {
       e2: [writeTextOp(fileB, 'contentB')],
     });
 
-    const result = await apply(adapter, [entry('e1'), entry('e2')], 'user', env, manifestPath);
+    const result = await apply({
+      adapter,
+      entries: [entry('e1'), entry('e2')],
+      scope: 'user',
+      env,
+      manifestPath,
+    });
 
     expect(await readText(fileA)).toBe('contentA');
     expect(await readText(fileB)).toBe('contentB');

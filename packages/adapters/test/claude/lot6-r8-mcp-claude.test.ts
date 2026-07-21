@@ -359,7 +359,7 @@ describe('lot6-R8: mcp claude end-to-end via engine', () => {
     expect(reportExitCode(c1)).toBe(3);
 
     // 2. apply → delegated add-json; server registered, foreign keys preserved.
-    await apply(adapter, [MCP_ENTRY], 'user', env, manifestPath);
+    await apply({ adapter, entries: [MCP_ENTRY], scope: 'user', env, manifestPath });
     const afterInstall = await readClaudeJson(env);
     const serversAfter = afterInstall['mcpServers'] as Record<string, unknown>;
     expect(serversAfter[SERVER_ID]).toEqual(RENDERED_CONFIG);
@@ -383,7 +383,7 @@ describe('lot6-R8: mcp claude end-to-end via engine', () => {
 
     // 4. 2nd apply: plan is [] (present) → no additional add-json call.
     const addCallsBefore = runner.calls.filter((c) => c.args[1] === 'add-json').length;
-    await apply(adapter, [MCP_ENTRY], 'user', env, manifestPath);
+    await apply({ adapter, entries: [MCP_ENTRY], scope: 'user', env, manifestPath });
     const addCallsAfter = runner.calls.filter((c) => c.args[1] === 'add-json').length;
     expect(addCallsAfter).toBe(addCallsBefore);
 
@@ -430,7 +430,7 @@ describe('lot6-R8: mcp claude end-to-end via engine', () => {
     const prev = process.env['GITHUB_TOKEN'];
     process.env['GITHUB_TOKEN'] = SENTINEL;
     try {
-      await apply(adapter, [MCP_ENTRY], 'user', env, manifestPath);
+      await apply({ adapter, entries: [MCP_ENTRY], scope: 'user', env, manifestPath });
 
       const claudeJsonRaw = await fs.readFile(
         path.join(resolveHome(env), '.claude.json'),

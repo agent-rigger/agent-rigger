@@ -33,10 +33,11 @@ import { isConsented, recordConsent } from '@agent-rigger/core/consent';
 import { apply, enrichWithApplied } from '@agent-rigger/core/engine';
 import { findEntry, readManifest } from '@agent-rigger/core/manifest';
 import type { Env } from '@agent-rigger/core/paths';
-import { resolveHome } from '@agent-rigger/core/paths';
-import type { Manifest, Scope } from '@agent-rigger/core/types';
+import { libsDir, resolveHome } from '@agent-rigger/core/paths';
+import type { LibMaterialization, Manifest, Scope } from '@agent-rigger/core/types';
 
 import type { ArtifactEntry, CatalogEntry } from '@agent-rigger/catalog';
+import { localId } from '@agent-rigger/catalog';
 import { resolveWithEdges } from '@agent-rigger/catalog/resolver';
 import {
   checkTools,
@@ -154,6 +155,42 @@ export interface RunInstallOptions {
    * resolution is itself pre-prune and authoritative.
    */
   requiresById?: Map<string, string[]>;
+  /**
+   * Lib materialisations for the engine's parallel channel (R3). Built CLI-side
+   * by the caller (runRemoteInstall/runUpdate) so the checkout `source` stays
+   * out of the core. runInstall drops lib entries from step 1b (S3 — a lib never
+   * reaches the target-routing predicate, no `[skipped]` line), lists them in
+   * the plan before consent (R3.2), and threads them to `apply({ libs })`.
+   * Absent/empty on a lib-free install.
+   */
+  libs?: LibMaterialization[];
+}
+
+// ---------------------------------------------------------------------------
+// ExplicitLibInstallError — S7 (a lib is never installed directly)
+// ---------------------------------------------------------------------------
+
+/**
+ * Thrown when a lib id is named EXPLICITLY on an install (`rigger install
+ * jr/lib:rules-common`, or an interactive selection of a lib alone). A lib is a
+ * shared dependency: it is materialised only through the artifacts that
+ * `requires` it, never on its own (S7) — installing it alone would leave an
+ * orphaned store no refcount can ever reclaim. The message is actionable and
+ * the CLI maps this to a usage exit (2). Fires on the user's explicit selection
+ * only — a lib pulled transitively by a consumer is never in `selectedIds`.
+ */
+export class ExplicitLibInstallError extends Error {
+  /** The explicitly-selected lib id (as the user typed it). */
+  readonly libId: string;
+
+  constructor(libId: string) {
+    super(
+      `"${libId}" is a lib and cannot be installed directly — a lib is installed `
+        + 'through the artifacts that require it. Install a consumer instead.',
+    );
+    this.name = 'ExplicitLibInstallError';
+    this.libId = libId;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -307,6 +344,19 @@ export async function runInstall(opts: RunInstallOptions): Promise<InstallResult
   const { catalog, adapter, scope, env, manifestPath, selectedIds, confirm } = opts;
   const { versionFor } = opts;
   const summary = opts.summary === true;
+  const libs = opts.libs ?? [];
+
+  // -------------------------------------------------------------------------
+  // Step 0: Refuse an EXPLICIT lib selection (S7). A lib is a shared dependency
+  // installed only through its consumers — never directly. Keyed on the user's
+  // selection (selectedIds), so a lib pulled transitively is unaffected. Fails
+  // before any resolution/materialisation.
+  // -------------------------------------------------------------------------
+
+  const explicitLib = selectedIds.find((id) => localId(id).startsWith('lib:'));
+  if (explicitLib !== undefined) {
+    throw new ExplicitLibInstallError(explicitLib);
+  }
 
   // -------------------------------------------------------------------------
   // Step 1: Resolve selected ids → concrete artifact entries
@@ -317,10 +367,17 @@ export async function runInstall(opts: RunInstallOptions): Promise<InstallResult
   // overrides per id; otherwise the local resolution — itself pre-prune on this
   // path, no cross-catalogue pruning happens here — is authoritative.
   const resolvedWithEdges = resolveWithEdges(selectedIds, catalog);
-  const resolved: ArtifactEntry[] = resolvedWithEdges.map((r) => r.entry);
   const localRequiresById = new Map(resolvedWithEdges.map((r) => [r.entry.id, r.requires]));
   const requiresFor = (id: string): string[] =>
     opts.requiresById?.get(id) ?? localRequiresById.get(id) ?? [];
+
+  // Partition lib entries OUT of the adapter-routed set BEFORE step 1b (S3): a
+  // lib targets no assistant, so targetsAssistant() would drop it into `skipped`
+  // and emit a parasitic `[skipped]` line. Libs are materialised by the engine's
+  // parallel channel (opts.libs), never routed to an adapter.
+  const resolved: ArtifactEntry[] = resolvedWithEdges
+    .map((r) => r.entry)
+    .filter((e) => e.nature !== 'lib');
 
   // -------------------------------------------------------------------------
   // Step 1b: Target routing — split by assistant compatibility (E-targets)
@@ -451,7 +508,16 @@ export async function runInstall(opts: RunInstallOptions): Promise<InstallResult
       + toolEntries.map((e) => `  ${e.id}  →  ${e.check}`).join('\n') + '\n'
     : '';
 
-  const planText = projectNote + renderedPlan + warningsBlock + toolChecksBlock;
+  // R3.2: the lib materialisation is part of the transaction the user consents
+  // to — surface it in the plan BEFORE confirmation (one line per lib naming the
+  // store dir it is posed into). The engine's parallel channel performs the
+  // write under apply({ libs }); this line is what the consent covers.
+  const libsBlock = libs.length > 0
+    ? '\n--- Libs (materialised) ---\n'
+      + libs.map((l) => `  lib ${l.name} → ${path.join(libsDir(env), l.name)}/`).join('\n') + '\n'
+    : '';
+
+  const planText = projectNote + renderedPlan + libsBlock + warningsBlock + toolChecksBlock;
 
   // -------------------------------------------------------------------------
   // Empty plan → already up to date, skip confirm + apply
@@ -486,10 +552,20 @@ export async function runInstall(opts: RunInstallOptions): Promise<InstallResult
     // so, reach apply — WITHOUT a confirmation prompt (only state.json changes).
     const adoptionDue = await isAdoptionDue(adapter, adapterEntries, scope, env, manifest);
 
-    if (adoptionDue) {
-      const applyResult = versionFor === undefined
-        ? await apply(adapter, adapterEntries, scope, env, manifestPath)
-        : await apply(adapter, adapterEntries, scope, env, manifestPath, versionFor);
+    // Reach apply when there is real work despite an empty write-plan: an
+    // adoption to record (R5/D5) OR libs to materialise (R3 — the consumer is
+    // up-to-date but its lib may be fresh/divergent on disk). Otherwise keep the
+    // historical up-to-date short-circuit.
+    if (adoptionDue || libs.length > 0) {
+      const applyResult = await apply({
+        adapter,
+        entries: adapterEntries,
+        scope,
+        env,
+        manifestPath,
+        ...(versionFor === undefined ? {} : { versionFor }),
+        ...(libs.length > 0 ? { libs } : {}),
+      });
 
       const output = buildOutput({
         planText,
@@ -592,9 +668,15 @@ export async function runInstall(opts: RunInstallOptions): Promise<InstallResult
   // Step 6: Apply (backup → write → manifest)
   // -------------------------------------------------------------------------
 
-  const applyResult = versionFor === undefined
-    ? await apply(adapter, adapterEntries, scope, env, manifestPath)
-    : await apply(adapter, adapterEntries, scope, env, manifestPath, versionFor);
+  const applyResult = await apply({
+    adapter,
+    entries: adapterEntries,
+    scope,
+    env,
+    manifestPath,
+    ...(versionFor === undefined ? {} : { versionFor }),
+    ...(libs.length > 0 ? { libs } : {}),
+  });
 
   // -------------------------------------------------------------------------
   // Step 7: Compose output

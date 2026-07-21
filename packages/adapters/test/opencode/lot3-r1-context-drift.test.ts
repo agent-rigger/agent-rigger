@@ -67,7 +67,7 @@ describe('opencode context — lot3 R1 real-adapter drift conservation', () => {
     const targets = resolveOpencodeUserTargets(env);
 
     // Install the opencode context (AGENTS.md = canonical, entry recorded).
-    await apply(adapter, [CONTEXT_ENTRY], 'user', env, manifestPath);
+    await apply({ adapter, entries: [CONTEXT_ENTRY], scope: 'user', env, manifestPath });
     expect(findEntry(await readManifest(manifestPath), 'context-opencode', 'user', 'opencode'))
       .toBeDefined();
 

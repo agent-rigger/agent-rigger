@@ -166,7 +166,13 @@ describe('lot2-R6: cycle over a pre-existing AGENTS.md', () => {
     const adapter = createClaudeAdapter({ denyRef: [], agentsContent: CANONICAL });
 
     // --- install ------------------------------------------------------------
-    await apply(adapter, [CONTEXT_ENTRY], 'user', env, targets.stateJson);
+    await apply({
+      adapter,
+      entries: [CONTEXT_ENTRY],
+      scope: 'user',
+      env,
+      manifestPath: targets.stateJson,
+    });
     expect(await readText(targets.agentsMd)).toBe(CANONICAL);
 
     const manifest = await readManifest(targets.stateJson);
@@ -223,7 +229,13 @@ describe('lot2-R6: AGENTS.md absent before install', () => {
   it('lot2-R6: install records previous=null; remove deletes the file (prior state was absence)', async () => {
     const adapter = createClaudeAdapter({ denyRef: [], agentsContent: CANONICAL });
 
-    await apply(adapter, [CONTEXT_ENTRY], 'user', env, targets.stateJson);
+    await apply({
+      adapter,
+      entries: [CONTEXT_ENTRY],
+      scope: 'user',
+      env,
+      manifestPath: targets.stateJson,
+    });
 
     const manifest = await readManifest(targets.stateJson);
     const entry = findEntry(manifest, 'context-claude', 'user', 'claude');
@@ -265,7 +277,13 @@ describe('lot2-R6: remove over a drifted AGENTS.md', () => {
   it('lot2-R6: remove leaves the drifted bytes untouched, removes the block, drops the entry', async () => {
     await writeText(targets.agentsMd, USER_CONTENT);
     const adapter = createClaudeAdapter({ denyRef: [], agentsContent: CANONICAL });
-    await apply(adapter, [CONTEXT_ENTRY], 'user', env, targets.stateJson);
+    await apply({
+      adapter,
+      entries: [CONTEXT_ENTRY],
+      scope: 'user',
+      env,
+      manifestPath: targets.stateJson,
+    });
 
     // The user enriches the managed file after install.
     await writeText(targets.agentsMd, DRIFTED);
@@ -295,9 +313,21 @@ describe('lot2-R6: re-install after drift keeps the first install baseline (R1 i
     const adapter = createClaudeAdapter({ denyRef: [], agentsContent: CANONICAL });
 
     // Install #1 over the user's file, then user drift, then repair install.
-    await apply(adapter, [CONTEXT_ENTRY], 'user', env, targets.stateJson);
+    await apply({
+      adapter,
+      entries: [CONTEXT_ENTRY],
+      scope: 'user',
+      env,
+      manifestPath: targets.stateJson,
+    });
     await writeText(targets.agentsMd, DRIFTED);
-    await apply(adapter, [CONTEXT_ENTRY], 'user', env, targets.stateJson);
+    await apply({
+      adapter,
+      entries: [CONTEXT_ENTRY],
+      scope: 'user',
+      env,
+      manifestPath: targets.stateJson,
+    });
 
     // The repair overwrote the drift with canonical content…
     expect(await readText(targets.agentsMd)).toBe(CANONICAL);
@@ -338,8 +368,20 @@ describe('lot2-R6: AGENTS.md shared between assistants', () => {
 
       // opencode first (a second install over matching content would plan
       // nothing), then claude (non-empty plan: the CLAUDE.md block is missing).
-      await apply(opencode, [entry], 'project', env, targets.stateJson);
-      await apply(claude, [entry], 'project', env, targets.stateJson);
+      await apply({
+        adapter: opencode,
+        entries: [entry],
+        scope: 'project',
+        env,
+        manifestPath: targets.stateJson,
+      });
+      await apply({
+        adapter: claude,
+        entries: [entry],
+        scope: 'project',
+        env,
+        manifestPath: targets.stateJson,
+      });
 
       // Both manifest entries reference the same <cwd>/AGENTS.md.
       const manifest = await readManifest(targets.stateJson);
@@ -424,7 +466,13 @@ describe('lot2-R6: retro-compat — legacy entry without previous', () => {
   it('lot2-R6: engine remove of a legacy entry deletes the exactly-matching file (degraded but safe)', async () => {
     await writeText(targets.agentsMd, USER_CONTENT);
     const adapter = createClaudeAdapter({ denyRef: [], agentsContent: CANONICAL });
-    await apply(adapter, [CONTEXT_ENTRY], 'user', env, targets.stateJson);
+    await apply({
+      adapter,
+      entries: [CONTEXT_ENTRY],
+      scope: 'user',
+      env,
+      manifestPath: targets.stateJson,
+    });
     await stripPrevious(targets.stateJson);
 
     await remove(adapter, [CONTEXT_ENTRY], 'user', env, targets.stateJson);
@@ -442,14 +490,26 @@ describe('lot2-R6: retro-compat — legacy entry without previous', () => {
     // while dropping the entry: orphaned managed content the tool can no
     // longer uninstall (the exact class R6/ADR-0016 forbids).
     const adapter = createClaudeAdapter({ denyRef: [], agentsContent: CANONICAL });
-    await apply(adapter, [CONTEXT_ENTRY], 'user', env, targets.stateJson);
+    await apply({
+      adapter,
+      entries: [CONTEXT_ENTRY],
+      scope: 'user',
+      env,
+      manifestPath: targets.stateJson,
+    });
     await stripApplied(targets.stateJson);
 
     // User deletes the CLAUDE.md managed block; AGENTS.md stays canonical.
     await writeText(targets.claudeMd, '# my own claude config\n');
 
     // Repair install re-adds the block.
-    await apply(adapter, [CONTEXT_ENTRY], 'user', env, targets.stateJson);
+    await apply({
+      adapter,
+      entries: [CONTEXT_ENTRY],
+      scope: 'user',
+      env,
+      manifestPath: targets.stateJson,
+    });
     expect(await readText(targets.claudeMd)).toContain(
       '<!-- BEGIN agent-rigger (managed — do not edit) -->',
     );
@@ -483,7 +543,13 @@ describe('lot2-R6: retro-compat — legacy entry without previous', () => {
   it('lot2-R6: a legacy entry NEVER deletes a drifted file', async () => {
     const DRIFTED = `${CANONICAL}\nuser work\n`;
     const adapter = createClaudeAdapter({ denyRef: [], agentsContent: CANONICAL });
-    await apply(adapter, [CONTEXT_ENTRY], 'user', env, targets.stateJson);
+    await apply({
+      adapter,
+      entries: [CONTEXT_ENTRY],
+      scope: 'user',
+      env,
+      manifestPath: targets.stateJson,
+    });
     await stripPrevious(targets.stateJson);
     await writeText(targets.agentsMd, DRIFTED);
 
@@ -518,7 +584,13 @@ describe('lot2-R6: audit distinguishes drift from absence', () => {
 
   it('lot2-R6: check exits 3 on a drifted context (engine round-trip)', async () => {
     const adapter = createClaudeAdapter({ denyRef: [], agentsContent: CANONICAL });
-    await apply(adapter, [CONTEXT_ENTRY], 'user', env, targets.stateJson);
+    await apply({
+      adapter,
+      entries: [CONTEXT_ENTRY],
+      scope: 'user',
+      env,
+      manifestPath: targets.stateJson,
+    });
     await writeText(targets.agentsMd, `${CANONICAL}\nuser addition\n`);
 
     const report = await check(adapter, [CONTEXT_ENTRY], 'user', env, targets.stateJson);

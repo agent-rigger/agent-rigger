@@ -26,15 +26,19 @@ import path from 'node:path';
 import type { Adapter, AdapterEntry } from './adapter';
 import { mergeApplied, mergeFiles } from './applied-merge';
 import { backup, backupDir, removeDir, removeFile, restore } from './backup';
+import { contentMatchesStore, syncToStore } from './linker';
 import { findEntry, readManifest, upsertEntry, writeManifest } from './manifest';
 import { mergePermission } from './opencode-json';
+import { libsDir } from './paths';
 import type { Env } from './paths';
 import { acquireRunLock, type RunLock } from './run-lock';
 import type {
   AppliedPayload,
   Assistant,
   ClaudeMcpServer,
+  LibMaterialization,
   Manifest,
+  ManifestAssistant,
   ManifestEntry,
   Nature,
   OpencodeMcpServer,
@@ -290,29 +294,47 @@ export function reportExitCode(report: Report): 0 | 3 {
  *     leaves the previous state.json intact (its content is not restored here).
  * See rollbackApply / rollbackCreatedDirs / rollbackCompensations.
  *
- * @param adapter       The adapter to use for planning and writing.
- * @param entries       Catalog entries to install.
- * @param scope         Installation scope ('user' | 'project').
- * @param env           Injectable env for HOME resolution.
- * @param manifestPath  Absolute path to state.json (e.g. from resolveUserTargets).
- * @param versionFor    Optional seam: maps an entry to its ref/sha for the
- *                      manifest. When omitted the defaults apply (ref:'v0.0.0', sha:'').
- * @param lock          Optional held run lock (R7/D7). When supplied the engine
- *                      runs under it without acquiring or releasing (cmd-update's
- *                      single hold across remove+apply); when omitted apply
- *                      self-acquires and releases it.
+ * Parameters are a single {@link ApplyOptions} object (ratified GATE DESIGN
+ * point 4, lib-nature): the signature already carried adapter/entries/scope/
+ * env/manifestPath/versionFor/lock, and `libs` would have made it an 8th
+ * positional — an options bag keeps every call site readable and lets a lib-free
+ * install omit `libs` entirely.
  */
-export async function apply(
-  adapter: Adapter,
-  entries: AdapterEntry[],
-  scope: Scope,
-  env: Env,
-  manifestPath: string,
-  versionFor?: (
-    entry: AdapterEntry,
-  ) => { ref: string; sha: string },
-  lock?: RunLock,
-): Promise<ApplyResult> {
+export interface ApplyOptions {
+  /** The adapter to use for planning and writing. */
+  adapter: Adapter;
+  /** Catalog entries to install. */
+  entries: AdapterEntry[];
+  /** Installation scope ('user' | 'project'). */
+  scope: Scope;
+  /** Injectable env for HOME resolution. */
+  env: Env;
+  /** Absolute path to state.json (e.g. from resolveUserTargets). */
+  manifestPath: string;
+  /**
+   * Optional seam: maps an entry to its ref/sha for the manifest. When omitted
+   * the defaults apply (ref:'v0.0.0', sha:'').
+   */
+  versionFor?: (entry: AdapterEntry) => { ref: string; sha: string };
+  /**
+   * Optional held run lock (R7/D7). When supplied the engine runs under it
+   * without acquiring or releasing (cmd-update's single hold across
+   * remove+apply); when omitted apply self-acquires and releases it.
+   */
+  lock?: RunLock;
+  /**
+   * Libs to materialise on a channel PARALLEL to the adapter loop (R3,
+   * lib-nature). Each is synced into `libsDir(env)/<name>` inside the SAME
+   * transaction (shared rollback ledger + createdDirs, shared manifest persist)
+   * BEFORE the adapter entries — never an AdapterEntry, never seen by
+   * adapter.plan/audit/planRemove (S3: no `[skipped]` line by partition).
+   * Absent/empty on a lib-free install.
+   */
+  libs?: LibMaterialization[];
+}
+
+export async function apply(options: ApplyOptions): Promise<ApplyResult> {
+  const { adapter, entries, scope, env, manifestPath, versionFor, lock, libs } = options;
   // R7/D7 — serialise the read-modify-write window across processes. When a
   // `lock` handle is supplied (cmd-update holds ONE across remove+apply) the
   // engine neither acquires nor releases it — the caller owns the lifecycle.
@@ -324,7 +346,7 @@ export async function apply(
     ? await acquireRunLock(manifestPath, { warn: (m) => lockWarnings.push(m) })
     : undefined;
   try {
-    const result = await applyInner(adapter, entries, scope, env, manifestPath, versionFor);
+    const result = await applyInner(adapter, entries, scope, env, manifestPath, versionFor, libs);
     return lockWarnings.length === 0
       ? result
       : { ...result, warnings: [...lockWarnings, ...result.warnings] };
@@ -342,6 +364,7 @@ async function applyInner(
   versionFor?: (
     entry: AdapterEntry,
   ) => { ref: string; sha: string },
+  libs?: LibMaterialization[],
 ): Promise<ApplyResult> {
   let manifest = await readManifest(manifestPath);
 
@@ -402,6 +425,60 @@ async function applyInner(
   const seenDirs = new Set<string>();
 
   try {
+    // -----------------------------------------------------------------------
+    // Lib materialisation channel (R3, design.md §1) — PARALLEL to the adapter
+    // loop, NOT inside it. Runs FIRST (deps-first: a lib exists on disk before
+    // its consumer is posed) and shares this try's rollback: a fresh lib dir
+    // joins `createdDirs`, so a later adapter-entry failure rm's it via the
+    // existing layer-B rollback (rollbackCreatedDirs) — zero new compensation
+    // channel, orphan-safe by construction (ADR-0027). A lib is never an
+    // AdapterEntry: adapter.plan/audit/planRemove never see it (S3, no
+    // `[skipped]` line by partition), and it depends on nothing, so its
+    // manifest entry is the global singleton (id, 'user', 'shared') (S2).
+    for (const lib of libs ?? []) {
+      // dest is store-side and assistant-agnostic (libsDir, ~/.config/.../libs);
+      // scope is constant 'user' for a lib regardless of the transaction scope,
+      // so the manifest triple (id, 'user', 'shared') stays a single global
+      // record across every consumer transaction (design.md §2).
+      const dest = path.join(libsDir(env), lib.name);
+      const destExists = await pathExists(dest);
+      if (!destExists) {
+        // Fresh: track for layer-B rollback (rm'd on throw), then sync. No new
+        // compensation — createdDirs already carries the undo.
+        createdDirs.add(dest);
+        await syncToStore(lib.source, dest);
+      } else if (!(await contentMatchesStore(lib.source, dest))) {
+        // Divergent re-install: back the whole store up BEFORE the destructive
+        // re-sync (ratified point 3 — the multi-artefact blast radius of a
+        // botched re-sync justifies paying more than the skills' Tier-1 posture,
+        // which does not back up a re-installed store).
+        const dirBak = await backupDir(dest);
+        if (dirBak !== null) {
+          allBackedUp.push(dirBak);
+        }
+        await syncToStore(lib.source, dest);
+      }
+      // else — identical content already on disk → no re-sync (idempotent).
+
+      // Record the single global entry regardless of the sync decision
+      // (adoption = idempotence): a 2nd transaction resolving the same lib
+      // upserts the identical (id, 'user', 'shared') triple, never a duplicate.
+      // buildManifestEntry copies lib.requires verbatim (opaque — empty for a
+      // real lib, which is depended upon but depends on nothing).
+      const libVersion = versionFor === undefined
+        ? undefined
+        : versionFor({ id: lib.id, nature: 'lib', scope: 'user' });
+      const libEntry = buildManifestEntry(
+        { id: lib.id, nature: 'lib', scope: 'user', requires: lib.requires },
+        'user',
+        [dest],
+        'shared',
+        libVersion,
+      );
+      manifest = upsertEntry(manifest, libEntry);
+      mutations.push({ kind: 'upsert', entry: libEntry });
+    }
+
     for (const entry of entries) {
       // Enrich the entry with its pre-existing manifest `applied` payload
       // before planning (R1/D8). Additive: handlers that ignore `applied` are
@@ -1082,7 +1159,7 @@ function buildManifestEntry(
   entry: AdapterEntry,
   scope: Scope,
   files: string[],
-  assistant: Assistant,
+  assistant: ManifestAssistant,
   version?: { ref: string; sha: string },
   applied?: AppliedPayload,
 ): ManifestEntry {

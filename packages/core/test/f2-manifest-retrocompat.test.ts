@@ -124,7 +124,7 @@ afterEach(async () => {
 describe('legacy manifest routed to claude', () => {
   it('legacy state.json is genuinely pre-M3 shaped (no assistant, stray source, keeps applied)', async () => {
     const adapter = createClaudeAdapter({ denyRef: REF_DENY });
-    await apply(adapter, [GUARDRAIL_ENTRY], 'user', env, manifestPath);
+    await apply({ adapter, entries: [GUARDRAIL_ENTRY], scope: 'user', env, manifestPath });
     await legacyizeManifest(manifestPath);
 
     // Guards the whole suite: assert the fixture really is legacy so no later
@@ -144,7 +144,7 @@ describe('legacy manifest routed to claude', () => {
 
   it('check routes the legacy entry to the claude adapter and audits it present', async () => {
     const adapter = createClaudeAdapter({ denyRef: REF_DENY });
-    await apply(adapter, [GUARDRAIL_ENTRY], 'user', env, manifestPath);
+    await apply({ adapter, entries: [GUARDRAIL_ENTRY], scope: 'user', env, manifestPath });
     await legacyizeManifest(manifestPath);
 
     const report = await check(adapter, [GUARDRAIL_ENTRY], 'user', env, manifestPath);
@@ -158,7 +158,7 @@ describe('legacy manifest routed to claude', () => {
 
   it('remove operates on the legacy entry (routes to claude, not skipped, not dropped)', async () => {
     const adapter = createClaudeAdapter({ denyRef: REF_DENY });
-    await apply(adapter, [GUARDRAIL_ENTRY], 'user', env, manifestPath);
+    await apply({ adapter, entries: [GUARDRAIL_ENTRY], scope: 'user', env, manifestPath });
     await legacyizeManifest(manifestPath);
 
     // Precondition: managed deny rules really are on disk before remove.
@@ -189,7 +189,7 @@ describe('legacy manifest routed to claude', () => {
 describe('legacy entry is not mis-selected by opencode', () => {
   it('opencode check does not see the legacy claude entry as present', async () => {
     const claude = createClaudeAdapter({ denyRef: REF_DENY });
-    await apply(claude, [GUARDRAIL_ENTRY], 'user', env, manifestPath);
+    await apply({ adapter: claude, entries: [GUARDRAIL_ENTRY], scope: 'user', env, manifestPath });
     await legacyizeManifest(manifestPath);
 
     const opencode = createOpencodeAdapter({});
@@ -204,7 +204,7 @@ describe('legacy entry is not mis-selected by opencode', () => {
 
   it('opencode remove is a no-op: it neither drops the legacy entry nor touches claude settings', async () => {
     const claude = createClaudeAdapter({ denyRef: REF_DENY });
-    await apply(claude, [GUARDRAIL_ENTRY], 'user', env, manifestPath);
+    await apply({ adapter: claude, entries: [GUARDRAIL_ENTRY], scope: 'user', env, manifestPath });
     await legacyizeManifest(manifestPath);
 
     const opencode = createOpencodeAdapter({});
@@ -235,11 +235,11 @@ describe('fresh claude entry coexists with a legacy entry', () => {
     const adapter = createClaudeAdapter({ denyRef: REF_DENY, agentsContent: AGENTS_CONTENT });
 
     // 1) Install a guardrail, then down-convert it to a pre-M3 legacy entry.
-    await apply(adapter, [GUARDRAIL_ENTRY], 'user', env, manifestPath);
+    await apply({ adapter, entries: [GUARDRAIL_ENTRY], scope: 'user', env, manifestPath });
     await legacyizeManifest(manifestPath);
 
     // 2) Freshly install a second artifact — the engine stamps assistant='claude'.
-    await apply(adapter, [CONTEXT_ENTRY], 'user', env, manifestPath);
+    await apply({ adapter, entries: [CONTEXT_ENTRY], scope: 'user', env, manifestPath });
 
     // Coexistence on disk: two artifacts; the legacy one still has NO assistant
     // (the fresh install did not clobber or re-stamp it), the fresh one is

@@ -124,7 +124,13 @@ async function main(): Promise<void> {
     console.info('exit  :', reportExitCode(before), '(3 = incomplete)');
 
     rule('2) apply');
-    const res1 = await apply(denyAdapter, [ENTRY], 'user', env, targets.stateJson);
+    const res1 = await apply({
+      adapter: denyAdapter,
+      entries: [ENTRY],
+      scope: 'user',
+      env,
+      manifestPath: targets.stateJson,
+    });
     console.info('written  :', res1.written);
     console.info('backedUp :', res1.backedUp, '(settings.json existed -> backed up)');
     console.info('settings.json now:\n' + (await readText(targets.claudeSettings)));
@@ -135,7 +141,13 @@ async function main(): Promise<void> {
     console.info('exit  :', reportExitCode(after), '(0 = complete)');
 
     rule('4) apply again (idempotent)');
-    const res2 = await apply(denyAdapter, [ENTRY], 'user', env, targets.stateJson);
+    const res2 = await apply({
+      adapter: denyAdapter,
+      entries: [ENTRY],
+      scope: 'user',
+      env,
+      manifestPath: targets.stateJson,
+    });
     console.info('written  :', res2.written, '(empty = no-op)');
     console.info('backedUp :', res2.backedUp, '(empty = nothing rewritten)');
 

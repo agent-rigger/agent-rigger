@@ -479,7 +479,7 @@ describe('createClaudeAdapter — plugin end-to-end via engine', () => {
     expect(report1.entries[0]!.state).toBe('missing');
 
     // 2. apply: triggers marketplace add + install
-    await apply(adapter, [PLUGIN_ENTRY], 'user', env, manifestPath);
+    await apply({ adapter, entries: [PLUGIN_ENTRY], scope: 'user', env, manifestPath });
     expect(installCount).toBe(1);
 
     // 3. check after apply: present
@@ -489,7 +489,7 @@ describe('createClaudeAdapter — plugin end-to-end via engine', () => {
 
     // 4. 2nd apply: plan returns [] (already present) → no additional installs
     const prevInstallCount = installCount;
-    await apply(adapter, [PLUGIN_ENTRY], 'user', env, manifestPath);
+    await apply({ adapter, entries: [PLUGIN_ENTRY], scope: 'user', env, manifestPath });
     expect(installCount).toBe(prevInstallCount);
   });
 
@@ -505,7 +505,7 @@ describe('createClaudeAdapter — plugin end-to-end via engine', () => {
     const targets = resolveUserTargets(env);
     const manifestPath = targets.stateJson;
 
-    await apply(adapter, [PLUGIN_ENTRY], 'user', env, manifestPath);
+    await apply({ adapter, entries: [PLUGIN_ENTRY], scope: 'user', env, manifestPath });
 
     // Filter list calls (from audit in plan), keep only apply calls
     const applyCalls = spyRunner.calls.filter((c) => !c.args.includes('list'));
@@ -527,7 +527,7 @@ describe('createClaudeAdapter — plugin end-to-end via engine', () => {
     const manifestPath = targets.stateJson;
 
     await expect(
-      apply(adapter, [PLUGIN_ENTRY], 'user', env, manifestPath),
+      apply({ adapter, entries: [PLUGIN_ENTRY], scope: 'user', env, manifestPath }),
     ).rejects.toBeInstanceOf(PluginInstallError);
   });
 });

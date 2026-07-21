@@ -39,7 +39,7 @@ import { findEntry, readManifest } from '@agent-rigger/core/manifest';
 import type { Env } from '@agent-rigger/core/paths';
 import { constantScanner } from '@agent-rigger/core/scan';
 import type { Scanner } from '@agent-rigger/core/scan';
-import type { Manifest, Scope, Verdict } from '@agent-rigger/core/types';
+import type { LibMaterialization, Manifest, Scope, Verdict } from '@agent-rigger/core/types';
 
 import {
   type ArtifactEntry,
@@ -61,6 +61,7 @@ import { buildAdapter } from './adapter-dispatch';
 import { CLI_COMMAND } from './cli';
 import type { InstallResult } from './cmd-install';
 import { runInstall, targetsAssistant } from './cmd-install';
+import { scanPathFor } from './scan-paths';
 import { materializeUnion } from './scan-staging';
 import { resolveSecretOverrides } from './secret-collect';
 
@@ -184,6 +185,50 @@ function pruneSatisfiedRequires(
     const pruned = entry.requires.filter((r) => !externallySatisfied.has(r));
     return pruned.length === entry.requires.length ? entry : { ...entry, requires: pruned };
   });
+}
+
+// ---------------------------------------------------------------------------
+// buildLibMaterializations — lib descriptors for the engine's parallel channel
+// ---------------------------------------------------------------------------
+
+/**
+ * Build a `LibMaterialization` for every lib in a resolved selection, so the
+ * engine's parallel channel (R3, `apply({ libs })`) can pose it — CLI-side,
+ * because the checkout `source` is a layout the core must never derive (D2,
+ * design.md §1 "split checkout/store").
+ *
+ * The `source` is `scanPathFor(entry, baseDir)[0]` — the SAME path the scan gate
+ * (materializeUnion) mirrored into the scanned union. This is the R2 invariant:
+ * the octet materialised IS the octet scanned. `applySkill` carries the only
+ * apply-time re-check and never sees a lib, so `scanEntries` is the unique
+ * barrier on these bytes — a source drifting from the scanned path would run
+ * unscanned bytes by import. The pin test (t4 model) freezes this equality.
+ *
+ * `requires` is copied verbatim from the pre-prune, qualified edge map (S4) —
+ * opaque transport; a real lib depends on nothing, so it is `[]`.
+ *
+ * Shared by runRemoteInstall and runUpdate (single source of the source
+ * computation — DRY, and the pin has one thing to freeze).
+ */
+export function buildLibMaterializations(
+  resolved: ArtifactEntry[],
+  baseDir: string,
+  requiresById: Map<string, string[]>,
+): LibMaterialization[] {
+  return resolved
+    .filter((e) => e.nature === 'lib')
+    .map((e) => {
+      const name = localId(e.id).replace(/^lib:/, '');
+      const paths = scanPathFor(e, baseDir);
+      const source = paths[0];
+      if (source === undefined) {
+        // Unreachable: scanPathFor('lib') always returns exactly one path
+        // (scan-paths.ts). Guarded so a future layout regression fails loud
+        // instead of materialising from `undefined`.
+        throw new Error(`lib ${e.id} has no checkout path (scanPathFor returned empty)`);
+      }
+      return { id: e.id, name, source, requires: requiresById.get(e.id) ?? [] };
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -500,6 +545,13 @@ export async function runRemoteInstall(opts: {
         rawResolvedWithEdges.map((r) => [qualify(r.entry.id), r.requires.map(qualify)]),
       );
 
+      // Lib materialisations (R3): descriptors for the engine's parallel
+      // channel, built CLI-side so `source` = scanPathFor('lib')[0] (the pinned
+      // scanned path — R2). Partitioned OUT of the adapter loop by runInstall
+      // (S3: a lib never reaches step 1b, no `[skipped]` line) and threaded to
+      // apply({ libs }). Empty on a lib-free selection.
+      const libs = buildLibMaterializations(resolved, dir, requiresById);
+
       // Qualify the effective catalog using qualifyEntries so that pack members,
       // requires, and ids are ALL qualified (not just the top-level id field).
       // This prevents UnknownEntryError when resolve() tries to look up pack members.
@@ -614,10 +666,21 @@ export async function runRemoteInstall(opts: {
           : { secretOverrides }),
       });
 
+      // A lib is remote content (its bytes come from THIS checkout) but it is
+      // excluded from remoteIds (targets: [], S3) so it never routes to an
+      // adapter. It must still be stamped with the REAL catalogue ref/sha: a
+      // v0.0.0/'' lib entry is a permanent, inextinguishable doctor missing-sha
+      // finding (update re-stamps '') and makes "the audit verifies its bytes"
+      // structurally impossible, asymmetric with the consumers from the same
+      // checkout. Union the lib ids into the version-eligible set WITHOUT
+      // touching remoteIds (externalIds/adapter stay intact); a real ref/sha
+      // never makes a lib a direct-update candidate — its 'shared' assistant
+      // keeps it non-candidate.
+      const remoteVersionIds = new Set([...remoteIds, ...libs.map((l) => l.id)]);
       const versionFor = (
         entry: { id: string },
       ): { ref: string; sha: string } => {
-        if (remoteIds.has(entry.id)) {
+        if (remoteVersionIds.has(entry.id)) {
           return { ref: version.ref, sha: version.sha };
         }
         return { ref: 'v0.0.0', sha: '' };
@@ -642,6 +705,9 @@ export async function runRemoteInstall(opts: {
         // cross-catalogue require persists on its requirer even though it was
         // pruned from the install graph.
         requiresById,
+        // Lib materialisations (R3): posed by the engine's parallel channel,
+        // never by the adapter. runInstall partitions them out of step 1b.
+        libs,
       });
 
       if (warnings.length === 0) {

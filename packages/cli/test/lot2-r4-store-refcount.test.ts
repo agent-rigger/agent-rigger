@@ -120,7 +120,7 @@ describe('lot2-R4 — runRemove plan output announces the store fate', () => {
     const adapter = createClaudeAdapter({ denyRef: [], skillSource: () => srcDir });
     const entry: AdapterEntry = { id: 'skill:solo', nature: 'skill', scope: 'user' };
 
-    await apply(adapter, [entry], 'user', env, manifestPath);
+    await apply({ adapter, entries: [entry], scope: 'user', env, manifestPath });
 
     const result = await runRemove({
       adapter,
@@ -141,7 +141,7 @@ describe('lot2-R4 — runRemove plan output announces the store fate', () => {
     const adapter = createClaudeAdapter({ denyRef: [], skillSource: () => srcDir });
     const entry: AdapterEntry = { id: 'skill:shared', nature: 'skill', scope: 'user' };
 
-    await apply(adapter, [entry], 'user', env, manifestPath);
+    await apply({ adapter, entries: [entry], scope: 'user', env, manifestPath });
 
     // A second reference: an opencode-style symlink pointing at the same store.
     const store = skillStorePath('shared');
@@ -170,7 +170,7 @@ describe('lot2-R4 — runRemove plan output announces the store fate', () => {
     const adapter = createClaudeAdapter({ denyRef: [], skillSource: () => srcDir });
     const userEntry: AdapterEntry = { id: 'skill:foo', nature: 'skill', scope: 'user' };
 
-    await apply(adapter, [userEntry], 'user', env, manifestPath);
+    await apply({ adapter, entries: [userEntry], scope: 'user', env, manifestPath });
 
     // Simulate a project install performed from ANOTHER cwd: a symlink under
     // projA plus a manifest entry whose `files` records that target. Neither

@@ -218,7 +218,7 @@ describe('obs1-R1 — plugin reads never spawn', () => {
     });
     const manifestPath = resolveUserTargets(env).stateJson;
 
-    const result = await apply(adapter, [ENTRY], 'user', env, manifestPath);
+    const result = await apply({ adapter, entries: [ENTRY], scope: 'user', env, manifestPath });
 
     expect(result.adopted).toContain(ENTRY.id);
     // Adoption spawned nothing — the plugin was already on disk.

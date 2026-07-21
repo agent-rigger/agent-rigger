@@ -143,7 +143,7 @@ describe('obs1-R2 (fix post-review): engine.remove never purges the manifest on 
     });
     const manifestPath = resolveUserTargets(env).stateJson;
 
-    await apply(adapter, [ENTRY], 'user', env, manifestPath);
+    await apply({ adapter, entries: [ENTRY], scope: 'user', env, manifestPath });
     const afterInstall = await readManifest(manifestPath);
     expect(findEntry(afterInstall, ENTRY.id, 'user', 'claude')).toBeDefined();
 
@@ -177,7 +177,7 @@ describe('obs1-R2 (fix post-review): engine.remove never purges the manifest on 
     });
     const manifestPath = resolveUserTargets(env).stateJson;
 
-    await apply(adapter, [ENTRY], 'user', env, manifestPath);
+    await apply({ adapter, entries: [ENTRY], scope: 'user', env, manifestPath });
 
     // Simulate a hand-uninstall: the ledger file is removed entirely.
     const { installedPluginsPath } = resolvePluginPaths(env);

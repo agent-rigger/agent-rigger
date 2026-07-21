@@ -61,6 +61,7 @@ import { handleConfig } from './cmd-config';
 import { runDoctor, runDoctorState } from './cmd-doctor';
 import { runInit } from './cmd-init';
 import type { CatalogProposal } from './cmd-init';
+import { ExplicitLibInstallError } from './cmd-install';
 import type { RunLsResult } from './cmd-ls';
 import { RESOURCE_NATURE_MAP, runLs } from './cmd-ls';
 import { NotInstalledError, runRemove } from './cmd-remove';
@@ -3150,6 +3151,15 @@ function handleError(err: unknown, print: (msg: string) => void): number {
     // R3 (lot 6, D3): a cross-catalogue require is not installed for this
     // scope/assistant. Actionable — names the requirer, the chain, and the
     // exact command to run first. Nothing was resolved/scanned/written.
+    print(`[error] ${err.message}`);
+    return 2;
+  }
+
+  if (err instanceof ExplicitLibInstallError) {
+    // S7 (lib-nature): a lib was named explicitly on install. A lib is a shared
+    // dependency installed only through its consumers — an invalid selection,
+    // like an unknown entry or a cross-catalogue miss (exit 2, validation).
+    // Nothing was resolved/scanned/written.
     print(`[error] ${err.message}`);
     return 2;
   }

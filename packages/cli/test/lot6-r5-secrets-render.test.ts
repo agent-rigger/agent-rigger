@@ -357,7 +357,7 @@ describe('lot6-R5: secretRefs lands on the manifest applied payload, names only'
       const entry: AdapterEntry = { id: 'mcp:github', nature: 'mcp', scope: 'user' };
       const manifestPath = path.join(tmp.dir, '.config', 'agent-rigger', 'state.json');
 
-      await apply(adapter, [entry], 'user', env, manifestPath);
+      await apply({ adapter, entries: [entry], scope: 'user', env, manifestPath });
 
       const manifest = await readManifest(manifestPath);
       const stored = manifest.artifacts.find((a) => a.id === 'mcp:github');
@@ -382,7 +382,7 @@ describe('lot6-R5: secretRefs lands on the manifest applied payload, names only'
 
       const entry: AdapterEntry = { id: 'mcp:github', nature: 'mcp', scope: 'user' };
       const manifestPath = path.join(tmp.dir, '.config', 'agent-rigger', 'state.json');
-      await apply(adapter, [entry], 'user', env, manifestPath);
+      await apply({ adapter, entries: [entry], scope: 'user', env, manifestPath });
 
       // Recursively read every file under HOME and confirm the sentinel value
       // never appears — covers state.json, opencode.json, and any .bak file.
@@ -430,7 +430,7 @@ describe('lot6-R5: adoption compares the RENDERED config — no false drift', ()
       const entry: AdapterEntry = { id: 'mcp:github', nature: 'mcp', scope: 'user' };
       const manifestPath = path.join(tmp.dir, '.config', 'agent-rigger', 'state.json');
 
-      const result = await apply(adapter, [entry], 'user', env, manifestPath);
+      const result = await apply({ adapter, entries: [entry], scope: 'user', env, manifestPath });
       expect(result.adopted).toContain('mcp:github');
 
       // The on-disk config must be untouched (adoption never writes config).
