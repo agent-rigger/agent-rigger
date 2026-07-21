@@ -288,6 +288,9 @@ describe('cli-signal-help-naming ④: --force help documents install and update'
     const entry = forceEntry as string;
     expect(entry).toContain('install');
     expect(entry).toContain('update');
+    // lib-nature T5: --force now also bypasses the remove refcount gate, so the
+    // help must name that surface too (behaviour proven in the T5 gate suite).
+    expect(entry).toContain('remove');
     expect(entry).not.toMatch(/\bonly\b/);
   });
 });

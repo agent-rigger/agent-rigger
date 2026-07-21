@@ -64,7 +64,7 @@ import type { CatalogProposal } from './cmd-init';
 import { ExplicitLibInstallError } from './cmd-install';
 import type { RunLsResult } from './cmd-ls';
 import { RESOURCE_NATURE_MAP, runLs } from './cmd-ls';
-import { NotInstalledError, runRemove } from './cmd-remove';
+import { NotInstalledError, RequiredByError, runRemove } from './cmd-remove';
 import { NO_UPDATE_CANDIDATES_MSG, runUpdate } from './cmd-update';
 import { LegacyConfigError, loadConfig } from './config';
 import { auditableGovernanceIds, type CatalogGovernanceMeta } from './governance';
@@ -528,6 +528,7 @@ Resource commands (available verbs: ls, add, info, check, remove, update):
                            Update without confirmation prompt.
   remove <id...>           Uninstall ids (any resource type).
   remove <id...> --yes     Uninstall without confirmation prompt.
+  remove <id...> --force   Uninstall even if still required by another entry (loud warning).
 
 Resources:
   skill | skills           Workflow skills.
@@ -544,7 +545,8 @@ Options:
                                  Target assistant (default: resolved from config/detection,
                                  or prompted; see README § Assistants).
   --yes                         Skip confirmation prompt (non-interactive install only).
-  --force                       Proceed despite blocking scan findings (install and update).
+  --force                       Proceed despite blocking scan findings (install, update) or
+                                the refcount gate — remove a still-required entry (remove).
   --fix                         Repair the installed state (doctor only; consent-driven).
   --remote                      Read configured catalog content for the differential (doctor
                                 only; read-only, fail-closed).
@@ -2763,6 +2765,9 @@ async function handleRemove(opts: HandleRemoveOpts): Promise<number> {
     selectedIds: ids,
     confirm,
     summary: flags['summary'] === true,
+    // R6 --force: bypass the refcount gate with a loud warning instead of a
+    // refusal (same noisy semantics as the scan --force).
+    force: flags['force'] === true,
   });
 
   print(result.output);
@@ -3139,6 +3144,13 @@ function handleError(err: unknown, print: (msg: string) => void): number {
   }
 
   if (err instanceof NotInstalledError) {
+    print(`[error] ${err.message}`);
+    return 2;
+  }
+
+  if (err instanceof RequiredByError) {
+    // R6: a remove refused because a remaining entry still requires one of the
+    // targets. Validation refusal → exit 2, dependents named in the message.
     print(`[error] ${err.message}`);
     return 2;
   }

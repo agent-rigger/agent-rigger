@@ -154,7 +154,7 @@ export interface ApplyResult {
  */
 type ManifestMutation =
   | { kind: 'upsert'; entry: ManifestEntry }
-  | { kind: 'remove'; id: string; scope: Scope; assistant: Assistant };
+  | { kind: 'remove'; id: string; scope: Scope; assistant: ManifestAssistant };
 
 /** Apply one accumulated mutation to a manifest (pure). */
 function applyMutation(manifest: Manifest, mutation: ManifestMutation): Manifest {
@@ -917,6 +917,49 @@ async function removeInner(
 
   try {
     for (const entry of entries) {
+      // lib-nature (T5): a lib entry is removed by the engine on the channel
+      // SYMMETRIC to the T3 materialisation — never through the adapter, which
+      // would raise UnsupportedNatureError (S3). Its manifest identity is the
+      // global singleton (id, 'user', 'shared') (S2), so it is looked up and
+      // dropped on THAT triple, independent of the run's scope/adapter.id. The
+      // store dir(s) it owns (libEntry.files = libsDir/<name>) are backed up as
+      // a whole (parity with the shared-store R3 backup) then removed; a dir
+      // already gone from disk collapses to a manifest-only purge (R6.5) — the
+      // refcount gate (cmd-remove) already refused the removal if it was still
+      // required, so reaching here means the convergence is safe.
+      if (entry.nature === 'lib') {
+        const libEntry = findEntry(manifest, entry.id, 'user', 'shared');
+        if (libEntry === undefined) {
+          // Absent from the manifest → idempotent no-op (never installed or
+          // already removed), same contract as the adapter "not installed" path.
+          continue;
+        }
+        const libDirs = libEntry.files;
+        const present = await Promise.all(libDirs.map(pathExists));
+        if (!present.some((p) => p)) {
+          // Phantom: the dir was hand-removed. Manifest-only convergence, no
+          // disk mutation — reported through the `purged` channel like the
+          // adapter phantom purge above.
+          allPurged.push(entry.id);
+          removedNatures.add('lib');
+          mutations.push({ kind: 'remove', id: entry.id, scope: 'user', assistant: 'shared' });
+          manifest = await persistMerged(manifestPath, mutations);
+          continue;
+        }
+        const libBackupTargets = libDirs.filter(
+          (p, i, arr) => arr.indexOf(p) === i && !backedUpPaths.has(p),
+        );
+        const libBakResults = await Promise.all(libBackupTargets.map((p) => backupDir(p)));
+        libBackupTargets.forEach((p) => backedUpPaths.add(p));
+        allBackedUp.push(...libBakResults.filter((b): b is string => b !== null));
+        await Promise.all(libDirs.map((d) => removeDir(d)));
+        allRemoved.push(entry.id);
+        removedNatures.add('lib');
+        mutations.push({ kind: 'remove', id: entry.id, scope: 'user', assistant: 'shared' });
+        manifest = await persistMerged(manifestPath, mutations);
+        continue;
+      }
+
       const plannedOps = await adapter.planRemove(
         enrichWithApplied(entry, manifest, adapter.id),
         scope,
@@ -1136,7 +1179,7 @@ function removeEntry(
   manifest: Manifest,
   id: string,
   scope: Scope,
-  assistant: Assistant = 'claude',
+  assistant: ManifestAssistant = 'claude',
 ): Manifest {
   return {
     ...manifest,

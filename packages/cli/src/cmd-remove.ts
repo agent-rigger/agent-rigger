@@ -18,20 +18,25 @@
  *   disk only (ADR-0016, realized by lot2-remove-reversible R5).
  */
 
+import { lstat } from 'node:fs/promises';
 import path from 'node:path';
 
 import { isStoreReferenced, storeReferenceCandidates } from '@agent-rigger/adapters';
 import { localId } from '@agent-rigger/catalog';
 import type { Adapter, AdapterEntry } from '@agent-rigger/core/adapter';
+import type { SharedNatureStore } from '@agent-rigger/core/engine';
 import { enrichWithApplied, remove } from '@agent-rigger/core/engine';
 import { findEntry, readManifest } from '@agent-rigger/core/manifest';
 import type { Env } from '@agent-rigger/core/paths';
 import { resolveHome } from '@agent-rigger/core/paths';
-import type { RemovalOpUnlink, Scope } from '@agent-rigger/core/types';
+import type { Manifest, ManifestEntry, RemovalOpUnlink, Scope } from '@agent-rigger/core/types';
 
 import { hookScriptStorePath } from './adapter-builder';
-import { renderRemovalPlan } from './ui';
+import { abbreviatePath, renderRemovalPlan } from './ui';
 import type { PlanRemovalGroup } from './ui';
+
+/** True if `p` exists on disk (file, dir, or symlink); false otherwise. */
+const pathExists = (p: string): Promise<boolean> => lstat(p).then(() => true).catch(() => false);
 
 // ---------------------------------------------------------------------------
 // RemoveCommandResult
@@ -88,6 +93,13 @@ export interface RunRemoveOptions {
    * stay integral in both modes.
    */
   summary?: boolean;
+  /**
+   * R6 --force: bypass the refcount gate (remove an entry still required by a
+   * remaining one) with a loud per-dependent warning instead of a refusal.
+   * Absent/false → the gate fails closed (exit 2). Same "noisy, never silent"
+   * semantics as the scan `--force`.
+   */
+  force?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -128,6 +140,141 @@ export class NotInstalledError extends Error {
 }
 
 // ---------------------------------------------------------------------------
+// RequiredByError — R6 refcount gate
+// ---------------------------------------------------------------------------
+
+/**
+ * One blocked removal: the qualified id the run would remove and the qualified
+ * ids of the remaining manifest entries that still `require` it.
+ */
+export interface RemoveBlock {
+  id: string;
+  dependents: string[];
+}
+
+function buildRequiredByMessage(blocks: RemoveBlock[]): string {
+  const lines = blocks.map(
+    (b) => `  - "${b.id}" is still required by ${b.dependents.map((d) => `"${d}"`).join(', ')}`,
+  );
+  return (
+    'Cannot remove — still required by installed artifacts:\n'
+    + lines.join('\n')
+    + '\nRemove the dependents in the same run, or pass --force to remove anyway '
+    + '(their imports/dependencies will break).'
+  );
+}
+
+/**
+ * Thrown BEFORE any confirm or write when a remove run would drop an entry a
+ * remaining manifest entry still `requires` (R6 — a GENERIC refcount over the
+ * persisted requires graph, every nature, not lib-only). Manifest-first and
+ * offline (R5 of the stock): the graph is read from state.json, no catalog fetch.
+ * The CLI maps it to exit code 2 (validation). `--force` bypasses the throw with
+ * a loud per-dependent warning instead.
+ */
+export class RequiredByError extends Error {
+  constructor(public readonly blocks: RemoveBlock[]) {
+    super(buildRequiredByMessage(blocks));
+    this.name = 'RequiredByError';
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Refcount graph helpers (R6 gate + R7.1 GC)
+// ---------------------------------------------------------------------------
+
+/** Manifest identity key — the (id, scope, assistant) triple upsert/remove use. */
+function manifestEntryKey(entry: ManifestEntry): string {
+  return `${entry.id}\u0000${entry.scope}\u0000${entry.assistant ?? 'claude'}`;
+}
+
+/**
+ * R6 gate — evaluate the requires graph at RUN level (S5): after the WHOLE run is
+ * hypothetically removed, does any REMAINING entry still require one of the
+ * removed ids? The refcount is GLOBAL (S2) — an id kept by another scope/assistant
+ * copy still satisfies the edge, so only an id with NO remaining entry counts as a
+ * block. A `requires` ref this run did not remove is ignored: a pre-existing
+ * broken edge is doctor's job (R7), not a break this removal caused.
+ */
+function computeRefcountBlocks(manifest: Manifest, removedEntries: ManifestEntry[]): RemoveBlock[] {
+  const removedKeys = new Set(removedEntries.map(manifestEntryKey));
+  const remaining = manifest.artifacts.filter((e) => !removedKeys.has(manifestEntryKey(e)));
+  const removedIds = new Set(removedEntries.map((e) => e.id));
+  const remainingIds = new Set(remaining.map((e) => e.id));
+
+  const blockMap = new Map<string, Set<string>>();
+  for (const r of remaining) {
+    for (const req of r.requires ?? []) {
+      if (removedIds.has(req) && !remainingIds.has(req)) {
+        const deps = blockMap.get(req) ?? new Set<string>();
+        deps.add(r.id);
+        blockMap.set(req, deps);
+      }
+    }
+  }
+  return [...blockMap.entries()]
+    .map(([id, deps]) => ({ id, dependents: [...deps].sort() }))
+    .sort((a, b) => a.id.localeCompare(b.id));
+}
+
+/**
+ * R7.1/S9 GC — libs whose LAST dependent leaves in this run. A lib qualifies when
+ * a removed entry required it (it WAS a dependent) AND no remaining entry still
+ * requires it. A lib already orphaned before the run (no removed dependent) is NOT
+ * collected — that is a doctor finding (R7.2), not a same-run proposal.
+ */
+function computeGcLibs(manifest: Manifest, removedEntries: ManifestEntry[]): ManifestEntry[] {
+  const removedKeys = new Set(removedEntries.map(manifestEntryKey));
+  const remaining = manifest.artifacts.filter((e) => !removedKeys.has(manifestEntryKey(e)));
+  const removedReqIds = new Set(removedEntries.flatMap((e) => e.requires ?? []));
+
+  return remaining.filter(
+    (lib) =>
+      lib.nature === 'lib'
+      && removedReqIds.has(lib.id)
+      && !remaining.some((r) => (r.requires ?? []).includes(lib.id)),
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Lib removal preview (display-only — the engine computes the real removal)
+// ---------------------------------------------------------------------------
+
+interface LibRemovalPreview {
+  id: string;
+  dirs: string[];
+  present: boolean;
+  orphaned: boolean;
+}
+
+async function buildLibPreviews(
+  libEntries: ManifestEntry[],
+  gcIds: Set<string>,
+): Promise<LibRemovalPreview[]> {
+  return Promise.all(
+    libEntries.map(async (e) => {
+      const present = (await Promise.all(e.files.map((f) => pathExists(f)))).some((p) => p);
+      return { id: e.id, dirs: e.files, present, orphaned: gcIds.has(e.id) };
+    }),
+  );
+}
+
+function renderLibRemovalBlock(
+  previews: LibRemovalPreview[],
+  home: string,
+  cwd: string,
+): string {
+  if (previews.length === 0) return '';
+  const lines = previews.map((p) => {
+    const dir = p.dirs.map((d) => abbreviatePath(d, { home, cwd })).join(', ');
+    const action = p.present ? `delete  ${dir}` : 'purge (already absent)';
+    const orphanTag = p.orphaned ? '  (orphaned — no remaining dependents)' : '';
+    return `  - ${p.id}   ${action}${orphanTag}`;
+  });
+  return '\n\n--- Libraries ---\n' + lines.join('\n');
+}
+
+// ---------------------------------------------------------------------------
 // runRemove
 // ---------------------------------------------------------------------------
 
@@ -158,23 +305,71 @@ export class NotInstalledError extends Error {
 export async function runRemove(opts: RunRemoveOptions): Promise<RemoveCommandResult> {
   const { adapter, scope, env, manifestPath, selectedIds, confirm } = opts;
   const summary = opts.summary === true;
+  const force = opts.force === true;
 
   // -------------------------------------------------------------------------
-  // Step 1 + 2: Validate ids against the manifest (identity triple) and build
-  // adapter entries from the manifest's own nature (skip tool-nature).
+  // Step 1 + 2: Validate ids against the manifest (identity triple) and route
+  // each entry. A lib lives under the global singleton (id, 'user', 'shared')
+  // (S2), so it is looked up on THAT triple — not the run's scope/adapter.id —
+  // and removed on the engine's lib channel (never the adapter, S3). Tool
+  // entries carry no adapter ops. `removedEntries` keeps the FULL manifest entry
+  // of every resolved id (tool and lib included): the R6 gate reads the requires
+  // graph over ALL natures, not just the adapter-routed ones.
   // -------------------------------------------------------------------------
 
   const manifest = await readManifest(manifestPath);
 
   const adapterEntries: AdapterEntry[] = [];
+  const libEntries: ManifestEntry[] = [];
+  const removedEntries: ManifestEntry[] = [];
   for (const id of selectedIds) {
-    const entry = findEntry(manifest, id, scope, adapter.id);
+    const isLib = localId(id).startsWith('lib:');
+    const entry = isLib
+      ? findEntry(manifest, id, 'user', 'shared')
+      : findEntry(manifest, id, scope, adapter.id);
     if (entry === undefined) {
       const installedIds = [...new Set(manifest.artifacts.map((e) => e.id))];
       throw new NotInstalledError(id, installedIds);
     }
+    removedEntries.push(entry);
     if (entry.nature === 'tool') continue;
+    if (entry.nature === 'lib') {
+      libEntries.push(entry);
+      continue;
+    }
     adapterEntries.push({ id: entry.id, nature: entry.nature, scope });
+  }
+
+  // -------------------------------------------------------------------------
+  // Step 2b: R6 gate — run-level refcount over the persisted requires graph,
+  // evaluated BEFORE any confirm or write (offline, manifest-first). `--force`
+  // downgrades the refusal to a loud per-dependent warning.
+  // -------------------------------------------------------------------------
+
+  const blocks = computeRefcountBlocks(manifest, removedEntries);
+  if (blocks.length > 0 && !force) {
+    throw new RequiredByError(blocks);
+  }
+  const forceWarnings = blocks.length > 0
+    ? blocks.map(
+      (b) =>
+        `--force: "${b.id}" removed while still required by ${
+          b.dependents.map((d) => `"${d}"`).join(', ')
+        } — their imports/dependencies will break`,
+    )
+    : [];
+
+  // -------------------------------------------------------------------------
+  // Step 2c: R7.1/S9 GC — a lib whose LAST dependent leaves in this run is
+  // proposed for removal in the SAME run, under the same confirm: it joins both
+  // the removal set and the plan preview.
+  // -------------------------------------------------------------------------
+
+  const gcLibs = computeGcLibs(manifest, removedEntries);
+  const gcIds = new Set(gcLibs.map((e) => e.id));
+  for (const gcLib of gcLibs) {
+    libEntries.push(gcLib);
+    removedEntries.push(gcLib);
   }
 
   // -------------------------------------------------------------------------
@@ -247,6 +442,13 @@ export async function runRemove(opts: RunRemoveOptions): Promise<RemoveCommandRe
     storeFates[op.store] = (await isStoreReferenced(op.store, candidates)) ? 'keep' : 'delete';
   }
 
+  // Lib removals (explicit + GC-proposed) are display-only in the preview: the
+  // engine computes the real removal on its lib channel. A present dir is a
+  // delete; a vanished dir is a manifest-only purge (R6.5).
+  const libPreviews = await buildLibPreviews(libEntries, gcIds);
+  const libBlock = renderLibRemovalBlock(libPreviews, resolveHome(env), cwd);
+  const libDestroysDisk = libPreviews.some((p) => p.present);
+
   const planText = renderRemovalPlan(groups, {
     home: resolveHome(env),
     cwd,
@@ -254,13 +456,13 @@ export async function runRemove(opts: RunRemoveOptions): Promise<RemoveCommandRe
     assistant: adapter.id,
     storeFates,
     summary,
-  }) + warningsBlock;
+  }) + warningsBlock + libBlock;
 
   // -------------------------------------------------------------------------
   // Nothing to do → neither disk destruction nor a phantom to purge.
   // -------------------------------------------------------------------------
 
-  if (groups.length === 0 && purgeCandidates.length === 0) {
+  if (groups.length === 0 && purgeCandidates.length === 0 && libEntries.length === 0) {
     const output = buildOutput({
       planText,
       reason: 'not-installed',
@@ -274,12 +476,13 @@ export async function runRemove(opts: RunRemoveOptions): Promise<RemoveCommandRe
   }
 
   // -------------------------------------------------------------------------
-  // Step 5: Confirm — only when the plan destroys something on disk. A pure
-  // purge (only phantom manifest entries, no group) mutates state.json alone,
-  // so it proceeds without a prompt (R1 scenario: "no confirmation but listed").
+  // Step 5: Confirm — only when the plan destroys something on disk: an adapter
+  // group OR a lib dir present on disk. A pure purge (only phantom entries, no
+  // group, no present lib) mutates state.json alone, so it proceeds without a
+  // prompt (R1 scenario: "no confirmation but listed").
   // -------------------------------------------------------------------------
 
-  if (groups.length > 0) {
+  if (groups.length > 0 || libDestroysDisk) {
     const confirmed = typeof confirm === 'boolean' ? confirm : await confirm(planText);
     if (!confirmed) {
       const output = buildOutput({
@@ -299,14 +502,39 @@ export async function runRemove(opts: RunRemoveOptions): Promise<RemoveCommandRe
   // Step 6: Apply (backup → remove → manifest)
   // -------------------------------------------------------------------------
 
-  // R7: hook guard scripts are copies shared through one user-level directory
-  // (path derivable from the env — design D6, same seam as adapter-builder).
-  // The engine deletes it, backed up as a whole, when the run removes the
-  // last hook-nature manifest entry (all scopes — hooks are claude-only, so
-  // passing the descriptor to any adapter is inert for the others).
-  const removeResult = await remove(adapter, adapterEntries, scope, env, manifestPath, [
+  // Lib entries ride alongside the adapter entries but the engine routes them to
+  // its lib channel by nature (never the adapter, S3). Scope is nominal here —
+  // the engine hardcodes the (id, 'user', 'shared') identity for a lib.
+  const libRemovalEntries: AdapterEntry[] = libEntries.map((e) => ({
+    id: e.id,
+    nature: 'lib',
+    scope: 'user',
+  }));
+
+  // Shared-store cleanup (R7): the hook scriptStore leaves with the last hook
+  // (D6, ONE user-level dir of copies — the manifest is the only refcount).
+  //
+  // A lib is NOT such a store: each lib owns its OWN dir under libs/, and the
+  // engine's lib channel already backs it up whole (`libs/<name>.bak-…`, a
+  // sibling INSIDE libs/) and removes it per-entry. Passing `{nature:'lib', dir:
+  // libsDir}` here would make the end-of-run cleanup back up the WHOLE libs/
+  // (relocating that per-lib backup under `libs.bak-…/`) and then remove libs/ —
+  // reporting a `backedUp` path that no longer exists and duplicating the bytes.
+  // So the libs/ root is NOT a shared store: the per-entry channel is the sole,
+  // correct owner of lib backup+removal (stable reported path), and the small
+  // libs/ container lingers holding its backups, exactly as skill/agent store
+  // backups already linger in their store dirs.
+  const sharedStores: SharedNatureStore[] = [
     { nature: 'hook', dir: hookScriptStorePath(env) },
-  ]);
+  ];
+  const removeResult = await remove(
+    adapter,
+    [...adapterEntries, ...libRemovalEntries],
+    scope,
+    env,
+    manifestPath,
+    sharedStores,
+  );
 
   // -------------------------------------------------------------------------
   // Step 7: Compose output
@@ -318,7 +546,7 @@ export async function runRemove(opts: RunRemoveOptions): Promise<RemoveCommandRe
     removed: removeResult.removed,
     purged: removeResult.purged,
     backedUp: removeResult.backedUp,
-    warnings: removeResult.warnings,
+    warnings: [...forceWarnings, ...removeResult.warnings],
     summary,
   });
 
