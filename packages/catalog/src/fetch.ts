@@ -4,6 +4,7 @@ import { assertSafeArtifactName } from '@agent-rigger/core/artifact-name';
 import { readJson, readText } from '@agent-rigger/core/fs-json';
 import type { OpencodePermission } from '@agent-rigger/core/types';
 
+import { CHECKOUT_CLAUDE, CHECKOUT_OPENCODE } from './checkout-prefixes';
 import { localId } from './qualify';
 import { type CatalogEntry, CatalogEntrySchema, type CatalogMeta, MetaSchema } from './schema';
 import type { CommandRunner } from './tool-check';
@@ -801,13 +802,13 @@ async function readCanonPermission(permissionJsonPath: string): Promise<Opencode
  *
  * Clones `url` at `version` (shallow, cleanup guaranteed by `withRemoteCheckout`),
  * validates catalog.json, then reads the per-nature content files WHILE the
- * checkout is still on disk:
- *  - guardrail (claude-targeted): guardrails/<name>/deny.json + allow.json.
- *  - guardrail (opencode-targeted): guardrails/<name>/permission.json (the native
- *    opencode descriptor, ADR-0020 "Option A" — same path the install builder,
- *    opencode-adapter-builder.ts, loads). A guardrail targeting BOTH assistants
- *    reads BOTH forms.
- *  - context: contexts/<name>/AGENTS.md (absent → '', install parity).
+ * checkout is still on disk (post-cutover layout, R9 — per-assistant dirs):
+ *  - guardrail (claude-targeted): claude/guardrails/<name>/deny.json + allow.json.
+ *  - guardrail (opencode-targeted): opencode/guardrails/<name>/permission.json (the
+ *    native opencode descriptor, ADR-0020 "Option A" — same path the install
+ *    builder, opencode-adapter-builder.ts, loads). A guardrail targeting BOTH
+ *    assistants reads BOTH forms, each from its assistant's dir.
+ *  - context: <assistant>/contexts/<name>/AGENTS.md (S8; absent → '', install parity).
  *  - mcp: config stays inline in the entry — no file read.
  * Names are derived from the entry id (prefix stripped) and guarded by
  * `assertSafeArtifactName` before any path join, exactly as the install builder.
@@ -841,25 +842,49 @@ export async function fetchCatalogCanon(
       if (entry.nature === 'guardrail') {
         const local = localId(entry.id).replace(/^guardrail:/, '');
         assertSafeArtifactName(local, entry.id);
-        const guardrailDir = join(dir, 'guardrails', local);
-        // A guardrail may target both assistants — read each form independently.
+        // Post-cutover (R9): each form lives under its assistant's dir — a
+        // bi-target guardrail is read from BOTH claude/ and opencode/, exactly
+        // where the install builders load them.
         if (entry.targets.includes('claude')) {
+          const claudeDir = join(dir, CHECKOUT_CLAUDE, 'guardrails', local);
           const [deny, allow] = await Promise.all([
-            readCanonDeny(join(guardrailDir, 'deny.json')),
-            readCanonAllow(join(guardrailDir, 'allow.json')),
+            readCanonDeny(join(claudeDir, 'deny.json')),
+            readCanonAllow(join(claudeDir, 'allow.json')),
           ]);
           guardrails.set(entry.id, { deny, allow });
         }
         if (entry.targets.includes('opencode')) {
+          const opencodeDir = join(dir, CHECKOUT_OPENCODE, 'guardrails', local);
           guardrailPermissions.set(
             entry.id,
-            await readCanonPermission(join(guardrailDir, 'permission.json')),
+            await readCanonPermission(join(opencodeDir, 'permission.json')),
           );
         }
       } else if (entry.nature === 'context') {
         const local = localId(entry.id).replace(/^context:/, '');
         assertSafeArtifactName(local, entry.id);
-        contexts.set(entry.id, await readText(join(dir, 'contexts', local, 'AGENTS.md')));
+        // Post-cutover (R9): a context lives under its assistant's dir. The canon
+        // map holds ONE block per id, so this COLLAPSES a bi-target context to a
+        // single assistant's form — preferring claude (S8: contexts are
+        // mono-target in practice; the real entry targets claude, and no id is
+        // renamed at this change — Hors périmètre). The pin in fetch.test.ts
+        // ('bi-target context canon collapses to the claude form (S8)') freezes
+        // this collapse so that lifting the S8 mono-target assumption (a
+        // genuinely per-assistant context, differing bytes per dir) turns red and
+        // forces a two-form canon here.
+        //
+        // This is a DRIFT-DETECTION gap, not a security hole: the pre-apply scan
+        // still covers BOTH dirs (scanPathFor returns one per target, R9.4), so
+        // no unscanned bytes install. Only doctor --remote's host-vs-canon
+        // coincidence check would miss a drift in the opencode form of a
+        // (hypothetical) bi-target context whose two forms diverge.
+        const assistant = entry.targets.includes('claude')
+          ? CHECKOUT_CLAUDE
+          : (entry.targets[0] ?? CHECKOUT_CLAUDE);
+        contexts.set(
+          entry.id,
+          await readText(join(dir, assistant, 'contexts', local, 'AGENTS.md')),
+        );
       }
     }
 

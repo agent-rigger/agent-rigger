@@ -183,10 +183,14 @@ async function makeIsolatedEnv(opts: {
 
     // Write versioned skill fixtures
     for (const skillId of skillIds) {
-      await fs.mkdir(path.join(tmpDir, 'skills', skillId), { recursive: true });
+      await fs.mkdir(path.join(tmpDir, 'common', 'skills', skillId), { recursive: true });
       const content = SKILL_CONTENT_BY_TAG[currentTag]
         ?? `# Skill ${skillId}\n${currentTag} content.`;
-      await fs.writeFile(path.join(tmpDir, 'skills', skillId, 'SKILL.md'), content, 'utf8');
+      await fs.writeFile(
+        path.join(tmpDir, 'common', 'skills', skillId, 'SKILL.md'),
+        content,
+        'utf8',
+      );
     }
 
     return {

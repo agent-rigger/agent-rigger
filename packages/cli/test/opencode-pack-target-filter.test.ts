@@ -120,7 +120,7 @@ async function makeRemoteEnv(): Promise<{
   );
 
   const writeGuardrailDeny = async (name: string, deny: string[]): Promise<void> => {
-    const dir = path.join(contentDir, 'guardrails', name);
+    const dir = path.join(contentDir, 'claude', 'guardrails', name);
     await fs.mkdir(dir, { recursive: true });
     await fs.writeFile(path.join(dir, 'deny.json'), JSON.stringify({ deny }), 'utf8');
   };
@@ -129,7 +129,7 @@ async function makeRemoteEnv(): Promise<{
     name: string,
     permission: Record<string, unknown>,
   ): Promise<void> => {
-    const dir = path.join(contentDir, 'guardrails', name);
+    const dir = path.join(contentDir, 'opencode', 'guardrails', name);
     await fs.mkdir(dir, { recursive: true });
     await fs.writeFile(path.join(dir, 'permission.json'), JSON.stringify({ permission }), 'utf8');
   };

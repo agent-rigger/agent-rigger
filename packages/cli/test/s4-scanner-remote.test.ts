@@ -84,7 +84,7 @@ async function makeRemoteEnv(): Promise<{
     'utf8',
   );
   // Write guardrail fixture for the remote guardrail entry
-  const guardrailDir = path.join(contentDir, 'guardrails', 'main');
+  const guardrailDir = path.join(contentDir, 'claude', 'guardrails', 'main');
   await fs.mkdir(guardrailDir, { recursive: true });
   await fs.writeFile(
     path.join(guardrailDir, 'deny.json'),
@@ -93,9 +93,9 @@ async function makeRemoteEnv(): Promise<{
   );
 
   // Write skills/remote-demo/SKILL.md
-  await fs.mkdir(path.join(contentDir, 'skills', 'remote-demo'), { recursive: true });
+  await fs.mkdir(path.join(contentDir, 'common', 'skills', 'remote-demo'), { recursive: true });
   await fs.writeFile(
-    path.join(contentDir, 'skills', 'remote-demo', 'SKILL.md'),
+    path.join(contentDir, 'common', 'skills', 'remote-demo', 'SKILL.md'),
     '# Remote Demo Skill\n\nThis is a remote skill fixture.',
     'utf8',
   );
@@ -407,7 +407,7 @@ describe('S4 — guardrail-only install: scanner covers catalog.json and guardra
     // One union scan; its tree is exactly catalog.json + the guardrail surface
     // (guardrails/main/deny.json) — nothing from the unselected skill.
     expect(calls).toHaveLength(1);
-    expect(trees[0]).toEqual(['catalog.json', 'guardrails/main/deny.json']);
+    expect(trees[0]).toEqual(['catalog.json', 'claude/guardrails/main/deny.json']);
   });
 });
 

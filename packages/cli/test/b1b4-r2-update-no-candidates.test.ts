@@ -115,9 +115,9 @@ async function makeIso(catalogs: { name: string; url: string }[]): Promise<Iso> 
       JSON.stringify({ meta: { name: 'r2-catalog' }, entries: [SKILL_ENTRY] }),
       'utf8',
     );
-    await fs.mkdir(path.join(tmpDir, 'skills', 'remote-demo'), { recursive: true });
+    await fs.mkdir(path.join(tmpDir, 'common', 'skills', 'remote-demo'), { recursive: true });
     await fs.writeFile(
-      path.join(tmpDir, 'skills', 'remote-demo', 'SKILL.md'),
+      path.join(tmpDir, 'common', 'skills', 'remote-demo', 'SKILL.md'),
       `# Remote Demo\n${TAG}@${SHA} content.`,
       'utf8',
     );

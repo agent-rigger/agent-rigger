@@ -165,7 +165,7 @@ describe('R5.1 — edge simple qualifié <catalog>/lib:<name>', () => {
         },
       ],
       files: {
-        'skills/consumer/SKILL.md': '# consumer\n',
+        'common/skills/consumer/SKILL.md': '# consumer\n',
         'common/libs/rules-common/rules.ts': 'export const x = 1;\n',
       },
     });
@@ -202,7 +202,7 @@ describe("R5.2 — cross-catalogue pruné du graphe mais persisté sur l'edge", 
           requires: ['othercat/skill:foo'],
         },
       ],
-      files: { 'skills/bar/SKILL.md': '# bar\n' },
+      files: { 'common/skills/bar/SKILL.md': '# bar\n' },
     });
     try {
       // Pre-seed the satisfied foreign require (same scope + assistant) so the
@@ -257,7 +257,7 @@ describe("R5.4 — entrée legacy sans edges backfillée à l'update", () => {
           requires: ['tool:git'],
         },
       ],
-      files: { 'skills/consumer/SKILL.md': '# consumer\n' },
+      files: { 'common/skills/consumer/SKILL.md': '# consumer\n' },
     });
     try {
       // Legacy manifest entry: installed before the change, NO requires field,

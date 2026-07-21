@@ -77,7 +77,7 @@ const LIB_AND_CONSUMER: CatalogEntry[] = [
 ];
 
 const CHECKOUT_FILES: Record<string, string> = {
-  'skills/consumer/SKILL.md': '# consumer\n',
+  'common/skills/consumer/SKILL.md': '# consumer\n',
   'common/libs/rules-common/rules.ts': 'export const rule = 1;\n',
 };
 

@@ -123,9 +123,9 @@ async function makeEnv(): Promise<{
     JSON.stringify({ meta: { name: 'r1-catalog' }, entries: [SKILL_ENTRY] }),
     'utf8',
   );
-  await fs.mkdir(path.join(contentDir, 'skills', 'remote-demo'), { recursive: true });
+  await fs.mkdir(path.join(contentDir, 'common', 'skills', 'remote-demo'), { recursive: true });
   await fs.writeFile(
-    path.join(contentDir, 'skills', 'remote-demo', 'SKILL.md'),
+    path.join(contentDir, 'common', 'skills', 'remote-demo', 'SKILL.md'),
     `# Remote Demo\n${TAG_NAME} content.`,
     'utf8',
   );

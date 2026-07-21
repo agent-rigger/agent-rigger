@@ -141,9 +141,9 @@ async function makeHarness(entries: CatalogEntry[]): Promise<Harness> {
   );
 
   // plugins/ — opencode plugin module (scanPathFor('plugin') whole dir).
-  await fs.mkdir(path.join(contentDir, 'plugins'), { recursive: true });
+  await fs.mkdir(path.join(contentDir, 'opencode', 'plugins'), { recursive: true });
   await fs.writeFile(
-    path.join(contentDir, 'plugins', 'guard.ts'),
+    path.join(contentDir, 'opencode', 'plugins', 'guard.ts'),
     '// opencode guard plugin\nexport const GuardPlugin = async () => ({});\n',
     'utf8',
   );
@@ -157,13 +157,17 @@ async function makeHarness(entries: CatalogEntry[]): Promise<Harness> {
   );
 
   // skills/<name> — plain skill checkout position.
-  await fs.mkdir(path.join(contentDir, 'skills', 'hello'), { recursive: true });
-  await fs.writeFile(path.join(contentDir, 'skills', 'hello', 'SKILL.md'), '# hello\n', 'utf8');
+  await fs.mkdir(path.join(contentDir, 'common', 'skills', 'hello'), { recursive: true });
+  await fs.writeFile(
+    path.join(contentDir, 'common', 'skills', 'hello', 'SKILL.md'),
+    '# hello\n',
+    'utf8',
+  );
 
   // hooks/ — whole dir, scriptSource for the hook adapter.
-  await fs.mkdir(path.join(contentDir, 'hooks'), { recursive: true });
+  await fs.mkdir(path.join(contentDir, 'claude', 'hooks'), { recursive: true });
   await fs.writeFile(
-    path.join(contentDir, 'hooks', 'guard-command.ts'),
+    path.join(contentDir, 'claude', 'hooks', 'guard-command.ts'),
     '// guard-command hook\n',
     'utf8',
   );

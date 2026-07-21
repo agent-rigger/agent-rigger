@@ -33,8 +33,14 @@ import type { Scanner } from '@agent-rigger/core/scan';
 import { stubScanner } from '@agent-rigger/core/scan';
 import type { OpencodeMcpServer, OpencodePermission } from '@agent-rigger/core/types';
 
-import { type CatalogEntry, localId } from '@agent-rigger/catalog';
+import {
+  type CatalogEntry,
+  CHECKOUT_COMMON,
+  CHECKOUT_OPENCODE,
+  localId,
+} from '@agent-rigger/catalog';
 
+import { layoutSkewMessage } from './layout-skew';
 import { renderMcpConfig } from './mcp-source';
 
 // ---------------------------------------------------------------------------
@@ -47,8 +53,10 @@ import { renderMcpConfig } from './mcp-source';
  * @param externalIds      Set of artifact ids whose source should be resolved
  *                         from externalBaseDir.
  * @param externalBaseDir  Absolute path to the root of a remote checkout. Expected
- *                         layout: skills/<name>/, agents/<name>.md, plugins/<name>.<ext>,
- *                         guardrails/<n>/permission.json, contexts/<n>/AGENTS.md.
+ *                         post-cutover layout (R9): common/skills/<name>/,
+ *                         common/agents/<name>.md, opencode/plugins/<name>.<ext>,
+ *                         opencode/guardrails/<n>/permission.json,
+ *                         opencode/contexts/<n>/AGENTS.md.
  * @param effectiveEntries Lookup map (id → CatalogEntry) for the resolved effective
  *                         catalog. Used by mcpSource to resolve the raw `config` field.
  * @param scanner          Security scanner invoked at apply time (defense in depth) for each
@@ -81,14 +89,22 @@ export interface BuildOpencodeAdapterOpts {
  */
 function resolveOpencodePluginPath(pluginsDir: string, name: string, id: string): string {
   let files: string[];
+  let dirMissing = false;
   try {
     files = readdirSync(pluginsDir);
-  } catch {
+  } catch (err) {
     files = [];
+    dirMissing = (err as NodeJS.ErrnoException).code === 'ENOENT';
   }
 
   const match = files.find((f) => path.parse(f).name === name);
   if (match === undefined) {
+    if (dirMissing) {
+      // The whole opencode/plugins dir is absent — the signature of a layout
+      // skew (R9.3), not a single missing file. Name both directions and the
+      // version alignment instead of a bare "not found under <dir>".
+      throw new Error(layoutSkewMessage(`pluginSource: plugin "${id}"`, pluginsDir));
+    }
     throw new Error(
       `pluginSource: plugin "${id}" not found under ${pluginsDir}. `
         + `Expected a file named "${name}.<ext>" in the remote checkout.`,
@@ -105,14 +121,15 @@ function resolveOpencodePluginPath(pluginsDir: string, name: string, id: string)
 /**
  * Build an OpencodeAdapter.
  *
- * All artifact content comes from externalBaseDir when externalIds are present:
- * - permission       : loaded verbatim from <externalBaseDir>/guardrails/<n>/permission.json
+ * All artifact content comes from externalBaseDir when externalIds are present
+ * (post-cutover layout, R9):
+ * - permission       : loaded verbatim from <externalBaseDir>/opencode/guardrails/<n>/permission.json
  *                       (native opencode descriptor, ADR-0020 "Option A"; a native
  *                       guardrail REQUIRES a descriptor — missing/empty → hard error)
- * - agentsContent    : loaded from <externalBaseDir>/contexts/<n>/AGENTS.md
- * - skillSource      : resolves id → <externalBaseDir>/skills/<id>
- * - agentSource      : resolves id → <externalBaseDir>/agents/<agentId>.md
- * - pluginSource     : resolves id → <externalBaseDir>/plugins/<id>.<ext> (basename lookup)
+ * - agentsContent    : loaded from <externalBaseDir>/opencode/contexts/<n>/AGENTS.md
+ * - skillSource      : resolves id → <externalBaseDir>/common/skills/<id>
+ * - agentSource      : resolves id → <externalBaseDir>/common/agents/<agentId>.md
+ * - pluginSource     : resolves id → <externalBaseDir>/opencode/plugins/<id>.<ext> (basename lookup)
  * - mcpSource        : resolves { server, config, secretRefs? } — config is RENDERED
  *                       from effectiveEntries' raw `config` field (R5, see mcpSource below)
  *
@@ -165,7 +182,7 @@ export async function buildOpencodeAdapter(
     const local = localId(externalGuardrailId);
     const name = local.startsWith('guardrail:') ? local.replace(/^guardrail:/, '') : local;
     assertSafeArtifactName(name, externalGuardrailId);
-    const guardrailDir = path.join(opts.externalBaseDir, 'guardrails', name);
+    const guardrailDir = path.join(opts.externalBaseDir, CHECKOUT_OPENCODE, 'guardrails', name);
     permission = await loadCanonicalOpencodePermission(path.join(guardrailDir, 'permission.json'));
   }
 
@@ -189,7 +206,9 @@ export async function buildOpencodeAdapter(
     const local = localId(externalContextId);
     const name = local.startsWith('context:') ? local.replace(/^context:/, '') : local;
     assertSafeArtifactName(name, externalContextId);
-    agentsContent = await readText(path.join(opts.externalBaseDir, 'contexts', name, 'AGENTS.md'));
+    agentsContent = await readText(
+      path.join(opts.externalBaseDir, CHECKOUT_OPENCODE, 'contexts', name, 'AGENTS.md'),
+    );
   } else {
     agentsContent = '';
   }
@@ -213,7 +232,7 @@ export async function buildOpencodeAdapter(
       const name = localId(entry.id).replace(/^skill:/, '');
       assertSafeArtifactName(name, entry.id);
       if (opts?.externalIds?.has(entry.id) === true && opts.externalBaseDir !== undefined) {
-        return path.join(opts.externalBaseDir, 'skills', name);
+        return path.join(opts.externalBaseDir, CHECKOUT_COMMON, 'skills', name);
       }
       throw new Error(
         `skillSource: skill "${entry.id}" is not in externalIds. `
@@ -224,7 +243,7 @@ export async function buildOpencodeAdapter(
       const name = localId(entry.id).replace(/^agent:/, '');
       assertSafeArtifactName(name, entry.id);
       if (opts?.externalIds?.has(entry.id) === true && opts.externalBaseDir !== undefined) {
-        return path.join(opts.externalBaseDir, 'agents', name + '.md');
+        return path.join(opts.externalBaseDir, CHECKOUT_COMMON, 'agents', name + '.md');
       }
       throw new Error(
         `agentSource: agent "${entry.id}" is not in externalIds. `
@@ -235,7 +254,7 @@ export async function buildOpencodeAdapter(
       const name = localId(entry.id).replace(/^plugin:/, '');
       assertSafeArtifactName(name, entry.id);
       if (opts?.externalIds?.has(entry.id) === true && opts.externalBaseDir !== undefined) {
-        const pluginsDir = path.join(opts.externalBaseDir, 'plugins');
+        const pluginsDir = path.join(opts.externalBaseDir, CHECKOUT_OPENCODE, 'plugins');
         return resolveOpencodePluginPath(pluginsDir, name, entry.id);
       }
       throw new Error(

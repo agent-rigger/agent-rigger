@@ -60,9 +60,9 @@ async function makeIsolatedEnv(): Promise<IsolatedEnv> {
   );
 
   for (const skillId of skillIds) {
-    await fs.mkdir(path.join(contentDir, 'skills', skillId), { recursive: true });
+    await fs.mkdir(path.join(contentDir, 'common', 'skills', skillId), { recursive: true });
     await fs.writeFile(
-      path.join(contentDir, 'skills', skillId, 'SKILL.md'),
+      path.join(contentDir, 'common', 'skills', skillId, 'SKILL.md'),
       `# Skill ${skillId}\n${TAG_V1_0_0} content.`,
       'utf8',
     );
@@ -109,9 +109,9 @@ async function makeIsolatedEnv(): Promise<IsolatedEnv> {
       'utf8',
     );
     for (const skillId of skillIds) {
-      await fs.mkdir(path.join(tmpDir, 'skills', skillId), { recursive: true });
+      await fs.mkdir(path.join(tmpDir, 'common', 'skills', skillId), { recursive: true });
       await fs.writeFile(
-        path.join(tmpDir, 'skills', skillId, 'SKILL.md'),
+        path.join(tmpDir, 'common', 'skills', skillId, 'SKILL.md'),
         `# Skill ${skillId}\n${TAG_V1_0_0} content.`,
         'utf8',
       );

@@ -265,9 +265,12 @@ function makeContextTmpFactory(dir: string): TmpDirFactory {
       path.join(dir, 'catalog.json'),
       JSON.stringify({ meta: { name: 'r5-test-catalog' }, entries: [CONTEXT_ENTRY] }),
     );
-    const ctxDir = path.join(dir, 'contexts', 'main');
-    await fs.mkdir(ctxDir, { recursive: true });
-    await fs.writeFile(path.join(ctxDir, 'AGENTS.md'), '# R5 test context\n', 'utf8');
+    // Bi-target context (claude + opencode): one AGENTS.md per assistant dir (R9/S8).
+    for (const assistant of ['claude', 'opencode']) {
+      const ctxDir = path.join(dir, assistant, 'contexts', 'main');
+      await fs.mkdir(ctxDir, { recursive: true });
+      await fs.writeFile(path.join(ctxDir, 'AGENTS.md'), '# R5 test context\n', 'utf8');
+    }
     return { path: dir, cleanup: async () => {} };
   };
 }

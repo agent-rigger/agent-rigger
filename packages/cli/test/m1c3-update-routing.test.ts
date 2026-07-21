@@ -142,9 +142,13 @@ async function makeIsolatedEnv(opts: {
       'utf8',
     );
     for (const skillId of skillIds) {
-      await fs.mkdir(path.join(tmpDir, 'skills', skillId), { recursive: true });
+      await fs.mkdir(path.join(tmpDir, 'common', 'skills', skillId), { recursive: true });
       const content = SKILL_CONTENT[currentTag] ?? `# Skill ${skillId}\n${currentTag}`;
-      await fs.writeFile(path.join(tmpDir, 'skills', skillId, 'SKILL.md'), content, 'utf8');
+      await fs.writeFile(
+        path.join(tmpDir, 'common', 'skills', skillId, 'SKILL.md'),
+        content,
+        'utf8',
+      );
     }
     return {
       path: tmpDir,
@@ -452,9 +456,9 @@ describe('update routing — `update --yes` (all) with a 2nd empty catalog', () 
         'utf8',
       );
       const skillId = other ? 'other-only' : 'remote-demo';
-      await fs.mkdir(path.join(tmpDir, 'skills', skillId), { recursive: true });
+      await fs.mkdir(path.join(tmpDir, 'common', 'skills', skillId), { recursive: true });
       await fs.writeFile(
-        path.join(tmpDir, 'skills', skillId, 'SKILL.md'),
+        path.join(tmpDir, 'common', 'skills', skillId, 'SKILL.md'),
         `# ${skillId}\n`,
         'utf8',
       );

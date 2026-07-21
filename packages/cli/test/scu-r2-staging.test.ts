@@ -120,17 +120,32 @@ async function makeCheckout(): Promise<Checkout> {
   await fs.mkdir(baseDir, { recursive: true });
 
   await writeFile(path.join(baseDir, 'catalog.json'), '{"meta":{"name":"scu"},"entries":[]}\n');
-  await writeFile(path.join(baseDir, 'skills', 'mon-skill', 'SKILL.md'), '# mon-skill\n');
-  await writeFile(path.join(baseDir, 'skills', 'mon-skill', 'helper.ts'), 'export const x = 1;\n');
+  await writeFile(path.join(baseDir, 'common', 'skills', 'mon-skill', 'SKILL.md'), '# mon-skill\n');
+  await writeFile(
+    path.join(baseDir, 'common', 'skills', 'mon-skill', 'helper.ts'),
+    'export const x = 1;\n',
+  );
   // NON-selected content — must never leak into a staging built without it.
-  await writeFile(path.join(baseDir, 'skills', 'autre', 'SKILL.md'), '# autre (secret)\n');
-  await writeFile(path.join(baseDir, 'agents', 'mon-agent.md'), '# mon-agent\n');
-  await writeFile(path.join(baseDir, 'guardrails', 'mon-guard', 'deny.json'), '{"deny":[]}\n');
-  await writeFile(path.join(baseDir, 'contexts', 'mon-ctx', 'AGENTS.md'), '# ctx\n');
-  await writeFile(path.join(baseDir, 'hooks', 'guard.ts'), 'export const guard = 1;\n');
+  await writeFile(
+    path.join(baseDir, 'common', 'skills', 'autre', 'SKILL.md'),
+    '# autre (secret)\n',
+  );
+  await writeFile(path.join(baseDir, 'common', 'agents', 'mon-agent.md'), '# mon-agent\n');
+  await writeFile(
+    path.join(baseDir, 'claude', 'guardrails', 'mon-guard', 'deny.json'),
+    '{"deny":[]}\n',
+  );
+  await writeFile(path.join(baseDir, 'claude', 'contexts', 'mon-ctx', 'AGENTS.md'), '# ctx\n');
+  await writeFile(path.join(baseDir, 'claude', 'hooks', 'guard.ts'), 'export const guard = 1;\n');
   // Shared lib the selected hooks never import — still part of the hooks/ surface.
-  await writeFile(path.join(baseDir, 'hooks', '_shared', 'lib.ts'), 'export const lib = 1;\n');
-  await writeFile(path.join(baseDir, 'plugins', 'mon-plugin', 'index.ts'), 'export default {};\n');
+  await writeFile(
+    path.join(baseDir, 'claude', 'hooks', '_shared', 'lib.ts'),
+    'export const lib = 1;\n',
+  );
+  await writeFile(
+    path.join(baseDir, 'opencode', 'plugins', 'mon-plugin', 'index.ts'),
+    'export default {};\n',
+  );
   await writeFile(
     path.join(baseDir, 'common', 'libs', 'rules-common', 'index.ts'),
     'export const rulesCommon = 1;\n',
@@ -214,16 +229,16 @@ describe('R2: materializeUnion — exact multi-nature mirror', () => {
       const leaves = await walkLeaves(stagingDir);
       expect(leaves).toEqual(
         [
-          'agents/mon-agent.md',
+          'common/agents/mon-agent.md',
           'catalog.json',
           'common/libs/rules-common/index.ts',
-          'contexts/mon-ctx/AGENTS.md',
-          'guardrails/mon-guard/deny.json',
-          'hooks/_shared/lib.ts',
-          'hooks/guard.ts',
-          'plugins/mon-plugin/index.ts',
-          'skills/mon-skill/SKILL.md',
-          'skills/mon-skill/helper.ts',
+          'claude/contexts/mon-ctx/AGENTS.md',
+          'claude/guardrails/mon-guard/deny.json',
+          'claude/hooks/_shared/lib.ts',
+          'claude/hooks/guard.ts',
+          'opencode/plugins/mon-plugin/index.ts',
+          'common/skills/mon-skill/SKILL.md',
+          'common/skills/mon-skill/helper.ts',
         ].sort(),
       );
     } finally {
@@ -263,7 +278,11 @@ describe('R2: materializeUnion — dedup of shared surfaces', () => {
 
     try {
       const leaves = await walkLeaves(stagingDir);
-      expect(leaves).toEqual(['catalog.json', 'hooks/_shared/lib.ts', 'hooks/guard.ts']);
+      expect(leaves).toEqual([
+        'catalog.json',
+        'claude/hooks/_shared/lib.ts',
+        'claude/hooks/guard.ts',
+      ]);
     } finally {
       await cleanup();
     }
@@ -282,11 +301,11 @@ describe('R2: materializeUnion — non-selected content is absent', () => {
 
     try {
       const leaves = await walkLeaves(stagingDir);
-      expect(leaves).not.toContain('skills/autre/SKILL.md');
+      expect(leaves).not.toContain('common/skills/autre/SKILL.md');
       expect(leaves).toEqual([
         'catalog.json',
-        'skills/mon-skill/SKILL.md',
-        'skills/mon-skill/helper.ts',
+        'common/skills/mon-skill/SKILL.md',
+        'common/skills/mon-skill/helper.ts',
       ].sort());
     } finally {
       await cleanup();
@@ -297,7 +316,7 @@ describe('R2: materializeUnion — non-selected content is absent', () => {
 describe('R2: materializeUnion — symlink copied verbatim (dereference:false)', () => {
   it('mirrors a symlink inside a selected skill as a symlink, not its target content', async () => {
     const { baseDir, tmpParent } = await newCheckout();
-    await fs.symlink('SKILL.md', path.join(baseDir, 'skills', 'mon-skill', 'link.md'));
+    await fs.symlink('SKILL.md', path.join(baseDir, 'common', 'skills', 'mon-skill', 'link.md'));
 
     const { stagingDir, cleanup } = await materializeUnion({
       entries: [SKILL],
@@ -306,7 +325,9 @@ describe('R2: materializeUnion — symlink copied verbatim (dereference:false)',
     });
 
     try {
-      const stat = await fs.lstat(path.join(stagingDir, 'skills', 'mon-skill', 'link.md'));
+      const stat = await fs.lstat(
+        path.join(stagingDir, 'common', 'skills', 'mon-skill', 'link.md'),
+      );
       expect(stat.isSymbolicLink()).toBe(true);
     } finally {
       await cleanup();
@@ -356,7 +377,7 @@ describe('R2: materializeUnion — anti-traversal guard', () => {
   it('throws before any staging is created when a forged id escapes the checkout (../ traversal)', async () => {
     const { baseDir, tmpParent } = await newCheckout();
     // localId strips up to the first '/', so the surviving name is '../../../evil'
-    // → path.join(baseDir, 'skills', '../../../evil') lands above the checkout.
+    // → path.join(baseDir, 'common', 'skills', '../../../evil') lands above the checkout.
     const evil: ArtifactEntry = { ...SKILL, id: 'skill:x/../../../evil' };
     const { factory, created } = recordingStagingIn(tmpParent);
 

@@ -123,8 +123,12 @@ beforeEach(async () => {
     '{"meta":{"name":"d2"},"entries":[]}\n',
     'utf8',
   );
-  await fs.mkdir(path.join(BASE_DIR, 'skills', 'demo'), { recursive: true });
-  await fs.writeFile(path.join(BASE_DIR, 'skills', 'demo', 'SKILL.md'), '# demo\n', 'utf8');
+  await fs.mkdir(path.join(BASE_DIR, 'common', 'skills', 'demo'), { recursive: true });
+  await fs.writeFile(
+    path.join(BASE_DIR, 'common', 'skills', 'demo', 'SKILL.md'),
+    '# demo\n',
+    'utf8',
+  );
 });
 
 afterEach(async () => {

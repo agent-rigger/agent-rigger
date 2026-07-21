@@ -1263,15 +1263,19 @@ describe('runCli — install --assistant=opencode', () => {
         path.join(dir, 'catalog.json'),
         JSON.stringify({ meta: { name: 'cli-test-catalog' }, entries: [GUARDRAIL_FIXTURE_BOTH] }),
       );
-      const guardrailDir = path.join(dir, 'guardrails', 'main');
-      await fs.mkdir(guardrailDir, { recursive: true });
+      // Bi-target guardrail: claude deny/allow under claude/, opencode permission
+      // under opencode/ (post-cutover, R9 — one dir per assistant).
+      const claudeGuardrailDir = path.join(dir, 'claude', 'guardrails', 'main');
+      const opencodeGuardrailDir = path.join(dir, 'opencode', 'guardrails', 'main');
+      await fs.mkdir(claudeGuardrailDir, { recursive: true });
+      await fs.mkdir(opencodeGuardrailDir, { recursive: true });
       await Bun.write(
-        path.join(guardrailDir, 'deny.json'),
+        path.join(claudeGuardrailDir, 'deny.json'),
         JSON.stringify({ deny: ['Bash(rm -rf *)'] }),
       );
-      await Bun.write(path.join(guardrailDir, 'allow.json'), JSON.stringify({ allow: [] }));
+      await Bun.write(path.join(claudeGuardrailDir, 'allow.json'), JSON.stringify({ allow: [] }));
       await Bun.write(
-        path.join(guardrailDir, 'permission.json'),
+        path.join(opencodeGuardrailDir, 'permission.json'),
         JSON.stringify({
           $schema: 'https://opencode.ai/config.json',
           permission: { bash: { 'rm -rf *': 'deny' } },
@@ -1527,16 +1531,29 @@ function makeFakeTmpFactory(dir: string, entries: CatalogEntry[]): TmpDirFactory
     await Promise.all(
       guardrailEntries.map(async (e) => {
         const name = e.id.replace(/^guardrail:/, '');
-        const guardrailDir = path.join(dir, 'guardrails', name);
-        await fs.mkdir(guardrailDir, { recursive: true });
-        await Bun.write(
-          path.join(guardrailDir, 'deny.json'),
-          JSON.stringify({ deny: ['fake-deny-rule'] }),
-        );
-        await Bun.write(
-          path.join(guardrailDir, 'allow.json'),
-          JSON.stringify({ allow: [] }),
-        );
+        // Post-cutover (R9): write each form under its assistant's dir so the
+        // scan union (one dir per target) finds every dir it scans — a
+        // bi-target guardrail needs BOTH the claude and opencode forms present.
+        if (e.targets.includes('claude')) {
+          const claudeDir = path.join(dir, 'claude', 'guardrails', name);
+          await fs.mkdir(claudeDir, { recursive: true });
+          await Bun.write(
+            path.join(claudeDir, 'deny.json'),
+            JSON.stringify({ deny: ['fake-deny-rule'] }),
+          );
+          await Bun.write(path.join(claudeDir, 'allow.json'), JSON.stringify({ allow: [] }));
+        }
+        if (e.targets.includes('opencode')) {
+          const opencodeDir = path.join(dir, 'opencode', 'guardrails', name);
+          await fs.mkdir(opencodeDir, { recursive: true });
+          await Bun.write(
+            path.join(opencodeDir, 'permission.json'),
+            JSON.stringify({
+              $schema: 'https://opencode.ai/config.json',
+              permission: { bash: { 'rm -rf *': 'deny' } },
+            }),
+          );
+        }
       }),
     );
     return { path: dir, cleanup: async () => {} };

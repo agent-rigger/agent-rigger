@@ -9,8 +9,8 @@
  *
  * Why a copy-mirror rather than some other union mechanism: the staging tree
  * reproduces the checkout layout byte-for-byte, so a finding the scanner reports
- * carries the checkout-relative path R7 already expects — `skills/a/SKILL.md`
- * stays `skills/a/SKILL.md`, `catalog.json` stays `catalog.json`, and two
+ * carries the checkout-relative path R7 already expects — `common/skills/a/SKILL.md`
+ * stays `common/skills/a/SKILL.md`, `catalog.json` stays `catalog.json`, and two
  * offending skills yield two distinct paths — without a single line of path
  * rewriting on the way out. The rel-position (`path.relative(baseDir, target)`)
  * IS the attribution.
@@ -36,6 +36,7 @@ import path from 'node:path';
 
 import type { ArtifactEntry } from '@agent-rigger/catalog';
 
+import { layoutSkewMessage } from './layout-skew';
 import { scanPathFor } from './scan-paths';
 
 /** Prefix for the sibling staging directory created by the default factory. */
@@ -119,6 +120,20 @@ export async function materializeUnion(opts: MaterializeUnionOpts): Promise<Unio
     }
   } catch (err) {
     await cleanup().catch(() => {});
+    // A missing SOURCE at a convention path is the signature of a layout skew
+    // (R9.3) — the checkout lays its content somewhere the post-cutover CLI does
+    // not look (or vice versa). Reframe the bare ENOENT so the operator aligns
+    // the CLI and catalogue versions instead of chasing a phantom corruption.
+    // Other cp failures (permission, EACCES) propagate verbatim.
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+      const missing = (err as NodeJS.ErrnoException).path;
+      const rel = missing === undefined
+        ? '(unknown checkout path)'
+        : path.isAbsolute(missing)
+        ? path.relative(baseDir, missing)
+        : missing;
+      throw new Error(layoutSkewMessage('scan staging', rel), { cause: err });
+    }
     throw err;
   }
 

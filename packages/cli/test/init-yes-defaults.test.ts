@@ -118,9 +118,9 @@ async function makeInitEnv(opts: MakeInitEnvOpts): Promise<{
   for (const entry of opts.entries) {
     if (entry.kind === 'artifact' && entry.nature === 'skill') {
       const name = entry.id.replace(/^skill:/, '');
-      await fs.mkdir(path.join(contentDir, 'skills', name), { recursive: true });
+      await fs.mkdir(path.join(contentDir, 'common', 'skills', name), { recursive: true });
       await fs.writeFile(
-        path.join(contentDir, 'skills', name, 'SKILL.md'),
+        path.join(contentDir, 'common', 'skills', name, 'SKILL.md'),
         `# ${name}\nFixture skill for tests.`,
         'utf8',
       );

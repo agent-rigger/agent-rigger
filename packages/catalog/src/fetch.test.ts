@@ -1857,8 +1857,9 @@ const MCP_ENTRY = {
 
 /**
  * Builds a content-dir fixture: writes catalog.json plus the per-nature content
- * files at install-parity paths (guardrails/<name>/{deny,allow}.json,
- * contexts/<name>/AGENTS.md), then returns a TmpDirFactory yielding that dir.
+ * files at install-parity, post-cutover paths (claude/guardrails/<name>/{deny,
+ * allow}.json, opencode/guardrails/<name>/permission.json,
+ * claude/contexts/<name>/AGENTS.md), then returns a TmpDirFactory yielding that dir.
  *
  * The fake clone runner (makeCloneRunner) never writes anything, so the files
  * placed here ARE the checkout content fetchCatalogCanon reads. `cleanupSpy`
@@ -1881,17 +1882,24 @@ async function makeContentDirFactory(files: {
   }
 
   for (const [name, g] of Object.entries(files.guardrails ?? {})) {
-    const gdir = join(dir, 'guardrails', name);
-    await mkdir(gdir, { recursive: true });
-    if (g.deny !== undefined) await writeFile(join(gdir, 'deny.json'), g.deny, 'utf8');
-    if (g.allow !== undefined) await writeFile(join(gdir, 'allow.json'), g.allow, 'utf8');
+    // Post-cutover (R9): claude deny/allow under claude/, opencode permission
+    // under opencode/ — exactly where fetchCatalogCanon reads each form by target.
+    if (g.deny !== undefined || g.allow !== undefined) {
+      const claudeDir = join(dir, 'claude', 'guardrails', name);
+      await mkdir(claudeDir, { recursive: true });
+      if (g.deny !== undefined) await writeFile(join(claudeDir, 'deny.json'), g.deny, 'utf8');
+      if (g.allow !== undefined) await writeFile(join(claudeDir, 'allow.json'), g.allow, 'utf8');
+    }
     if (g.permission !== undefined) {
-      await writeFile(join(gdir, 'permission.json'), g.permission, 'utf8');
+      const opencodeDir = join(dir, 'opencode', 'guardrails', name);
+      await mkdir(opencodeDir, { recursive: true });
+      await writeFile(join(opencodeDir, 'permission.json'), g.permission, 'utf8');
     }
   }
 
   for (const [name, content] of Object.entries(files.contexts ?? {})) {
-    const cdir = join(dir, 'contexts', name);
+    // A context is per-assistant (S8); the fetch fixtures target claude.
+    const cdir = join(dir, 'claude', 'contexts', name);
     await mkdir(cdir, { recursive: true });
     await writeFile(join(cdir, 'AGENTS.md'), content, 'utf8');
   }
@@ -2018,6 +2026,40 @@ describe('fetchCatalogCanon — context without AGENTS.md → empty string (inst
       tmpFactory: factory,
     });
     expect(canon.contexts.get('context:house')).toBe('');
+  });
+});
+
+describe('fetchCatalogCanon — bi-target context canon collapses to the claude form (S8)', () => {
+  // Freezes the S8 mono-target assumption in fetch.ts: the canon map holds one
+  // block per id, so a (hypothetical) bi-target context whose claude/ and
+  // opencode/ AGENTS.md DIFFER collapses to the claude form. This is a
+  // drift-detection gap, NOT a security hole — the pre-apply scan still covers
+  // both dirs (scanPathFor, R9.4). If a future change makes contexts genuinely
+  // per-assistant (two-form canon), this pin turns red and forces the decision.
+  it('reads the claude AGENTS.md, ignoring a divergent opencode form', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'fetchcanon-s8-'));
+    try {
+      await writeFile(
+        join(dir, 'catalog.json'),
+        wrapCatalog([{ ...CONTEXT_ENTRY, targets: ['claude', 'opencode'] }]),
+        'utf8',
+      );
+      const claudeCtx = join(dir, 'claude', 'contexts', 'house');
+      const opencodeCtx = join(dir, 'opencode', 'contexts', 'house');
+      await mkdir(claudeCtx, { recursive: true });
+      await mkdir(opencodeCtx, { recursive: true });
+      await writeFile(join(claudeCtx, 'AGENTS.md'), '# claude form\n', 'utf8');
+      await writeFile(join(opencodeCtx, 'AGENTS.md'), '# opencode form (divergent)\n', 'utf8');
+
+      const canon = await fetchCatalogCanon('c', CANON_URL, CANON_VERSION, makeCloneRunner(), {
+        tmpFactory: async () => ({ path: dir, cleanup: async () => {} }),
+      });
+
+      // Collapsed to the claude form — the opencode divergence is not surfaced.
+      expect(canon.contexts.get('context:house')).toBe('# claude form\n');
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 });
 

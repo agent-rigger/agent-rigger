@@ -133,9 +133,9 @@ async function makeAdHocEnv(): Promise<{
     'utf8',
   );
 
-  await fs.mkdir(path.join(contentDir, 'skills', 'remote-demo'), { recursive: true });
+  await fs.mkdir(path.join(contentDir, 'common', 'skills', 'remote-demo'), { recursive: true });
   await fs.writeFile(
-    path.join(contentDir, 'skills', 'remote-demo', 'SKILL.md'),
+    path.join(contentDir, 'common', 'skills', 'remote-demo', 'SKILL.md'),
     '# Remote Demo\n\nAd-hoc install test skill.',
     'utf8',
   );

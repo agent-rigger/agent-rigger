@@ -159,7 +159,7 @@ async function makePluginEnv(entries: CatalogEntry[]): Promise<PluginEnv> {
   );
 
   // Populate plugins/ directory with the native opencode modules.
-  const pluginsDir = path.join(contentDir, 'plugins');
+  const pluginsDir = path.join(contentDir, 'opencode', 'plugins');
   await fs.mkdir(pluginsDir, { recursive: true });
   await fs.writeFile(
     path.join(pluginsDir, 'guard.ts'),
@@ -236,7 +236,9 @@ function installGuardPlugin(
 describe('H13-1 — scanPathFor: plugin nature', () => {
   it('returns the plugins/ directory for an opencode-targeted plugin', () => {
     const baseDir = '/tmp/checkout';
-    expect(scanPathFor(OPENCODE_PLUGIN_ENTRY, baseDir)).toEqual([path.join(baseDir, 'plugins')]);
+    expect(scanPathFor(OPENCODE_PLUGIN_ENTRY, baseDir)).toEqual([
+      path.join(baseDir, 'opencode', 'plugins'),
+    ]);
   });
 
   it('returns the same plugins/ dir regardless of which plugin id is scanned', () => {
@@ -259,13 +261,13 @@ describe('H13-1 — scanPathFor: plugin nature', () => {
       targets: ['claude', 'opencode'],
       scopes: ['user'],
     };
-    expect(scanPathFor(dualEntry, baseDir)).toEqual([path.join(baseDir, 'plugins')]);
+    expect(scanPathFor(dualEntry, baseDir)).toEqual([path.join(baseDir, 'opencode', 'plugins')]);
   });
 
   it('strips the source qualifier before deciding (qualified opencode plugin id)', () => {
     const baseDir = '/tmp/checkout';
     const qualified: CatalogEntry = { ...OPENCODE_PLUGIN_ENTRY, id: 'principal/plugin:guard' };
-    expect(scanPathFor(qualified, baseDir)).toEqual([path.join(baseDir, 'plugins')]);
+    expect(scanPathFor(qualified, baseDir)).toEqual([path.join(baseDir, 'opencode', 'plugins')]);
   });
 });
 
@@ -298,7 +300,11 @@ describe('H13-2 — scanEntries: plugin entries', () => {
     // Two plugin entries → one plugins/ in the union (dedup), scanned once; the
     // whole dir is present, sibling modules included (audit.ts + guard.ts, R2).
     expect(calls).toHaveLength(1);
-    expect(trees[0]).toEqual(['catalog.json', 'plugins/audit.ts', 'plugins/guard.ts']);
+    expect(trees[0]).toEqual([
+      'catalog.json',
+      'opencode/plugins/audit.ts',
+      'opencode/plugins/guard.ts',
+    ]);
   });
 
   it('only scans catalog.json for a claude-only plugin entry (no module in checkout)', async () => {
@@ -380,8 +386,8 @@ describe('H13-4 — opencode plugin + clean scanner → scanned then installed',
     // selected guard.ts and the sibling audit.ts (R2 "chaque nature conserve sa
     // surface", shared modules included).
     expect(calls).toHaveLength(1);
-    expect(trees[0]).toContain('plugins/guard.ts');
-    expect(trees[0]).toContain('plugins/audit.ts');
+    expect(trees[0]).toContain('opencode/plugins/guard.ts');
+    expect(trees[0]).toContain('opencode/plugins/audit.ts');
   });
 
   it('installs the plugin module into pluginDir after a clean scan', async () => {

@@ -73,8 +73,12 @@ async function makeEnv(): Promise<Fixture> {
     JSON.stringify({ meta: { name: 'scu-r4-catalog' }, entries: [SKILL_ENTRY] }),
     'utf8',
   );
-  await fs.mkdir(path.join(contentDir, 'skills', 'demo'), { recursive: true });
-  await fs.writeFile(path.join(contentDir, 'skills', 'demo', 'SKILL.md'), '# demo\n', 'utf8');
+  await fs.mkdir(path.join(contentDir, 'common', 'skills', 'demo'), { recursive: true });
+  await fs.writeFile(
+    path.join(contentDir, 'common', 'skills', 'demo', 'SKILL.md'),
+    '# demo\n',
+    'utf8',
+  );
 
   const env: Env = { RIGGER_HOME: homeDir };
   const userTargets = resolveUserTargets(env);

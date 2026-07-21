@@ -118,7 +118,7 @@ async function makeHookEnv(entries: CatalogEntry[]): Promise<HookEnv> {
   );
 
   // Populate hooks/ directory with guard script + shared lib
-  const hooksDir = path.join(contentDir, 'hooks');
+  const hooksDir = path.join(contentDir, 'claude', 'hooks');
   const sharedDir = path.join(hooksDir, '_shared');
   await fs.mkdir(sharedDir, { recursive: true });
   await fs.writeFile(
@@ -350,7 +350,7 @@ describe('R27-4 — scanPathFor: hook nature → hooks/ directory', () => {
       event: 'PreToolUse',
       matcher: 'Bash',
     };
-    expect(scanPathFor(entry, baseDir)).toEqual([path.join(baseDir, 'hooks')]);
+    expect(scanPathFor(entry, baseDir)).toEqual([path.join(baseDir, 'claude', 'hooks')]);
   });
 
   it('returns the same hooks/ dir regardless of which hook id is scanned', () => {
@@ -385,7 +385,7 @@ describe('R27-4 — scanPathFor: hook nature → hooks/ directory', () => {
       targets: ['claude'],
       scopes: ['user'],
     };
-    expect(scanPathFor(entry, baseDir)).toEqual([path.join(baseDir, 'skills', 'demo')]);
+    expect(scanPathFor(entry, baseDir)).toEqual([path.join(baseDir, 'common', 'skills', 'demo')]);
   });
 
   it('still returns the individual file path for agent nature', () => {
@@ -397,7 +397,9 @@ describe('R27-4 — scanPathFor: hook nature → hooks/ directory', () => {
       targets: ['claude'],
       scopes: ['user'],
     };
-    expect(scanPathFor(entry, baseDir)).toEqual([path.join(baseDir, 'agents', 'demo.md')]);
+    expect(scanPathFor(entry, baseDir)).toEqual([
+      path.join(baseDir, 'common', 'agents', 'demo.md'),
+    ]);
   });
 });
 
@@ -421,11 +423,11 @@ describe('R27-3 — scanEntries: deduplicates hook paths', () => {
     expect(calls).toHaveLength(1);
     expect(trees[0]).toEqual([
       'catalog.json',
-      'hooks/_shared/hook-lib.ts',
-      'hooks/post-tool.ts',
-      'hooks/pre-tool.ts',
-      'hooks/stop.ts',
-      'hooks/submit.ts',
+      'claude/hooks/_shared/hook-lib.ts',
+      'claude/hooks/post-tool.ts',
+      'claude/hooks/pre-tool.ts',
+      'claude/hooks/stop.ts',
+      'claude/hooks/submit.ts',
     ]);
   });
 
@@ -630,8 +632,8 @@ describe('R27-CLEAN — hook + clean scanner → installs normally', () => {
     // pre-tool.ts AND the shared _shared/hook-lib.ts nobody referenced (R2
     // "chaque nature conserve sa surface"), never a per-script standalone scan.
     expect(calls).toHaveLength(1);
-    expect(trees[0]).toContain('hooks/pre-tool.ts');
-    expect(trees[0]).toContain('hooks/_shared/hook-lib.ts');
+    expect(trees[0]).toContain('claude/hooks/pre-tool.ts');
+    expect(trees[0]).toContain('claude/hooks/_shared/hook-lib.ts');
   });
 });
 
@@ -655,7 +657,7 @@ describe('D3 — causal: a secret in _shared/ the selected hook never imports bl
   it('scanEntries throws ScanBlockedError whose finding names hooks/_shared/hook-lib.ts', async () => {
     // Plant the secret ONLY in the shared lib; pre-tool.ts and catalog.json stay clean.
     await fs.writeFile(
-      path.join(hookEnv.contentDir, 'hooks', '_shared', 'hook-lib.ts'),
+      path.join(hookEnv.contentDir, 'claude', 'hooks', '_shared', 'hook-lib.ts'),
       `// shared hook library\nconst token = "${FROZEN_PAT}";\n`,
       'utf8',
     );
@@ -674,6 +676,6 @@ describe('D3 — causal: a secret in _shared/ the selected hook never imports bl
 
     expect(caught).toBeInstanceOf(ScanBlockedError);
     const err = caught as ScanBlockedError;
-    expect(err.findings.some((f) => f.includes('hooks/_shared/hook-lib.ts'))).toBe(true);
+    expect(err.findings.some((f) => f.includes('claude/hooks/_shared/hook-lib.ts'))).toBe(true);
   });
 });

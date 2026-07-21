@@ -187,32 +187,34 @@ async function makeRemoteEnv(opts: { withCatalogUrl: boolean }): Promise<{
   );
 
   // Write skills/remote-demo/SKILL.md
-  await fs.mkdir(path.join(contentDir, 'skills', 'remote-demo'), { recursive: true });
+  await fs.mkdir(path.join(contentDir, 'common', 'skills', 'remote-demo'), { recursive: true });
   await fs.writeFile(
-    path.join(contentDir, 'skills', 'remote-demo', 'SKILL.md'),
+    path.join(contentDir, 'common', 'skills', 'remote-demo', 'SKILL.md'),
     '# Remote Demo Skill\n\nThis is a remote skill fixture.',
     'utf8',
   );
 
   // Write guardrails/guardrails-claude/ for Scenario 2 + TEST-3 (B-iii: all from checkout)
-  await fs.mkdir(path.join(contentDir, 'guardrails', 'guardrails-claude'), { recursive: true });
+  await fs.mkdir(path.join(contentDir, 'claude', 'guardrails', 'guardrails-claude'), {
+    recursive: true,
+  });
   await fs.writeFile(
-    path.join(contentDir, 'guardrails', 'guardrails-claude', 'deny.json'),
+    path.join(contentDir, 'claude', 'guardrails', 'guardrails-claude', 'deny.json'),
     JSON.stringify({ deny: ['Read(~/.ssh/**)'] }),
     'utf8',
   );
 
   // Write hook scripts for TEST-4 (pack:harness)
-  await fs.mkdir(path.join(contentDir, 'hooks', '_shared'), { recursive: true });
+  await fs.mkdir(path.join(contentDir, 'claude', 'hooks', '_shared'), { recursive: true });
   for (const name of ['guard-command', 'guard-secret', 'guard-write-secret', 'guard-prompt']) {
     await fs.writeFile(
-      path.join(contentDir, 'hooks', `${name}.ts`),
+      path.join(contentDir, 'claude', 'hooks', `${name}.ts`),
       `// stub ${name}`,
       'utf8',
     );
   }
   await fs.writeFile(
-    path.join(contentDir, 'hooks', '_shared', 'hook-lib.ts'),
+    path.join(contentDir, 'claude', 'hooks', '_shared', 'hook-lib.ts'),
     '// stub hook-lib',
     'utf8',
   );
@@ -880,7 +882,7 @@ describe('TEST-2b — skill source absent in checkout — error propagates + cle
     const noSkillEnv = await makeRemoteEnv({ withCatalogUrl: true });
 
     // Remove the SKILL.md from contentDir
-    await fs.rm(path.join(noSkillEnv.contentDir, 'skills', 'remote-demo'), {
+    await fs.rm(path.join(noSkillEnv.contentDir, 'common', 'skills', 'remote-demo'), {
       recursive: true,
       force: true,
     });
@@ -902,7 +904,7 @@ describe('TEST-2b — skill source absent in checkout — error propagates + cle
 
   it('exits non-0 when SKILL.md is absent', async () => {
     const noSkillEnv = await makeRemoteEnv({ withCatalogUrl: true });
-    await fs.rm(path.join(noSkillEnv.contentDir, 'skills', 'remote-demo'), {
+    await fs.rm(path.join(noSkillEnv.contentDir, 'common', 'skills', 'remote-demo'), {
       recursive: true,
       force: true,
     });

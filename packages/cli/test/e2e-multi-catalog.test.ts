@@ -206,7 +206,7 @@ async function makeRemoteContentEnv(opts: {
     if (entry.kind === 'artifact' && entry.nature === 'skill') {
       const localId = entry.id.includes('/') ? entry.id.split('/').slice(1).join('/') : entry.id;
       const skillName = localId.replace(/^skill:/, '');
-      const skillDir = path.join(contentDir, 'skills', skillName);
+      const skillDir = path.join(contentDir, 'common', 'skills', skillName);
       await fs.mkdir(skillDir, { recursive: true });
       await fs.writeFile(
         path.join(skillDir, 'SKILL.md'),
@@ -900,9 +900,9 @@ describe('e2e multi-catalog — scenario 7: install routes by prefix to secondar
       }),
       'utf8',
     );
-    await fs.mkdir(path.join(contentDirA, 'skills', 'x'), { recursive: true });
+    await fs.mkdir(path.join(contentDirA, 'common', 'skills', 'x'), { recursive: true });
     await fs.writeFile(
-      path.join(contentDirA, 'skills', 'x', 'SKILL.md'),
+      path.join(contentDirA, 'common', 'skills', 'x', 'SKILL.md'),
       '# x\nContent from source A.',
       'utf8',
     );
@@ -931,15 +931,15 @@ describe('e2e multi-catalog — scenario 7: install routes by prefix to secondar
       }),
       'utf8',
     );
-    await fs.mkdir(path.join(contentDirB, 'skills', 'x'), { recursive: true });
+    await fs.mkdir(path.join(contentDirB, 'common', 'skills', 'x'), { recursive: true });
     await fs.writeFile(
-      path.join(contentDirB, 'skills', 'x', 'SKILL.md'),
+      path.join(contentDirB, 'common', 'skills', 'x', 'SKILL.md'),
       '# x\nContent from source B.',
       'utf8',
     );
-    await fs.mkdir(path.join(contentDirB, 'skills', 'only-in-b'), { recursive: true });
+    await fs.mkdir(path.join(contentDirB, 'common', 'skills', 'only-in-b'), { recursive: true });
     await fs.writeFile(
-      path.join(contentDirB, 'skills', 'only-in-b', 'SKILL.md'),
+      path.join(contentDirB, 'common', 'skills', 'only-in-b', 'SKILL.md'),
       '# only-in-b\nExclusive to source B.',
       'utf8',
     );

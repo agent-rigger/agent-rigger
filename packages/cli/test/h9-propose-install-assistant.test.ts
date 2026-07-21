@@ -75,9 +75,12 @@ async function makeFixture(): Promise<Fixture> {
     }),
     'utf8',
   );
-  const ctxDir = path.join(contentDir, 'contexts', 'main');
-  await fs.mkdir(ctxDir, { recursive: true });
-  await fs.writeFile(path.join(ctxDir, 'AGENTS.md'), AGENTS_CONTENT, 'utf8');
+  // Bi-target context (claude + opencode): one AGENTS.md per assistant dir (R9/S8).
+  for (const assistant of ['claude', 'opencode']) {
+    const ctxDir = path.join(contentDir, assistant, 'contexts', 'main');
+    await fs.mkdir(ctxDir, { recursive: true });
+    await fs.writeFile(path.join(ctxDir, 'AGENTS.md'), AGENTS_CONTENT, 'utf8');
+  }
 
   const env: Env = { RIGGER_HOME: homeDir };
   const manifestPath = path.join(homeDir, '.config', 'agent-rigger', 'state.json');

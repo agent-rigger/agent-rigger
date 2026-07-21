@@ -78,14 +78,20 @@ async function makeTmpHome(): Promise<{ dir: string; env: Env; cleanup: () => Pr
  */
 async function makeCheckoutDir(baseDir: string): Promise<string> {
   const checkoutDir = path.join(baseDir, 'checkout');
-  await fs.mkdir(path.join(checkoutDir, 'hooks', '_shared'), { recursive: true });
+  await fs.mkdir(path.join(checkoutDir, 'claude', 'hooks', '_shared'), { recursive: true });
   for (const name of HOOK_NAMES) {
-    await fs.writeFile(path.join(checkoutDir, 'hooks', `${name}.ts`), `// stub ${name}`);
+    await fs.writeFile(path.join(checkoutDir, 'claude', 'hooks', `${name}.ts`), `// stub ${name}`);
   }
-  await fs.writeFile(path.join(checkoutDir, 'hooks', '_shared', 'hook-lib.ts'), '// stub lib');
+  await fs.writeFile(
+    path.join(checkoutDir, 'claude', 'hooks', '_shared', 'hook-lib.ts'),
+    '// stub lib',
+  );
 
-  await fs.mkdir(path.join(checkoutDir, 'skills', 'demo'), { recursive: true });
-  await fs.writeFile(path.join(checkoutDir, 'skills', 'demo', 'SKILL.md'), '# demo skill');
+  await fs.mkdir(path.join(checkoutDir, 'common', 'skills', 'demo'), { recursive: true });
+  await fs.writeFile(
+    path.join(checkoutDir, 'common', 'skills', 'demo', 'SKILL.md'),
+    '# demo skill',
+  );
 
   return checkoutDir;
 }
