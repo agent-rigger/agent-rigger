@@ -391,6 +391,12 @@ export function buildLibMaterializations(
  * Callers prepend the warnings to their output, and thread `constantScanner(verdict)`
  * to the adapter's apply-time re-check under !force (design.md § Le seam de couplage).
  *
+ * Libs (engine-materialized, never applied by an adapter) have NO apply-time
+ * re-check at all: this gate is the only barrier over their bytes. That is
+ * sound because the union covers `scanPathFor('lib')` and the materializer's
+ * source is pinned to that exact path (path_match test, ADR-0030) — the
+ * materialized byte is the scanned byte.
+ *
  * The staging mirror is torn down in a `finally` — it never survives the call,
  * scan success or failure. A scan always runs (catalog.json is always mirrored),
  * so a selection with no scannable natures (guardrail-only, mcp-only) still

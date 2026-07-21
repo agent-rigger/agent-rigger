@@ -46,6 +46,11 @@ export const stubScanner: Scanner = {
  *   (`assertNever`, ADR-0022 §4), so a new artefact nature that materialises
  *   content breaks the build until it joins the union. No apply-time source can
  *   silently escape what the gate already covered.
+ * - The superset also covers ENGINE materialisation, not only adapter applies:
+ *   libs are posed by apply()'s parallel channel from a source pinned equal to
+ *   `scanPathFor('lib')[0]` (path_match test, ADR-0030). A lib has no apply-time
+ *   re-check — the union gate is its only barrier, and the pin is what makes
+ *   that barrier airtight.
  *
  * Returning the union verdict for any source is therefore exact, at zero
  * re-spawn — the point of the change, since R1 counts the gate AND the apply.
