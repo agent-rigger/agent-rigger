@@ -237,7 +237,18 @@ export async function runUpdate(opts: RunUpdateOptions): Promise<UpdateResult> {
 
     if (entry === undefined) {
       skippedIds.push(id);
-      skipReasons.set(id, 'not installed');
+      // T7 (differed from T3): a lib entry always writes assistant:'shared'
+      // (S2) so the lookup above — scoped to THIS update's (scope, assistant)
+      // — never matches it, installed or not. 'not installed' would be
+      // misleading for an id that IS installed; name the real reason instead.
+      // The skip itself is unchanged (S5 exemption pin: update never becomes
+      // a direct-lib-update path) — only the message changes.
+      skipReasons.set(
+        id,
+        localId(id).startsWith('lib:')
+          ? 'a lib is updated through the artifacts that require it'
+          : 'not installed',
+      );
       continue;
     }
 

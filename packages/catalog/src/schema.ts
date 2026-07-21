@@ -22,8 +22,13 @@ import {
 // Nature constants + compile-time coherence check with core.Nature
 // ---------------------------------------------------------------------------
 
-/** The 9 natures of installable artefacts. */
-const NATURES = [
+/**
+ * The 9 natures of installable artefacts. Exported (T7, lib-nature R8.4) so
+ * CLI-side exhaustiveness tests can iterate it against the manual per-nature
+ * structures (RESOURCE_NATURE_MAP, PREFIX_TO_NATURE, ADAPTER_CHECK_NATURES)
+ * without a second, driftable list.
+ */
+export const NATURES = [
   'plugin',
   'guardrail',
   'context',

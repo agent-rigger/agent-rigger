@@ -45,6 +45,8 @@ export const RESOURCE_NATURE_MAP: Record<string, string> = {
   hooks: 'hook',
   tool: 'tool',
   tools: 'tool',
+  lib: 'lib',
+  libs: 'lib',
   pack: 'pack',
   packs: 'pack',
   catalog: 'catalog',
@@ -129,16 +131,21 @@ export async function runLs(opts: RunLsOptions): Promise<RunLsResult> {
     : targets.stateJson;
 
   const installedAssistants = new Map<string, Assistant[]>();
+  // A lib entry writes assistant:'shared' (S2, lib-nature) — it has no
+  // single-assistant identity and is never routed to an adapter, so it is
+  // excluded from the per-assistant tally above and tracked here instead
+  // (T7): a lib is a global singleton, so an --assistant filter must never
+  // hide one that IS installed.
+  const installedLibIds = new Set<string>();
   try {
     const manifest = await readManifest(stateJsonPath);
     for (const a of manifest.artifacts) {
       if (a.scope !== scope) continue;
       const entryAssistant = a.assistant ?? 'claude';
-      // A lib entry writes assistant:'shared' (S2, lib-nature) — it has no
-      // single-assistant identity and is never routed to an adapter, so it is
-      // excluded from this per-assistant tally (T7 gives libs their own ls
-      // display).
-      if (entryAssistant === 'shared') continue;
+      if (entryAssistant === 'shared') {
+        installedLibIds.add(a.id);
+        continue;
+      }
       const existing = installedAssistants.get(a.id);
       if (existing === undefined) {
         installedAssistants.set(a.id, [entryAssistant]);
@@ -150,11 +157,12 @@ export async function runLs(opts: RunLsOptions): Promise<RunLsResult> {
     // Absent/corrupt manifest → nothing installed, every entry [available].
   }
 
-  const installedIds = new Set(
-    [...installedAssistants.entries()]
+  const installedIds = new Set([
+    ...[...installedAssistants.entries()]
       .filter(([, assistants]) => assistant === undefined || assistants.includes(assistant))
       .map(([id]) => id),
-  );
+    ...installedLibIds,
+  ]);
 
   // -------------------------------------------------------------------------
   // Step 3: Render
