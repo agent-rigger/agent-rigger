@@ -10,7 +10,9 @@
  *   guarantee cleanup in finally.
  * - Inside the callback: readCatalogDir → frontier guard (path traversal) →
  *   security scan (scanEntries: catalog.json + every scannable entry) → mergeCatalogs → resolve ids →
- *   buildAdapter(assistant, env, {externalIds, externalBaseDir, catalogUrl, pluginRunner}) →
+ *   R4 pre-flight (D4: refuse an opencode plugin requiring a lib when the
+ *   host cannot symlink, before any write) → buildAdapter(assistant, env,
+ *   {externalIds, externalBaseDir, catalogUrl, pluginRunner}) →
  *   versionFor → runInstall. `assistant` defaults to 'claude' when omitted
  *   (back-compat — the CLI always resolves and passes one explicitly, slice A).
  *
@@ -31,11 +33,16 @@
  * - exactOptionalPropertyTypes: never assigns undefined to optional fields.
  */
 
+import path from 'node:path';
+
 import type { PluginRunner } from '@agent-rigger/adapters';
 import type { Assistant } from '@agent-rigger/core';
 import { createCompositeScanner } from '@agent-rigger/core';
 import { assertSafeArtifactName } from '@agent-rigger/core/artifact-name';
+import type { LinkOptions } from '@agent-rigger/core/linker';
+import { probeSymlinkSupport } from '@agent-rigger/core/linker';
 import { findEntry, readManifest } from '@agent-rigger/core/manifest';
+import { libsDir } from '@agent-rigger/core/paths';
 import type { Env } from '@agent-rigger/core/paths';
 import { constantScanner } from '@agent-rigger/core/scan';
 import type { Scanner } from '@agent-rigger/core/scan';
@@ -185,6 +192,125 @@ function pruneSatisfiedRequires(
     const pruned = entry.requires.filter((r) => !externallySatisfied.has(r));
     return pruned.length === entry.requires.length ? entry : { ...entry, requires: pruned };
   });
+}
+
+// ---------------------------------------------------------------------------
+// SymlinkUnavailableError — R4/D4 (lib-nature pre-flight)
+// ---------------------------------------------------------------------------
+
+/**
+ * Thrown by the R4 pre-flight (below) when the host cannot create symlinks
+ * AND the resolved selection contains an opencode plugin whose `requires`
+ * include a lib. Refused BEFORE any write (store, lib, manifest) — the
+ * targeted vector is opencode/plugins.ts's `linkOrCopy` call: its silent
+ * copy-fallback would pose the plugin file as a byte copy, whose relative
+ * import (`../libs/<name>/...`) resolves against the copy's own directory
+ * instead of the store — a "Cannot find module" broken import discovered
+ * only when the user runs it, the exact silent failure the stock forbids.
+ *
+ * Scoped to the one proven vector (design.md § Surfaces de cycle de vie — R4
+ * "portée honnête"): a plugin nature entry posed by copy, depending on a lib.
+ * Any other copy-installed nature that later grows a lib dependency is
+ * BACKLOG, not this gate.
+ */
+export class SymlinkUnavailableError extends Error {
+  /** The qualified opencode plugin id that cannot be safely copy-installed. */
+  readonly pluginId: string;
+  /** The qualified lib id the plugin requires. */
+  readonly libId: string;
+
+  constructor(pluginId: string, libId: string) {
+    super(
+      `Cannot install "${pluginId}": this system does not support symlinks, but it requires `
+        + `"${libId}" (a shared lib) — a plain copy would leave its import unresolved at `
+        + 'runtime ("Cannot find module"). On Windows, enable Developer Mode (Settings > '
+        + 'Privacy & security > For developers) to allow symlink creation, then retry. '
+        + 'Native support without Developer Mode is tracked on the roadmap (W1).',
+    );
+    this.name = 'SymlinkUnavailableError';
+    this.pluginId = pluginId;
+    this.libId = libId;
+  }
+}
+
+/**
+ * First opencode plugin in `resolved` whose (qualified, pre-prune) requires
+ * include a lib id — the ONE vector R4 targets. Same `targetsAssistant`
+ * predicate step 1b uses, applied here to the raw (not-yet-partitioned)
+ * selection so a mixed-target pack's sibling opencode member is only flagged
+ * when THIS run's assistant is actually 'opencode' (callers gate on that
+ * separately — a claude-targeted run never reaches this vector even for a
+ * dual-target plugin, since the claude plugin nature delegates to the native
+ * CLI, never `linkOrCopy`).
+ *
+ * Returns the (plugin id, lib id) pair for the error message; undefined when
+ * no such plugin is in the selection.
+ */
+function findSymlinkDependentPlugin(
+  resolved: ArtifactEntry[],
+  requiresById: Map<string, string[]>,
+  libIds: Set<string>,
+  assistant: Assistant,
+): { pluginId: string; libId: string } | undefined {
+  for (const entry of resolved) {
+    if (entry.nature !== 'plugin' || !targetsAssistant(entry, assistant)) continue;
+    const libRef = (requiresById.get(entry.id) ?? []).find((r) => libIds.has(r));
+    if (libRef !== undefined) {
+      return { pluginId: entry.id, libId: libRef };
+    }
+  }
+  return undefined;
+}
+
+/**
+ * R4 pre-flight (D4): refuse BEFORE any write when the host cannot create
+ * symlinks and `resolved` contains an opencode plugin whose requires include
+ * a lib. Shared by `runRemoteInstall` (fresh installs) AND `runUpdate`
+ * (cmd-update.ts) — a stale opencode plugin re-posed by an update goes
+ * through the exact SAME `linkOrCopy` call as a fresh install
+ * (opencode/plugins.ts's `applySkill`): if the catalogue bump being applied
+ * ADDS a lib requirement to an already-copy-installed plugin, the update
+ * must refuse for the same reason a fresh install would — and it must do so
+ * BEFORE `remove()` deletes the old copy, or the update would destroy the
+ * artifact with nothing safely re-posed in its place (a "success" that
+ * silently breaks the install, exactly what R4 exists to prevent). No-op
+ * (never even probes) when `assistant !== 'opencode'` — the claude plugin
+ * nature delegates to the native CLI, never `linkOrCopy`.
+ *
+ * The probe itself runs on the SAME filesystem the real pose will use
+ * (`libsDir(env)`'s parent — the rigger config dir, sibling of the plugin
+ * store) rather than os.tmpdir(), so its verdict isn't skewed by a
+ * filesystem mismatch (network-mounted HOME, container bind mount) between
+ * where the probe runs and where the real symlink would be created.
+ *
+ * @param resolved     Qualified resolved selection.
+ * @param requiresById  Qualified, pre-prune requires per qualified entry id.
+ * @param libIds        Qualified ids of every lib in the resolved selection.
+ * @param assistant     This run's target assistant.
+ * @param env           Injectable env — resolves the same-filesystem scratch dir.
+ * @param symlink       Injectable symlink implementation forwarded to the probe (tests).
+ */
+export async function assertSymlinkCapable(
+  resolved: ArtifactEntry[],
+  requiresById: Map<string, string[]>,
+  libIds: Set<string>,
+  assistant: Assistant,
+  env: Env,
+  symlink?: LinkOptions['symlink'],
+): Promise<void> {
+  if (assistant !== 'opencode') return;
+
+  const dependent = findSymlinkDependentPlugin(resolved, requiresById, libIds, assistant);
+  if (dependent === undefined) return;
+
+  const scratchParentDir = path.dirname(libsDir(env));
+  const supported = await probeSymlinkSupport({
+    scratchParentDir,
+    ...(symlink === undefined ? {} : { symlink }),
+  });
+  if (!supported) {
+    throw new SymlinkUnavailableError(dependent.pluginId, dependent.libId);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -424,6 +550,16 @@ export async function runRemoteInstall(opts: {
    * ids, interactive picker, ad-hoc) funnels through runRemoteInstall.
    */
   summary?: boolean;
+  /**
+   * Injectable symlink implementation forwarded to the R4 pre-flight probe
+   * (probeSymlinkSupport, core/linker.ts) — tests force a rejection to
+   * simulate a host without symlink support. Defaults to the real
+   * `fs.symlink` (same default `linkOrCopy` uses). This seam only decides
+   * whether the pre-flight throws; it never reaches the real per-artefact
+   * install writes, which go through the adapter's own untouched
+   * `linkOrCopy` call.
+   */
+  symlink?: LinkOptions['symlink'];
 }): Promise<InstallResult> {
   const {
     ids,
@@ -600,6 +736,20 @@ export async function runRemoteInstall(opts: {
         scanner,
         force,
       });
+
+      // R4 pre-flight (D4): refuse BEFORE any write when the host cannot
+      // create symlinks and the resolved selection contains an opencode
+      // plugin requiring a lib (opencode/plugins.ts poses a plugin via
+      // linkOrCopy, whose silent copy-fallback would break the plugin's
+      // relative import at runtime — SymlinkUnavailableError above). Probed
+      // ONCE per run, AFTER the scan gate (the security verdict primes) and
+      // BEFORE buildAdapter/apply: nothing durable has been written yet at
+      // this point — scanEntries only mirrors the union into a staging dir
+      // torn down in its own `finally`. Never gated behind --force: this is
+      // a structural runtime-correctness refusal, not a scan policy. Shared
+      // with runUpdate (cmd-update.ts) — see assertSymlinkCapable's docblock.
+      const libIds = new Set(libs.map((l) => l.id));
+      await assertSymlinkCapable(resolved, requiresById, libIds, assistant, env, opts.symlink);
 
       // Build effectiveEntries map for hookSpec resolution (qualified ids).
       const effectiveEntries = new Map(effective.map((e) => [e.id, e]));

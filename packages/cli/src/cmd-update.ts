@@ -48,6 +48,7 @@ import type { Assistant } from '@agent-rigger/core';
 import { createCompositeScanner } from '@agent-rigger/core';
 import { assertSafeArtifactName } from '@agent-rigger/core/artifact-name';
 import { apply, remove } from '@agent-rigger/core/engine';
+import type { LinkOptions } from '@agent-rigger/core/linker';
 import { readManifest } from '@agent-rigger/core/manifest';
 import type { Env } from '@agent-rigger/core/paths';
 import { acquireRunLock } from '@agent-rigger/core/run-lock';
@@ -57,7 +58,12 @@ import type { Scope } from '@agent-rigger/core/types';
 
 import { buildAdapter } from './adapter-dispatch';
 import { targetsAssistant } from './cmd-install';
-import { buildLibMaterializations, partitionForeignRequires, scanEntries } from './remote-install';
+import {
+  assertSymlinkCapable,
+  buildLibMaterializations,
+  partitionForeignRequires,
+  scanEntries,
+} from './remote-install';
 import { ANSI, paint, shouldColor } from './ui';
 
 /**
@@ -107,6 +113,15 @@ export interface RunUpdateOptions {
    * untouched, never updated as a side effect.
    */
   assistant?: Assistant;
+  /**
+   * Injectable symlink implementation forwarded to the R4 pre-flight probe
+   * (assertSymlinkCapable / probeSymlinkSupport, shared with runRemoteInstall
+   * — see remote-install.ts) — tests force a rejection to simulate a host
+   * without symlink support. Defaults to the real `fs.symlink`. This seam
+   * only decides whether the pre-flight throws; it never reaches the real
+   * per-artefact install writes.
+   */
+  symlink?: LinkOptions['symlink'];
 }
 
 export interface UpdateResult {
@@ -363,6 +378,31 @@ export async function runUpdate(opts: RunUpdateOptions): Promise<UpdateResult> {
           scanner,
           force,
         });
+
+        // R4 pre-flight (D4): shared with runRemoteInstall (remote-install.ts,
+        // see assertSymlinkCapable's docblock) — a stale opencode plugin
+        // re-posed by THIS update goes through the exact same linkOrCopy call
+        // as a fresh install. If the catalogue bump being applied ADDED a lib
+        // requirement to an already-copy-installed plugin, the update must
+        // refuse for the same reason a fresh install would — and it MUST do
+        // so here, before remove() below deletes the old copy: a refusal
+        // raised only at apply() would leave the artifact destroyed with
+        // nothing safely re-posed in its place, the exact silent-breakage
+        // scenario R4 exists to prevent. libIds is computed independently of
+        // the later `libs` (built after buildAdapter) so the gate can run
+        // this early, right after the scan gate (same relative position as
+        // runRemoteInstall) and well before the remove/apply block.
+        const libIdsForPreflight = new Set(
+          resolved.filter((e) => e.nature === 'lib').map((e) => qualifyEdge(e.id)),
+        );
+        await assertSymlinkCapable(
+          resolved,
+          requiresByQualifiedId,
+          libIdsForPreflight,
+          assistant,
+          env,
+          opts.symlink,
+        );
 
         // R5 (lot 6, D5): replay every stale mcp entry's previously-resolved
         // secretRefs from the manifest, so the re-render (mcpSource) reuses

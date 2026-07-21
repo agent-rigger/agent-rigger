@@ -74,6 +74,7 @@ import {
   ForeignRequireUnsatisfiedError,
   runRemoteInstall,
   ScanBlockedError,
+  SymlinkUnavailableError,
 } from './remote-install';
 import {
   InvalidSecretEnvFlagError,
@@ -3160,6 +3161,16 @@ function handleError(err: unknown, print: (msg: string) => void): number {
     // dependency installed only through its consumers — an invalid selection,
     // like an unknown entry or a cross-catalogue miss (exit 2, validation).
     // Nothing was resolved/scanned/written.
+    print(`[error] ${err.message}`);
+    return 2;
+  }
+
+  if (err instanceof SymlinkUnavailableError) {
+    // R4/D4 (lib-nature): an opencode plugin requiring a lib was refused
+    // BEFORE any write because this host cannot create symlinks — sibling of
+    // the other pre-resolution validation errors above (exit 2). The message
+    // itself already names the cause, the blocking plugin, its lib
+    // dependency, and the actionable fix (Developer Mode / roadmap W1).
     print(`[error] ${err.message}`);
     return 2;
   }
