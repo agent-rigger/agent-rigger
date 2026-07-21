@@ -298,33 +298,78 @@ describe('renderPlan — merge-allow', () => {
 // ---------------------------------------------------------------------------
 
 describe('renderPlan — write-text', () => {
-  it('renders "write  +L / -0" with the content line count', () => {
+  // W5: a real line-by-line diff against `previous` (the pre-install content
+  // captured at plan time, lot2 R6/FM6) replaces the old first-N-lines
+  // preview — a new file shows every line as an addition, a modified file
+  // shows a unified diff (contexte 3), capped with explicit elision beyond
+  // ~40 display rows.
+
+  it('renders every line as an addition for a brand-new file (no previous)', () => {
     const content = 'line1\nline2\nline3';
     const op: WriteOp = { kind: 'write-text', path: '/p', content, description: '' };
     const group: PlanGroup = { id: 'a', nature: 'context', action: 'install', ops: [op] };
     const result = renderPlan([group], { color: false });
     expect(result).toContain('write  +3 / -0');
+    expect(result).toContain('+ line1');
+    expect(result).toContain('+ line2');
+    expect(result).toContain('+ line3');
+    expect(result).not.toContain('│');
   });
 
-  it('shows first N lines with "│" prefix up to maxDetail', () => {
-    const content = 'l1\nl2\nl3\nl4\nl5\nl6\nl7';
-    const op: WriteOp = { kind: 'write-text', path: '/p', content, description: '' };
+  it('treats previous === null the same as no previous (new file)', () => {
+    const op: WriteOp = {
+      kind: 'write-text',
+      path: '/p',
+      content: 'a\nb',
+      description: '',
+      previous: null,
+    };
     const group: PlanGroup = { id: 'a', nature: 'context', action: 'install', ops: [op] };
-    const result = renderPlan([group], { color: false, maxDetail: 3 });
-    expect(result).toContain('│ l1');
-    expect(result).toContain('│ l3');
-    expect(result).not.toContain('│ l4');
-    expect(result).toContain('│ …');
+    const result = renderPlan([group], { color: false });
+    expect(result).toContain('write  +2 / -0');
+    expect(result).toContain('+ a');
+    expect(result).toContain('+ b');
   });
 
-  it('shows all lines when count <= maxDetail without truncation marker', () => {
-    const content = 'a\nb\nc';
-    const op: WriteOp = { kind: 'write-text', path: '/p', content, description: '' };
+  it('renders a unified diff (contexte 3) against previous for a modified file', () => {
+    const previous = 'keep1\nkeep2\nkeep3\nold\nkeep4\nkeep5\nkeep6';
+    const content = 'keep1\nkeep2\nkeep3\nnew\nkeep4\nkeep5\nkeep6';
+    const op: WriteOp = { kind: 'write-text', path: '/p', content, description: '', previous };
     const group: PlanGroup = { id: 'a', nature: 'context', action: 'install', ops: [op] };
-    const result = renderPlan([group], { color: false, maxDetail: 6 });
-    expect(result).toContain('│ a');
-    expect(result).toContain('│ c');
-    expect(result).not.toContain('│ …');
+    const result = renderPlan([group], { color: false });
+    expect(result).toContain('write  +1 / -1');
+    expect(result).toContain('- old');
+    expect(result).toContain('+ new');
+    // Unchanged lines within contexte 3 of the change are shown as context.
+    expect(result).toContain('│ keep3');
+    expect(result).toContain('│ keep4');
+  });
+
+  it('collapses unchanged runs farther than contexte 3 into a gap marker', () => {
+    const filler = Array.from({ length: 10 }, (_, i) => `same${i}`);
+    const previous = [...filler, 'old', ...filler].join('\n');
+    const content = [...filler, 'new', ...filler].join('\n');
+    const op: WriteOp = { kind: 'write-text', path: '/p', content, description: '', previous };
+    const group: PlanGroup = { id: 'a', nature: 'context', action: 'install', ops: [op] };
+    const result = renderPlan([group], { color: false });
+    expect(result).toContain('write  +1 / -1');
+    // Lines immediately around the change are kept as context…
+    expect(result).toContain('│ same9');
+    expect(result).toContain('│ same0');
+    // …but the far side of each 10-line filler run collapses into a gap.
+    expect(result).toContain('unchanged');
+  });
+
+  it('caps the diff body at ~40 rows and elides the remainder explicitly', () => {
+    const previous = Array.from({ length: 60 }, (_, i) => `old${i}`).join('\n');
+    const content = Array.from({ length: 60 }, (_, i) => `new${i}`).join('\n');
+    const op: WriteOp = { kind: 'write-text', path: '/p', content, description: '', previous };
+    const group: PlanGroup = { id: 'a', nature: 'context', action: 'install', ops: [op] };
+    const result = renderPlan([group], { color: false });
+    expect(result).toContain('write  +60 / -60');
+    expect(result).toContain('- old0');
+    expect(result).not.toContain('+ new59');
+    expect(result).toContain('diff truncated (+80 more lines)');
   });
 
   it('abbreviates path in abbreviated form', () => {
@@ -339,19 +384,30 @@ describe('renderPlan — write-text', () => {
     expect(result).toContain('~/.claude/skills/foo/SKILL.md');
   });
 
-  it('reports +0 for empty content', () => {
+  it('reports +0 / -0 for empty content (new file)', () => {
     const op: WriteOp = { kind: 'write-text', path: '/p', content: '', description: '' };
     const group: PlanGroup = { id: 'a', nature: 'context', action: 'install', ops: [op] };
     const result = renderPlan([group], { color: false });
     expect(result).toContain('write  +0 / -0');
   });
 
-  it('ignores trailing newline in line count', () => {
+  it('ignores trailing newline in the add count', () => {
     // 'a\nb\n' is 2 logical lines, not 3
     const op: WriteOp = { kind: 'write-text', path: '/p', content: 'a\nb\n', description: '' };
     const group: PlanGroup = { id: 'a', nature: 'context', action: 'install', ops: [op] };
     const result = renderPlan([group], { color: false });
     expect(result).toContain('write  +2 / -0');
+  });
+
+  it('reports the real add/remove counts when the diff shrinks the file', () => {
+    const previous = 'a\nb\nc\nd\ne';
+    const content = 'a\nb\ne';
+    const op: WriteOp = { kind: 'write-text', path: '/p', content, description: '', previous };
+    const group: PlanGroup = { id: 'a', nature: 'context', action: 'install', ops: [op] };
+    const result = renderPlan([group], { color: false });
+    expect(result).toContain('write  +0 / -2');
+    expect(result).toContain('- c');
+    expect(result).toContain('- d');
   });
 });
 

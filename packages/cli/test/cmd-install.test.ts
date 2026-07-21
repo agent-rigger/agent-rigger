@@ -1620,6 +1620,38 @@ describe('runInstall — B10: presence-checks on an empty write-plan', () => {
     expect(result.output).toContain('tool:glab');
   });
 
+  // T5/B10 (fix-bugs-cli-b5-b10, deferred item): the test above proves the
+  // check RAN under `--yes` on an empty plan, but only transitively implies
+  // consent was granted. This test asserts the grant itself: cold (--yes,
+  // non-interactive) consent for a not-yet-consented tool on a tools-only
+  // (empty write-plan) selection is actually PERSISTED to the ledger — the
+  // same persistence a non-empty plan's `--yes` install already gets. No
+  // confirmToolChecks callback is passed: were the boolean `--yes` path to
+  // wrongly fall through to the interactive branch, the default (stdin-
+  // reading) prompt would run and this test would hang — its absence is
+  // itself proof the cold path never reaches that branch.
+  it('cold consent on an empty plan (T5/B10): --yes grants AND persists consent, not merely runs the check once', async () => {
+    const result = await runInstall({
+      catalog: [REQUIRED_TOOL_ENTRY],
+      adapter: createClaudeAdapter({ denyRef: REF_DENY, agentsContent: AGENTS_CONTENT }),
+      scope: SCOPE,
+      env,
+      manifestPath,
+      selectedIds: ['tool:glab'],
+      confirm: true,
+      toolRunner: allToolsPresentRunner,
+    });
+
+    // Tools-only selection: no adapter plan, nothing written.
+    expect(result.applied).toBe(false);
+    expect(result.output.toLowerCase()).toMatch(/up.to.date|nothing to install/);
+
+    // The consent ledger records the cold grant — not just an ephemeral
+    // in-memory decision for this one run.
+    const consented = await isConsented(env, { id: 'tool:glab', command: 'which glab' });
+    expect(consented).toBe(true);
+  });
+
   it('tools-only --yes (adoption branch): checks run alongside the adoption, both reported', async () => {
     const catalog: CatalogEntry[] = [...MINI_CATALOG, REQUIRED_TOOL_ENTRY];
     const adapter = createClaudeAdapter({ denyRef: REF_DENY, agentsContent: AGENTS_CONTENT });

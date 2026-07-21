@@ -27,10 +27,78 @@ export type CommandRunner = (
 ) => Promise<CommandResult>;
 
 /**
+ * Generous cap on captured stdout/stderr, per stream. Real command output
+ * (git clone/ls-remote, tool `--version` probes, …) stays far under this;
+ * a runaway or unexpectedly chatty command (verbose git errors, `ls-remote
+ * --tags` on a repo with huge tag history) must never let defaultRunner
+ * buffer unbounded memory. Exit code and error semantics are unaffected —
+ * only the captured TEXT is bounded, marked explicitly when truncated.
+ */
+const MAX_CAPTURED_OUTPUT_BYTES = 1024 * 1024; // 1 MiB
+
+const TRUNCATION_MARKER = '\n…[truncated: output exceeded 1 MiB cap]';
+
+function concatUint8Arrays(chunks: Uint8Array[], totalLength: number): Uint8Array {
+  const out = new Uint8Array(totalLength);
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return out;
+}
+
+/**
+ * Reads a ReadableStream<Uint8Array> as UTF-8 text, stopping once
+ * `maxBytes` have been buffered — the stream is cancelled (not drained) once
+ * the cap is hit, so a runaway producer stops being read entirely, not
+ * merely stops being saved. Appends `TRUNCATION_MARKER` when the cap fires.
+ */
+async function readCappedText(
+  stream: ReadableStream<Uint8Array> | null,
+  maxBytes: number,
+): Promise<string> {
+  if (stream === null) return '';
+
+  const reader = stream.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  let truncated = false;
+
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    const remaining = maxBytes - total;
+    if (remaining <= 0) {
+      truncated = true;
+      break;
+    }
+    if (value.byteLength > remaining) {
+      chunks.push(value.subarray(0, remaining));
+      total += remaining;
+      truncated = true;
+      break;
+    }
+    chunks.push(value);
+    total += value.byteLength;
+  }
+
+  if (truncated) {
+    await reader.cancel().catch(() => {});
+  } else {
+    reader.releaseLock();
+  }
+
+  const text = new TextDecoder().decode(concatUint8Arrays(chunks, total));
+  return truncated ? text + TRUNCATION_MARKER : text;
+}
+
+/**
  * Default runner: executes `command` via Bun's process API.
  * When `args` is provided, spawns `[command, ...args]` directly.
  * Without `args`, falls back to `sh -c <command>`.
- * Captures stdout and stderr as UTF-8 strings.
+ * Captures stdout and stderr as UTF-8 strings, each capped at
+ * `MAX_CAPTURED_OUTPUT_BYTES` (see {@link readCappedText}).
  */
 export const defaultRunner: CommandRunner = async (command, args) => {
   const argv = args ? [command, ...args] : ['sh', '-c', command];
@@ -39,8 +107,8 @@ export const defaultRunner: CommandRunner = async (command, args) => {
     stderr: 'pipe',
   });
   const exitCode = await proc.exited;
-  const stdout = await new Response(proc.stdout).text();
-  const stderr = await new Response(proc.stderr).text();
+  const stdout = await readCappedText(proc.stdout, MAX_CAPTURED_OUTPUT_BYTES);
+  const stderr = await readCappedText(proc.stderr, MAX_CAPTURED_OUTPUT_BYTES);
   return { exitCode, stdout, stderr };
 };
 

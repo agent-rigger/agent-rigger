@@ -89,32 +89,91 @@ function makeRunner(opts: { failUrlContaining?: string } = {}): CommandRunner {
   };
 }
 
+/** Describes one catalog source served by {@link makeSequentialTmpFactory}. */
+interface SequentialCatalogSource {
+  url: string;
+  sourceName: string;
+  dir: string;
+  entries: CatalogEntry[];
+  /**
+   * When true, the mock `ls-remote --tags` call for this source returns no
+   * tags, forcing resolveVersion's extra HEAD-fallback round-trip. Used to
+   * prove the URL-keying is order-independent: a source with one more hop
+   * than its sibling resolves its `clone` call later under Promise.all, yet
+   * still lands its content in the right directory.
+   */
+  noTags?: boolean;
+}
+
 /**
- * Builds a TmpDirFactory that rotates between dirA and dirB, writing catalog.json on each call.
- * First call → dirA with entriesA, second call → dirB with entriesB.
+ * Builds a coupled {run, tmpFactory} pair serving two or more catalog
+ * sources concurrently, keyed by the URL `git clone` actually receives —
+ * NOT by call order.
+ *
+ * cli.ts fetches every configured catalog concurrently (Promise.all in
+ * resolveEffectiveCatalogFull), sharing ONE runner and ONE tmpFactory across
+ * all of them. An earlier version of this helper handed out dirA on the
+ * FIRST tmpFactory() call and dirB on the second, assuming source A's
+ * resolveVersion→clone chain always settles before source B's. That
+ * assumption does not hold: the two chains can take a different number of
+ * round-trips (e.g. one falls back from `ls-remote --tags` to
+ * `ls-remote HEAD` when it has no tags) — so the "second" tmpFactory() call
+ * is not necessarily source B's, and the wrong catalog.json could silently
+ * land in the wrong directory.
+ *
+ * The fix: `git clone` always receives the url AND the destination path in
+ * the same call, so writing catalog.json there — keyed by that url — is
+ * correct no matter which chain reaches `clone` first. tmpFactory's own job
+ * shrinks to handing out an available directory; it no longer decides content.
  */
 function makeSequentialTmpFactory(
-  dirA: string,
-  entriesA: CatalogEntry[],
-  dirB: string,
-  entriesB: CatalogEntry[],
-): TmpDirFactory {
-  let call = 0;
-  return async () => {
-    call++;
-    if (call === 1) {
-      await Bun.write(
-        path.join(dirA, 'catalog.json'),
-        JSON.stringify({ meta: { name: 'source-a' }, entries: entriesA }),
-      );
-      return { path: dirA, cleanup: async () => {} };
-    }
-    await Bun.write(
-      path.join(dirB, 'catalog.json'),
-      JSON.stringify({ meta: { name: 'source-b' }, entries: entriesB }),
-    );
-    return { path: dirB, cleanup: async () => {} };
+  sources: SequentialCatalogSource[],
+): { run: CommandRunner; tmpFactory: TmpDirFactory } {
+  const byUrl = new Map(sources.map((s) => [s.url, s]));
+  const dirs = sources.map((s) => s.dir);
+  let dirIndex = 0;
+
+  const tmpFactory: TmpDirFactory = async () => {
+    // Which physical dir a given call receives no longer matters — content
+    // is attached at `clone` time below, keyed by url alone.
+    const dir = dirs[dirIndex % dirs.length] as string;
+    dirIndex++;
+    return { path: dir, cleanup: async () => {} };
   };
+
+  const run: CommandRunner = async (_cmd, args) => {
+    const argv = args ?? [];
+
+    if (argv[0] === 'ls-remote' && argv.includes('--tags')) {
+      const url = argv.at(-1);
+      const source = url === undefined ? undefined : byUrl.get(url);
+      if (source?.noTags === true) {
+        return { exitCode: 0, stdout: '', stderr: '' };
+      }
+      return { exitCode: 0, stdout: `${FAKE_SHA}\trefs/tags/${TAG_NAME}\n`, stderr: '' };
+    }
+    if (argv[0] === 'ls-remote' && argv.includes('HEAD')) {
+      return { exitCode: 0, stdout: `${FAKE_SHA}\tHEAD\n`, stderr: '' };
+    }
+    if (argv[0] === 'clone') {
+      const url = argv.at(-2);
+      const destPath = argv.at(-1);
+      const source = url === undefined ? undefined : byUrl.get(url);
+      if (source !== undefined && destPath !== undefined) {
+        await Bun.write(
+          path.join(destPath, 'catalog.json'),
+          JSON.stringify({ meta: { name: source.sourceName }, entries: source.entries }),
+        );
+      }
+      return { exitCode: 0, stdout: '', stderr: '' };
+    }
+    if (argv[0] === '-C' && argv[2] === 'rev-parse') {
+      return { exitCode: 0, stdout: `${FAKE_SHA}\n`, stderr: '' };
+    }
+    return { exitCode: 0, stdout: '', stderr: '' };
+  };
+
+  return { run, tmpFactory };
 }
 
 /** Skill entry fixture. */
@@ -268,15 +327,20 @@ describe('e2e multi-catalog — scenario 1: two catalogues, ls shows qualified e
     const code = await runCli(['ls'], {
       print: cap.print,
       env: ctx.env,
-      remote: {
-        run: makeRunner(),
-        tmpFactory: makeSequentialTmpFactory(
-          ctx.catalogDirA,
-          [skillEntry('skill:from-a')],
-          ctx.catalogDirB,
-          [skillEntry('skill:from-b')],
-        ),
-      },
+      remote: makeSequentialTmpFactory([
+        {
+          url: CATALOG_URL_A,
+          sourceName: 'source-a',
+          dir: ctx.catalogDirA,
+          entries: [skillEntry('skill:from-a')],
+        },
+        {
+          url: CATALOG_URL_B,
+          sourceName: 'source-b',
+          dir: ctx.catalogDirB,
+          entries: [skillEntry('skill:from-b')],
+        },
+      ]),
     });
     expect(code).toBe(0);
   });
@@ -286,15 +350,20 @@ describe('e2e multi-catalog — scenario 1: two catalogues, ls shows qualified e
     await runCli(['ls'], {
       print: cap.print,
       env: ctx.env,
-      remote: {
-        run: makeRunner(),
-        tmpFactory: makeSequentialTmpFactory(
-          ctx.catalogDirA,
-          [skillEntry('skill:from-a')],
-          ctx.catalogDirB,
-          [skillEntry('skill:from-b')],
-        ),
-      },
+      remote: makeSequentialTmpFactory([
+        {
+          url: CATALOG_URL_A,
+          sourceName: 'source-a',
+          dir: ctx.catalogDirA,
+          entries: [skillEntry('skill:from-a')],
+        },
+        {
+          url: CATALOG_URL_B,
+          sourceName: 'source-b',
+          dir: ctx.catalogDirB,
+          entries: [skillEntry('skill:from-b')],
+        },
+      ]),
     });
     const out = cap.lines.join('\n');
     expect(out).toContain('a/skill:from-a');
@@ -305,15 +374,20 @@ describe('e2e multi-catalog — scenario 1: two catalogues, ls shows qualified e
     await runCli(['ls'], {
       print: cap.print,
       env: ctx.env,
-      remote: {
-        run: makeRunner(),
-        tmpFactory: makeSequentialTmpFactory(
-          ctx.catalogDirA,
-          [skillEntry('skill:from-a')],
-          ctx.catalogDirB,
-          [skillEntry('skill:from-b')],
-        ),
-      },
+      remote: makeSequentialTmpFactory([
+        {
+          url: CATALOG_URL_A,
+          sourceName: 'source-a',
+          dir: ctx.catalogDirA,
+          entries: [skillEntry('skill:from-a')],
+        },
+        {
+          url: CATALOG_URL_B,
+          sourceName: 'source-b',
+          dir: ctx.catalogDirB,
+          entries: [skillEntry('skill:from-b')],
+        },
+      ]),
     });
     const out = cap.lines.join('\n');
     expect(out).toContain('b/skill:from-b');
@@ -324,16 +398,53 @@ describe('e2e multi-catalog — scenario 1: two catalogues, ls shows qualified e
     await runCli(['ls'], {
       print: cap.print,
       env: ctx.env,
-      remote: {
-        run: makeRunner(),
-        tmpFactory: makeSequentialTmpFactory(
-          ctx.catalogDirA,
-          [skillEntry('skill:from-a')],
-          ctx.catalogDirB,
-          [skillEntry('skill:from-b')],
-        ),
-      },
+      remote: makeSequentialTmpFactory([
+        {
+          url: CATALOG_URL_A,
+          sourceName: 'source-a',
+          dir: ctx.catalogDirA,
+          entries: [skillEntry('skill:from-a')],
+        },
+        {
+          url: CATALOG_URL_B,
+          sourceName: 'source-b',
+          dir: ctx.catalogDirB,
+          entries: [skillEntry('skill:from-b')],
+        },
+      ]),
     });
+    const out = cap.lines.join('\n');
+    expect(out).toContain('a/skill:from-a');
+    expect(out).toContain('b/skill:from-b');
+  });
+
+  it('no collision when source A needs an extra HEAD-fallback hop (order-independent keying)', async () => {
+    // Source A has no tags → resolveVersion takes one extra ls-remote round-trip
+    // before it reaches `clone`. Under Promise.all, source B's clone call then
+    // fires FIRST even though A was initiated first — a call-count-keyed
+    // tmpFactory would hand B's content to A's slot. URL-keying must still
+    // route each catalog.json to the right place.
+    const cap = makeCapture();
+    const code = await runCli(['ls'], {
+      print: cap.print,
+      env: ctx.env,
+      remote: makeSequentialTmpFactory([
+        {
+          url: CATALOG_URL_A,
+          sourceName: 'source-a',
+          dir: ctx.catalogDirA,
+          entries: [skillEntry('skill:from-a')],
+          noTags: true,
+        },
+        {
+          url: CATALOG_URL_B,
+          sourceName: 'source-b',
+          dir: ctx.catalogDirB,
+          entries: [skillEntry('skill:from-b')],
+        },
+      ]),
+    });
+    expect(code).toBe(0);
     const out = cap.lines.join('\n');
     expect(out).toContain('a/skill:from-a');
     expect(out).toContain('b/skill:from-b');
@@ -360,15 +471,20 @@ describe('e2e multi-catalog — scenario 2: homonym skill:x in both sources', ()
     await runCli(['ls'], {
       print: cap.print,
       env: ctx.env,
-      remote: {
-        run: makeRunner(),
-        tmpFactory: makeSequentialTmpFactory(
-          ctx.catalogDirA,
-          [skillEntry('skill:x')],
-          ctx.catalogDirB,
-          [skillEntry('skill:x')],
-        ),
-      },
+      remote: makeSequentialTmpFactory([
+        {
+          url: CATALOG_URL_A,
+          sourceName: 'source-a',
+          dir: ctx.catalogDirA,
+          entries: [skillEntry('skill:x')],
+        },
+        {
+          url: CATALOG_URL_B,
+          sourceName: 'source-b',
+          dir: ctx.catalogDirB,
+          entries: [skillEntry('skill:x')],
+        },
+      ]),
     });
     const out = cap.lines.join('\n');
     expect(out).toContain('a/skill:x');
@@ -380,15 +496,20 @@ describe('e2e multi-catalog — scenario 2: homonym skill:x in both sources', ()
     await runCli(['ls'], {
       print: cap.print,
       env: ctx.env,
-      remote: {
-        run: makeRunner(),
-        tmpFactory: makeSequentialTmpFactory(
-          ctx.catalogDirA,
-          [skillEntry('skill:x')],
-          ctx.catalogDirB,
-          [skillEntry('skill:x')],
-        ),
-      },
+      remote: makeSequentialTmpFactory([
+        {
+          url: CATALOG_URL_A,
+          sourceName: 'source-a',
+          dir: ctx.catalogDirA,
+          entries: [skillEntry('skill:x')],
+        },
+        {
+          url: CATALOG_URL_B,
+          sourceName: 'source-b',
+          dir: ctx.catalogDirB,
+          entries: [skillEntry('skill:x')],
+        },
+      ]),
     });
     const out = cap.lines.join('\n');
     expect(out).not.toContain('deduplicated');

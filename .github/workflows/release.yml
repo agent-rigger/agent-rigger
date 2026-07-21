@@ -42,11 +42,15 @@ jobs:
         #      hand-added above an empty section (bypassing the rotation script,
         #      whose own empty-release guard would have refused) must not pass.
         # The section body is every line after the header up to the next `## [`
-        # heading, or EOF. Dots in the version are escaped so the header match is
-        # exact; awk matches the header literally (index), anchored at column 1.
+        # heading, or EOF. The version is a semver string and can carry ERE
+        # metacharacters beyond the dot (e.g. a `+build` suffix, where `+` is
+        # an ERE quantifier) — every metacharacter is escaped, not just dots,
+        # so the grep header match is exact regardless of tag shape; awk
+        # matches the header literally (index), anchored at column 1.
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          if ! grep -qE "^## \[${VERSION//./\\.}\]" CHANGELOG.md; then
+          VERSION_RE=$(printf '%s' "$VERSION" | sed -E 's/[][(){}.*+^$?|\\]/\\&/g')
+          if ! grep -qE "^## \[${VERSION_RE}\]" CHANGELOG.md; then
             echo "::error::CHANGELOG.md has no \"## [${VERSION}]\" section for tag ${GITHUB_REF_NAME}."
             echo "Rotate the changelog before tagging (see CONTRIBUTING.md § Releasing):"
             echo "    bun scripts/release-changelog.ts ${VERSION}"
