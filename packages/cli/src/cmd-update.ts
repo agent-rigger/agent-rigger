@@ -492,15 +492,21 @@ export async function runUpdate(opts: RunUpdateOptions): Promise<UpdateResult> {
         // lib never reaches the adapter's remove/plan, which would raise
         // UnsupportedNatureError). Thread the captured requires (S4/R5) onto the
         // opaque AdapterEntry transport so buildManifestEntry backfills them
-        // (S6). Omit when none, per the AdapterEntry.requires convention.
+        // (S6). ALWAYS attach the array, even empty (review T8 fix, tech-lead
+        // option A): this is the update path's own backfill write — omitting
+        // `[]` here would make the S6 promise ("backfilled at the first
+        // update") a permanent no-op for every zero-dependency legacy entry,
+        // since the manifest would keep reading `requires: undefined` after
+        // re-resolution just as it did before. `undefined` on a manifest
+        // entry must mean ONLY "never re-resolved since this change shipped".
         const adapterEntries = resolved
           .filter((e) => e.nature !== 'tool' && e.nature !== 'lib')
-          .map((e) => {
-            const requires = requiresByQualifiedId.get(e.id) ?? [];
-            return requires.length > 0
-              ? { id: e.id, nature: e.nature, scope, requires }
-              : { id: e.id, nature: e.nature, scope };
-          });
+          .map((e) => ({
+            id: e.id,
+            nature: e.nature,
+            scope,
+            requires: requiresByQualifiedId.get(e.id) ?? [],
+          }));
 
         // 3e. versionFor seam: remote (has checkout path) → real ref/sha, others → v0.0.0/''.
         // A lib is remote content too but excluded from remoteIds (targets: [],

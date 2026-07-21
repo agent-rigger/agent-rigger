@@ -104,7 +104,13 @@ describe('R5.1 — edge simple persisté sur le consommateur', () => {
     expect((await entryById('guardrails-claude'))?.requires).toEqual(['lib:rules-common']);
   });
 
-  it('un consommateur sans requires ne persiste aucun champ requires', async () => {
+  it('un consommateur sans requires persiste un tableau requires vide (convention T8 : undefined = legacy uniquement)', async () => {
+    // Convention amendée en review T8 (tech-lead option A): un `requires`
+    // ABSENT au manifest doit signifier UNIQUEMENT "jamais résolu depuis ce
+    // change" (S6 legacy) — jamais "résolu, zéro dépendance". L'omission
+    // d'origine (T2) cassait le backfill S6 pour toute entrée zéro-dép :
+    // l'update la re-résolvait mais réécrivait encore `undefined`, donc le
+    // finding doctor "entrée sans edges" ne se serait jamais résorbé.
     const adapter = createClaudeAdapter({
       denyRef: ['Read(./.env)'],
       agentsContent: AGENTS_CONTENT,
@@ -119,7 +125,7 @@ describe('R5.1 — edge simple persisté sur le consommateur', () => {
       confirm: true,
     });
 
-    expect((await entryById('guardrails-claude'))?.requires).toBeUndefined();
+    expect((await entryById('guardrails-claude'))?.requires).toEqual([]);
   });
 
   it('requiresById (capture pré-prune) prime la résolution locale', async () => {

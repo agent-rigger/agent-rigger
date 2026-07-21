@@ -336,7 +336,10 @@ export type ManifestIssue =
   | 'missing-sha'
   | 'missing-file'
   | 'applied-drift'
-  | 'malformed';
+  | 'malformed'
+  | 'broken-edge'
+  | 'orphan-lib'
+  | 'no-edges';
 
 interface FindingManifestCommon extends FindingCommon {
   class: 'manifest';
@@ -390,12 +393,58 @@ export interface FindingManifestMalformed extends FindingManifestCommon {
   repair: RepairOpBackupState;
 }
 
+/**
+ * R7: an entry's `requires` names an id no manifest entry carries any more —
+ * a `--force` removal (R6.7) broke the edge earlier. Generic over every
+ * nature (the same mechanism the R6 CLI gate reads), never lib-specific.
+ * Report-only: the refusal that would have PREVENTED this lives in
+ * `cmd-remove`'s R6 gate, not here — doctor only ever reports what already
+ * broke.
+ */
+export interface FindingManifestBrokenEdge extends FindingManifestCommon {
+  issue: 'broken-edge';
+  entryId: string;
+  nature: Nature;
+  scope: Scope;
+  /** The `requires` ref that names no surviving manifest entry. */
+  missingRef: string;
+}
+
+/**
+ * R7/S9: an installed `lib` entry no remaining entry requires — the same-run
+ * GC proposal (`computeGcLibs`, cmd-remove.ts) was refused at its last
+ * dependent's removal, or the lib became orphaned some other way. Report-only
+ * (removable via `rigger remove`, never doctor itself).
+ */
+export interface FindingManifestOrphanLib extends FindingManifestCommon {
+  issue: 'orphan-lib';
+  entryId: string;
+  scope: Scope;
+}
+
+/**
+ * R5/S6: a manifest entry with NO `requires` field at all (`undefined` —
+ * never a present `[]`, which means "resolved, zero deps") — installed
+ * before this change, pending `rigger update`'s backfill. Report-only, info
+ * severity: nothing is broken, the graph is simply not yet complete for this
+ * entry.
+ */
+export interface FindingManifestNoEdges extends FindingManifestCommon {
+  issue: 'no-edges';
+  entryId: string;
+  nature: Nature;
+  scope: Scope;
+}
+
 export type FindingManifest =
   | FindingManifestOrphanCatalog
   | FindingManifestMissingSha
   | FindingManifestMissingFile
   | FindingManifestAppliedDrift
-  | FindingManifestMalformed;
+  | FindingManifestMalformed
+  | FindingManifestBrokenEdge
+  | FindingManifestOrphanLib
+  | FindingManifestNoEdges;
 
 // --- dangling (R3) -----------------------------------------------------------
 
@@ -722,6 +771,60 @@ export function manifestAppliedDrift(params: {
     issue: 'applied-drift',
     id: `manifest:applied-drift:${params.entryId}`,
     summary: `"${params.entryId}"'s recorded applied payload no longer matches the live config.`,
+    entryId: params.entryId,
+    nature: params.nature,
+    scope: params.scope,
+  };
+}
+
+/** R7: an entry's requires names an id no manifest entry carries any more. */
+export function manifestBrokenEdge(params: {
+  entryId: string;
+  nature: Nature;
+  scope: Scope;
+  missingRef: string;
+}): FindingManifestBrokenEdge {
+  return {
+    class: 'manifest',
+    issue: 'broken-edge',
+    id: `manifest:broken-edge:${params.entryId}:${params.missingRef}`,
+    summary: `"${params.entryId}" requires "${params.missingRef}", which is no longer `
+      + `installed — reinstall "${params.missingRef}" or remove "${params.entryId}".`,
+    entryId: params.entryId,
+    nature: params.nature,
+    scope: params.scope,
+    missingRef: params.missingRef,
+  };
+}
+
+/** R7/S9: an installed lib no remaining entry requires — removable. */
+export function manifestOrphanLib(params: {
+  entryId: string;
+  scope: Scope;
+}): FindingManifestOrphanLib {
+  return {
+    class: 'manifest',
+    issue: 'orphan-lib',
+    id: `manifest:orphan-lib:${params.entryId}`,
+    summary: `"${params.entryId}" is installed but no remaining entry requires it — `
+      + `removable ("rigger remove ${params.entryId}").`,
+    entryId: params.entryId,
+    scope: params.scope,
+  };
+}
+
+/** R5/S6: a legacy entry with no requires field at all, pending backfill. */
+export function manifestNoEdges(params: {
+  entryId: string;
+  nature: Nature;
+  scope: Scope;
+}): FindingManifestNoEdges {
+  return {
+    class: 'manifest',
+    issue: 'no-edges',
+    id: `manifest:no-edges:${params.entryId}`,
+    summary: `"${params.entryId}" predates the requires graph (no edges recorded) — `
+      + 'run "rigger update" to backfill them.',
     entryId: params.entryId,
     nature: params.nature,
     scope: params.scope,

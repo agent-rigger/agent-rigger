@@ -419,12 +419,16 @@ export async function runInstall(opts: RunInstallOptions): Promise<InstallResult
     .filter((e) => e.nature !== 'tool')
     .map((e) => {
       // Thread the resolved requires (S4/R5) onto the opaque AdapterEntry
-      // transport so buildManifestEntry persists them. Omit when none, per the
-      // AdapterEntry.requires convention (absent = declares no requires).
-      const requires = requiresFor(e.id);
-      return requires.length > 0
-        ? { id: e.id, nature: e.nature, scope, requires }
-        : { id: e.id, nature: e.nature, scope };
+      // transport so buildManifestEntry persists them. ALWAYS attach the
+      // array, even empty (review T8 fix, tech-lead option A): `undefined`
+      // on a manifest entry must mean ONLY "predates the requires graph
+      // entirely" (S6's legacy/no-edges signal) — a resolved entry, post
+      // this change, has ALWAYS been resolved (even to zero deps), so it
+      // always carries `[]`. Omitting `[]` here would make S6's promised
+      // backfill a no-op for every zero-dependency entry (the finding would
+      // never clear) and would falsely flag every freshly-installed
+      // zero-dep entry as "legacy".
+      return { id: e.id, nature: e.nature, scope, requires: requiresFor(e.id) };
     });
 
   // Read manifest once to determine action (install vs update) per entry.
