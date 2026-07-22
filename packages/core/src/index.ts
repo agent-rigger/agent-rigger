@@ -8,6 +8,7 @@ export * from './deny';
 export * from './doctor';
 export * from './engine';
 export * from './fs-json';
+export * from './home-package-json';
 export * from './hooks';
 export * from './linker';
 export * from './managed-import';

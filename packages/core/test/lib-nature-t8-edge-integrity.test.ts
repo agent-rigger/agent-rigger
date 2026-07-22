@@ -1,7 +1,7 @@
 /**
  * Tests for the T8 edge-integrity scanner
  * (core/doctor/scanners/edge-integrity.ts) — R7 (edge cassé, lib orpheline),
- * S6 (entrée sans edges).
+ * S6 (entrée sans edges), U1 (lib-imports-missing, lib-imports-alias).
  *
  * Named scenarios from requirements.md / tasks.md T8:
  *   - R7.3 "edge cassé" — an entry's `requires` names an id no manifest
@@ -15,19 +15,34 @@
  *     `requires` field at all (undefined) is flagged; an entry with an
  *     explicit `requires: []` (already resolved, zero deps) is not.
  *   - "doctor sur un état SAIN" — a lib with an installed dependent, edges
- *     recorded both ways, produces zero findings.
+ *     recorded both ways, AND a correct home package.json, produces zero
+ *     findings.
  *   - "générique — pas spécifique lib" (R6.6 posture, reused here) — the
  *     broken-edge check covers any nature's requires, not lib alone.
+ *   - U1 "lib-imports-missing" — a lib entry with the home package.json
+ *     absent, or present without the `#libs/*` mapping, is flagged; a
+ *     lib-free manifest never even reads it.
+ *
+ * Isolation (U1): every test's `ctx.env` points `RIGGER_HOME` at a
+ * deterministic, GUARANTEED-nonexistent sibling of its tmp manifest dir
+ * (`fakeHomeEnv`) — never the real machine's `~/.config/agent-rigger`. Tests
+ * predating U1 that carry a `nature: 'lib'` entry (R7.2/R7.3's "still
+ * installed" cases) pick this default up transparently via `ctxFor`'s second
+ * parameter; only the "état sain" test needs to pre-populate a CORRECT
+ * package.json there, since it asserts zero findings unfiltered.
  */
 
 import { describe, expect, it } from 'bun:test';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import type { DoctorContext } from '../src/doctor/finding';
 import { edgeIntegrityScanner } from '../src/doctor/scanners/edge-integrity';
 import { manifestAuditScanner } from '../src/doctor/scanners/manifest-audit';
+import { writeJson } from '../src/fs-json';
+import { homePackageJsonPath } from '../src/paths';
+import type { Env } from '../src/paths';
 import type { Manifest, ManifestEntry } from '../src/types';
 
 async function withManifest<T>(
@@ -44,8 +59,13 @@ async function withManifest<T>(
   }
 }
 
-function ctxFor(manifestPath: string): DoctorContext {
-  return { env: {}, manifestPath, configuredCatalogIds: [] };
+/** A RIGGER_HOME guaranteed not to exist — sibling of the tmp manifest dir. */
+function fakeHomeEnv(manifestPath: string): Env {
+  return { RIGGER_HOME: path.join(path.dirname(manifestPath), '__fake_home_for_tests__') };
+}
+
+function ctxFor(manifestPath: string, env: Env = fakeHomeEnv(manifestPath)): DoctorContext {
+  return { env, manifestPath, configuredCatalogIds: [] };
 }
 
 function entry(
@@ -289,10 +309,171 @@ describe('doctor-T8: état sain (lib + dépendants) — zéro finding', () => {
     };
 
     await withManifest(manifest, async (manifestPath) => {
-      const findings = await edgeIntegrityScanner(ctxFor(manifestPath));
+      // A truly healthy state ALSO means the home package.json carries the
+      // correct #libs/* mapping — pre-populate it so this test's unfiltered
+      // "zero findings" stays about edges, not about U1's own check.
+      const env = fakeHomeEnv(manifestPath);
+      await writeJson(homePackageJsonPath(env), {
+        name: 'agent-rigger-home',
+        imports: { '#libs/*': './libs/*' },
+      });
+
+      const findings = await edgeIntegrityScanner(ctxFor(manifestPath, env));
       expect(findings).toHaveLength(0);
     });
   });
+});
+
+// ---------------------------------------------------------------------------
+// U1 (lib-imports-alias) — lib-imports-missing
+// ---------------------------------------------------------------------------
+
+describe('doctor-T8u1: lib-imports-missing (U1, lib-imports-alias)', () => {
+  it('doctor-T8u1: a lib entry with the home package.json ABSENT is flagged', async () => {
+    const manifest: Manifest = {
+      version: 1,
+      artifacts: [
+        entry({ id: 'jr/lib:rules-common', nature: 'lib', assistant: 'shared', requires: [] }),
+      ],
+    };
+
+    await withManifest(manifest, async (manifestPath) => {
+      const findings = await edgeIntegrityScanner(ctxFor(manifestPath));
+
+      const missing = findings.filter(
+        (f) => f.class === 'manifest' && f.issue === 'lib-imports-missing',
+      );
+      expect(missing).toHaveLength(1);
+      const finding = missing[0]!;
+      if (finding.class !== 'manifest' || finding.issue !== 'lib-imports-missing') {
+        throw new Error('unreachable');
+      }
+      expect(finding.packageJsonPath).toBe(homePackageJsonPath(fakeHomeEnv(manifestPath)));
+      expect(finding.summary).toContain('#libs/*');
+      expect('repair' in finding).toBe(false);
+    });
+  });
+
+  it('doctor-T8u1: a lib entry with the home package.json present but WITHOUT the #libs/* leaf is flagged', async () => {
+    const manifest: Manifest = {
+      version: 1,
+      artifacts: [
+        entry({ id: 'jr/lib:rules-common', nature: 'lib', assistant: 'shared', requires: [] }),
+      ],
+    };
+
+    await withManifest(manifest, async (manifestPath) => {
+      const env = fakeHomeEnv(manifestPath);
+      await writeJson(homePackageJsonPath(env), { name: 'agent-rigger-home' });
+
+      const findings = await edgeIntegrityScanner(ctxFor(manifestPath, env));
+      expect(findings.filter((f) => f.class === 'manifest' && f.issue === 'lib-imports-missing'))
+        .toHaveLength(1);
+    });
+  });
+
+  it('doctor-T8u1: a lib entry with the home package.json present and CORRECT is silent', async () => {
+    const manifest: Manifest = {
+      version: 1,
+      artifacts: [
+        entry({ id: 'jr/lib:rules-common', nature: 'lib', assistant: 'shared', requires: [] }),
+      ],
+    };
+
+    await withManifest(manifest, async (manifestPath) => {
+      const env = fakeHomeEnv(manifestPath);
+      await writeJson(homePackageJsonPath(env), {
+        name: 'agent-rigger-home',
+        imports: { '#libs/*': './libs/*' },
+      });
+
+      const findings = await edgeIntegrityScanner(ctxFor(manifestPath, env));
+      expect(findings.filter((f) => f.class === 'manifest' && f.issue === 'lib-imports-missing'))
+        .toHaveLength(0);
+    });
+  });
+
+  it('doctor-T8u1: a manifest with NO lib entry never even reads the package.json (no finding regardless)', async () => {
+    const manifest: Manifest = {
+      version: 1,
+      artifacts: [
+        entry({ id: 'jr/skill:standalone', nature: 'skill', assistant: 'claude', requires: [] }),
+      ],
+    };
+
+    await withManifest(manifest, async (manifestPath) => {
+      // No package.json written at all under this fake home — if the check
+      // were NOT gated on hasLibEntry, this would still produce a finding.
+      const findings = await edgeIntegrityScanner(ctxFor(manifestPath));
+      expect(findings.filter((f) => f.class === 'manifest' && f.issue === 'lib-imports-missing'))
+        .toHaveLength(0);
+    });
+  });
+
+  it('doctor-T8u1: a lib entry with a DIVERGENT #libs/* mapping (wrong target) is flagged', async () => {
+    const manifest: Manifest = {
+      version: 1,
+      artifacts: [
+        entry({ id: 'jr/lib:rules-common', nature: 'lib', assistant: 'shared', requires: [] }),
+      ],
+    };
+
+    await withManifest(manifest, async (manifestPath) => {
+      const env = fakeHomeEnv(manifestPath);
+      await writeJson(homePackageJsonPath(env), {
+        name: 'agent-rigger-home',
+        imports: { '#libs/*': './wrong/*' },
+      });
+
+      const findings = await edgeIntegrityScanner(ctxFor(manifestPath, env));
+      expect(findings.filter((f) => f.class === 'manifest' && f.issue === 'lib-imports-missing'))
+        .toHaveLength(1);
+    });
+  });
+
+  it(
+    'doctor-T8u1: a MALFORMED home package.json degrades to the finding — '
+      + 'the scanner never throws, unrelated findings from the SAME run survive (review fix)',
+    async () => {
+      const manifest: Manifest = {
+        version: 1,
+        artifacts: [
+          entry({ id: 'jr/lib:rules-common', nature: 'lib', assistant: 'shared', requires: [] }),
+          // A --force-removed dependency elsewhere → an UNRELATED broken-edge
+          // finding this same scanner run must still surface.
+          entry({
+            id: 'jr/hook:guard-command',
+            nature: 'hook',
+            assistant: 'claude',
+            requires: ['jr/lib:vanished'],
+          }),
+        ],
+      };
+
+      await withManifest(manifest, async (manifestPath) => {
+        const env = fakeHomeEnv(manifestPath);
+        const pkgPath = homePackageJsonPath(env);
+        await mkdir(path.dirname(pkgPath), { recursive: true });
+        // Genuinely invalid JSON — readJson would throw InvalidJsonError.
+        await writeFile(pkgPath, '{ not valid json,,, ', 'utf8');
+
+        // Must resolve (never reject/throw) despite the malformed file.
+        const findings = await edgeIntegrityScanner(ctxFor(manifestPath, env));
+
+        const missing = findings.filter(
+          (f) => f.class === 'manifest' && f.issue === 'lib-imports-missing',
+        );
+        expect(missing).toHaveLength(1);
+
+        // The unrelated broken-edge finding from the SAME run still surfaces
+        // — the malformed package.json never aborts the rest of the scanner.
+        const broken = findings.filter(
+          (f) => f.class === 'manifest' && f.issue === 'broken-edge',
+        );
+        expect(broken).toHaveLength(1);
+      });
+    },
+  );
 });
 
 // ---------------------------------------------------------------------------

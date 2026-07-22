@@ -143,6 +143,27 @@ export function libsDir(env: Env = Bun.env): string {
 }
 
 // ---------------------------------------------------------------------------
+// homePackageJsonPath — managed #libs/* import mapping (U1, lib-imports-alias)
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolve the managed `package.json` at the root of the rigger home:
+ * `~/.config/agent-rigger/package.json` — `dirname(libsDir(env))`, i.e. the
+ * SAME directory that hosts `libs/` and every other named store (skills,
+ * agents, plugins, hooks). Consumers posed under that home (hooks in the
+ * scriptStore, plugins symlinked from the plugin store) resolve their
+ * `#libs/<lib>/<mod>.ts` specifiers against the nearest ancestor
+ * `package.json` found by walking up from their REALPATH — this file, not a
+ * project's or a symlink's own directory (2026-07-22 probe, brief
+ * lib-imports-alias). The engine's lib-materialisation channel (`apply()`)
+ * guarantees this file carries `imports["#libs/*"] = "./libs/*"` whenever it
+ * materialises at least one lib (`home-package-json.ts`).
+ */
+export function homePackageJsonPath(env: Env = Bun.env): string {
+  return path.join(path.dirname(libsDir(env)), 'package.json');
+}
+
+// ---------------------------------------------------------------------------
 // Project-scope targets
 // ---------------------------------------------------------------------------
 

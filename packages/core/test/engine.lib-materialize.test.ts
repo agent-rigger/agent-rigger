@@ -15,6 +15,10 @@
  * - Rollback orphan-safe: a fresh lib materialised then followed by a failing
  *   adapter entry is removed by the shared layer-B rollback, and state.json is
  *   never persisted (ADR-0027 Tier-1).
+ * - U1 (lib-imports-alias): a non-empty `libs` ALSO guarantees the home
+ *   `package.json` `#libs/*` mapping, under the SAME transactional rollback
+ *   ledger as every other file this function touches — a fresh file is
+ *   deleted on rollback, an existing one is restored from its `.bak`.
  *
  * Isolation: fresh tmp HOME per test via makeTmpHome().
  */
@@ -25,9 +29,9 @@ import path from 'node:path';
 
 import type { Adapter, AdapterEntry } from '../src/adapter';
 import { apply } from '../src/engine';
-import { readText, writeText } from '../src/fs-json';
+import { readJson, readText, writeJson, writeText } from '../src/fs-json';
 import { readManifest } from '../src/manifest';
-import { libsDir, resolveUserTargets } from '../src/paths';
+import { homePackageJsonPath, libsDir, resolveUserTargets } from '../src/paths';
 import type { Env } from '../src/paths';
 import type { Assistant, LibMaterialization, NatureReport, Scope, WriteOp } from '../src/types';
 import { makeTmpHome } from './tmp-home';
@@ -436,4 +440,227 @@ describe('R3 rollback-orphan-safe — a failing entry after a fresh lib', () => 
     expect(manifest.artifacts.some((e) => e.id === 'jr/hook:guard')).toBe(false);
     expect(manifest.artifacts.some((e) => e.id === 'jr/lib:rules-common')).toBe(true);
   });
+});
+
+// ---------------------------------------------------------------------------
+// U1 (lib-imports-alias) — home package.json managed #libs/* mapping
+// ---------------------------------------------------------------------------
+
+describe('U1 home package.json — guaranteed whenever libs materialise', () => {
+  it('creates the managed package.json fresh when absent, sober stub (name + imports)', async () => {
+    const source = await makeLibSource('rules-common', { 'index.ts': 'x' });
+    const adapter = makeRecordingAdapter('claude', {});
+    const pkgPath = homePackageJsonPath(env);
+
+    expect(await exists(pkgPath)).toBe(false);
+
+    await apply({
+      adapter,
+      entries: [],
+      scope: 'user',
+      env,
+      manifestPath,
+      libs: [{ id: 'jr/lib:rules-common', name: 'rules-common', source, requires: [] }],
+    });
+
+    expect(await exists(pkgPath)).toBe(true);
+    const pkg = await readJson(pkgPath);
+    expect(pkg).toEqual({
+      name: 'agent-rigger-home',
+      imports: { '#libs/*': './libs/*' },
+    });
+  });
+
+  it('merges at leaf granularity into an EXISTING package.json — other keys and other imports survive', async () => {
+    const source = await makeLibSource('rules-common', { 'index.ts': 'x' });
+    const adapter = makeRecordingAdapter('claude', {});
+    const pkgPath = homePackageJsonPath(env);
+    await writeJson(pkgPath, {
+      name: 'someone-elses-name',
+      version: '1.0.0',
+      imports: { '#other/*': './other/*' },
+    });
+
+    await apply({
+      adapter,
+      entries: [],
+      scope: 'user',
+      env,
+      manifestPath,
+      libs: [{ id: 'jr/lib:rules-common', name: 'rules-common', source, requires: [] }],
+    });
+
+    const pkg = await readJson(pkgPath);
+    expect(pkg).toEqual({
+      name: 'someone-elses-name',
+      version: '1.0.0',
+      imports: { '#other/*': './other/*', '#libs/*': './libs/*' },
+    });
+  });
+
+  it('a PRESENT-but-EMPTY package.json ({}) is merged (case b), never given the fresh-stub "name"', async () => {
+    const source = await makeLibSource('rules-common', { 'index.ts': 'x' });
+    const adapter = makeRecordingAdapter('claude', {});
+    const pkgPath = homePackageJsonPath(env);
+    await writeJson(pkgPath, {});
+
+    await apply({
+      adapter,
+      entries: [],
+      scope: 'user',
+      env,
+      manifestPath,
+      libs: [{ id: 'jr/lib:rules-common', name: 'rules-common', source, requires: [] }],
+    });
+
+    const pkg = await readJson(pkgPath);
+    expect(pkg).toEqual({ imports: { '#libs/*': './libs/*' } });
+    expect(pkg['name']).toBeUndefined();
+  });
+
+  it('corrects a DIVERGENT #libs/* mapping to the canonical target', async () => {
+    const source = await makeLibSource('rules-common', { 'index.ts': 'x' });
+    const adapter = makeRecordingAdapter('claude', {});
+    const pkgPath = homePackageJsonPath(env);
+    await writeJson(pkgPath, { imports: { '#libs/*': './some/stale/path/*' } });
+
+    await apply({
+      adapter,
+      entries: [],
+      scope: 'user',
+      env,
+      manifestPath,
+      libs: [{ id: 'jr/lib:rules-common', name: 'rules-common', source, requires: [] }],
+    });
+
+    const pkg = await readJson(pkgPath);
+    expect(pkg).toEqual({ imports: { '#libs/*': './libs/*' } });
+  });
+
+  it('is a TRUE no-op (zero write, zero backup) when the mapping is already correct', async () => {
+    const source = await makeLibSource('rules-common', { 'index.ts': 'x' });
+    const adapter = makeRecordingAdapter('claude', {});
+    const pkgPath = homePackageJsonPath(env);
+    await writeJson(pkgPath, { name: 'agent-rigger-home', imports: { '#libs/*': './libs/*' } });
+    const before = await readText(pkgPath);
+
+    const result = await apply({
+      adapter,
+      entries: [],
+      scope: 'user',
+      env,
+      manifestPath,
+      libs: [{ id: 'jr/lib:rules-common', name: 'rules-common', source, requires: [] }],
+    });
+
+    expect(await readText(pkgPath)).toBe(before);
+    expect(result.backedUp).toEqual([]);
+    // No stray .bak-* sibling was ever created next to it.
+    const siblings = await fs.readdir(path.dirname(pkgPath));
+    expect(siblings.some((s) => s.startsWith('package.json.bak-'))).toBe(false);
+  });
+
+  it('is NEVER created/touched on a lib-free install (libs absent)', async () => {
+    const adapter = makeRecordingAdapter('claude', {
+      'jr/hook:guard': [writeTextOp(path.join(home, 'consumer.md'), 'body')],
+    });
+    const pkgPath = homePackageJsonPath(env);
+
+    await apply({
+      adapter,
+      entries: [consumer('jr/hook:guard')],
+      scope: 'user',
+      env,
+      manifestPath,
+      // no `libs` at all
+    });
+
+    expect(await exists(pkgPath)).toBe(false);
+  });
+
+  it('ROLLBACK — a freshly-created package.json is deleted when a later entry fails', async () => {
+    const source = await makeLibSource('rules-common', { 'index.ts': 'x' });
+    const adapter = makeRecordingAdapter('claude', {
+      'jr/hook:guard': [writeTextOp(path.join(home, 'boom.md'), FAIL_SENTINEL)],
+    });
+    const pkgPath = homePackageJsonPath(env);
+
+    await expect(
+      apply({
+        adapter,
+        entries: [consumer('jr/hook:guard')],
+        scope: 'user',
+        env,
+        manifestPath,
+        libs: [{ id: 'jr/lib:rules-common', name: 'rules-common', source, requires: [] }],
+      }),
+    ).rejects.toBeInstanceOf(ConsumerFailError);
+
+    // Fresh this run → orphan-safe rollback removes it, same tier as every
+    // other first-wins ledger entry.
+    expect(await exists(pkgPath)).toBe(false);
+  });
+
+  it('ROLLBACK — an EXISTING package.json is restored to its original when a later entry fails', async () => {
+    const source = await makeLibSource('rules-common', { 'index.ts': 'x' });
+    const pkgPath = homePackageJsonPath(env);
+    const originalPkg = { name: 'pre-existing', dependencies: { zod: '^3.0.0' } };
+    await writeJson(pkgPath, originalPkg);
+
+    const adapter = makeRecordingAdapter('claude', {
+      'jr/hook:guard': [writeTextOp(path.join(home, 'boom.md'), FAIL_SENTINEL)],
+    });
+
+    await expect(
+      apply({
+        adapter,
+        entries: [consumer('jr/hook:guard')],
+        scope: 'user',
+        env,
+        manifestPath,
+        libs: [{ id: 'jr/lib:rules-common', name: 'rules-common', source, requires: [] }],
+      }),
+    ).rejects.toBeInstanceOf(ConsumerFailError);
+
+    // Restored to the PRE-run original — the merge (which would have added
+    // #libs/*) never survives the rollback.
+    expect(await readJson(pkgPath)).toEqual(originalPkg);
+  });
+
+  it(
+    'FAIL-CLOSED (review fix) — a MALFORMED home package.json rejects with an actionable '
+      + 'error, no partial write, manifest intact',
+    async () => {
+      const source = await makeLibSource('rules-common', { 'index.ts': 'x' });
+      const pkgPath = homePackageJsonPath(env);
+      const malformedBytes = '{ not valid json,,, ';
+      await fs.mkdir(path.dirname(pkgPath), { recursive: true });
+      await fs.writeFile(pkgPath, malformedBytes, 'utf8');
+      const adapter = makeRecordingAdapter('claude', {});
+
+      // Tech-lead decision: NEVER treat a malformed managed file as absent —
+      // the raw InvalidJsonError is wrapped into an actionable "fix or
+      // remove" message naming the path.
+      await expect(
+        apply({
+          adapter,
+          entries: [],
+          scope: 'user',
+          env,
+          manifestPath,
+          libs: [{ id: 'jr/lib:rules-common', name: 'rules-common', source, requires: [] }],
+        }),
+      ).rejects.toThrow(/fix or remove/);
+
+      // No partial write: the malformed bytes are untouched, byte-for-byte.
+      expect(await readText(pkgPath)).toBe(malformedBytes);
+      // Manifest intact: the failed run never persisted anything (the throw
+      // happens before the adapter loop and before persistMerged).
+      const manifest = await readManifest(manifestPath);
+      expect(manifest.artifacts).toHaveLength(0);
+      // Orphan-safe: the lib this run would have materialised is rolled back
+      // too (same try/catch, same rollback layers as every other failure).
+      expect(await exists(libDest('rules-common'))).toBe(false);
+    },
+  );
 });

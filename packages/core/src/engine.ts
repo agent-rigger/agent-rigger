@@ -26,6 +26,8 @@ import path from 'node:path';
 import type { Adapter, AdapterEntry } from './adapter';
 import { mergeApplied, mergeFiles } from './applied-merge';
 import { backup, backupDir, removeDir, removeFile, restore, restoreDir } from './backup';
+import { InvalidJsonError, readJson, writeJson } from './fs-json';
+import { mergeLibsImportMapping } from './home-package-json';
 import { contentMatchesStore, syncToStore } from './linker';
 import {
   findEntry,
@@ -38,7 +40,7 @@ import {
   writeManifest,
 } from './manifest';
 import { mergePermission } from './opencode-json';
-import { libsDir } from './paths';
+import { homePackageJsonPath, libsDir } from './paths';
 import type { Env } from './paths';
 import { acquireRunLock, type RunLock } from './run-lock';
 import type {
@@ -337,7 +339,9 @@ export interface ApplyOptions {
    * transaction (shared rollback ledger + createdDirs, shared manifest persist)
    * BEFORE the adapter entries — never an AdapterEntry, never seen by
    * adapter.plan/audit/planRemove (S3: no `[skipped]` line by partition).
-   * Absent/empty on a lib-free install.
+   * Absent/empty on a lib-free install. A non-empty `libs` ALSO guarantees the
+   * home-managed `package.json` `#libs/*` mapping (U1, lib-imports-alias) —
+   * see `home-package-json.ts`.
    */
   libs?: LibMaterialization[];
 }
@@ -499,6 +503,55 @@ async function applyInner(
       );
       manifest = upsertEntry(manifest, libEntry);
       mutations.push({ kind: 'upsert', entry: libEntry });
+    }
+
+    // Home package.json — managed `#libs/*` import mapping (U1,
+    // lib-imports-alias). Guaranteed whenever this run materialises AT LEAST
+    // ONE lib (gated on `libs`, not on whether any individual lib's sync was
+    // actually a no-op above — a transaction that resolves libs must always
+    // leave the mapping correct, even if every lib was already up to date).
+    // Reuses the SAME file-level rollback tier as every other write in this
+    // function: `backup()` + the shared `rollbackLedger` (first-wins per
+    // path) — a fresh file is deleted on rollback (backup() returns null for
+    // an absent path, exactly like every other first-wins ledger entry); an
+    // existing file's `.bak` is restored. Zero new rollback channel.
+    if ((libs ?? []).length > 0) {
+      const pkgPath = homePackageJsonPath(env);
+      const pkgExisted = await pathExists(pkgPath);
+      // Fail-closed on a malformed file (tech-lead decision, U1 review fix):
+      // the managed file may carry USER keys the engine must never guess at
+      // by silently treating it as absent, and a JSON parse failure here
+      // already means bun's own #libs/* resolution is broken for the user —
+      // so this NEVER falls back to "treat as absent". The raw
+      // InvalidJsonError already names the path but carries no remediation;
+      // wrapped here so an actionable "fix or remove" survives to the
+      // caller. Thrown BEFORE any backup/write for this file, so the
+      // existing try/catch's full rollback (layers A-D) undoes whatever
+      // THIS run already materialised (libs included) and state.json is
+      // never persisted — no special-casing needed beyond this throw.
+      let currentPkg: Record<string, unknown> | undefined;
+      if (pkgExisted) {
+        try {
+          currentPkg = await readJson(pkgPath);
+        } catch (err) {
+          if (!(err instanceof InvalidJsonError)) throw err;
+          throw new Error(
+            `Cannot guarantee the "#libs/*" import mapping: "${pkgPath}" is not valid JSON `
+              + '— fix or remove the file, then re-run.',
+            { cause: err },
+          );
+        }
+      }
+      const { result: pkgResult, changed: pkgChanged } = mergeLibsImportMapping(currentPkg);
+      if (pkgChanged) {
+        if (!rollbackLedger.has(pkgPath)) {
+          const pkgBak = await backup(pkgPath);
+          rollbackLedger.set(pkgPath, pkgBak);
+          if (pkgBak !== null) allBackedUp.push(pkgBak);
+        }
+        await writeJson(pkgPath, pkgResult);
+      }
+      // else — mapping already exact → true no-op, zero I/O beyond the reads above.
     }
 
     for (const entry of entries) {

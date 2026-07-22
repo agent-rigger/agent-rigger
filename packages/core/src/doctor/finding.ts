@@ -339,7 +339,8 @@ export type ManifestIssue =
   | 'malformed'
   | 'broken-edge'
   | 'orphan-lib'
-  | 'no-edges';
+  | 'no-edges'
+  | 'lib-imports-missing';
 
 interface FindingManifestCommon extends FindingCommon {
   class: 'manifest';
@@ -436,6 +437,23 @@ export interface FindingManifestNoEdges extends FindingManifestCommon {
   scope: Scope;
 }
 
+/**
+ * U1 (lib-imports-alias): at least one `lib`-nature entry is installed, but
+ * the home-managed `package.json` the engine's lib channel guarantees
+ * (`apply()`, `home-package-json.ts`) is absent, has an incorrect `#libs/*`
+ * mapping, or is unreadable (malformed JSON — the scanner degrades this to
+ * the same finding rather than throwing) — a consumer posed under this home
+ * will fail to resolve its `#libs/<lib>/<mod>.ts` imports. Report-only: the
+ * fix is re-running install/update for any lib consumer (the engine
+ * re-guarantees the mapping on its next lib-materialising transaction),
+ * never a doctor auto-repair.
+ */
+export interface FindingManifestLibImportsMissing extends FindingManifestCommon {
+  issue: 'lib-imports-missing';
+  /** Absolute path of the home-managed package.json the lib channel guarantees. */
+  packageJsonPath: string;
+}
+
 export type FindingManifest =
   | FindingManifestOrphanCatalog
   | FindingManifestMissingSha
@@ -444,7 +462,8 @@ export type FindingManifest =
   | FindingManifestMalformed
   | FindingManifestBrokenEdge
   | FindingManifestOrphanLib
-  | FindingManifestNoEdges;
+  | FindingManifestNoEdges
+  | FindingManifestLibImportsMissing;
 
 // --- dangling (R3) -----------------------------------------------------------
 
@@ -828,6 +847,26 @@ export function manifestNoEdges(params: {
     entryId: params.entryId,
     nature: params.nature,
     scope: params.scope,
+  };
+}
+
+/**
+ * U1 (lib-imports-alias): a lib is installed but the home package.json
+ * `#libs/*` mapping is missing or wrong — one finding for the whole home
+ * (not per-lib-entry: the mapping is a single shared file), keyed by its path
+ * so re-diagnosing yields the same id.
+ */
+export function manifestLibImportsMissing(params: {
+  packageJsonPath: string;
+}): FindingManifestLibImportsMissing {
+  return {
+    class: 'manifest',
+    issue: 'lib-imports-missing',
+    id: `manifest:lib-imports-missing:${params.packageJsonPath}`,
+    summary: `"${params.packageJsonPath}" is missing or has an incorrect "#libs/*" import `
+      + 'mapping while a lib is installed — run install/update for any lib consumer to '
+      + 'regenerate it.',
+    packageJsonPath: params.packageJsonPath,
   };
 }
 
