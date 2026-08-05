@@ -1,0 +1,22 @@
+name: ci
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Pas d'action de toolchain dédiée : `rust-toolchain.toml` épingle le
+      # channel exact ("1.97.1", pas "stable") et ses composants ; le premier
+      # appel `cargo`/`rustup` ci-dessous installe cette chaîne précise.
+      - run: rustup show
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo test --all

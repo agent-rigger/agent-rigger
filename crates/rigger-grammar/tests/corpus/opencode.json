@@ -1,0 +1,22 @@
+{
+  "model": "acme/model-large",
+  // perso — ne pas toucher
+  "theme": "dark",
+  "instructions": ["AGENTS.md", "docs/notes.md"], // garder
+  "permissions": {
+    "bash": {
+      "allow": [
+        "git status",
+        /*
+         * revu manuellement
+         * ne pas retirer
+         */
+        "git diff"
+      ],
+      "deny": ["rm -rf *"]
+    }
+  },
+  "keybinds": {
+    "leader": "ctrl+x"
+  },
+}

@@ -1,0 +1,26 @@
+{
+	"model": "acme/model-small",
+	"models": {
+		"fallback": [
+			{
+				"id": "acme/model-tiny",
+				"params": {
+        "temperature": 0.2
+				}
+			}
+		]
+	},
+	"hooks": {
+		"preToolUse": [
+			{
+				"matcher": "Bash",
+				"hooks": [
+					{
+						"type": "command",
+						"command": "scripts/guard.sh"
+					}
+				]
+			}
+		]
+	}
+}

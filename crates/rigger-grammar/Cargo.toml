@@ -1,0 +1,12 @@
+[package]
+name = "rigger-grammar"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+# En [dev-dependencies] : aucun code de src/ ne les utilise encore (lib.rs
+# est vide par mandat de T1) ; seuls les tests les touchent. T3 les
+# promouvra en [dependencies] quand src/jsonc.rs et src/toml.rs existeront.
+[dev-dependencies]
+jsonc-parser = { version = "=0.33.1", features = ["cst"] }
+toml_edit = { version = "=0.25.13" }
