@@ -16,6 +16,16 @@
 //! **Un renommage.** Le document possédé est donc, à tout instant
 //! observable, soit celui d'avant, soit celui d'après.
 //!
+//! **Le renommage porte sur le document, jamais sur le lien qui le désigne.**
+//! Un fichier de réglages du dossier personnel est couramment un lien vers un
+//! dépôt de configurations versionné — c'est même la raison d'être de ce genre
+//! de dépôt. Renommer sur le lien le remplacerait par un fichier ordinaire :
+//! le lien disparaîtrait sans trace, le document réel ne recevrait jamais la
+//! pose, et l'appel rapporterait un succès. Le produit suit donc le lien
+//! jusqu'au document, et c'est à côté de **celui-là** que le temporaire est
+//! écrit — sans quoi le renommage traverserait un système de fichiers et
+//! cesserait d'être atomique.
+//!
 //! **Ce que l'empreinte est ici, et pourquoi.** Le contenu lu au calcul
 //! lui-même. La comparaison est alors exacte et ne peut pas se tromper, là où
 //! un condensé échange cette certitude contre de la mémoire — un arbitrage
@@ -154,7 +164,12 @@ pub fn capture(path: &Path) -> Result<Capture, TxnError> {
 /// par une panique.
 #[derive(Debug)]
 pub struct Staged {
+    /// Le chemin tel que l'appelant l'a donné. C'est lui que les refus
+    /// nomment : c'est celui que son propriétaire reconnaît.
     target: PathBuf,
+    /// Le document que le renommage remplace — la cible, ou ce vers quoi elle
+    /// pointe quand elle est un lien symbolique.
+    document: PathBuf,
     temporary: Option<PathBuf>,
 }
 
@@ -174,7 +189,7 @@ impl Staged {
             .take()
             .expect("un temporaire n'est validé qu'une fois");
 
-        let actuel = fs::read(&self.target).map_err(|detail| TxnError::Read {
+        let actuel = fs::read(&self.document).map_err(|detail| TxnError::Read {
             path: self.target.clone(),
             detail,
         });
@@ -192,7 +207,7 @@ impl Staged {
             });
         }
 
-        fs::rename(&temporary, &self.target).map_err(|detail| {
+        fs::rename(&temporary, &self.document).map_err(|detail| {
             let _ = fs::remove_file(&temporary);
             TxnError::Write {
                 path: self.target.clone(),
@@ -210,28 +225,78 @@ impl Drop for Staged {
     }
 }
 
-/// Écrit `contents` dans un temporaire du **répertoire de `target`**, sans
-/// toucher à `target`.
+/// Écrit `contents` dans un temporaire du **répertoire du document**, sans
+/// toucher ni au document ni à `target`. Quand `target` est un lien
+/// symbolique, le document est ce vers quoi il pointe.
 pub fn stage(target: &Path, contents: &str) -> Result<Staged, TxnError> {
-    let temporary = temporary_path(target);
+    let document = document_designe(target)?;
+    let temporary = temporary_path(&document);
     fs::write(&temporary, contents).map_err(|detail| TxnError::Write {
         path: temporary.clone(),
         detail,
     })?;
     Ok(Staged {
         target: target.to_path_buf(),
+        document,
         temporary: Some(temporary),
     })
 }
 
-/// Le chemin du temporaire d'une cible : même répertoire, nom dérivé du sien
+/// Le nombre de liens qu'un chemin peut enchaîner avant que le suivi ne
+/// refuse. Un lien qui pointe sur lui-même boucle sans cette borne, et ce
+/// module doit le dire lui-même : personne d'autre ne lira ce chemin.
+const LIENS_MAX: usize = 40;
+
+/// Le document que `target` désigne : `target` lui-même, ou ce vers quoi il
+/// pointe quand c'est un lien symbolique — le maillon final, en suivant la
+/// chaîne.
+///
+/// Seul le **dernier segment** est résolu, et pas le chemin entier : un
+/// répertoire intermédiaire qui serait un lien ne change rien au document
+/// désigné, et le résoudre ferait nommer, dans les refus, un chemin que le
+/// propriétaire du document n'a jamais écrit.
+fn document_designe(target: &Path) -> Result<PathBuf, TxnError> {
+    let mut chemin = target.to_path_buf();
+    for _ in 0..LIENS_MAX {
+        let metadata = fs::symlink_metadata(&chemin).map_err(|detail| TxnError::Read {
+            path: target.to_path_buf(),
+            detail,
+        })?;
+        if !metadata.file_type().is_symlink() {
+            return Ok(chemin);
+        }
+        let pointe = fs::read_link(&chemin).map_err(|detail| TxnError::Read {
+            path: target.to_path_buf(),
+            detail,
+        })?;
+        chemin = if pointe.is_absolute() {
+            pointe
+        } else {
+            // Un lien relatif se lit depuis le répertoire du lien, jamais
+            // depuis le répertoire courant du processus.
+            chemin
+                .parent()
+                .unwrap_or_else(|| Path::new("."))
+                .join(pointe)
+        };
+    }
+    Err(TxnError::Read {
+        path: target.to_path_buf(),
+        detail: io::Error::other(format!(
+            "plus de {LIENS_MAX} liens symboliques enchaînés — le document désigné n'est pas \
+             déterminable"
+        )),
+    })
+}
+
+/// Le chemin du temporaire d'un document : même répertoire, nom dérivé du sien
 /// et de l'identifiant du processus.
-fn temporary_path(target: &Path) -> PathBuf {
-    let nom = target
+fn temporary_path(document: &Path) -> PathBuf {
+    let nom = document
         .file_name()
         .map(|nom| nom.to_string_lossy().into_owned())
         .unwrap_or_else(|| "document".to_string());
-    let dossier = target.parent().unwrap_or_else(|| Path::new("."));
+    let dossier = document.parent().unwrap_or_else(|| Path::new("."));
     dossier.join(format!(".{nom}.rigger-{}.tmp", std::process::id()))
 }
 

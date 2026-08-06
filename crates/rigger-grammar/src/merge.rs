@@ -17,9 +17,28 @@
 //! sémantiques d'avant et d'après : constater la présence de ce qu'on a ajouté
 //! ne dit **rien** de ce qu'on a détruit, et c'est par ce trou qu'une valeur
 //! écrite par l'utilisateur est sortie d'un tableau.
+//!
+//! **Elle a deux moitiés, et la seconde est en octets.** La comparaison des
+//! valeurs sémantiques ne voit que des feuilles : un commentaire, une
+//! indentation, un échappement n'en sont pas, donc leur disparition la laisse
+//! muette. C1 exige l'inverse — la différence entre le document d'avant et
+//! celui d'après doit se réduire **exactement** à ce que la trace enregistre,
+//! sinon la transaction annule. La seule façon de le constater sans le
+//! supposer est de **défaire l'écriture qu'on vient de calculer** et de
+//! comparer les octets à ceux d'avant. C'est ce que la dérivation des capacités
+//! exige d'une grammaire sur sa sonde ; ici, la même épreuve porte sur le
+//! document de l'utilisateur, que personne n'a choisi.
+//!
+//! Ce que cette moitié attrape et que rien d'autre n'attrapait : la trace d'une
+//! clé remplacée n'enregistre que la valeur **sémantique** de sa pré-image, si
+//! bien qu'un commentaire vivant à l'intérieur de cette valeur était détruit à
+//! la pose et jamais rendu au retrait. Le refus tombe désormais avant que le
+//! document ne soit remplacé, et il tombe pour toute écriture qui ne se défait
+//! pas — pas seulement pour celles auxquelles on aurait pensé.
 
 use std::fmt;
 
+use crate::capability::TriviaDivergence;
 use crate::{
     values_lost, Applied, Capabilities, Edit, Grammar, GrammarError, Inverse, MergeAdmission,
     MergeRefusal, SemanticValue,
@@ -35,8 +54,8 @@ pub struct Merged {
     pub inverse: Inverse,
 }
 
-/// Pourquoi une fusion n'a pas eu lieu. Aucune de ces trois variantes ne
-/// laisse un document remplacé : la première tombe avant tout rendu, les deux
+/// Pourquoi une fusion n'a pas eu lieu. Aucune de ces quatre variantes ne
+/// laisse un document remplacé : la première tombe avant tout rendu, les
 /// autres rendent un document qui n'a jamais quitté la mémoire.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MergeError {
@@ -51,6 +70,15 @@ pub enum MergeError {
         grammar: &'static str,
         /// Les valeurs disparues, avec leur chemin.
         lost: Vec<SemanticValue>,
+    },
+    /// La trace calculée ne rend pas le document d'avant octet pour octet. La
+    /// pose serait donc irréversible, et l'écart porte sur ce que la trace
+    /// n'enregistre pas — un commentaire, une indentation, un échappement.
+    PreimageNotRestored {
+        /// La grammaire qui a écrit.
+        grammar: &'static str,
+        /// Ce qui a divergé entre la pré-image et ce que la trace rend.
+        divergence: TriviaDivergence,
     },
 }
 
@@ -77,6 +105,15 @@ impl fmt::Display for MergeError {
                 }
                 Ok(())
             }
+            Self::PreimageNotRestored {
+                grammar,
+                divergence,
+            } => write!(
+                f,
+                "grammaire `{grammar}` : cette écriture ne se défait pas — la trace calculée ne \
+                 rend pas le document d'avant, {divergence}. La transaction annule plutôt que de \
+                 poser dans un document possédé ce qu'elle ne saurait pas retirer"
+            ),
         }
     }
 }
@@ -121,6 +158,29 @@ pub fn merge<G: Grammar>(source: &str, edit: &Edit) -> Result<Merged, MergeError
             grammar: G::NAME,
             lost,
         });
+    }
+
+    // La seconde moitié de la post-condition, en octets : la trace est
+    // **exécutée** sur le rendu, et ce qu'elle rend doit être le document
+    // d'avant. Une trace qui ne rend pas la pré-image décrit une pose
+    // irréversible, et l'écart tombe exactement là où la comparaison des
+    // valeurs sémantiques est aveugle — un commentaire, une indentation, un
+    // échappement ne sont pas des feuilles.
+    //
+    // Elle vient **après** la comparaison des valeurs, et cet ordre est du
+    // fond : une écriture qui détruit une valeur de l'utilisateur doit être
+    // refusée en nommant cette valeur, qui est ce que son propriétaire
+    // reconnaît, plutôt qu'en nommant un offset.
+    match G::invert(&rendered, &inverse) {
+        Err(err) => return Err(MergeError::Grammar(err)),
+        Ok(defait) => {
+            if let Some(divergence) = TriviaDivergence::measure(source, &defait) {
+                return Err(MergeError::PreimageNotRestored {
+                    grammar: G::NAME,
+                    divergence,
+                });
+            }
+        }
     }
 
     Ok(Merged { rendered, inverse })

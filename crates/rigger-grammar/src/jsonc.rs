@@ -126,6 +126,19 @@ impl Grammar for Jsonc {
                             let node = property
                                 .value()
                                 .ok_or_else(|| GrammarError::path_not_found(Jsonc::NAME, path))?;
+                            // Ce que la trace retient de la pré-image est sa
+                            // valeur **sémantique** : la bibliothèque n'offre
+                            // pas d'insérer des octets bruts ailleurs que dans
+                            // un littéral, donc un commentaire ou un
+                            // échappement vivant à l'intérieur de la valeur
+                            // remplacée ne se rétablit pas. Ce remplacement-là
+                            // ne doit donc pas atteindre le document, et ce
+                            // n'est pas ici que cela se décide : `merge`
+                            // exécute cet inverse sur le rendu et refuse quand
+                            // les octets d'avant ne reviennent pas. Le refus
+                            // est ainsi mesuré sur le document réel plutôt que
+                            // déduit d'une liste de formes auxquelles on aurait
+                            // pensé.
                             replaced.push((name.clone(), read_value(&node)?));
                             property.set_value(input_value(value));
                         }

@@ -253,6 +253,14 @@ pub trait Grammar {
     /// pré-image **octet pour octet**. Un inverse qui rend un document
     /// équivalent mais reformaté détruit le travail du propriétaire au
     /// retrait, c'est-à-dire à l'endroit exact où personne ne regarde.
+    ///
+    /// **Cette propriété n'est pas crue sur parole, et ne peut pas l'être.**
+    /// Elle porte sur un couple (document, édition), pas sur une grammaire : la
+    /// même implémentation la tient sur une clé dont la valeur est une chaîne
+    /// et la perd sur une clé dont la valeur porte un commentaire. Ce que la
+    /// dérivation et le corpus mesurent est donc un échantillon ; ce qui
+    /// **décide** est [`merge`], qui exécute cet inverse-ci sur ce rendu-là et
+    /// refuse l'écriture quand les octets d'avant ne reviennent pas.
     fn invert(_source: &str, _inverse: &Inverse) -> Result<String, GrammarError> {
         Err(GrammarError::unsupported(Self::NAME, "défaire une édition"))
     }

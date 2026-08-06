@@ -18,6 +18,16 @@
 //! propriété vérifie que ce que l'édition change est un fragment **contigu**,
 //! c'est-à-dire que le document n'a pas été ré-émis en entier.
 //!
+//! **Ce que cette propriété-là n'exerce pas, et où c'est tenu.** L'édition
+//! employée pose une clé qu'aucun document du corpus ne porte, donc elle
+//! n'emprunte que la branche d'**ajout** ; la branche de **remplacement**
+//! n'est pas exercée ici, et ne peut pas l'être sans choisir une clé document
+//! par document. C'est [`rigger_grammar::merge`] qui tient la propriété là où
+//! elle décide de quelque chose : il défait l'écriture qu'il vient de calculer
+//! et refuse si les octets d'avant ne reviennent pas — sur le document de
+//! l'utilisateur, quelle que soit la branche empruntée. Ce fichier mesure ce
+//! qu'une grammaire sait faire ; `merge` mesure ce qu'elle vient de faire.
+//!
 //! `tests/corpus/` porte les documents dont la grammaire préserve la trivia ;
 //! `tests/corpus-limites/` porte ceux dont elle ne la préserve pas, et le
 //! second est câblé ici à ce que la table des capacités en dit — un document

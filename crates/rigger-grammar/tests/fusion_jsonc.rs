@@ -361,6 +361,122 @@ fn c2_une_valeur_deja_presente_n_entre_pas_dans_la_trace() {
     );
 }
 
+/// Les remplacements dont la pré-image n'est **pas** faite que de valeurs :
+/// les octets qui la composent portent aussi un commentaire, ou un
+/// échappement que le document a choisi.
+///
+/// Ce que la trace enregistre d'une clé remplacée est sa valeur **sémantique**,
+/// et une valeur sémantique ne porte ni commentaire ni échappement. Rétablir
+/// ces pré-images-là rendrait donc un document que le propriétaire n'a pas
+/// écrit — et la post-condition sémantique ne le voit pas, puisqu'elle ne
+/// compare que des feuilles.
+fn remplacements_dont_la_preimage_ne_se_retablit_pas() -> Vec<(&'static str, &'static str, Edit)> {
+    vec![
+        (
+            "un commentaire dans l'objet remplacé",
+            concat!(
+                "{\n",
+                "\t\"permissions\": {\n",
+                "\t\t// mes règles, ne pas toucher\n",
+                "\t\t\"deny\": [\"Bash(rm -rf *)\"] // important\n",
+                "\t},\n",
+                "\t\"modele\": \"acme/modele-petit\"\n",
+                "}\n",
+            ),
+            Edit::keys(
+                &[],
+                [(
+                    "permissions",
+                    Value::Object(vec![(
+                        "deny".to_string(),
+                        Value::List(vec![Value::text("Bash(true)")]),
+                    )]),
+                )],
+            ),
+        ),
+        (
+            "un commentaire dans le tableau remplacé",
+            concat!(
+                "{\n",
+                "\t\"utilisateurs\": [\"u1\", /* garder */ \"u2\"]\n",
+                "}\n",
+            ),
+            Edit::keys(
+                &[],
+                [(
+                    "utilisateurs",
+                    Value::List(vec![Value::text("u1"), Value::text("u2")]),
+                )],
+            ),
+        ),
+        (
+            "un échappement dans la chaîne remplacée",
+            concat!("{\n", "  \"a\": \"caf\\u00e9\",\n", "  \"b\": 1\n", "}\n",),
+            Edit::keys(&[], [("a", Value::text("x"))]),
+        ),
+    ]
+}
+
+#[test]
+fn c1_un_remplacement_dont_la_preimage_ne_se_retablit_pas_fait_annuler() {
+    for (cas, avant, edit) in remplacements_dont_la_preimage_ne_se_retablit_pas() {
+        // GIVEN un document possédé dont la clé remplacée porte des octets que
+        // la trace n'enregistre pas.
+        // WHEN une pose passe par la grammaire.
+        let echec = merge::<Jsonc>(avant, &edit).err().unwrap_or_else(|| {
+            panic!("{cas} : la fusion a réussi sur une écriture qu'elle ne sait pas défaire")
+        });
+
+        // THEN la transaction annule, et le message nomme la grammaire et ce
+        // qui n'a pas été préservé.
+        let message = echec.to_string();
+        for attendu in ["jsonc", "ne se défait pas"] {
+            assert!(
+                message.contains(attendu),
+                "{cas} : le refus ne nomme pas « {attendu} » — {message}"
+            );
+        }
+    }
+}
+
+/// Garde, pas scénario : le refus ci-dessus doit tenir à ce que la pré-image
+/// n'est pas rétablissable, et **jamais** à un remplacement en soi. Sans cette
+/// garde, refuser tout remplacement rendrait le scénario vert en supprimant la
+/// capacité qu'il encadre.
+#[test]
+fn garde_un_remplacement_dont_la_preimage_se_retablit_reste_possible() {
+    const AVANT: &str = concat!(
+        "{\n",
+        "\t\"permissions\": {\n",
+        "\t\t\"deny\": [\"Bash(rm -rf *)\"]\n",
+        "\t}, // garder\n",
+        "\t\"modele\": \"acme/modele-petit\"\n",
+        "}\n",
+    );
+    let edit = Edit::keys(
+        &[],
+        [(
+            "permissions",
+            Value::Object(vec![(
+                "deny".to_string(),
+                Value::List(vec![Value::text("Bash(true)")]),
+            )]),
+        )],
+    );
+
+    let fusion = merge::<Jsonc>(AVANT, &edit).expect("la fusion doit réussir");
+    assert!(fusion.rendered.contains("Bash(true)"));
+    assert!(
+        fusion.rendered.contains("// garder"),
+        "le commentaire hors de la valeur remplacée a disparu : {}",
+        fusion.rendered
+    );
+    assert_eq!(
+        Jsonc::invert(&fusion.rendered, &fusion.inverse).expect("l'inverse doit s'appliquer"),
+        AVANT
+    );
+}
+
 /// Garde, pas scénario : le doublon de clé est admis par le format, qui laisse
 /// indéfini ce qu'un lecteur en fait. Le chemin de **lecture** le refuse
 /// depuis T3a ; le chemin d'**écriture** doit le refuser aussi, sans quoi il

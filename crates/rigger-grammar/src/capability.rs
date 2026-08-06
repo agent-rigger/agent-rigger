@@ -166,7 +166,14 @@ pub struct TriviaDivergence {
 }
 
 impl TriviaDivergence {
-    fn measure(input: &str, output: &str) -> Option<Self> {
+    /// Ce qui a divergé entre deux rendus, ou rien s'ils sont identiques.
+    ///
+    /// Visible dans la caisse parce que [`crate::merge`] mesure la même chose
+    /// sur le document de l'utilisateur que la dérivation mesure sur la sonde.
+    /// Une seconde façon de dire « ces octets diffèrent » divergerait de
+    /// celle-ci, et le refus ne nommerait pas la même chose selon l'endroit
+    /// d'où il tombe.
+    pub(crate) fn measure(input: &str, output: &str) -> Option<Self> {
         if input == output {
             return None;
         }
@@ -656,6 +663,15 @@ fn measure_trivia<G: Grammar>() -> TriviaMeasure {
 /// une édition triviale sur un document docile reste possible ici. C'est
 /// `tests/conformance.rs` qui exerce la même propriété sur les documents du
 /// dépôt, que l'auteur d'une grammaire ne choisit pas.
+///
+/// **Et ce qu'aucune des deux ne pouvait fermer.** Une seule édition est posée
+/// ici, et une seule là-bas : ce qu'elles établissent est qu'un chemin
+/// d'écriture existe et qu'il se défait **sur ce cas-là**. Rien n'en découle
+/// pour l'écriture suivante, sur un document que personne n'a vu — une clé dont
+/// la valeur porte un commentaire se remplace sans erreur et ne se défait pas.
+/// L'admission ne peut donc pas être le dernier mot : [`crate::merge`] défait
+/// chaque écriture qu'il calcule avant de la rendre, et refuse si les octets
+/// d'avant ne reviennent pas.
 fn measure_write_path<G: Grammar>() -> Vec<RefusalReason> {
     let probe = G::PROBE;
     let edit = crate::Edit::values(probe.list_path, [probe.value_absent]);

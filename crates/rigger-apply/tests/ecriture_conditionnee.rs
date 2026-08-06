@@ -80,6 +80,69 @@ fn c8_le_nominal() {
     fs::remove_dir_all(&dir).expect("nettoyage");
 }
 
+/// Garde, pas scénario : aucun scénario de C8 ne nomme le lien symbolique, et
+/// la disposition est pourtant celle d'un dépôt de dotfiles — le fichier de
+/// réglages du dossier personnel **est** un lien vers le document versionné.
+///
+/// Un renommage sur le lien le remplace par un fichier ordinaire : le lien
+/// disparaît sans trace, le document réel ne reçoit jamais la pose, et l'appel
+/// rapporte un succès. Rien dans le registre ne permettrait de le rétablir,
+/// puisque l'inverse d'une pose défait une écriture et jamais une destruction
+/// de lien.
+#[cfg(unix)]
+#[test]
+fn garde_une_cible_qui_est_un_lien_symbolique_recoit_la_pose_sans_perdre_le_lien() {
+    let dir = repertoire("lien-symbolique");
+    let depot = dir.join("dotfiles");
+    let maison = dir.join("home");
+    fs::create_dir_all(&depot).expect("création du dépôt");
+    fs::create_dir_all(&maison).expect("création du dossier personnel");
+    let reel = depot.join("reglages.json");
+    fs::write(&reel, REGLAGES).expect("écriture du document versionné");
+    let lien = maison.join("reglages.json");
+    std::os::unix::fs::symlink(&reel, &lien).expect("création du lien");
+
+    // Le temporaire vit à côté du document versionné, et non à côté du lien :
+    // un renommage n'est atomique qu'à l'intérieur d'un même système de
+    // fichiers, et rien ne dit que le dépôt et le dossier personnel vivent sur
+    // le même.
+    let staged = stage(&lien, "{}\n").expect("le temporaire doit s'écrire");
+    assert_eq!(
+        staged.temporary_path().parent(),
+        Some(depot.as_path()),
+        "le temporaire ne vit pas dans le répertoire du document désigné"
+    );
+    drop(staged);
+
+    let trace = merge_into_file::<Jsonc>(&lien, &fragment()).expect("la pose doit réussir");
+
+    // Le lien est toujours un lien.
+    assert!(
+        fs::symlink_metadata(&lien)
+            .expect("le lien doit exister")
+            .file_type()
+            .is_symlink(),
+        "le lien a été remplacé par un fichier ordinaire"
+    );
+
+    // Et c'est le document versionné qui a reçu la pose.
+    let apres = fs::read_to_string(&reel).expect("relecture du document versionné");
+    assert!(
+        apres.contains("docs/pose.md"),
+        "le document réel n'a pas reçu la pose : {apres}"
+    );
+    assert_eq!(
+        Jsonc::invert(&apres, &trace).expect("l'inverse doit s'appliquer"),
+        REGLAGES,
+        "la trace ne rend pas le document d'avant"
+    );
+
+    // Aucun temporaire ne subsiste, d'aucun des deux côtés.
+    assert_eq!(fichiers(&maison), vec!["reglages.json".to_string()]);
+    assert_eq!(fichiers(&depot), vec!["reglages.json".to_string()]);
+    fs::remove_dir_all(&dir).expect("nettoyage");
+}
+
 #[test]
 fn c8_le_document_a_change_entre_le_calcul_et_l_ecriture() {
     // GIVEN un plan calculé sur un document dont l'empreinte a été relevée.
