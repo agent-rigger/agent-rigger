@@ -314,22 +314,24 @@ fn les_documents_de_corpus_limites_confirment_la_table() {
 
 /// Garde de câblage, pas propriété de grammaire : la table des capacités et
 /// l'aiguillage de ce fichier sont **deux listes écrites à la main**, et rien
-/// ne les rapprochait. Une grammaire pouvait donc être publiée « préserve la
-/// trivia, admise au `merge` » sans qu'aucun document du corpus ne l'ait
-/// jamais traversée — la table présente pourtant ces réponses comme mesurées,
-/// et la seule chose qui les mesurait alors était sa propre sonde, écrite par
-/// l'auteur de la grammaire.
+/// ne les rapprochait. Une grammaire pouvait donc être publiée sans qu'aucune
+/// des propriétés de ce fichier ne la traverse jamais.
 ///
-/// Ce que cette garde ajoute est le second témoin : ce que la grammaire dit
-/// d'elle-même doit tenir sur des documents que le dépôt garde par ailleurs
-/// (`garde_pieges_du_corpus_toujours_presents`), et que l'aller-retour
-/// byte-identique ci-dessus traverse.
+/// **Ce que cette garde ne fait plus, et pourquoi.** Elle exigeait qu'au moins
+/// un document du corpus **s'aiguille** vers chaque grammaire publiée, et cet
+/// aiguillage se fait par extension de fichier. Le second témoin qu'elle
+/// prétendait apporter était donc choisi par l'auteur de la grammaire jugée :
+/// il lui suffisait de déposer un document docile portant l'extension qu'il
+/// déclarait pour n'être jamais exercé sur les documents hostiles du dépôt. Le
+/// second témoin vit désormais dans la dérivation elle-même — toute grammaire
+/// se voit proposer `SHARED_CORPUS` en entier, sans considération
+/// d'extension — et ce qui est vérifié ici est qu'elle en a bien lu quelque
+/// chose.
 #[test]
 fn garde_toute_grammaire_publiee_traverse_le_corpus() {
-    let mut publiees: Vec<&str> = rigger_grammar::table()
-        .iter()
-        .map(|capacites| capacites.grammar())
-        .collect();
+    let table = rigger_grammar::table();
+
+    let mut publiees: Vec<&str> = table.iter().map(|capacites| capacites.grammar()).collect();
     publiees.sort_unstable();
 
     let mut aiguillees: Vec<&str> = Grammaire::TOUTES
@@ -344,24 +346,72 @@ fn garde_toute_grammaire_publiee_traverse_le_corpus() {
          grammaires — l'une des deux publie ou exerce une grammaire que l'autre ignore"
     );
 
-    let documents = tous_les_documents();
-    let orphelines: Vec<&str> = Grammaire::TOUTES
+    let orphelines: Vec<&str> = table
         .iter()
-        .filter(|grammaire| {
-            let nom = grammaire.capacites().grammar();
-            !documents.iter().any(|path| {
-                Grammaire::pour(path).is_ok_and(|autre| autre.capacites().grammar() == nom)
-            })
-        })
-        .map(|grammaire| grammaire.capacites().grammar())
+        .filter(|capacites| capacites.shared_corpus_documents_read() == 0)
+        .map(|capacites| capacites.grammar())
         .collect();
 
     assert!(
         orphelines.is_empty(),
-        "{} grammaire(s) publiée(s) qu'aucun document du corpus ne traverse — ce que la table \
-         en dit ne repose que sur leur propre sonde : {}",
+        "{} grammaire(s) publiée(s) qui ne lisent aucun document du dépôt — ce que la table en \
+         dit ne repose que sur leur propre sonde : {}",
         orphelines.len(),
         orphelines.join(", ")
+    );
+}
+
+/// Garde de câblage : le corpus que la dérivation embarque doit être celui que
+/// le dépôt porte, document pour document et octet pour octet.
+///
+/// Sans elle, un document ajouté à `tests/corpus/` serait exercé par les
+/// propriétés de ce fichier mais jamais proposé aux grammaires, et un document
+/// embarqué depuis un état antérieur du dépôt ferait mesurer la préservation
+/// sur des octets que plus personne ne relit. Les deux se lisent de la même
+/// façon depuis ici : la liste embarquée et le dossier ne décrivent plus le
+/// même jeu.
+#[test]
+fn garde_le_corpus_embarque_est_celui_du_depot() {
+    let sur_disque: Vec<(String, Vec<u8>)> = corpus_entries()
+        .iter()
+        .map(|path| {
+            let nom = path
+                .file_name()
+                .and_then(|nom| nom.to_str())
+                .unwrap_or_else(|| panic!("{}: nom de fichier non UTF-8", path.display()))
+                .to_string();
+            let octets = fs::read(path)
+                .unwrap_or_else(|err| panic!("{}: lecture impossible — {err}", path.display()));
+            (nom, octets)
+        })
+        .collect();
+
+    let embarque: Vec<(String, Vec<u8>)> = rigger_grammar::SHARED_CORPUS
+        .iter()
+        .map(|(nom, source)| ((*nom).to_string(), source.as_bytes().to_vec()))
+        .collect();
+
+    let noms = |jeu: &[(String, Vec<u8>)]| -> Vec<String> {
+        jeu.iter().map(|(nom, _)| nom.clone()).collect()
+    };
+    assert_eq!(
+        noms(&embarque),
+        noms(&sur_disque),
+        "le corpus embarqué par la dérivation ne nomme pas les mêmes documents que {}",
+        corpus_dir().display()
+    );
+
+    let divergents: Vec<&str> = embarque
+        .iter()
+        .zip(sur_disque.iter())
+        .filter(|((_, embarques), (_, disque))| embarques != disque)
+        .map(|((nom, _), _)| nom.as_str())
+        .collect();
+    assert!(
+        divergents.is_empty(),
+        "{} document(s) embarqué(s) dont les octets ne sont plus ceux du dépôt : {}",
+        divergents.len(),
+        divergents.join(", ")
     );
 }
 

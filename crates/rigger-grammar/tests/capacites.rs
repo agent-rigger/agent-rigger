@@ -307,7 +307,8 @@ fn garde_aucune_grammaire_publiee_n_echappe_a_la_mesure() {
                         RefusalReason::ProbeWithoutHostileTrivia { .. }
                             | RefusalReason::ProbeCommentIsNotTrivia(_)
                             | RefusalReason::ProbeUnreadable(_)
-                            | RefusalReason::MalformedDocumentAccepted
+                            | RefusalReason::MalformedDocumentAccepted { .. }
+                            | RefusalReason::NoSharedCorpusDocument
                     )
                 })
                 .map(|raison| raison.to_string())
@@ -596,6 +597,162 @@ fn garde_une_sonde_muette_sur_une_dimension_ne_credite_rien() {
     );
 }
 
+/// Garde, pas scénario : la sonde est écrite par l'auteur de la grammaire
+/// jugée, donc elle ne porte que la trivia qu'il a bien voulu y mettre. Les
+/// trois dimensions exigées par la dérivation ne ferment que ce qu'elles
+/// nomment — une **forme** de commentaire absente de la sonde reste un angle
+/// mort, et la grammaire ci-dessous l'occupe exactement : analyseur réel, sonde
+/// honnête sur les trois dimensions, et un rendu qui **détruit les commentaires
+/// de bloc**, forme que sa sonde ne contient pas.
+///
+/// Ce que cela impose à la dérivation : mesurer aussi sur des documents que
+/// l'auteur de la grammaire n'a pas choisis. Le dépôt en porte, et leurs pièges
+/// sont gardés par `conformance.rs`, qui n'appartient à aucune grammaire.
+#[test]
+fn garde_une_grammaire_qui_detruit_une_trivia_absente_de_sa_sonde_ne_credite_rien() {
+    struct DetruitLesCommentairesDeBloc;
+
+    impl Grammar for DetruitLesCommentairesDeBloc {
+        const NAME: &'static str = "détruit-les-commentaires-de-bloc";
+        const ROLE: GrammarRole = GrammarRole::ReadWrite;
+        const RESOLUTION: Resolution = Resolution::IndependentOfOrder;
+        const PROBE: Probe = Probe {
+            source: SONDE_JSONC,
+            comment: "// sonde",
+            list_path: &["allow"],
+            value_present: "read",
+            value_absent: "network",
+        };
+
+        fn round_trip(source: &str) -> Result<String, GrammarError> {
+            Ok(retire_les_commentaires_de_bloc(&Jsonc::round_trip(source)?))
+        }
+
+        fn find_string_in_list(
+            source: &str,
+            path: &[&str],
+            value: &str,
+        ) -> Result<bool, GrammarError> {
+            Jsonc::find_string_in_list(source, path, value)
+        }
+    }
+
+    // La sonde de cette grammaire ne porte aucun commentaire de bloc : sa
+    // destruction y est invisible, et c'est ce qui rend le crédit possible.
+    assert!(
+        !SONDE_JSONC.contains("/*"),
+        "la sonde de ce test doit ignorer les commentaires de bloc, sans quoi la dérivation \
+         attraperait le défaut sur la sonde et ne démontrerait rien du corpus"
+    );
+
+    let capacites = Capabilities::of::<DetruitLesCommentairesDeBloc>();
+    assert!(
+        !capacites.preserves_trivia(),
+        "une grammaire qui détruit les commentaires de bloc a été créditée de la préservation \
+         de la trivia, parce que sa propre sonde n'en portait aucun"
+    );
+    assert!(
+        matches!(capacites.merge(), MergeAdmission::Refused(_)),
+        "une grammaire qui détruit les commentaires de bloc a été admise au `merge`"
+    );
+}
+
+/// Retire les commentaires de bloc d'un document JSONC rendu. Suffisant pour
+/// ce test : le document mesuré n'en contient aucun à l'intérieur d'une chaîne.
+fn retire_les_commentaires_de_bloc(rendu: &str) -> String {
+    let mut sortie = String::with_capacity(rendu.len());
+    let mut reste = rendu;
+    while let Some(ouverture) = reste.find("/*") {
+        sortie.push_str(&reste[..ouverture]);
+        match reste[ouverture + 2..].find("*/") {
+            Some(fermeture) => reste = &reste[ouverture + 2 + fermeture + 2..],
+            None => return sortie,
+        }
+    }
+    sortie.push_str(reste);
+    sortie
+}
+
+/// Garde, pas scénario : l'épreuve d'existence d'un analyseur est un
+/// **refus**, et un refus se contrefait. La grammaire ci-dessous refuse ce qui
+/// ne commence pas par une accolade et rend tout le reste tel quel : aucun
+/// octet n'est analysé, et la sonde comme le corpus lui reviennent à
+/// l'identique.
+///
+/// Ce qu'elle impose : que les documents dont la dérivation exige le refus
+/// soient dérivés du document lui-même, et pas seulement préfixés d'une
+/// constante publique. Un document suivi de ce qui n'en est pas un, ou
+/// concaténé à lui-même, commence toujours par la même accolade — les
+/// distinguer demande de lire la structure, c'est-à-dire d'analyser.
+#[test]
+fn garde_un_refus_de_facade_ne_credite_pas_un_analyseur() {
+    struct RefusDeFacade;
+
+    impl Grammar for RefusDeFacade {
+        const NAME: &'static str = "refus-de-façade";
+        const ROLE: GrammarRole = GrammarRole::ReadWrite;
+        const RESOLUTION: Resolution = Resolution::IndependentOfOrder;
+        const PROBE: Probe = Probe {
+            source: SONDE_JSONC,
+            comment: "// sonde",
+            list_path: &["allow"],
+            value_present: "read",
+            value_absent: "network",
+        };
+
+        fn round_trip(source: &str) -> Result<String, GrammarError> {
+            if source.trim_start().starts_with('{') {
+                Ok(source.to_string())
+            } else {
+                Err(GrammarError::malformed(Self::NAME, "pas une accolade"))
+            }
+        }
+
+        fn find_string_in_list(
+            source: &str,
+            path: &[&str],
+            value: &str,
+        ) -> Result<bool, GrammarError> {
+            Jsonc::find_string_in_list(source, path, value)
+        }
+    }
+
+    // Le refus est bien celui que la dérivation demandait jusqu'ici : le
+    // document préfixé de ce qui n'en est pas un est rejeté.
+    assert!(
+        RefusDeFacade::round_trip(&format!("{}{SONDE_JSONC}", rigger_grammar::NOT_A_DOCUMENT))
+            .is_err(),
+        "cette grammaire doit passer l'épreuve de refus telle qu'elle était écrite, sans quoi \
+         elle ne démontre pas que cette épreuve se contrefait"
+    );
+
+    // La constante étant publique, la contrefaçon la plus directe est de la
+    // reconnaître : `source.starts_with(NOT_A_DOCUMENT)`. Elle échoue pour la
+    // même raison que celle ci-dessus — la majorité des mutations exigées ne
+    // se reconnaissent pas à leur tête, elles commencent par les octets mêmes
+    // du document dont elles dérivent.
+    let non_reconnaissables = rigger_grammar::mutations(SONDE_JSONC)
+        .into_iter()
+        .filter(|(_, mutant)| !mutant.starts_with(rigger_grammar::NOT_A_DOCUMENT))
+        .count();
+    assert!(
+        non_reconnaissables >= 2,
+        "{non_reconnaissables} mutation(s) seulement échappent à un test sur la tête du \
+         document — reconnaître la constante publique suffirait à passer pour un analyseur"
+    );
+
+    let capacites = Capabilities::of::<RefusDeFacade>();
+    assert!(
+        !capacites.preserves_trivia(),
+        "une implémentation qui rend son entrée telle quelle a été créditée de la préservation \
+         de la trivia, parce qu'elle refuse une ligne qu'elle n'a pas eu besoin de lire"
+    );
+    assert!(
+        matches!(capacites.merge(), MergeAdmission::Refused(_)),
+        "une implémentation sans analyseur a été admise au `merge`"
+    );
+}
+
 /// Garde, pas scénario : elle tient le **critère** de la colonne
 /// « résolution », qui doit être le même pour toutes les grammaires.
 ///
@@ -771,8 +928,22 @@ fn garde_la_lecture_des_sources_reclame_un_fichier_par_module_declare() {
 
 /// Lit la source de la caisse. Le chemin part de `CARGO_MANIFEST_DIR` : la
 /// garde doit rester juste quel que soit le répertoire courant du test.
+///
+/// **`build.rs` en fait partie**, et il le faut : c'est du code de cette
+/// caisse, il choisit les documents sur lesquels la préservation se mesure, et
+/// un nom d'hôte y déciderait aussi sûrement qu'au milieu de la dérivation. Le
+/// laisser hors du champ rendrait la garde contournable en descendant d'un
+/// cran — le mode que la garde de la garde ferme déjà pour les sous-dossiers.
 fn sources_de_la_caisse() -> Vec<(String, String)> {
-    sources_rs(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src"))
+    let racine = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut sources = sources_rs(&racine.join("src"));
+    let build = racine.join("build.rs");
+    sources.push((
+        "build.rs".to_string(),
+        fs::read_to_string(&build)
+            .unwrap_or_else(|err| panic!("{}: lecture impossible — {err}", build.display())),
+    ));
+    sources
 }
 
 /// Lit **récursivement** les fichiers `.rs` sous `dir`, chacun rendu avec son

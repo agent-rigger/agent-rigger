@@ -16,8 +16,8 @@ pub mod jsonc;
 pub mod toml;
 
 pub use capability::{
-    table, Capabilities, GrammarRole, MergeAdmission, MergeRefusal, RefusalReason, Resolution,
-    TriviaDivergence,
+    mutations, table, Capabilities, GrammarRole, MergeAdmission, MergeRefusal, RefusalReason,
+    Resolution, TriviaDivergence, SHARED_CORPUS,
 };
 pub use jsonc::Jsonc;
 pub use toml::Toml;

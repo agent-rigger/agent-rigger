@@ -16,16 +16,39 @@
 //! écrire » a figuré ici, et elle était fausse : la sonde comme l'aller-retour
 //! sont fournis par la grammaire jugée, donc une implémentation qui rend son
 //! entrée telle quelle sur une sonde édulcorée se créditait de tout. Ce que
-//! `measure_trivia` exige désormais coûte quelque chose à qui voudrait
-//! recommencer — trois dimensions de trivia hostile dans la sonde, un
-//! fragment de commentaire dont l'optionalité est **exécutée**, et le refus
-//! d'un document qui n'en est pas un, qui est ce qui distingue un analyseur
-//! d'une fonction identité. Aucune de ces épreuves ne rend la tricherie
-//! impossible ; toutes la rendent visible et coûteuse. Le second témoin est
-//! ailleurs, et il est délibérément hors de portée de l'auteur d'une
-//! grammaire : `tests/conformance.rs` exige de toute grammaire publiée ici
-//! qu'elle traverse le corpus du dépôt, dont les pièges sont gardés par un
-//! test qui ne lui appartient pas.
+//! `measure_trivia` exige coûte quelque chose à qui voudrait recommencer —
+//! trois dimensions de trivia hostile dans la sonde, un fragment de
+//! commentaire dont l'optionalité est **exécutée**, et le refus de documents
+//! qui n'en sont pas, qui est ce qui distingue un analyseur d'une fonction
+//! identité.
+//!
+//! **Deux choses que la sonde seule ne pouvait pas fermer, et qui sont
+//! fermées ici.** Elles ont toutes deux la même cause : ce sur quoi la mesure
+//! porte était choisi par celui qu'elle juge.
+//!
+//! *La sonde ne porte que la trivia que son auteur y met.* Les trois
+//! dimensions exigées nomment des catégories, pas des formes : une grammaire
+//! dont le rendu détruit les commentaires de **bloc**, avec une sonde ne
+//! portant qu'un commentaire de ligne, passait les trois et se créditait de
+//! la préservation. La mesure porte donc aussi sur [`SHARED_CORPUS`], les
+//! documents du dépôt — que l'auteur d'une grammaire ne choisit pas, dont les
+//! pièges sont gardés par `tests/conformance.rs`, et que **toute** grammaire
+//! se voit proposer quelle que soit leur extension. Ce qu'une grammaire lit
+//! d'eux, elle doit le rendre à l'octet près ; et une grammaire qui n'en lit
+//! aucun n'est mesurée que sur elle-même, donc n'est pas mesurée.
+//!
+//! *Un refus se contrefait.* Refuser un document préfixé d'une constante
+//! publique ne demande pas de savoir lire : `starts_with` suffit, et une
+//! fonction identité s'en trouvait créditée d'un analyseur. Les documents
+//! dont le refus est exigé sont donc **dérivés du document lui-même** — voir
+//! [`mutations`] : suivi de ce qui n'est pas un document, et concaténé à
+//! lui-même, deux formes qui commencent par les mêmes octets que l'original
+//! et que seule une lecture de la structure distingue.
+//!
+//! Aucune de ces épreuves ne rend la tricherie impossible : le corpus du
+//! dépôt est lisible, et ses mutations sont énumérables par qui veut les
+//! recopier en dur. Toutes la rendent visible et coûteuse, et aucune ne se
+//! satisfait plus d'un document que l'auteur de la grammaire a apporté.
 //!
 //! **Deux termes ne s'exécutent pas.** La sensibilité à l'ordre de la
 //! [`Resolution`] est une propriété de qui lit le document et non du code qui
@@ -37,6 +60,65 @@
 use std::fmt;
 
 use crate::{Grammar, Jsonc, Toml};
+
+/// Les documents du dépôt, embarqués dans la caisse : le second témoin de la
+/// dérivation, et le seul qui ne soit pas fourni par la grammaire jugée.
+///
+/// **Pourquoi ils vivent dans la bibliothèque et pas dans un test.** La porte
+/// d'admission doit être mécanique (`docs/specs/socle-neuf/tasks.md` § T3a) :
+/// une table qui se trompe pendant qu'un test rougit reste une table qui se
+/// trompe pour qui l'appelle. La mesure a donc besoin des documents au moment
+/// où elle répond, pas au moment où la suite tourne.
+///
+/// **Pourquoi ils restent physiquement dans `tests/corpus/`.** C'est le
+/// domicile que le plan de fichiers de T1 leur donne, et les gardes de
+/// fixture qui vérifient qu'ils portent encore leurs pièges y sont attachées.
+/// `tests/conformance.rs` vérifie que cette liste nomme chaque fichier du
+/// dossier : une liste et un dossier qui décrivent le même jeu sans se
+/// rencontrer divergeraient, et la divergence prendrait la forme d'un
+/// document ajouté au dépôt que la dérivation ne verrait jamais.
+///
+/// Ils sont proposés à **toute** grammaire, sans considération d'extension :
+/// aiguiller un document vers une grammaire par son nom rendrait à l'auteur
+/// d'une grammaire le choix de ce sur quoi il est jugé.
+///
+/// **La liste est énumérée par `build.rs`, jamais recopiée** — le script dit
+/// les deux raisons, dont l'une est que le nom d'un de ces fichiers est un nom
+/// d'hôte, que le scénario C7 interdit d'écrire dans cette source.
+pub const SHARED_CORPUS: &[(&str, &str)] = genere::SHARED_CORPUS;
+
+/// La liste écrite par `build.rs` à la compilation. Elle vit dans son propre
+/// module pour que la documentation de [`SHARED_CORPUS`] reste ici, où elle se
+/// lit avec le reste de la dérivation.
+mod genere {
+    include!(concat!(env!("OUT_DIR"), "/shared_corpus.rs"));
+}
+
+/// Les documents dérivés de `source` dont la dérivation exige le **refus**.
+///
+/// Ce que chacun coûte à contrefaire, qui est la seule raison de leur choix.
+/// Le premier est préfixé de [`crate::NOT_A_DOCUMENT`] : il se refuse par un
+/// `starts_with`, et il ne prouve donc rien à lui seul — il reste parce qu'un
+/// document qui commence par ce qui n'en est pas un doit être refusé, et que
+/// c'est la forme la plus lisible de l'épreuve. Les deux autres commencent
+/// par les **mêmes octets que l'original** : les refuser demande de lire au
+/// moins jusqu'à l'endroit où ils cessent d'être un document, c'est-à-dire
+/// d'analyser. La concaténation à soi-même n'emploie aucune constante de
+/// cette caisse : elle ne se reconnaît pas au motif, seulement à la structure
+/// — deux racines en JSON, une clé ou une table définie deux fois en TOML.
+pub fn mutations(source: &str) -> [(&'static str, String); 3] {
+    [
+        (
+            "préfixé de ce qui n'est pas un document",
+            format!("{}{source}", crate::NOT_A_DOCUMENT),
+        ),
+        (
+            "suivi de ce qui n'est pas un document",
+            format!("{source}{}", crate::NOT_A_DOCUMENT),
+        ),
+        ("concaténé à lui-même", format!("{source}{source}")),
+    ]
+}
 
 /// Ce que le produit s'autorise à faire des documents d'une grammaire.
 ///
@@ -152,7 +234,25 @@ pub enum RefusalReason {
     /// pas d'analyseur derrière son aller-retour, et une fonction identité
     /// rendrait n'importe quelle sonde à l'octet près sans avoir rien
     /// compris du document.
-    MalformedDocumentAccepted,
+    MalformedDocumentAccepted {
+        /// Le document dont la mutation a été acceptée.
+        document: &'static str,
+        /// La mutation acceptée, nommée — voir [`mutations`].
+        mutation: &'static str,
+    },
+    /// Un document du corpus du dépôt que la grammaire **lit** n'a pas été
+    /// rendu à l'octet près. C'est la mesure que sa propre sonde ne peut pas
+    /// donner : elle ne porte que la trivia que son auteur y a mise.
+    SharedCorpusNotPreserved {
+        /// Le document du dépôt qui n'a pas été rendu.
+        document: &'static str,
+        /// Ce qui a divergé, mesuré.
+        divergence: TriviaDivergence,
+    },
+    /// La grammaire ne lit aucun document du corpus du dépôt. Sa préservation
+    /// n'est donc mesurée que sur la sonde qu'elle fournit elle-même, ce qui
+    /// laisse à son auteur le choix de ce sur quoi il est jugé.
+    NoSharedCorpusDocument,
     /// Le fragment que la sonde déclare comme commentaire ne l'est pas : le
     /// document privé de ce fragment n'est plus lisible, donc ce fragment
     /// porte de la donnée et la dimension « commentaire » n'est pas mesurée.
@@ -184,11 +284,24 @@ impl fmt::Display for RefusalReason {
                 "la sonde de la grammaire ne porte pas la dimension « {dimension} » — la \
                  préservation des octets hors trace n'y est pas mesurable"
             ),
-            Self::MalformedDocumentAccepted => write!(
+            Self::MalformedDocumentAccepted { document, mutation } => write!(
                 f,
-                "la grammaire a accepté un document qui n'en est pas un — son aller-retour ne \
-                 passe par aucun analyseur, et rendrait sa sonde à l'octet près sans rien en \
-                 avoir compris"
+                "la grammaire a accepté « {document} » {mutation}, qui n'est pas un document — \
+                 son aller-retour ne passe par aucun analyseur, et rendrait sa sonde à l'octet \
+                 près sans rien en avoir compris"
+            ),
+            Self::SharedCorpusNotPreserved {
+                document,
+                divergence,
+            } => write!(
+                f,
+                "l'aller-retour sur « {document} », document du dépôt que cette grammaire lit, \
+                 ne rend pas les octets hors trace : {divergence}"
+            ),
+            Self::NoSharedCorpusDocument => write!(
+                f,
+                "la grammaire ne lit aucun document du dépôt — sa préservation n'est mesurée \
+                 que sur la sonde qu'elle fournit elle-même"
             ),
             Self::ProbeCommentIsNotTrivia(err) => write!(
                 f,
@@ -253,7 +366,8 @@ pub enum MergeAdmission {
 pub struct Capabilities {
     grammar: &'static str,
     role: GrammarRole,
-    trivia: Result<(), RefusalReason>,
+    trivia: Vec<RefusalReason>,
+    shared_corpus_documents_read: usize,
     designates_list_element: bool,
     resolution: Resolution,
     merge: MergeAdmission,
@@ -264,7 +378,10 @@ impl Capabilities {
     pub fn of<G: Grammar>() -> Self {
         let probe = G::PROBE;
 
-        let trivia = measure_trivia::<G>();
+        let TriviaMeasure {
+            reasons: trivia,
+            shared_corpus_documents_read,
+        } = measure_trivia::<G>();
 
         // Désigner un élément de liste, c'est trouver celui qui y est et ne
         // pas trouver celui qui n'y est pas. Une implémentation qui répond
@@ -285,9 +402,7 @@ impl Capabilities {
         if G::ROLE == GrammarRole::ReadOnly {
             reasons.push(RefusalReason::ReadOnlyGrammar);
         }
-        if let Err(reason) = &trivia {
-            reasons.push(reason.clone());
-        }
+        reasons.extend(trivia.iter().cloned());
         if G::RESOLUTION == Resolution::DependsOnOrder {
             reasons.push(RefusalReason::ResolutionDependsOnOrder);
         }
@@ -304,6 +419,7 @@ impl Capabilities {
             grammar: G::NAME,
             role: G::ROLE,
             trivia,
+            shared_corpus_documents_read,
             designates_list_element,
             resolution: G::RESOLUTION,
             merge,
@@ -322,7 +438,16 @@ impl Capabilities {
 
     /// La grammaire rend-elle les octets hors trace à l'identique.
     pub fn preserves_trivia(&self) -> bool {
-        self.trivia.is_ok()
+        self.trivia.is_empty()
+    }
+
+    /// Combien de documents de [`SHARED_CORPUS`] cette grammaire lit.
+    ///
+    /// Zéro veut dire que sa préservation n'a été mesurée que sur la sonde
+    /// qu'elle fournit elle-même — c'est un défaut d'instrument, et il est
+    /// porté comme tel par [`RefusalReason::NoSharedCorpusDocument`].
+    pub fn shared_corpus_documents_read(&self) -> usize {
+        self.shared_corpus_documents_read
     }
 
     /// La grammaire sait-elle désigner un élément de liste par sa valeur.
@@ -341,22 +466,46 @@ impl Capabilities {
     }
 }
 
-/// Mesure la préservation de la trivia de `G`, en cinq épreuves qui vont de
-/// l'instrument vers la mesure.
+/// Ce que la mesure de la trivia rapporte : les raisons de refuser, toutes,
+/// et le nombre de documents du dépôt que la grammaire a lus.
 ///
-/// **Les trois premières portent sur l'instrument**, et elles existent parce
-/// que la sonde comme l'aller-retour sont fournis par la grammaire jugée. Une
-/// sonde édulcorée, ou une implémentation qui rend son entrée telle quelle,
-/// rendrait la réponse trivialement vraie ; ces trois épreuves sont ce qui
-/// coûte quelque chose à qui voudrait annoncer une capacité qu'il n'a pas.
-/// Elles ne rendent pas l'annonce mensongère impossible — voir l'en-tête du
-/// module —, elles la rendent mesurablement fausse sur ce qui est mesurable.
-fn measure_trivia<G: Grammar>() -> Result<(), RefusalReason> {
+/// **Toutes les raisons, et non la première.** Les épreuves ne s'arrêtent plus
+/// à la première qui échoue, et ce n'est pas une commodité de rapport : le
+/// décompte des documents du dépôt lus doit être établi même quand la sonde a
+/// déjà échoué, sans quoi une grammaire refusée sur sa sonde passerait pour
+/// une grammaire qui ne lit rien du dépôt, et les deux défauts d'instrument
+/// deviendraient indistinguables.
+struct TriviaMeasure {
+    reasons: Vec<RefusalReason>,
+    shared_corpus_documents_read: usize,
+}
+
+/// Mesure la préservation de la trivia de `G`, en épreuves qui vont de
+/// l'instrument vers la mesure, et sur deux jeux de documents dont un seul
+/// appartient à la grammaire jugée.
+///
+/// **Les épreuves d'instrument** existent parce que la sonde comme
+/// l'aller-retour sont fournis par la grammaire jugée. Une sonde édulcorée, ou
+/// une implémentation qui rend son entrée telle quelle, rendrait la réponse
+/// trivialement vraie. Elles ne rendent pas l'annonce mensongère impossible —
+/// voir l'en-tête du module —, elles la rendent mesurablement fausse sur ce
+/// qui est mesurable.
+///
+/// **Les épreuves sur [`SHARED_CORPUS`]** portent sur des documents que
+/// l'auteur d'une grammaire ne choisit pas. C'est la seule partie de la mesure
+/// dont il ne fournit pas l'instrument, et c'est pour cela qu'elle attrape ce
+/// que la sonde laisse passer : une forme de trivia que la sonde ne contient
+/// pas, et un refus contrefait qui n'a jamais eu à lire un document réel.
+fn measure_trivia<G: Grammar>() -> TriviaMeasure {
     let probe = G::PROBE;
+    let mut reasons = Vec::new();
 
     // 1. L'instrument porte les trois dimensions de trivia hostile. Les deux
     //    premières se reconnaissent sans rien savoir de la grammaire ; la
-    //    troisième est déclarée, et vérifiée en 3.
+    //    troisième est déclarée, et vérifiée en 3. Ces trois dimensions
+    //    nomment des catégories et non des formes — un commentaire de bloc
+    //    absent de la sonde reste invisible ici, et c'est l'épreuve 5 qui le
+    //    rattrape.
     for (dimension, present) in [
         ("fin de ligne CRLF", probe.source.contains("\r\n")),
         (
@@ -372,7 +521,7 @@ fn measure_trivia<G: Grammar>() -> Result<(), RefusalReason> {
         ),
     ] {
         if !present {
-            return Err(RefusalReason::ProbeWithoutHostileTrivia { dimension });
+            reasons.push(RefusalReason::ProbeWithoutHostileTrivia { dimension });
         }
     }
 
@@ -388,27 +537,64 @@ fn measure_trivia<G: Grammar>() -> Result<(), RefusalReason> {
     //    préservation ne se mesure pas par un aller-retour, elle se mesurera
     //    sur son chemin d'écriture, et l'admission se rouvrira alors avec un
     //    motif au lieu d'avoir été accordée par défaut.
-    let not_a_document = format!("{}{}", crate::NOT_A_DOCUMENT, probe.source);
-    if G::round_trip(&not_a_document).is_ok() {
-        return Err(RefusalReason::MalformedDocumentAccepted);
-    }
+    reasons.extend(refused_mutations::<G>("la sonde", probe.source));
 
     // 3. Le fragment déclaré commentaire en est un. Retiré, le document doit
     //    rester lisible — sinon il portait de la donnée, et la dimension
     //    « commentaire » n'était portée que dans la déclaration.
-    if let Err(err) = G::round_trip(&probe.source.replace(probe.comment, "")) {
-        return Err(RefusalReason::ProbeCommentIsNotTrivia(err));
+    if !probe.comment.is_empty() {
+        if let Err(err) = G::round_trip(&probe.source.replace(probe.comment, "")) {
+            reasons.push(RefusalReason::ProbeCommentIsNotTrivia(err));
+        }
     }
 
-    // 4 et 5. La mesure elle-même : la sonde est relue, et les octets rendus
-    //    sont comparés aux octets d'entrée.
+    // 4. La mesure sur la sonde : elle est relue, et les octets rendus sont
+    //    comparés aux octets d'entrée.
     match G::round_trip(probe.source) {
-        Err(err) => Err(RefusalReason::ProbeUnreadable(err)),
-        Ok(rendered) => match TriviaDivergence::measure(probe.source, &rendered) {
-            Some(divergence) => Err(RefusalReason::TriviaNotPreserved(divergence)),
-            None => Ok(()),
-        },
+        Err(err) => reasons.push(RefusalReason::ProbeUnreadable(err)),
+        Ok(rendered) => {
+            if let Some(divergence) = TriviaDivergence::measure(probe.source, &rendered) {
+                reasons.push(RefusalReason::TriviaNotPreserved(divergence));
+            }
+        }
     }
+
+    // 5. La mesure sur le corpus du dépôt. Chaque document est proposé, et un
+    //    document refusé n'est pas un défaut : une grammaire ne lit pas les
+    //    documents d'une autre. Ce qui est exigé porte sur ceux qu'elle
+    //    **accepte** — les rendre à l'octet près, et refuser leurs mutations.
+    let mut shared_corpus_documents_read = 0;
+    for &(document, source) in SHARED_CORPUS {
+        let Ok(rendered) = G::round_trip(source) else {
+            continue;
+        };
+        shared_corpus_documents_read += 1;
+        if let Some(divergence) = TriviaDivergence::measure(source, &rendered) {
+            reasons.push(RefusalReason::SharedCorpusNotPreserved {
+                document,
+                divergence,
+            });
+        }
+        reasons.extend(refused_mutations::<G>(document, source));
+    }
+    if shared_corpus_documents_read == 0 {
+        reasons.push(RefusalReason::NoSharedCorpusDocument);
+    }
+
+    TriviaMeasure {
+        reasons,
+        shared_corpus_documents_read,
+    }
+}
+
+/// Exige de `G` qu'elle refuse chaque mutation de `source`, et nomme celles
+/// qu'elle a acceptées.
+fn refused_mutations<G: Grammar>(document: &'static str, source: &str) -> Vec<RefusalReason> {
+    mutations(source)
+        .into_iter()
+        .filter(|(_, mutant)| G::round_trip(mutant).is_ok())
+        .map(|(mutation, _)| RefusalReason::MalformedDocumentAccepted { document, mutation })
+        .collect()
 }
 
 /// La table des capacités des grammaires que cette caisse porte aujourd'hui.
