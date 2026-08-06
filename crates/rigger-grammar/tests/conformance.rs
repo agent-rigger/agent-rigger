@@ -38,11 +38,12 @@ use std::path::{Path, PathBuf};
 
 use rigger_grammar::{Capabilities, Grammar, GrammarError, Jsonc, MergeAdmission, Toml};
 
-/// Le préfixe qui rend un document illisible dans les deux grammaires : ni
-/// une valeur JSON, ni une ligne de clé TOML. Une seule forme pour les deux,
-/// parce que la propriété est commune et qu'une forme par grammaire
-/// laisserait croire que le refus dépend de la façon de casser le document.
-const PREFIXE_MALFORME: &str = "!!! ceci n'est pas un document !!!\n";
+/// Le préfixe qui rend un document illisible dans les deux grammaires. Il
+/// vient de la caisse — `rigger_grammar::NOT_A_DOCUMENT` —, parce que la
+/// dérivation des capacités s'en sert comme épreuve d'existence d'un
+/// analyseur : deux définitions dériveraient, et la propriété vérifiée ici ne
+/// serait plus celle que la table exige là-bas.
+const PREFIXE_MALFORME: &str = rigger_grammar::NOT_A_DOCUMENT;
 
 /// La grammaire d'un document du corpus, déduite de son extension. C'est le
 /// seul aiguillage : les propriétés ci-dessous ne connaissent que ce type.
@@ -53,6 +54,14 @@ enum Grammaire {
 }
 
 impl Grammaire {
+    /// Les grammaires que ce fichier sait aiguiller. Écrite à la main, comme
+    /// `table()` l'est en face — et c'est pour cela que
+    /// `garde_toute_grammaire_publiee_traverse_le_corpus` compare les deux :
+    /// deux listes qui décrivent le même jeu sans se rencontrer divergent, et
+    /// la divergence prend la forme d'une grammaire publiée « mesurée » que
+    /// le corpus n'a jamais traversée.
+    const TOUTES: [Self; 2] = [Self::Jsonc, Self::Toml];
+
     fn pour(path: &Path) -> Result<Self, String> {
         match path.extension().and_then(|ext| ext.to_str()) {
             Some("json") => Ok(Self::Jsonc),
@@ -300,6 +309,59 @@ fn les_documents_de_corpus_limites_confirment_la_table() {
         "{} désaccord(s) entre le corpus des limites et la table des capacités :\n\n{}",
         failures.len(),
         failures.join("\n\n")
+    );
+}
+
+/// Garde de câblage, pas propriété de grammaire : la table des capacités et
+/// l'aiguillage de ce fichier sont **deux listes écrites à la main**, et rien
+/// ne les rapprochait. Une grammaire pouvait donc être publiée « préserve la
+/// trivia, admise au `merge` » sans qu'aucun document du corpus ne l'ait
+/// jamais traversée — la table présente pourtant ces réponses comme mesurées,
+/// et la seule chose qui les mesurait alors était sa propre sonde, écrite par
+/// l'auteur de la grammaire.
+///
+/// Ce que cette garde ajoute est le second témoin : ce que la grammaire dit
+/// d'elle-même doit tenir sur des documents que le dépôt garde par ailleurs
+/// (`garde_pieges_du_corpus_toujours_presents`), et que l'aller-retour
+/// byte-identique ci-dessus traverse.
+#[test]
+fn garde_toute_grammaire_publiee_traverse_le_corpus() {
+    let mut publiees: Vec<&str> = rigger_grammar::table()
+        .iter()
+        .map(|capacites| capacites.grammar())
+        .collect();
+    publiees.sort_unstable();
+
+    let mut aiguillees: Vec<&str> = Grammaire::TOUTES
+        .iter()
+        .map(|grammaire| grammaire.capacites().grammar())
+        .collect();
+    aiguillees.sort_unstable();
+
+    assert_eq!(
+        publiees, aiguillees,
+        "la table des capacités et l'aiguillage du corpus ne décrivent pas le même jeu de \
+         grammaires — l'une des deux publie ou exerce une grammaire que l'autre ignore"
+    );
+
+    let documents = tous_les_documents();
+    let orphelines: Vec<&str> = Grammaire::TOUTES
+        .iter()
+        .filter(|grammaire| {
+            let nom = grammaire.capacites().grammar();
+            !documents.iter().any(|path| {
+                Grammaire::pour(path).is_ok_and(|autre| autre.capacites().grammar() == nom)
+            })
+        })
+        .map(|grammaire| grammaire.capacites().grammar())
+        .collect();
+
+    assert!(
+        orphelines.is_empty(),
+        "{} grammaire(s) publiée(s) qu'aucun document du corpus ne traverse — ce que la table \
+         en dit ne repose que sur leur propre sonde : {}",
+        orphelines.len(),
+        orphelines.join(", ")
     );
 }
 

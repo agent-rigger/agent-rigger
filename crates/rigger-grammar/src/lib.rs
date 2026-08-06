@@ -16,12 +16,23 @@ pub mod jsonc;
 pub mod toml;
 
 pub use capability::{
-    table, Capabilities, MergeAdmission, MergeRefusal, RefusalReason, Resolution, TriviaDivergence,
+    table, Capabilities, GrammarRole, MergeAdmission, MergeRefusal, RefusalReason, Resolution,
+    TriviaDivergence,
 };
 pub use jsonc::Jsonc;
 pub use toml::Toml;
 
 use std::fmt;
+
+/// Ce qui n'est un document dans aucune grammaire servie : ni une valeur
+/// JSON, ni une ligne de clé TOML. Une seule forme pour toutes, parce que la
+/// propriété est commune et qu'une forme par grammaire laisserait croire que
+/// le refus dépend de la façon de casser le document.
+///
+/// La dérivation des capacités s'en sert comme épreuve d'existence d'un
+/// analyseur, et `tests/conformance.rs` comme épreuve de refus nommé : une
+/// seule définition, parce que deux dériveraient.
+pub const NOT_A_DOCUMENT: &str = "!!! ceci n'est pas un document !!!\n";
 
 /// Le document sur lequel une capacité se mesure. Il appartient à la
 /// grammaire, parce qu'il est écrit dans sa syntaxe, et il porte de la trivia
@@ -30,6 +41,17 @@ use std::fmt;
 pub struct Probe {
     /// Le document, dans la syntaxe de la grammaire.
     pub source: &'static str,
+    /// Un fragment de **commentaire** présent dans `source`.
+    ///
+    /// Des trois dimensions de trivia hostile que la dérivation exige, deux
+    /// se reconnaissent sans rien savoir de la grammaire — la fin de ligne
+    /// CRLF et l'indentation. La troisième a une syntaxe qui change d'une
+    /// grammaire à l'autre, donc elle se déclare ici. La déclaration n'est
+    /// pas crue sur parole : la dérivation retire ce fragment du document et
+    /// exige qu'il reste lisible. Un fragment dont le retrait casse la
+    /// lecture est une **donnée**, pas un commentaire, et la sonde ne porte
+    /// alors pas la dimension qu'elle prétend porter.
+    pub comment: &'static str,
     /// Le chemin d'une liste de chaînes présente dans `source`.
     pub list_path: &'static [&'static str],
     /// Une valeur que cette liste contient.
@@ -57,6 +79,18 @@ pub enum GrammarError {
         /// L'opération demandée, nommée.
         operation: &'static str,
     },
+    /// Le document définit plusieurs fois la même clé sur le chemin lu, et le
+    /// format ne dit pas laquelle un lecteur honore. Le produit refuse plutôt
+    /// que d'en choisir une : écrire dans celle qui n'est pas honorée serait
+    /// inopérant sans erreur et sans trace.
+    Ambiguous {
+        /// La grammaire qui refuse.
+        grammar: &'static str,
+        /// La clé définie plusieurs fois.
+        key: String,
+        /// Le nombre de définitions trouvées.
+        occurrences: usize,
+    },
 }
 
 impl GrammarError {
@@ -73,10 +107,22 @@ impl GrammarError {
         Self::Unsupported { grammar, operation }
     }
 
+    /// Refus d'arbitrage, nommant la grammaire, la clé et le nombre de fois
+    /// qu'elle est définie.
+    pub fn ambiguous(grammar: &'static str, key: impl Into<String>, occurrences: usize) -> Self {
+        Self::Ambiguous {
+            grammar,
+            key: key.into(),
+            occurrences,
+        }
+    }
+
     /// La grammaire qui a refusé.
     pub fn grammar(&self) -> &'static str {
         match self {
-            Self::Malformed { grammar, .. } | Self::Unsupported { grammar, .. } => grammar,
+            Self::Malformed { grammar, .. }
+            | Self::Unsupported { grammar, .. }
+            | Self::Ambiguous { grammar, .. } => grammar,
         }
     }
 }
@@ -91,6 +137,16 @@ impl fmt::Display for GrammarError {
                 f,
                 "grammaire `{grammar}` : {operation} n'est pas implémenté"
             ),
+            Self::Ambiguous {
+                grammar,
+                key,
+                occurrences,
+            } => write!(
+                f,
+                "grammaire `{grammar}` : la clé `{key}` est définie {occurrences} fois sur le \
+                 chemin lu — le format ne dit pas laquelle est honorée à la lecture, et le \
+                 produit ne choisit pas à sa place"
+            ),
         }
     }
 }
@@ -102,16 +158,24 @@ impl std::error::Error for GrammarError {}
 ///
 /// Les deux capacités que ce trait sert — préserver la trivia, désigner un
 /// élément de liste — ne se déclarent pas : elles se mesurent en faisant
-/// tourner l'implémentation sur [`Probe`]. Une grammaire qui ne les
-/// implémente pas ne peut donc pas les annoncer.
+/// tourner l'implémentation sur [`Probe`]. La sonde appartenant à la
+/// grammaire jugée, la mesure exige d'elle plus que le seul aller-retour :
+/// voir la dérivation dans [`capability`], qui dit ce que ces épreuves
+/// garantissent et ce qu'elles ne garantissent pas.
 ///
-/// La troisième, [`Resolution`], est le seul terme déclaré, parce qu'aucun
-/// code de cette caisse ne peut l'exécuter : elle décrit comment le document
-/// est **résolu par qui le lit**, ce qui se mesure sur ce lecteur et se cite,
-/// jamais ne se devine. Chaque implémentation doit donner sa source datée.
+/// Deux termes ne s'exécutent pas, et chacun pour sa raison. [`Resolution`]
+/// décrit comment le document est **résolu par qui le lit**, ce qui se mesure
+/// sur ce lecteur et se cite, jamais ne se devine. [`GrammarRole`] dit ce que
+/// le produit s'autorise à écrire, ce qui est une **décision** et non une
+/// mesure. Chaque implémentation doit donner, pour l'un comme pour l'autre,
+/// sa source datée.
 pub trait Grammar {
     /// Le nom sous lequel cette grammaire est nommée dans un refus.
     const NAME: &'static str;
+
+    /// Ce que le produit s'autorise à faire des documents de cette grammaire.
+    /// Décision produit, datée et sourcée par l'implémentation.
+    const ROLE: GrammarRole;
 
     /// La sensibilité à l'ordre de la résolution des documents de cette
     /// grammaire. Fait mesuré, cité par l'implémentation.
