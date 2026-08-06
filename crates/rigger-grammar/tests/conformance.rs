@@ -12,6 +12,12 @@
 //! **deux** répertoires, une version rendue illisible doit faire refuser la
 //! grammaire en se nommant.
 //!
+//! **`apply` puis `invert` byte-identique à la pré-image** (T3b) : sur chaque
+//! document qu'une grammaire **admise** au `merge` sait lire, une édition est
+//! posée puis défaite, et les octets d'avant doivent revenir. La même
+//! propriété vérifie que ce que l'édition change est un fragment **contigu**,
+//! c'est-à-dire que le document n'a pas été ré-émis en entier.
+//!
 //! `tests/corpus/` porte les documents dont la grammaire préserve la trivia ;
 //! `tests/corpus-limites/` porte ceux dont elle ne la préserve pas, et le
 //! second est câblé ici à ce que la table des capacités en dit — un document
@@ -36,7 +42,9 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use rigger_grammar::{Capabilities, Grammar, GrammarError, Jsonc, MergeAdmission, Toml};
+use rigger_grammar::{
+    Applied, Capabilities, Edit, Grammar, GrammarError, Inverse, Jsonc, MergeAdmission, Toml, Value,
+};
 
 /// Le préfixe qui rend un document illisible dans les deux grammaires. Il
 /// vient de la caisse — `rigger_grammar::NOT_A_DOCUMENT` —, parce que la
@@ -85,6 +93,20 @@ impl Grammaire {
         match self {
             Self::Jsonc => Capabilities::of::<Jsonc>(),
             Self::Toml => Capabilities::of::<Toml>(),
+        }
+    }
+
+    fn apply(self, source: &str, edit: &Edit) -> Result<Applied, GrammarError> {
+        match self {
+            Self::Jsonc => Jsonc::apply(source, edit),
+            Self::Toml => Toml::apply(source, edit),
+        }
+    }
+
+    fn invert(self, source: &str, inverse: &Inverse) -> Result<String, GrammarError> {
+        match self {
+            Self::Jsonc => Jsonc::invert(source, inverse),
+            Self::Toml => Toml::invert(source, inverse),
         }
     }
 }
@@ -249,6 +271,116 @@ fn refus_nomme_sur_document_malforme() {
             failures.join("\n\n")
         );
     }
+}
+
+/// Troisième propriété commune (T3b) : sur un document que la grammaire lit et
+/// qu'elle est **admise** à écrire, `apply` puis `invert` rend la pré-image
+/// octet pour octet, et ce que `apply` change se limite à un fragment
+/// contigu.
+///
+/// **Pourquoi cette propriété est ici et pas seulement dans la dérivation.**
+/// La dérivation mesure le chemin d'écriture sur la sonde de la grammaire,
+/// que son auteur choisit. Ces documents-ci, non : ils portent la trivia
+/// hostile que `garde_pieges_du_corpus_toujours_presents` maintient, et une
+/// grammaire qui reformate à l'écriture ne peut pas s'y soustraire en
+/// apportant un document docile.
+///
+/// L'édition employée est la même pour tous — une clé à la racine, sous un nom
+/// qu'aucun document ne porte —, parce qu'une édition choisie document par
+/// document redonnerait à l'auteur d'une grammaire la main sur ce sur quoi il
+/// est jugé.
+#[test]
+fn apply_puis_invert_rend_la_preimage_octet_pour_octet() {
+    const CLE: &str = "rigger-conformance-cle-absente";
+    let edit = Edit::keys(&[], [(CLE, Value::text("valeur de conformance"))]);
+
+    let documents = tous_les_documents();
+    let mut exerces = 0;
+    let mut failures = Vec::new();
+
+    for path in &documents {
+        let Ok(grammaire) = Grammaire::pour(path) else {
+            continue;
+        };
+        if grammaire.capacites().merge() != &MergeAdmission::Admitted {
+            continue;
+        }
+        let Ok((input, text)) = lire_utf8(path) else {
+            continue;
+        };
+        assert!(
+            !text.contains(CLE),
+            "{}: le corpus porte déjà la clé de conformance",
+            path.display()
+        );
+
+        let applied = match grammaire.apply(&text, &edit) {
+            Ok(applied) => applied,
+            Err(err) => {
+                failures.push(format!("{}: `apply` a refusé — {err}", path.display()));
+                continue;
+            }
+        };
+        exerces += 1;
+
+        // Ce que l'édition change est un fragment contigu : le document n'est
+        // pas ré-émis en entier. Mesuré par soustraction du plus long préfixe
+        // et du plus long suffixe communs — une ré-émission fait sortir tout
+        // le document, une édition locale un fragment court.
+        let (disparu, apparu) = ecart(&text, &applied.rendered);
+        if !disparu.is_empty() {
+            failures.push(format!(
+                "{}: {} octet(s) hors trace ont disparu à l'écriture — {disparu:?}",
+                path.display(),
+                disparu.len()
+            ));
+        }
+        if !apparu.contains(CLE) {
+            failures.push(format!(
+                "{}: ce qui est apparu n'est pas la clé posée — {apparu:?}",
+                path.display()
+            ));
+        }
+
+        match grammaire.invert(&applied.rendered, &applied.inverse) {
+            Err(err) => failures.push(format!("{}: `invert` a refusé — {err}", path.display())),
+            Ok(defait) => {
+                if let Err(message) = compare_byte_identical(path, &input, defait.as_bytes()) {
+                    failures.push(format!("après `apply` puis `invert` — {message}"));
+                }
+            }
+        }
+    }
+
+    assert!(
+        exerces > 0,
+        "aucun document du corpus n'a été édité — la propriété ne porterait sur rien"
+    );
+    assert!(
+        failures.is_empty(),
+        "{} document(s) dont l'écriture ne se défait pas exactement :\n\n{}",
+        failures.len(),
+        failures.join("\n\n")
+    );
+}
+
+/// Ce qui a disparu et ce qui est apparu entre deux rendus, le plus long
+/// préfixe et le plus long suffixe communs retirés.
+fn ecart(avant: &str, apres: &str) -> (String, String) {
+    let (a, b) = (avant.as_bytes(), apres.as_bytes());
+    let prefixe = a.iter().zip(b.iter()).take_while(|(x, y)| x == y).count();
+    let reste = a.len().min(b.len()) - prefixe;
+    let suffixe = a
+        .iter()
+        .rev()
+        .zip(b.iter().rev())
+        .take_while(|(x, y)| x == y)
+        .count()
+        .min(reste);
+    (
+        String::from_utf8_lossy(&a[prefixe..a.len() - suffixe]).into_owned(),
+        String::from_utf8_lossy(&b[prefixe..b.len() - suffixe]).into_owned(),
+    )
 }
 
 /// Le câblage lui-même : un document vit dans `corpus-limites/` parce que sa

@@ -8,19 +8,19 @@
 //! sources de la caisse, sur laquelle C7 s'appuie —, parce qu'une garde qui
 //! cesse de porter sans rougir est le mode qu'ils ferment.
 //!
-//! Ce que ces tests ne peuvent pas encore constater, et pourquoi : le
-//! scénario C1 demande qu'une transaction annule « avant que le document ne
-//! soit remplacé ». Aucun chemin d'écriture n'existe dans cette caisse — il
-//! arrive avec T3b —, donc ce qui est constaté ici est plus fort et plus
-//! étroit à la fois : le refus tombe à l'admission, avant même qu'un chemin
-//! d'écriture soit atteignable.
+//! Ce que ces tests constatent de C1, et ce qu'ils laissent à une autre
+//! caisse : le scénario demande qu'une transaction annule « avant que le
+//! document ne soit remplacé ». Ce qui est constaté ici est plus étroit et
+//! plus fort à la fois — le refus tombe à l'**admission**, avant que le chemin
+//! d'écriture soit atteint. Que le document du disque soit celui d'avant se
+//! constate là où l'écriture a lieu, dans `rigger-apply`.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use rigger_grammar::{
-    Capabilities, Grammar, GrammarError, GrammarRole, Jsonc, MergeAdmission, Probe, RefusalReason,
-    Resolution, Toml,
+    Applied, Capabilities, Edit, Grammar, GrammarError, GrammarRole, Inverse, Jsonc,
+    MergeAdmission, Probe, RefusalReason, Resolution, SemanticValue, Toml,
 };
 
 /// Copie un contenu dans un fichier temporaire nommé, et rend son chemin.
@@ -82,6 +82,22 @@ impl Grammar for SondeOrdonnee {
             Self::NAME,
             "désigner un élément de liste",
         ))
+    }
+
+    // Le chemin d'écriture est celui de JSONC, et il le faut : depuis que la
+    // dérivation le mesure, une grammaire qui n'en a pas est refusée pour
+    // cela — et le refus mesuré ici pourrait alors venir de l'écriture plutôt
+    // que de l'ordre.
+    fn apply(source: &str, edit: &Edit) -> Result<Applied, GrammarError> {
+        Jsonc::apply(source, edit)
+    }
+
+    fn invert(source: &str, inverse: &Inverse) -> Result<String, GrammarError> {
+        Jsonc::invert(source, inverse)
+    }
+
+    fn values(source: &str) -> Result<Vec<SemanticValue>, GrammarError> {
+        Jsonc::values(source)
     }
 }
 
@@ -812,6 +828,128 @@ fn garde_une_cle_dupliquee_est_refusee_plutot_qu_arbitree_en_silence() {
     );
 }
 
+/// Garde, pas scénario : la dette que `capability.rs` portait par écrit
+/// depuis T3a, et que cette tranche collecte.
+///
+/// Le rôle d'une grammaire est une **décision** produit, donc déclarée. Tant
+/// qu'aucune grammaire n'avait de chemin d'écriture, se déclarer en écriture
+/// ne coûtait rien et rien ne pouvait le contredire — c'était une capacité
+/// annoncée sans implémentation, la chose même que ce module existe pour
+/// rendre fausse. La grammaire ci-dessous préserve tout, lit le dépôt, désigne
+/// un élément de liste, et se déclare en écriture sans savoir écrire.
+#[test]
+fn garde_un_role_en_ecriture_sans_chemin_d_ecriture_ne_tient_pas() {
+    struct DeclareEcrireSansSavoir;
+
+    impl Grammar for DeclareEcrireSansSavoir {
+        const NAME: &'static str = "déclare-écrire-sans-savoir";
+        const ROLE: GrammarRole = GrammarRole::ReadWrite;
+        const RESOLUTION: Resolution = Resolution::IndependentOfOrder;
+        const PROBE: Probe = Jsonc::PROBE;
+
+        fn round_trip(source: &str) -> Result<String, GrammarError> {
+            Jsonc::round_trip(source)
+        }
+
+        fn find_string_in_list(
+            source: &str,
+            path: &[&str],
+            value: &str,
+        ) -> Result<bool, GrammarError> {
+            Jsonc::find_string_in_list(source, path, value)
+        }
+    }
+
+    let capacites = Capabilities::of::<DeclareEcrireSansSavoir>();
+    assert!(
+        capacites.preserves_trivia() && capacites.designates_list_element(),
+        "cette grammaire doit être créditée de tout ce qui se mesure sans écrire, sans quoi le \
+         refus ci-dessous pourrait venir d'ailleurs"
+    );
+    assert!(
+        !capacites.applies_edits(),
+        "une grammaire sans chemin d'écriture a été créditée de l'écriture"
+    );
+
+    let refus = match capacites.merge() {
+        MergeAdmission::Refused(refus) => refus,
+        MergeAdmission::Admitted => {
+            panic!("`merge` admis sur une grammaire qui déclare écrire sans savoir écrire")
+        }
+    };
+    assert!(
+        matches!(refus.reasons(), [RefusalReason::NoWritePath(_)]),
+        "le refus doit porter la seule raison qui le motive : {:?}",
+        refus.reasons()
+    );
+}
+
+/// Garde, pas scénario : écrire ne suffit pas, il faut savoir **défaire**, et
+/// défaire en rendant les octets d'avant.
+///
+/// La grammaire ci-dessous écrit exactement comme JSONC et défait presque : sa
+/// pré-image revient reformatée. Un retrait qui reformate détruit le travail
+/// du propriétaire à l'endroit où personne ne regarde, et cette destruction-là
+/// n'a aucun observable au moment de la **pose** — c'est pour cela que
+/// l'admission doit la mesurer avant, et pas la découvrir après.
+#[test]
+fn garde_un_inverse_qui_ne_rend_pas_la_preimage_ne_credite_rien() {
+    struct DefaitEnReformatant;
+
+    impl Grammar for DefaitEnReformatant {
+        const NAME: &'static str = "défait-en-reformatant";
+        const ROLE: GrammarRole = GrammarRole::ReadWrite;
+        const RESOLUTION: Resolution = Resolution::IndependentOfOrder;
+        const PROBE: Probe = Jsonc::PROBE;
+
+        fn round_trip(source: &str) -> Result<String, GrammarError> {
+            Jsonc::round_trip(source)
+        }
+
+        fn find_string_in_list(
+            source: &str,
+            path: &[&str],
+            value: &str,
+        ) -> Result<bool, GrammarError> {
+            Jsonc::find_string_in_list(source, path, value)
+        }
+
+        fn apply(source: &str, edit: &Edit) -> Result<Applied, GrammarError> {
+            Jsonc::apply(source, edit)
+        }
+
+        fn invert(source: &str, inverse: &Inverse) -> Result<String, GrammarError> {
+            Ok(Jsonc::invert(source, inverse)?.replace("\r\n", "\n"))
+        }
+
+        fn values(source: &str) -> Result<Vec<SemanticValue>, GrammarError> {
+            Jsonc::values(source)
+        }
+    }
+
+    let capacites = Capabilities::of::<DefaitEnReformatant>();
+    assert!(
+        !capacites.applies_edits(),
+        "une grammaire dont l'inverse reformate a été créditée de l'écriture"
+    );
+
+    let refus = match capacites.merge() {
+        MergeAdmission::Refused(refus) => refus,
+        MergeAdmission::Admitted => {
+            panic!("`merge` admis sur une grammaire dont le retrait reformate le document")
+        }
+    };
+    assert!(
+        matches!(refus.reasons(), [RefusalReason::InverseNotByteIdentical(_)]),
+        "le refus doit nommer ce qui n'a pas été préservé au retrait : {:?}",
+        refus.reasons()
+    );
+    assert!(
+        refus.to_string().contains("fins de ligne"),
+        "le refus ne nomme pas ce qui a divergé : {refus}"
+    );
+}
+
 /// La table publiée, entrée par entrée. Les valeurs attendues sont écrites
 /// ici et **mesurées** là-bas : c'est le seul sens qui protège, l'inverse
 /// laisserait la production s'aligner sur le test.
@@ -824,7 +962,7 @@ fn garde_une_cle_dupliquee_est_refusee_plutot_qu_arbitree_en_silence() {
 #[test]
 fn la_table_publie_chaque_capacite_derivee_par_grammaire() {
     let table = rigger_grammar::table();
-    let publiee: Vec<(&str, GrammarRole, bool, bool, Resolution, bool)> = table
+    let publiee: Vec<(&str, GrammarRole, bool, bool, bool, Resolution, bool)> = table
         .iter()
         .map(|capacites| {
             (
@@ -832,6 +970,7 @@ fn la_table_publie_chaque_capacite_derivee_par_grammaire() {
                 capacites.role(),
                 capacites.preserves_trivia(),
                 capacites.designates_list_element(),
+                capacites.applies_edits(),
                 capacites.resolution(),
                 capacites.merge() == &MergeAdmission::Admitted,
             )
@@ -846,12 +985,14 @@ fn la_table_publie_chaque_capacite_derivee_par_grammaire() {
                 GrammarRole::ReadWrite,
                 true,
                 true,
+                true,
                 Resolution::IndependentOfOrder,
                 true
             ),
             (
                 Toml::NAME,
                 GrammarRole::ReadOnly,
+                false,
                 false,
                 false,
                 Resolution::IndependentOfOrder,

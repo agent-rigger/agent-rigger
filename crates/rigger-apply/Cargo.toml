@@ -1,0 +1,16 @@
+[package]
+name = "rigger-apply"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+# La caisse qui porte l'**entrée-sortie** de l'écriture. `rigger-grammar` est
+# pure et le reste : c'est cette contrainte qui a désigné le domicile de la
+# garde d'écriture, du verrou et de la sauvegarde transitoire
+# (`04-design-socle-neuf.md` § Plan de fichiers, amendement du 2026-08-06).
+# Aucune dépendance tierce : ce que cette caisse fait — lire, écrire à côté,
+# renommer — est de la bibliothèque standard, et une dépendance de plus sur ce
+# chemin serait une dépendance sur le chemin qui touche les documents de
+# l'utilisateur.
+[dependencies]
+rigger-grammar = { path = "../rigger-grammar" }

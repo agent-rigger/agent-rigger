@@ -2,24 +2,33 @@
 //! document possédé par quelqu'un d'autre. Cette caisse ne connaît ni
 //! assistant, ni catalogue, ni registre.
 //!
-//! **Ce qui n'est pas ici, et pourquoi.** Le plan de fichiers
+//! Le plan de fichiers
 //! (`docs/specs/refondation-multi-assistants/04-design-socle-neuf.md`
-//! § Plan de fichiers) donne à ce module un trait `Document` portant
-//! `parse`, `apply(Edit) -> Inverse` et `render`. `Edit` et `Inverse` sortent
-//! des scénarios de la famille C, et leur chemin d'écriture est la tranche
-//! T3b. Ce que T3a a besoin de nommer est plus étroit : ce qu'une grammaire
-//! sait faire **sans** chemin d'écriture, parce que c'est de cela que se
-//! dérive son admission au comportement `merge`.
+//! § Plan de fichiers) donne à ce module un trait portant `parse`,
+//! `apply(Edit) -> Inverse` et `render`, adressés par chemin de grammaire et
+//! jamais par numéro de ligne. Les formes exactes d'`Edit` et d'`Inverse`
+//! devaient sortir des scénarios de la famille C : elles en sortent, et
+//! vivent dans [`edit`].
+//!
+//! **Ce qui n'est pas ici, et pourquoi.** La troisième forme de trace — « ce
+//! bloc entre ces bornes » — dépend d'une syntaxe de marqueurs qui n'existe
+//! pas encore, et la caisse ne fait **aucune entrée-sortie** : l'écriture
+//! conditionnée d'un document possédé vit dans `rigger-apply`, parce que ce
+//! plan veut celle-ci pure.
 
 pub mod capability;
+pub mod edit;
 pub mod jsonc;
+pub mod merge;
 pub mod toml;
 
 pub use capability::{
     mutations, table, Capabilities, GrammarRole, MergeAdmission, MergeRefusal, RefusalReason,
     Resolution, TriviaDivergence, SHARED_CORPUS,
 };
+pub use edit::{values_lost, Applied, Edit, Inverse, SemanticValue, Value};
 pub use jsonc::Jsonc;
+pub use merge::{merge, MergeError, Merged};
 pub use toml::Toml;
 
 use std::fmt;
@@ -79,6 +88,16 @@ pub enum GrammarError {
         /// L'opération demandée, nommée.
         operation: &'static str,
     },
+    /// Le chemin visé n'existe pas dans le document, ou n'y a pas la forme
+    /// que l'édition suppose. Le produit refuse plutôt que de fabriquer la
+    /// structure manquante : il n'écrit qu'à un endroit dont l'existence a
+    /// été constatée, jamais à un endroit qu'il vient d'inventer.
+    PathNotFound {
+        /// La grammaire qui refuse.
+        grammar: &'static str,
+        /// Le chemin demandé, tel qu'il a été écrit.
+        path: String,
+    },
     /// Le document définit plusieurs fois la même clé sur le chemin lu, et le
     /// format ne dit pas laquelle un lecteur honore. Le produit refuse plutôt
     /// que d'en choisir une : écrire dans celle qui n'est pas honorée serait
@@ -107,6 +126,18 @@ impl GrammarError {
         Self::Unsupported { grammar, operation }
     }
 
+    /// Refus d'adressage, nommant la grammaire et le chemin demandé.
+    pub fn path_not_found(grammar: &'static str, path: &[String]) -> Self {
+        Self::PathNotFound {
+            grammar,
+            path: if path.is_empty() {
+                "(racine)".to_string()
+            } else {
+                path.join(".")
+            },
+        }
+    }
+
     /// Refus d'arbitrage, nommant la grammaire, la clé et le nombre de fois
     /// qu'elle est définie.
     pub fn ambiguous(grammar: &'static str, key: impl Into<String>, occurrences: usize) -> Self {
@@ -122,6 +153,7 @@ impl GrammarError {
         match self {
             Self::Malformed { grammar, .. }
             | Self::Unsupported { grammar, .. }
+            | Self::PathNotFound { grammar, .. }
             | Self::Ambiguous { grammar, .. } => grammar,
         }
     }
@@ -136,6 +168,11 @@ impl fmt::Display for GrammarError {
             Self::Unsupported { grammar, operation } => write!(
                 f,
                 "grammaire `{grammar}` : {operation} n'est pas implémenté"
+            ),
+            Self::PathNotFound { grammar, path } => write!(
+                f,
+                "grammaire `{grammar}` : le chemin `{path}` n'existe pas dans ce document, et le \
+                 produit n'y fabrique pas la structure qui manque"
             ),
             Self::Ambiguous {
                 grammar,
@@ -193,4 +230,42 @@ pub trait Grammar {
     /// survit pas plus à un réordonnancement qu'un numéro de ligne à un
     /// reformatage.
     fn find_string_in_list(source: &str, path: &[&str], value: &str) -> Result<bool, GrammarError>;
+
+    /// Applique `edit` à `source` et rend le document édité **avec** la trace
+    /// qui le défait, produits par la même analyse.
+    ///
+    /// **Le refus par défaut est le fond de cette méthode.** Une grammaire qui
+    /// ne l'écrit pas se déclare sans chemin d'écriture, et la dérivation des
+    /// capacités la refuse au comportement `merge` en le nommant — c'est ainsi
+    /// qu'un rôle `ReadWrite` annoncé sans implémentation cesse d'être
+    /// tenable. Ce que ce défaut ne fait **pas** est croire une grammaire sur
+    /// parole : il la fait mesurer comme n'écrivant rien, ce qu'elle est.
+    fn apply(_source: &str, _edit: &Edit) -> Result<Applied, GrammarError> {
+        Err(GrammarError::unsupported(
+            Self::NAME,
+            "appliquer une édition",
+        ))
+    }
+
+    /// Défait une édition et rend le document d'avant.
+    ///
+    /// La propriété que la dérivation exige : `apply` puis `invert` rend la
+    /// pré-image **octet pour octet**. Un inverse qui rend un document
+    /// équivalent mais reformaté détruit le travail du propriétaire au
+    /// retrait, c'est-à-dire à l'endroit exact où personne ne regarde.
+    fn invert(_source: &str, _inverse: &Inverse) -> Result<String, GrammarError> {
+        Err(GrammarError::unsupported(Self::NAME, "défaire une édition"))
+    }
+
+    /// Les valeurs que le document porte, chacune avec son chemin.
+    ///
+    /// C'est le témoin de la post-condition : le multiensemble d'avant doit
+    /// être inclus dans celui d'après, sans quoi l'écriture a détruit une
+    /// valeur que l'utilisateur avait écrite.
+    fn values(_source: &str) -> Result<Vec<SemanticValue>, GrammarError> {
+        Err(GrammarError::unsupported(
+            Self::NAME,
+            "énumérer les valeurs du document",
+        ))
+    }
 }

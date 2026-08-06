@@ -122,18 +122,18 @@ pub fn mutations(source: &str) -> [(&'static str, String); 3] {
 
 /// Ce que le produit s'autorise à faire des documents d'une grammaire.
 ///
-/// Ce terme-ci est **déclaré**, comme [`Resolution`] et pour une raison du
-/// même ordre : il n'est pas mesurable par cette caisse aujourd'hui, parce
-/// qu'**aucune** grammaire n'y a de chemin d'écriture — celui de JSONC arrive
-/// avec la tranche T3b. Le mesurer sur l'existant reviendrait à refuser
-/// toutes les grammaires, ce que le scénario nominal de C7 interdit.
+/// Ce terme-ci reste **déclaré**, comme [`Resolution`] : ce que le produit
+/// s'autorise à écrire est une décision, et aucune mesure ne la remplace. Une
+/// bibliothèque qui deviendrait fidèle ne rouvrirait pas une grammaire que le
+/// produit a décidé de ne pas écrire.
 ///
-/// **La dette que cela laisse, et qui la collecte.** Le jour où un chemin
-/// d'écriture existe, l'admission doit l'exiger en plus de cette déclaration
-/// — une grammaire qui se déclare [`GrammarRole::ReadWrite`] sans en avoir un
-/// serait alors une capacité annoncée sans implémentation, et c'est
-/// exactement ce que ce module existe pour rendre faux. C'est écrit ici parce
-/// que T3b passe par ce fichier.
+/// **Ce que la déclaration ne suffit plus à obtenir, depuis T3b.** Elle ne
+/// donne que le droit d'être mesurée. Une grammaire qui se déclare
+/// [`GrammarRole::ReadWrite`] voit son chemin d'écriture **exécuté** par
+/// [`Capabilities::of`] — poser, relire ce qui a été posé, défaire en rendant
+/// la pré-image octet pour octet —, et le manque de l'un des trois la fait
+/// refuser en le nommant. C'est la dette que ce module portait par écrit tant
+/// qu'aucune grammaire n'avait de chemin d'écriture, et elle est collectée.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GrammarRole {
     /// Le produit lit ces documents et n'y écrit jamais. Décision produit :
@@ -257,6 +257,21 @@ pub enum RefusalReason {
     /// document privé de ce fragment n'est plus lisible, donc ce fragment
     /// porte de la donnée et la dimension « commentaire » n'est pas mesurée.
     ProbeCommentIsNotTrivia(crate::GrammarError),
+    /// La grammaire se déclare en écriture et n'a pas de chemin d'écriture :
+    /// son édition refuse. C'est une capacité annoncée sans implémentation, et
+    /// c'est la dette que ce module devait collecter le jour où un chemin
+    /// d'écriture existerait.
+    NoWritePath(crate::GrammarError),
+    /// L'édition a été appliquée mais le rendu ne porte pas ce qu'elle
+    /// demandait d'écrire, ou n'est plus lisible par sa propre grammaire.
+    EditNotApplied(&'static str),
+    /// L'inverse de l'édition a refusé de s'appliquer : ce que la grammaire a
+    /// écrit, elle ne sait pas le défaire.
+    InverseUnusable(crate::GrammarError),
+    /// L'inverse s'applique mais ne rend pas la pré-image octet pour octet :
+    /// le retrait reformaterait le document du propriétaire, à l'endroit où
+    /// personne ne regarde.
+    InverseNotByteIdentical(TriviaDivergence),
 }
 
 impl fmt::Display for RefusalReason {
@@ -307,6 +322,22 @@ impl fmt::Display for RefusalReason {
                 f,
                 "le fragment que la sonde déclare commentaire porte de la donnée : le document \
                  privé de ce fragment n'est plus lisible — {err}"
+            ),
+            Self::NoWritePath(err) => write!(
+                f,
+                "la grammaire se déclare en écriture et n'a pas de chemin d'écriture — {err}"
+            ),
+            Self::EditNotApplied(detail) => {
+                write!(f, "l'édition n'a pas été appliquée à la sonde : {detail}")
+            }
+            Self::InverseUnusable(err) => write!(
+                f,
+                "l'inverse de l'édition ne s'applique pas — ce que la grammaire écrit, elle ne \
+                 sait pas le défaire : {err}"
+            ),
+            Self::InverseNotByteIdentical(divergence) => write!(
+                f,
+                "l'inverse de l'édition ne rend pas la pré-image octet pour octet : {divergence}"
             ),
         }
     }
@@ -369,6 +400,7 @@ pub struct Capabilities {
     trivia: Vec<RefusalReason>,
     shared_corpus_documents_read: usize,
     designates_list_element: bool,
+    applies_edits: bool,
     resolution: Resolution,
     merge: MergeAdmission,
 }
@@ -398,11 +430,25 @@ impl Capabilities {
         // contingente, et toutes sont portées : un refus qui n'en donne
         // qu'une laisse croire que lever celle-là suffirait. La lecture
         // seule vient donc en tête — elle ne se lève par aucune mesure.
+        //
+        // Le chemin d'écriture n'est mesuré que sur une grammaire qui se
+        // déclare en écriture. Sur une grammaire en lecture seule, l'absence
+        // d'un chemin d'écriture n'est pas un défaut mais la décision
+        // elle-même, et la publier en second motif laisserait croire qu'en
+        // écrire un rouvrirait la porte.
+        let write = if G::ROLE == GrammarRole::ReadWrite {
+            measure_write_path::<G>()
+        } else {
+            Vec::new()
+        };
+        let applies_edits = G::ROLE == GrammarRole::ReadWrite && write.is_empty();
+
         let mut reasons = Vec::new();
         if G::ROLE == GrammarRole::ReadOnly {
             reasons.push(RefusalReason::ReadOnlyGrammar);
         }
         reasons.extend(trivia.iter().cloned());
+        reasons.extend(write);
         if G::RESOLUTION == Resolution::DependsOnOrder {
             reasons.push(RefusalReason::ResolutionDependsOnOrder);
         }
@@ -421,6 +467,7 @@ impl Capabilities {
             trivia,
             shared_corpus_documents_read,
             designates_list_element,
+            applies_edits,
             resolution: G::RESOLUTION,
             merge,
         }
@@ -453,6 +500,13 @@ impl Capabilities {
     /// La grammaire sait-elle désigner un élément de liste par sa valeur.
     pub fn designates_list_element(&self) -> bool {
         self.designates_list_element
+    }
+
+    /// La grammaire sait-elle écrire une édition **et la défaire** en rendant
+    /// la pré-image octet pour octet. Mesuré en exécutant les deux sur sa
+    /// sonde, jamais déduit de son rôle déclaré.
+    pub fn applies_edits(&self) -> bool {
+        self.applies_edits
     }
 
     /// La sensibilité à l'ordre de la résolution de ses documents.
@@ -585,6 +639,65 @@ fn measure_trivia<G: Grammar>() -> TriviaMeasure {
         reasons,
         shared_corpus_documents_read,
     }
+}
+
+/// Mesure le chemin d'écriture de `G` en l'**exécutant** sur sa sonde : une
+/// valeur que la sonde déclare absente y est posée, puis retirée par l'inverse
+/// que l'édition a rendu.
+///
+/// **Ce que cette mesure ferme.** Le rôle d'une grammaire est une décision
+/// produit, donc déclarée ; tant qu'aucune grammaire n'avait de chemin
+/// d'écriture, se déclarer en écriture ne coûtait rien et rien ne pouvait le
+/// contredire. C'est la dette que ce module portait par écrit. Une grammaire
+/// qui se déclare en écriture doit désormais **écrire**, **relire ce qu'elle a
+/// écrit**, et **rendre la pré-image octet pour octet** en le défaisant.
+///
+/// **Ce qu'elle ne ferme pas.** La sonde appartient à la grammaire jugée, donc
+/// une édition triviale sur un document docile reste possible ici. C'est
+/// `tests/conformance.rs` qui exerce la même propriété sur les documents du
+/// dépôt, que l'auteur d'une grammaire ne choisit pas.
+fn measure_write_path<G: Grammar>() -> Vec<RefusalReason> {
+    let probe = G::PROBE;
+    let edit = crate::Edit::values(probe.list_path, [probe.value_absent]);
+
+    let applied = match G::apply(probe.source, &edit) {
+        Ok(applied) => applied,
+        Err(err) => return vec![RefusalReason::NoWritePath(err)],
+    };
+
+    // La relecture passe par l'énumération des valeurs, et non par la
+    // recherche dans une liste : c'est le témoin dont la post-condition se
+    // sert, donc c'est lui qui doit exister. Une grammaire qui écrit sans
+    // savoir relire ce qu'elle a écrit ne peut rien promettre de ce qu'elle a
+    // détruit.
+    let mut reasons = Vec::new();
+    let posee = crate::SemanticValue::new(
+        probe.list_path.join("."),
+        crate::Value::Text(probe.value_absent.to_string()),
+    );
+    match G::values(&applied.rendered) {
+        Err(_) => reasons.push(RefusalReason::EditNotApplied(
+            "le rendu n'est plus lisible par sa propre grammaire",
+        )),
+        Ok(valeurs) => {
+            if !valeurs.contains(&posee) {
+                reasons.push(RefusalReason::EditNotApplied(
+                    "la valeur posée est absente du rendu",
+                ));
+            }
+        }
+    }
+
+    match G::invert(&applied.rendered, &applied.inverse) {
+        Err(err) => reasons.push(RefusalReason::InverseUnusable(err)),
+        Ok(defait) => {
+            if let Some(divergence) = TriviaDivergence::measure(probe.source, &defait) {
+                reasons.push(RefusalReason::InverseNotByteIdentical(divergence));
+            }
+        }
+    }
+
+    reasons
 }
 
 /// Exige de `G` qu'elle refuse chaque mutation de `source`, et nomme celles
