@@ -1,13 +1,12 @@
-# Le corpus de crates/rigger-grammar/tests/corpus/ (et sa fixture de
-# caractérisation dans tests/corpus-limites/) sont la mesure elle-même :
-# leurs octets exacts (CRLF compris) sont ce que tests/conformance.rs et
-# tests/limites_connues.rs vérifient. `core.autocrlf=input` normaliserait
-# les CRLF en LF au commit et rendrait les fixtures fausses sans qu'aucun
-# diff ne le signale. -text désactive toute conversion de fin de ligne, à
-# l'entrée comme à la sortie, sur ces fichiers.
+# The corpus of crates/rigger-grammar/tests/corpus/ (and its characterization
+# fixture in tests/corpus-limites/) is the measurement itself: its exact bytes
+# (CRLF included) are what tests/conformance.rs and tests/known_limits.rs check.
+# `core.autocrlf=input` would normalise the CRLF to LF on commit and would make
+# the fixtures wrong without any diff reporting it. -text disables every line
+# ending conversion, on the way in as on the way out, on these files.
 #
-# `**` et non `*` : un `*` ne couvre pas les sous-dossiers (`corpus-limites/`
-# n'aurait pas été protégé), `git check-attr` le confirme en rendant
-# `unspecified` sur un fichier d'un sous-dossier avec `*` seul.
+# `**` and not `*`: a `*` does not cover subdirectories (`corpus-limites/` would
+# not have been protected); `git check-attr` confirms it by returning
+# `unspecified` on a file of a subdirectory with `*` alone.
 crates/rigger-grammar/tests/corpus/** -text
 crates/rigger-grammar/tests/corpus-limites/** -text

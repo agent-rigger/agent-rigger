@@ -1,20 +1,19 @@
-//! La frontière de grammaire : ce que le produit sait lire et rendre d'un
-//! document possédé par quelqu'un d'autre. Cette caisse ne connaît ni
-//! assistant, ni catalogue, ni registre.
+//! The grammar boundary: what the product can read from, and render back to, a
+//! document somebody else owns. This crate knows nothing of assistants, of
+//! catalogues, or of the registry.
 //!
-//! Le plan de fichiers
+//! The file plan
 //! (`docs/specs/refondation-multi-assistants/04-design-socle-neuf.md`
-//! § Plan de fichiers) donne à ce module un trait portant `parse`,
-//! `apply(Edit) -> Inverse` et `render`, adressés par chemin de grammaire et
-//! jamais par numéro de ligne. Les formes exactes d'`Edit` et d'`Inverse`
-//! devaient sortir des scénarios de la famille C : elles en sortent, et
-//! vivent dans [`edit`].
+//! § Plan de fichiers) gives this module a trait carrying `parse`,
+//! `apply(Edit) -> Inverse` and `render`, addressed by grammar path and never
+//! by line number. The exact shapes of `Edit` and `Inverse` were meant to come
+//! out of the family-C scenarios: they did, and they live in [`edit`].
 //!
-//! **Ce qui n'est pas ici, et pourquoi.** La troisième forme de trace — « ce
-//! bloc entre ces bornes » — dépend d'une syntaxe de marqueurs qui n'existe
-//! pas encore, et la caisse ne fait **aucune entrée-sortie** : l'écriture
-//! conditionnée d'un document possédé vit dans `rigger-apply`, parce que ce
-//! plan veut celle-ci pure.
+//! **What is not here, and why.** The third shape of trace — "this block
+//! between these bounds" — depends on a marker syntax that does not exist yet,
+//! and the crate performs **no input or output**: the conditional write of an
+//! owned document lives in `rigger-apply`, because this plan wants this crate
+//! pure.
 
 pub mod capability;
 pub mod edit;
@@ -33,87 +32,87 @@ pub use toml::Toml;
 
 use std::fmt;
 
-/// Ce qui n'est un document dans aucune grammaire servie : ni une valeur
-/// JSON, ni une ligne de clé TOML. Une seule forme pour toutes, parce que la
-/// propriété est commune et qu'une forme par grammaire laisserait croire que
-/// le refus dépend de la façon de casser le document.
+/// Text that is a document in none of the grammars served: neither a JSON
+/// value, nor a TOML key line. One single shape for all of them, because the
+/// property is common and because one shape per grammar would suggest that the
+/// refusal depends on the way the document was broken.
 ///
-/// La dérivation des capacités s'en sert comme épreuve d'existence d'un
-/// analyseur, et `tests/conformance.rs` comme épreuve de refus nommé : une
-/// seule définition, parce que deux dériveraient.
-pub const NOT_A_DOCUMENT: &str = "!!! ceci n'est pas un document !!!\n";
+/// The capability derivation uses it as proof that a parser exists, and
+/// `tests/conformance.rs` as proof of a named refusal: one definition, because
+/// two would drift apart.
+pub const NOT_A_DOCUMENT: &str = "!!! this is not a document !!!\n";
 
-/// Le document sur lequel une capacité se mesure. Il appartient à la
-/// grammaire, parce qu'il est écrit dans sa syntaxe, et il porte de la trivia
-/// hostile : une sonde édulcorée rendrait la mesure trivialement vraie.
+/// The document a capability is measured on. It belongs to the grammar,
+/// because it is written in its syntax, and it carries hostile trivia: a
+/// watered-down probe would make the measurement trivially true.
 #[derive(Debug, Clone, Copy)]
 pub struct Probe {
-    /// Le document, dans la syntaxe de la grammaire.
+    /// The document, in the syntax of the grammar.
     pub source: &'static str,
-    /// Un fragment de **commentaire** présent dans `source`.
+    /// A fragment of a **comment** present in `source`.
     ///
-    /// Des trois dimensions de trivia hostile que la dérivation exige, deux
-    /// se reconnaissent sans rien savoir de la grammaire — la fin de ligne
-    /// CRLF et l'indentation. La troisième a une syntaxe qui change d'une
-    /// grammaire à l'autre, donc elle se déclare ici. La déclaration n'est
-    /// pas crue sur parole : la dérivation retire ce fragment du document et
-    /// exige qu'il reste lisible. Un fragment dont le retrait casse la
-    /// lecture est une **donnée**, pas un commentaire, et la sonde ne porte
-    /// alors pas la dimension qu'elle prétend porter.
+    /// Of the three dimensions of hostile trivia the derivation demands, two
+    /// can be recognised without knowing anything about the grammar — the CRLF
+    /// line ending and the indentation. The third has a syntax that changes
+    /// from one grammar to the next, so it is declared here. The declaration
+    /// is not taken on trust: the derivation strips this fragment from the
+    /// document and demands that it still be readable. A fragment whose
+    /// removal breaks the read is **data**, not a comment, and the probe then
+    /// does not carry the dimension it claims to carry.
     pub comment: &'static str,
-    /// Le chemin d'une liste de chaînes présente dans `source`.
+    /// The path of a list of strings present in `source`.
     pub list_path: &'static [&'static str],
-    /// Une valeur que cette liste contient.
+    /// A value that list contains.
     pub value_present: &'static str,
-    /// Une valeur que cette liste ne contient pas.
+    /// A value that list does not contain.
     pub value_absent: &'static str,
 }
 
-/// Ce qu'une grammaire refuse, en se nommant. Un refus qui ne nomme pas la
-/// grammaire laisse son lecteur chercher, et c'est le mode que le registre
-/// enregistre sous « refus muet ».
+/// What a grammar refuses, while naming itself. A refusal that does not name
+/// the grammar leaves its reader searching, and that is the mode the registry
+/// records as "silent refusal".
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GrammarError {
-    /// Le document n'est pas lisible par cette grammaire.
+    /// The document is not readable by this grammar.
     Malformed {
-        /// La grammaire qui refuse.
+        /// The grammar that refuses.
         grammar: &'static str,
-        /// Ce que la bibliothèque d'analyse a rapporté.
+        /// What the parsing library reported.
         detail: String,
     },
-    /// L'opération demandée n'a pas d'implémentation dans cette grammaire.
+    /// The requested operation has no implementation in this grammar.
     Unsupported {
-        /// La grammaire qui refuse.
+        /// The grammar that refuses.
         grammar: &'static str,
-        /// L'opération demandée, nommée.
+        /// The requested operation, named.
         operation: &'static str,
     },
-    /// Le chemin visé n'existe pas dans le document, ou n'y a pas la forme
-    /// que l'édition suppose. Le produit refuse plutôt que de fabriquer la
-    /// structure manquante : il n'écrit qu'à un endroit dont l'existence a
-    /// été constatée, jamais à un endroit qu'il vient d'inventer.
+    /// The targeted path does not exist in the document, or does not have the
+    /// shape the edit assumes. The product refuses rather than fabricate the
+    /// missing structure: it writes only where existence has been observed,
+    /// never where it has just invented something.
     PathNotFound {
-        /// La grammaire qui refuse.
+        /// The grammar that refuses.
         grammar: &'static str,
-        /// Le chemin demandé, tel qu'il a été écrit.
+        /// The requested path, as it was written.
         path: String,
     },
-    /// Le document définit plusieurs fois la même clé sur le chemin lu, et le
-    /// format ne dit pas laquelle un lecteur honore. Le produit refuse plutôt
-    /// que d'en choisir une : écrire dans celle qui n'est pas honorée serait
-    /// inopérant sans erreur et sans trace.
+    /// The document defines the same key more than once on the path being
+    /// read, and the format does not say which one a reader honours. The
+    /// product refuses rather than pick one: writing into the one that is not
+    /// honoured would be ineffective with no error and no trace.
     Ambiguous {
-        /// La grammaire qui refuse.
+        /// The grammar that refuses.
         grammar: &'static str,
-        /// La clé définie plusieurs fois.
+        /// The key defined more than once.
         key: String,
-        /// Le nombre de définitions trouvées.
+        /// The number of definitions found.
         occurrences: usize,
     },
 }
 
 impl GrammarError {
-    /// Refus de lecture, nommant la grammaire et ce que l'analyse a rapporté.
+    /// Read refusal, naming the grammar and what the parse reported.
     pub fn malformed(grammar: &'static str, detail: impl fmt::Display) -> Self {
         Self::Malformed {
             grammar,
@@ -121,25 +120,25 @@ impl GrammarError {
         }
     }
 
-    /// Refus d'opération, nommant la grammaire et l'opération.
+    /// Operation refusal, naming the grammar and the operation.
     pub fn unsupported(grammar: &'static str, operation: &'static str) -> Self {
         Self::Unsupported { grammar, operation }
     }
 
-    /// Refus d'adressage, nommant la grammaire et le chemin demandé.
+    /// Addressing refusal, naming the grammar and the requested path.
     pub fn path_not_found(grammar: &'static str, path: &[String]) -> Self {
         Self::PathNotFound {
             grammar,
             path: if path.is_empty() {
-                "(racine)".to_string()
+                "(root)".to_string()
             } else {
                 path.join(".")
             },
         }
     }
 
-    /// Refus d'arbitrage, nommant la grammaire, la clé et le nombre de fois
-    /// qu'elle est définie.
+    /// Arbitration refusal, naming the grammar, the key, and how many times it
+    /// is defined.
     pub fn ambiguous(grammar: &'static str, key: impl Into<String>, occurrences: usize) -> Self {
         Self::Ambiguous {
             grammar,
@@ -148,7 +147,7 @@ impl GrammarError {
         }
     }
 
-    /// La grammaire qui a refusé.
+    /// The grammar that refused.
     pub fn grammar(&self) -> &'static str {
         match self {
             Self::Malformed { grammar, .. }
@@ -163,16 +162,15 @@ impl fmt::Display for GrammarError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Malformed { grammar, detail } => {
-                write!(f, "grammaire `{grammar}` : document malformé — {detail}")
+                write!(f, "grammar `{grammar}`: malformed document — {detail}")
             }
-            Self::Unsupported { grammar, operation } => write!(
-                f,
-                "grammaire `{grammar}` : {operation} n'est pas implémenté"
-            ),
+            Self::Unsupported { grammar, operation } => {
+                write!(f, "grammar `{grammar}`: {operation} is not implemented")
+            }
             Self::PathNotFound { grammar, path } => write!(
                 f,
-                "grammaire `{grammar}` : le chemin `{path}` n'existe pas dans ce document, et le \
-                 produit n'y fabrique pas la structure qui manque"
+                "grammar `{grammar}`: the path `{path}` does not exist in this document, and the \
+                 product does not fabricate the structure that is missing"
             ),
             Self::Ambiguous {
                 grammar,
@@ -180,9 +178,9 @@ impl fmt::Display for GrammarError {
                 occurrences,
             } => write!(
                 f,
-                "grammaire `{grammar}` : la clé `{key}` est définie {occurrences} fois sur le \
-                 chemin lu — le format ne dit pas laquelle est honorée à la lecture, et le \
-                 produit ne choisit pas à sa place"
+                "grammar `{grammar}`: the key `{key}` is defined {occurrences} times on the path \
+                 being read — the format does not say which one is honoured on read, and the \
+                 product does not choose in its place"
             ),
         }
     }
@@ -190,90 +188,85 @@ impl fmt::Display for GrammarError {
 
 impl std::error::Error for GrammarError {}
 
-/// Une grammaire d'écriture ou de lecture, du point de vue de ce que la table
-/// des capacités doit pouvoir **exécuter** pour répondre à son sujet.
+/// A writing or reading grammar, seen from what the capability table must be
+/// able to **execute** in order to answer questions about it.
 ///
-/// Les deux capacités que ce trait sert — préserver la trivia, désigner un
-/// élément de liste — ne se déclarent pas : elles se mesurent en faisant
-/// tourner l'implémentation sur [`Probe`]. La sonde appartenant à la
-/// grammaire jugée, la mesure exige d'elle plus que le seul aller-retour :
-/// voir la dérivation dans [`capability`], qui dit ce que ces épreuves
-/// garantissent et ce qu'elles ne garantissent pas.
+/// The two capabilities this trait serves — preserving trivia, designating a
+/// list element — are not declared: they are measured by running the
+/// implementation on [`Probe`]. Since the probe belongs to the grammar being
+/// judged, the measurement demands more of it than the round trip alone: see
+/// the derivation in [`capability`], which says what those trials guarantee
+/// and what they do not.
 ///
-/// Deux termes ne s'exécutent pas, et chacun pour sa raison. [`Resolution`]
-/// décrit comment le document est **résolu par qui le lit**, ce qui se mesure
-/// sur ce lecteur et se cite, jamais ne se devine. [`GrammarRole`] dit ce que
-/// le produit s'autorise à écrire, ce qui est une **décision** et non une
-/// mesure. Chaque implémentation doit donner, pour l'un comme pour l'autre,
-/// sa source datée.
+/// Two terms do not execute, each for its own reason. [`Resolution`] describes
+/// how the document is **resolved by whoever reads it**, which is measured on
+/// that reader and cited, never guessed. [`GrammarRole`] says what the product
+/// allows itself to write, which is a **decision** and not a measurement. Every
+/// implementation must give, for one as for the other, its dated source.
 pub trait Grammar {
-    /// Le nom sous lequel cette grammaire est nommée dans un refus.
+    /// The name this grammar is named by in a refusal.
     const NAME: &'static str;
 
-    /// Ce que le produit s'autorise à faire des documents de cette grammaire.
-    /// Décision produit, datée et sourcée par l'implémentation.
+    /// What the product allows itself to do with documents of this grammar.
+    /// A product decision, dated and sourced by the implementation.
     const ROLE: GrammarRole;
 
-    /// La sensibilité à l'ordre de la résolution des documents de cette
-    /// grammaire. Fait mesuré, cité par l'implémentation.
+    /// How sensitive to order the resolution of documents of this grammar is.
+    /// A measured fact, cited by the implementation.
     const RESOLUTION: Resolution;
 
-    /// Le document sur lequel les capacités exécutables se mesurent.
+    /// The document the executable capabilities are measured on.
     const PROBE: Probe;
 
-    /// Analyse puis rend, sans aucune édition. Le rendu doit être identique
-    /// octet pour octet à l'entrée quand la grammaire préserve la trivia.
+    /// Parses then renders, with no edit at all. The rendering must be
+    /// byte-for-byte identical to the input when the grammar preserves trivia.
     fn round_trip(source: &str) -> Result<String, GrammarError>;
 
-    /// Dit si la liste de chaînes à `path` contient `value`. La désignation
-    /// se fait par égalité de valeur et jamais par indice — un indice ne
-    /// survit pas plus à un réordonnancement qu'un numéro de ligne à un
-    /// reformatage.
+    /// Says whether the list of strings at `path` contains `value`. An element
+    /// is designated by value equality and never by index — an index survives
+    /// a reordering no better than a line number survives a reformat.
     fn find_string_in_list(source: &str, path: &[&str], value: &str) -> Result<bool, GrammarError>;
 
-    /// Applique `edit` à `source` et rend le document édité **avec** la trace
-    /// qui le défait, produits par la même analyse.
+    /// Applies `edit` to `source` and returns the edited document **together
+    /// with** the trace that undoes it, both produced by the same parse.
     ///
-    /// **Le refus par défaut est le fond de cette méthode.** Une grammaire qui
-    /// ne l'écrit pas se déclare sans chemin d'écriture, et la dérivation des
-    /// capacités la refuse au comportement `merge` en le nommant — c'est ainsi
-    /// qu'un rôle `ReadWrite` annoncé sans implémentation cesse d'être
-    /// tenable. Ce que ce défaut ne fait **pas** est croire une grammaire sur
-    /// parole : il la fait mesurer comme n'écrivant rien, ce qu'elle est.
+    /// **Refusal by default is the substance of this method.** A grammar that
+    /// does not write it declares itself to have no write path, and the
+    /// capability derivation refuses it the `merge` behaviour while naming that
+    /// — which is how a `ReadWrite` role announced without an implementation
+    /// stops being tenable. What this default does **not** do is take a grammar
+    /// at its word: it makes it measure as writing nothing, which is what it is.
     fn apply(_source: &str, _edit: &Edit) -> Result<Applied, GrammarError> {
-        Err(GrammarError::unsupported(
-            Self::NAME,
-            "appliquer une édition",
-        ))
+        Err(GrammarError::unsupported(Self::NAME, "applying an edit"))
     }
 
-    /// Défait une édition et rend le document d'avant.
+    /// Undoes an edit and returns the document as it was before.
     ///
-    /// La propriété que la dérivation exige : `apply` puis `invert` rend la
-    /// pré-image **octet pour octet**. Un inverse qui rend un document
-    /// équivalent mais reformaté détruit le travail du propriétaire au
-    /// retrait, c'est-à-dire à l'endroit exact où personne ne regarde.
+    /// The property the derivation demands: `apply` then `invert` returns the
+    /// pre-image **byte for byte**. An inverse that returns an equivalent but
+    /// reformatted document destroys the owner's work on removal, that is, at
+    /// the exact spot where nobody is looking.
     ///
-    /// **Cette propriété n'est pas crue sur parole, et ne peut pas l'être.**
-    /// Elle porte sur un couple (document, édition), pas sur une grammaire : la
-    /// même implémentation la tient sur une clé dont la valeur est une chaîne
-    /// et la perd sur une clé dont la valeur porte un commentaire. Ce que la
-    /// dérivation et le corpus mesurent est donc un échantillon ; ce qui
-    /// **décide** est [`merge`], qui exécute cet inverse-ci sur ce rendu-là et
-    /// refuse l'écriture quand les octets d'avant ne reviennent pas.
+    /// **This property is not taken on trust, and cannot be.** It holds of a
+    /// (document, edit) pair, not of a grammar: the same implementation keeps
+    /// it on a key whose value is a string and loses it on a key whose value
+    /// carries a comment. What the derivation and the corpus measure is
+    /// therefore a sample; what **decides** is [`merge`], which runs this very
+    /// inverse on that very rendering and refuses the write when the bytes from
+    /// before do not come back.
     fn invert(_source: &str, _inverse: &Inverse) -> Result<String, GrammarError> {
-        Err(GrammarError::unsupported(Self::NAME, "défaire une édition"))
+        Err(GrammarError::unsupported(Self::NAME, "undoing an edit"))
     }
 
-    /// Les valeurs que le document porte, chacune avec son chemin.
+    /// The values the document carries, each with its path.
     ///
-    /// C'est le témoin de la post-condition : le multiensemble d'avant doit
-    /// être inclus dans celui d'après, sans quoi l'écriture a détruit une
-    /// valeur que l'utilisateur avait écrite.
+    /// This is the witness of the post-condition: the multiset from before must
+    /// be included in the one from after, failing which the write destroyed a
+    /// value the user had written.
     fn values(_source: &str) -> Result<Vec<SemanticValue>, GrammarError> {
         Err(GrammarError::unsupported(
             Self::NAME,
-            "énumérer les valeurs du document",
+            "enumerating the values of the document",
         ))
     }
 }

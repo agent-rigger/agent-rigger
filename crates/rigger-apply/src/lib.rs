@@ -1,14 +1,13 @@
-//! L'écriture d'un document possédé : ce que `rigger-grammar` ne peut pas
-//! porter parce qu'elle est pure, et que le plan de fichiers range ici.
+//! Writing an owned document: what `rigger-grammar` cannot carry because it is
+//! pure, and what the file plan puts here.
 //!
-//! **Ce qui n'est pas encore ici.** Le verrou entre processus
-//! (`crates/rigger-apply/src/lock.rs`) appartient à cette caisse et arrive
-//! avec la famille A. Son absence ne rend pas ce module inutile, et c'est le
-//! fond de C8 : le verrou exclut d'autres exécutions **du produit**, il ne
-//! peut rien contre l'hôte, qui réécrit ses propres fichiers de réglages —
-//! mesuré le 2026-08-06, et routinier. La garde d'empreinte est la seule
-//! défense contre le seul écrivain concurrent que le produit ne peut ni
-//! exclure ni prévoir.
+//! **What is not here yet.** The inter-process lock
+//! (`crates/rigger-apply/src/lock.rs`) belongs to this crate and arrives with
+//! family A. Its absence does not make this module useless, and that is the
+//! substance of C8: the lock excludes other runs **of the product**, it can do
+//! nothing against the host, which rewrites its own settings files — measured on
+//! 2026-08-06, and routine. The fingerprint guard is the only defence against
+//! the one concurrent writer the product can neither exclude nor foresee.
 
 pub mod txn;
 

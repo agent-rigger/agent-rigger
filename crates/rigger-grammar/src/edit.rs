@@ -1,58 +1,55 @@
-//! Ce que le produit demande d'écrire, ce qui le défait, et les valeurs qu'un
-//! document porte.
+//! What the product asks to be written, what undoes it, and the values a
+//! document carries.
 //!
-//! **Adressé par chemin de grammaire, jamais par numéro de ligne.** C'est
-//! l'énoncé du plan de fichiers, et c'est la seule chose que ce module rend
-//! structurellement vraie : il n'existe ici aucun type qui sache dire « à
-//! cette ligne », donc aucune implémentation ne peut en fabriquer un sans
-//! ajouter le type qui manque, sous les yeux d'un relecteur.
+//! **Addressed by grammar path, never by line number.** That is what the file
+//! plan states, and it is the one thing this module makes structurally true:
+//! there exists here no type able to say "at this line", so no implementation
+//! can fabricate one without adding the missing type, under a reviewer's eyes.
 //!
-//! **Deux formes d'édition, et la troisième n'est pas ici.** Le plan en donne
-//! trois : « ces clés à ce chemin », « ces valeurs dans ce tableau à ce
-//! chemin », et « ce bloc entre ces bornes ». Les deux premières vivent ici ;
-//! la troisième dépend d'une syntaxe de marqueurs qui n'existe pas encore et
-//! qui est la tranche suivante. L'écrire aujourd'hui figerait la forme d'une
-//! trace avant les scénarios qui la contraignent.
+//! **Two shapes of edit, and the third is not here.** The plan gives three:
+//! "these keys at this path", "these values in this array at this path", and
+//! "this block between these bounds". The first two live here; the third
+//! depends on a marker syntax that does not exist yet and is the next slice.
+//! Writing it today would freeze the shape of a trace ahead of the scenarios
+//! that constrain it.
 //!
-//! **La désignation d'une valeur de tableau se fait par égalité de valeur.**
-//! Un indice ne survit pas plus à un réordonnancement qu'un numéro de ligne à
-//! un reformatage — c'est le motif d'origine de l'interdiction du positionnel,
-//! appliqué à un axe de plus.
+//! **An array value is designated by value equality.** An index survives a
+//! reordering no better than a line number survives a reformat — that is the
+//! original motive for banning positional addressing, applied to one more axis.
 
 use std::fmt;
 
-/// Une valeur telle qu'un document en porte : ce que le produit écrit, et ce
-/// qu'il retrouve pour le rétablir.
+/// A value as a document carries it: what the product writes, and what it
+/// finds again in order to restore it.
 ///
-/// Les nombres sont gardés sous leur **texte d'origine** et non convertis :
-/// `1.50` et `1.5` sont le même nombre et deux documents différents, et
-/// l'inverse doit rendre les octets d'avant.
+/// Numbers are kept under their **original text** rather than converted:
+/// `1.50` and `1.5` are the same number and two different documents, and the
+/// inverse must return the bytes from before.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Value {
-    /// Une chaîne, décodée.
+    /// A string, decoded.
     Text(String),
-    /// Un nombre, sous le texte que le document portait.
+    /// A number, under the text the document carried.
     Number(String),
-    /// Un booléen.
+    /// A boolean.
     Bool(bool),
-    /// L'absence de valeur, telle que le document la nomme.
+    /// The absence of a value, as the document names it.
     Null,
-    /// Une liste de valeurs.
+    /// A list of values.
     List(Vec<Value>),
-    /// Un objet, clés dans l'ordre du document.
+    /// An object, keys in document order.
     Object(Vec<(String, Value)>),
 }
 
 impl Value {
-    /// Une valeur de texte, construite depuis n'importe quoi qui en donne un.
+    /// A text value, built from anything that yields one.
     pub fn text(value: impl Into<String>) -> Self {
         Self::Text(value.into())
     }
 
-    /// Une valeur qui n'en contient pas d'autre. C'est de celles-là que se
-    /// fait le multiensemble comparé par la post-condition : comparer un objet
-    /// entier masquerait la disparition d'une de ses feuilles derrière
-    /// l'apparition d'une autre.
+    /// A value that contains no other. Those are what the multiset compared by
+    /// the post-condition is made of: comparing a whole object would hide the
+    /// disappearance of one of its leaves behind the appearance of another.
     pub fn is_leaf(&self) -> bool {
         !matches!(self, Self::List(_) | Self::Object(_))
     }
@@ -67,8 +64,8 @@ impl fmt::Display for Value {
             Self::Null => write!(f, "null"),
             Self::List(values) => {
                 write!(f, "[")?;
-                for (rang, value) in values.iter().enumerate() {
-                    if rang > 0 {
+                for (rank, value) in values.iter().enumerate() {
+                    if rank > 0 {
                         write!(f, ", ")?;
                     }
                     write!(f, "{value}")?;
@@ -77,8 +74,8 @@ impl fmt::Display for Value {
             }
             Self::Object(entries) => {
                 write!(f, "{{")?;
-                for (rang, (name, value)) in entries.iter().enumerate() {
-                    if rang > 0 {
+                for (rank, (name, value)) in entries.iter().enumerate() {
+                    if rank > 0 {
                         write!(f, ", ")?;
                     }
                     write!(f, "{name}: {value}")?;
@@ -89,35 +86,35 @@ impl fmt::Display for Value {
     }
 }
 
-/// Ce que le produit demande d'écrire dans un document possédé.
+/// What the product asks to write into an owned document.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Edit {
-    /// « Ces clés à ce chemin ». Une clé déjà présente voit sa valeur
-    /// remplacée, et l'inverse porte de quoi rétablir l'ancienne.
+    /// "These keys at this path". A key already present has its value
+    /// replaced, and the inverse carries what is needed to restore the old one.
     Keys {
-        /// Le chemin de l'objet qui porte ces clés. Vide pour la racine.
+        /// The path of the object carrying these keys. Empty for the root.
         path: Vec<String>,
-        /// Les clés et leurs valeurs, dans l'ordre où elles sont écrites.
+        /// The keys and their values, in the order they are written.
         entries: Vec<(String, Value)>,
     },
-    /// « Ces valeurs dans ce tableau à ce chemin ». Une valeur déjà présente
-    /// n'est pas ajoutée et n'entre pas dans la trace.
+    /// "These values in this array at this path". A value already present is
+    /// not added and does not enter the trace.
     Values {
-        /// Le chemin du tableau, dernier segment compris.
+        /// The path of the array, last segment included.
         path: Vec<String>,
-        /// Les valeurs à y trouver ou à y mettre.
+        /// The values to find there or to put there.
         values: Vec<String>,
     },
 }
 
 impl Edit {
-    /// « Ces clés à ce chemin ».
+    /// "These keys at this path".
     pub fn keys(
         path: &[&str],
         entries: impl IntoIterator<Item = (impl Into<String>, Value)>,
     ) -> Self {
         Self::Keys {
-            path: chemin(path),
+            path: owned_path(path),
             entries: entries
                 .into_iter()
                 .map(|(name, value)| (name.into(), value))
@@ -125,15 +122,15 @@ impl Edit {
         }
     }
 
-    /// « Ces valeurs dans ce tableau à ce chemin ».
+    /// "These values in this array at this path".
     pub fn values(path: &[&str], values: impl IntoIterator<Item = impl Into<String>>) -> Self {
         Self::Values {
-            path: chemin(path),
+            path: owned_path(path),
             values: values.into_iter().map(Into::into).collect(),
         }
     }
 
-    /// Le chemin visé, tel qu'un refus le nomme.
+    /// The targeted path, as a refusal names it.
     pub fn path(&self) -> &[String] {
         match self {
             Self::Keys { path, .. } | Self::Values { path, .. } => path,
@@ -141,34 +138,32 @@ impl Edit {
     }
 }
 
-/// Ce qui défait exactement l'édition qui l'a produite — et **rien d'autre**.
-/// Ce que le produit n'a pas écrit n'y figure pas, donc ne peut pas en sortir.
+/// What undoes exactly the edit that produced it — and **nothing else**. What
+/// the product did not write does not appear in it, so cannot come out of it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Inverse {
-    /// Retirer les clés que l'édition a ajoutées, rétablir celles dont elle a
-    /// remplacé la valeur.
+    /// Remove the keys the edit added, restore those whose value it replaced.
     Keys {
-        /// Le chemin de l'objet.
+        /// The path of the object.
         path: Vec<String>,
-        /// Les clés que l'édition a créées, à retirer.
+        /// The keys the edit created, to be removed.
         added: Vec<String>,
-        /// Les clés dont l'édition a remplacé la valeur, et cette valeur.
+        /// The keys whose value the edit replaced, and that value.
         replaced: Vec<(String, Value)>,
     },
-    /// Retirer du tableau les valeurs que l'édition y a mises, par égalité de
-    /// valeur.
+    /// Remove from the array the values the edit put there, by value equality.
     Values {
-        /// Le chemin du tableau.
+        /// The path of the array.
         path: Vec<String>,
-        /// Les valeurs que l'édition a ajoutées.
+        /// The values the edit added.
         added: Vec<String>,
     },
 }
 
 impl Inverse {
-    /// Rien à défaire : l'édition n'a rien écrit. C'est le cas d'une valeur
-    /// qui préexistait, que le produit n'a donc pas ajoutée et ne retirera
-    /// jamais.
+    /// Nothing to undo: the edit wrote nothing. This is the case of a value
+    /// that already existed, which the product therefore did not add and will
+    /// never remove.
     pub fn is_empty(&self) -> bool {
         match self {
             Self::Keys {
@@ -178,69 +173,69 @@ impl Inverse {
         }
     }
 
-    /// Les valeurs que le document portait et que la trace **enregistre**,
-    /// c'est-à-dire celles qu'elle sait rétablir.
+    /// The values the document carried and that the trace **records**, that is,
+    /// the ones it knows how to restore.
     ///
-    /// **Pourquoi la post-condition en a besoin.** L'exigence n'est pas que
-    /// rien ne disparaisse — une mise à jour remplace une valeur par une
-    /// autre, et c'est son objet. L'exigence est que la différence entre le
-    /// document d'avant et celui d'après se réduise **exactement à ce que la
-    /// trace enregistre**. Une valeur remplacée est donc portée par la trace,
-    /// donc défaisable ; une valeur disparue sans y figurer ne l'est pas, et
-    /// c'est celle-là que la post-condition doit attraper.
+    /// **Why the post-condition needs this.** The requirement is not that
+    /// nothing disappear — an update replaces one value with another, and that
+    /// is its purpose. The requirement is that the difference between the
+    /// document before and the document after reduce **exactly to what the
+    /// trace records**. A replaced value is therefore carried by the trace,
+    /// hence undoable; a value that disappeared without appearing in it is not,
+    /// and that is the one the post-condition must catch.
     pub fn recorded_values(&self) -> Vec<SemanticValue> {
-        let mut valeurs = Vec::new();
+        let mut values = Vec::new();
         if let Self::Keys { path, replaced, .. } = self {
             for (name, value) in replaced {
-                let mut chemin = path.clone();
-                chemin.push(name.clone());
-                flatten(value, &chemin.join("."), &mut valeurs);
+                let mut child_path = path.clone();
+                child_path.push(name.clone());
+                flatten(value, &child_path.join("."), &mut values);
             }
         }
-        valeurs
+        values
     }
 }
 
-/// Rassemble les valeurs feuilles d'une valeur composée, chacune avec son
-/// chemin — les éléments d'une liste partageant celui de la liste, comme dans
-/// l'énumération que rend une grammaire.
-fn flatten(value: &Value, path: &str, valeurs: &mut Vec<SemanticValue>) {
+/// Gathers the leaf values of a composite value, each with its path — the
+/// elements of a list sharing the path of the list, as in the enumeration a
+/// grammar returns.
+fn flatten(value: &Value, path: &str, values: &mut Vec<SemanticValue>) {
     match value {
-        Value::List(values) => {
-            for value in values {
-                flatten(value, path, valeurs);
+        Value::List(elements) => {
+            for element in elements {
+                flatten(element, path, values);
             }
         }
         Value::Object(entries) => {
-            for (name, value) in entries {
-                let chemin = if path.is_empty() {
+            for (name, entry) in entries {
+                let child_path = if path.is_empty() {
                     name.clone()
                 } else {
                     format!("{path}.{name}")
                 };
-                flatten(value, &chemin, valeurs);
+                flatten(entry, &child_path, values);
             }
         }
-        feuille => valeurs.push(SemanticValue::new(path, feuille.clone())),
+        leaf => values.push(SemanticValue::new(path, leaf.clone())),
     }
 }
 
-/// Le rendu d'une édition et la trace qui la défait, produits par la **même**
-/// analyse : un second chemin de lecture divergerait de celui qui a écrit, et
-/// le passage que le produit croit posséder s'élargirait en silence.
+/// The rendering of an edit and the trace that undoes it, produced by the
+/// **same** parse: a second read path would drift from the one that wrote, and
+/// the passage the product believes it owns would widen in silence.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Applied {
-    /// Le document rendu après l'édition.
+    /// The document as rendered after the edit.
     pub rendered: String,
-    /// Ce qui défait cette édition.
+    /// What undoes this edit.
     pub inverse: Inverse,
 }
 
-/// Une valeur que le document porte, et le chemin où elle vit.
+/// A value the document carries, and the path where it lives.
 ///
-/// Les éléments d'un tableau partagent le chemin de ce tableau : leur rang
-/// n'entre pas dans leur identité, pour la même raison qu'il n'entre pas dans
-/// celle d'un élément qu'on retire.
+/// The elements of an array share the path of that array: their rank does not
+/// enter their identity, for the same reason it does not enter the identity of
+/// an element being removed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SemanticValue {
     path: String,
@@ -248,7 +243,7 @@ pub struct SemanticValue {
 }
 
 impl SemanticValue {
-    /// Une valeur à un chemin.
+    /// A value at a path.
     pub fn new(path: impl Into<String>, value: Value) -> Self {
         Self {
             path: path.into(),
@@ -256,12 +251,12 @@ impl SemanticValue {
         }
     }
 
-    /// Le chemin où elle vit.
+    /// The path where it lives.
     pub fn path(&self) -> &str {
         &self.path
     }
 
-    /// La valeur elle-même.
+    /// The value itself.
     pub fn value(&self) -> &Value {
         &self.value
     }
@@ -273,26 +268,25 @@ impl fmt::Display for SemanticValue {
     }
 }
 
-/// Les valeurs d'`avant` que le multiensemble d'`apres` ne contient pas.
+/// The values of `before` that the multiset `after` does not contain.
 ///
-/// **Un multiensemble, et pas un ensemble.** Un document peut porter deux fois
-/// la même valeur au même chemin — deux règles identiques dans un tableau —,
-/// et en perdre une est une perte. Comparer des ensembles la rendrait
-/// invisible.
-pub fn values_lost(avant: &[SemanticValue], apres: &[SemanticValue]) -> Vec<SemanticValue> {
-    let mut restantes: Vec<&SemanticValue> = apres.iter().collect();
-    let mut perdues = Vec::new();
-    for valeur in avant {
-        match restantes.iter().position(|candidate| *candidate == valeur) {
-            Some(rang) => {
-                restantes.remove(rang);
+/// **A multiset, not a set.** A document may carry the same value twice at the
+/// same path — two identical rules in an array — and losing one of them is a
+/// loss. Comparing sets would make it invisible.
+pub fn values_lost(before: &[SemanticValue], after: &[SemanticValue]) -> Vec<SemanticValue> {
+    let mut remaining: Vec<&SemanticValue> = after.iter().collect();
+    let mut lost = Vec::new();
+    for value in before {
+        match remaining.iter().position(|candidate| *candidate == value) {
+            Some(rank) => {
+                remaining.remove(rank);
             }
-            None => perdues.push(valeur.clone()),
+            None => lost.push(value.clone()),
         }
     }
-    perdues
+    lost
 }
 
-fn chemin(path: &[&str]) -> Vec<String> {
+fn owned_path(path: &[&str]) -> Vec<String> {
     path.iter().map(|segment| (*segment).to_string()).collect()
 }

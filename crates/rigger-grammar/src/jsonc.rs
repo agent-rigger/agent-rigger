@@ -1,11 +1,11 @@
-//! La grammaire JSONC, servie par `jsonc-parser 0.33.1` et sa fonctionnalité
-//! `cst`. JSON strict en étant un sous-ensemble, la même grammaire sert les
-//! documents sans commentaire.
+//! The JSONC grammar, served by `jsonc-parser 0.33.1` and its `cst` feature.
+//! Strict JSON being a subset of it, the same grammar serves documents without
+//! comments.
 //!
-//! **Un seul reconnaisseur.** Tout ce que ce module lit d'un document passe
-//! par l'arbre concret. Une seconde lecture du même texte — par un analyseur
-//! de valeurs, par exemple — divergerait de la première, et le passage que le
-//! produit croit posséder s'élargirait en silence.
+//! **One single recogniser.** Everything this module reads of a document goes
+//! through the concrete syntax tree. A second read of the same text — by a
+//! value parser, say — would drift from the first, and the passage the product
+//! believes it owns would widen in silence.
 
 use jsonc_parser::cst::{CstArray, CstInputValue, CstNode, CstObject, CstRootNode};
 use jsonc_parser::ParseOptions;
@@ -15,18 +15,18 @@ use crate::{
     Value,
 };
 
-/// La grammaire JSONC.
+/// The JSONC grammar.
 pub struct Jsonc;
 
-/// La sonde : un document minuscule qui porte la trivia que la préservation
-/// doit rendre — CRLF, commentaire de tête, commentaire de fin de ligne,
-/// indentation par tabulation, virgule traînante. Elle est écrite ici, à la
-/// main, et jamais copiée d'un fichier de la machine.
+/// The probe: a tiny document carrying the trivia that preservation must return
+/// — CRLF, leading comment, end-of-line comment, tab indentation, trailing
+/// comma. It is written here, by hand, and never copied from a file on the
+/// machine.
 const PROBE_SOURCE: &str = concat!(
     "{\r\n",
-    "\t// sonde — commentaire de tête\r\n",
+    "\t// probe — leading comment\r\n",
     "\t\"permissions\": {\r\n",
-    "\t\t\"deny\": [\"Bash(rm -rf *)\", \"Read(./secrets/**)\"], // garder\r\n",
+    "\t\t\"deny\": [\"Bash(rm -rf *)\", \"Read(./secrets/**)\"], // keep\r\n",
     "\t},\r\n",
     "}\r\n",
 );
@@ -34,45 +34,47 @@ const PROBE_SOURCE: &str = concat!(
 impl Grammar for Jsonc {
     const NAME: &'static str = "jsonc";
 
-    /// Le produit écrit dans ces documents : c'est la grammaire des documents
-    /// possédés par l'hôte servi — réglages et serveurs d'outils —, et la
-    /// seule sur laquelle le comportement `merge` a un objet (décision du
-    /// 2026-08-06, `docs/specs/refondation-multi-assistants/04-design-socle-neuf.md`
+    /// The product writes into these documents: this is the grammar of the
+    /// documents owned by the host that is served — settings and tool servers —
+    /// and the only one on which the `merge` behaviour has an object (decision
+    /// of 2026-08-06,
+    /// `docs/specs/refondation-multi-assistants/04-design-socle-neuf.md`
     /// § Plan de fichiers).
     ///
-    /// **Cette déclaration n'est plus crue sur parole depuis T3b.** La
-    /// dérivation exécute le chemin d'écriture sur la sonde : poser, relire ce
-    /// qui a été posé, puis défaire en rendant la pré-image octet pour octet.
-    /// Une grammaire qui déclarerait ce rôle sans ces trois-là est refusée en
-    /// nommant ce qui manque.
+    /// **This declaration is no longer taken on trust since T3b.** The
+    /// derivation runs the write path on the probe: write, read back what was
+    /// written, then undo while returning the pre-image byte for byte. A
+    /// grammar declaring this role without those three is refused, by naming
+    /// what is missing.
     const ROLE: GrammarRole = GrammarRole::ReadWrite;
 
-    /// Le critère est celui de toute la colonne, et il porte sur la
-    /// **grammaire** : *aucun second candidat qu'une position départagerait*.
+    /// The criterion is that of the whole column, and it bears on the
+    /// **grammar**: *no second candidate that a position would have to
+    /// separate*.
     ///
-    /// Le format ne le donne pas — il admet qu'un nom soit défini plusieurs
-    /// fois dans le même objet et laisse le comportement d'un lecteur
-    /// **indéfini** (RFC 8259 § 4 : « the behavior … is unpredictable »).
-    /// C'est donc l'implémentation qui le tient : la lecture refuse en
-    /// nommant la clé dès qu'elle est définie deux fois sur le chemin lu,
-    /// plutôt que d'honorer la première en silence. Sans ce refus, cette
-    /// colonne serait peuplée par deux critères contradictoires — un sur le
-    /// format ici, un sur la grammaire à côté — et le mode que C7 ferme se
-    /// rouvrirait sur un document qui porte le doublon.
+    /// The format does not give it — it admits that a name be defined more than
+    /// once in the same object and leaves a reader's behaviour **undefined**
+    /// (RFC 8259 § 4: "the behavior … is unpredictable"). So it is the
+    /// implementation that holds it: the read refuses, by naming the key, as
+    /// soon as it is defined twice on the path being read, rather than honour
+    /// the first one in silence. Without that refusal, this column would be
+    /// populated by two contradictory criteria — one about the format here, one
+    /// about the grammar next to it — and the mode C7 closes would reopen on a
+    /// document carrying the duplicate.
     ///
-    /// Le fait mesuré le 2026-08-06 sur le fichier de réglages servi — sa
-    /// résolution se fait **par catégorie** et non par position — reste vrai
-    /// et reste sourcé (`docs/specs/socle-neuf/requirements.md` § C7,
+    /// The fact measured on 2026-08-06 on the settings file that is served —
+    /// its resolution goes **by category** and not by position — remains true
+    /// and remains sourced (`docs/specs/socle-neuf/requirements.md` § C7,
     /// `docs/specs/refondation-multi-assistants/05-contrat-catalogue.md` § 5,
-    /// sonde documentaire du 2026-08-05). Il ne peut pas peupler seul cette
-    /// colonne : il porte sur **qui lit** le document, quand la condition
-    /// d'admission doit se dériver de la grammaire. Une affirmation non datée
-    /// sur ce point doit être tenue pour périmée.
+    /// documentary probe of 2026-08-05). It cannot populate this column on its
+    /// own: it bears on **who reads** the document, whereas the admission
+    /// condition must derive from the grammar. An undated claim on this point
+    /// must be held to be stale.
     const RESOLUTION: Resolution = Resolution::IndependentOfOrder;
 
     const PROBE: Probe = Probe {
         source: PROBE_SOURCE,
-        comment: "// sonde — commentaire de tête",
+        comment: "// probe — leading comment",
         list_path: &["permissions", "deny"],
         value_present: "Bash(rm -rf *)",
         value_absent: "Bash(true)",
@@ -126,19 +128,18 @@ impl Grammar for Jsonc {
                             let node = property
                                 .value()
                                 .ok_or_else(|| GrammarError::path_not_found(Jsonc::NAME, path))?;
-                            // Ce que la trace retient de la pré-image est sa
-                            // valeur **sémantique** : la bibliothèque n'offre
-                            // pas d'insérer des octets bruts ailleurs que dans
-                            // un littéral, donc un commentaire ou un
-                            // échappement vivant à l'intérieur de la valeur
-                            // remplacée ne se rétablit pas. Ce remplacement-là
-                            // ne doit donc pas atteindre le document, et ce
-                            // n'est pas ici que cela se décide : `merge`
-                            // exécute cet inverse sur le rendu et refuse quand
-                            // les octets d'avant ne reviennent pas. Le refus
-                            // est ainsi mesuré sur le document réel plutôt que
-                            // déduit d'une liste de formes auxquelles on aurait
-                            // pensé.
+                            // What the trace keeps of the pre-image is its
+                            // **semantic** value: the library offers no way to
+                            // insert raw bytes anywhere other than inside a
+                            // literal, so a comment or an escape living inside
+                            // the replaced value is not restored. Such a
+                            // replacement must therefore not reach the
+                            // document, and this is not where that is decided:
+                            // `merge` runs this inverse on the rendering and
+                            // refuses when the bytes from before do not come
+                            // back. The refusal is thus measured on the real
+                            // document rather than deduced from a list of
+                            // shapes we would have thought of.
                             replaced.push((name.clone(), read_value(&node)?));
                             property.set_value(input_value(value));
                         }
@@ -204,10 +205,9 @@ impl Grammar for Jsonc {
             Inverse::Values { path, added } => {
                 let array = array_at(&root, path)?;
                 for value in added {
-                    // Une seule occurrence par valeur enregistrée : le produit
-                    // en a ajouté une, il en retire une. Retirer toutes celles
-                    // qui portent la même valeur emporterait celle que
-                    // l'utilisateur avait écrite avant.
+                    // One occurrence per recorded value: the product added one,
+                    // it removes one. Removing every element carrying the same
+                    // value would take away the one the user had written before.
                     if let Some(element) = find_string_element(&array, value)? {
                         element.remove();
                     }
@@ -219,33 +219,34 @@ impl Grammar for Jsonc {
 
     fn values(source: &str) -> Result<Vec<SemanticValue>, GrammarError> {
         let root = parse(source)?;
-        let mut valeurs = Vec::new();
+        let mut values = Vec::new();
         if let Some(node) = root.value() {
-            collect_values(&node, "", &mut valeurs)?;
+            collect_values(&node, "", &mut values)?;
         }
-        Ok(valeurs)
+        Ok(values)
     }
 }
 
-/// L'objet au bout de `path`, refusant en chemin toute clé définie deux fois.
+/// The object at the end of `path`, refusing along the way any key defined
+/// twice.
 ///
-/// La navigation est la **même** que celle de la lecture, et elle refuse pour
-/// la même raison : écrire dans une des deux définitions d'une clé serait
-/// écrire dans un bloc dont rien ne dit qu'il est celui qui compte.
+/// The navigation is the **same** as the one used for reading, and it refuses
+/// for the same reason: writing into one of the two definitions of a key would
+/// be writing into a block that nothing says is the one that counts.
 fn object_at(root: &CstRootNode, path: &[String]) -> Result<CstObject, GrammarError> {
     let mut object = root
         .object_value()
         .ok_or_else(|| GrammarError::path_not_found(Jsonc::NAME, path))?;
-    for (rang, key) in path.iter().enumerate() {
+    for (rank, key) in path.iter().enumerate() {
         refuse_if_defined_twice(&object, key)?;
         object = object
             .object_value(key)
-            .ok_or_else(|| GrammarError::path_not_found(Jsonc::NAME, &path[..=rang]))?;
+            .ok_or_else(|| GrammarError::path_not_found(Jsonc::NAME, &path[..=rank]))?;
     }
     Ok(object)
 }
 
-/// Le tableau au bout de `path`, dernier segment compris.
+/// The array at the end of `path`, last segment included.
 fn array_at(root: &CstRootNode, path: &[String]) -> Result<CstArray, GrammarError> {
     let (list_key, object_path) = path
         .split_last()
@@ -257,10 +258,10 @@ fn array_at(root: &CstRootNode, path: &[String]) -> Result<CstArray, GrammarErro
         .ok_or_else(|| GrammarError::path_not_found(Jsonc::NAME, path))
 }
 
-/// Le premier élément du tableau dont la chaîne décodée vaut `value`.
+/// The first element of the array whose decoded string equals `value`.
 ///
-/// Par **égalité de valeur** et jamais par indice : un indice ne survit pas
-/// plus à un réordonnancement qu'un numéro de ligne à un reformatage.
+/// By **value equality** and never by index: an index survives a reordering no
+/// better than a line number survives a reformat.
 fn find_string_element(array: &CstArray, value: &str) -> Result<Option<CstNode>, GrammarError> {
     for element in array.elements() {
         let Some(literal) = element.as_string_lit() else {
@@ -276,7 +277,8 @@ fn find_string_element(array: &CstArray, value: &str) -> Result<Option<CstNode>,
     Ok(None)
 }
 
-/// Lit la valeur portée par un nœud, pour que l'inverse sache la rétablir.
+/// Reads the value carried by a node, so that the inverse knows how to restore
+/// it.
 fn read_value(node: &CstNode) -> Result<Value, GrammarError> {
     if let Some(literal) = node.as_string_lit() {
         let decoded = literal
@@ -287,9 +289,9 @@ fn read_value(node: &CstNode) -> Result<Value, GrammarError> {
     if let Some(number) = node.as_number_lit() {
         return Ok(Value::Number(number.to_string()));
     }
-    // Un mot nu — la tolérance du format sur les noms et valeurs non
-    // quotés — est rendu par son texte brut : le rétablir demande d'écrire
-    // ces octets-là, pas de leur donner un sens.
+    // A bare word — the format's tolerance for unquoted names and values — is
+    // returned as its raw text: restoring it means writing those bytes back,
+    // not giving them a meaning.
     if let Some(word) = node.as_word_lit() {
         return Ok(Value::Number(word.to_string()));
     }
@@ -315,14 +317,14 @@ fn read_value(node: &CstNode) -> Result<Value, GrammarError> {
     }
     Err(GrammarError::unsupported(
         Jsonc::NAME,
-        "lire une valeur de cette sorte",
+        "reading a value of this kind",
     ))
 }
 
 fn property_name(property: &jsonc_parser::cst::CstObjectProp) -> Result<String, GrammarError> {
     property
         .name()
-        .ok_or_else(|| GrammarError::malformed(Jsonc::NAME, "propriété sans nom"))?
+        .ok_or_else(|| GrammarError::malformed(Jsonc::NAME, "property with no name"))?
         .decoded_value()
         .map_err(|err| GrammarError::malformed(Jsonc::NAME, format!("{err:?}")))
 }
@@ -330,11 +332,11 @@ fn property_name(property: &jsonc_parser::cst::CstObjectProp) -> Result<String, 
 fn read_property_value(property: &jsonc_parser::cst::CstObjectProp) -> Result<Value, GrammarError> {
     let node = property
         .value()
-        .ok_or_else(|| GrammarError::malformed(Jsonc::NAME, "propriété sans valeur"))?;
+        .ok_or_else(|| GrammarError::malformed(Jsonc::NAME, "property with no value"))?;
     read_value(&node)
 }
 
-/// Traduit une valeur du produit vers ce que la bibliothèque sait insérer.
+/// Translates a value of the product into what the library can insert.
 fn input_value(value: &Value) -> CstInputValue {
     match value {
         Value::Text(text) => CstInputValue::String(text.clone()),
@@ -351,20 +353,20 @@ fn input_value(value: &Value) -> CstInputValue {
     }
 }
 
-/// Rassemble les valeurs **feuilles** du document, chacune avec son chemin.
+/// Gathers the **leaf** values of the document, each with its path.
 ///
-/// Les éléments d'un tableau partagent le chemin de ce tableau : leur rang
-/// n'entre pas dans leur identité, sans quoi ajouter un élément ferait
-/// « disparaître » tous ceux qui le suivent.
+/// The elements of an array share the path of that array: their rank does not
+/// enter their identity, failing which adding one element would make every
+/// element after it "disappear".
 fn collect_values(
     node: &CstNode,
     path: &str,
-    valeurs: &mut Vec<SemanticValue>,
+    values: &mut Vec<SemanticValue>,
 ) -> Result<(), GrammarError> {
     if let Some(object) = node.as_object() {
         for property in object.properties() {
             let name = property_name(&property)?;
-            let chemin = if path.is_empty() {
+            let child_path = if path.is_empty() {
                 name
             } else {
                 format!("{path}.{name}")
@@ -372,19 +374,19 @@ fn collect_values(
             let Some(value) = property.value() else {
                 continue;
             };
-            collect_values(&value, &chemin, valeurs)?;
+            collect_values(&value, &child_path, values)?;
         }
         return Ok(());
     }
     if let Some(array) = node.as_array() {
         for element in array.elements() {
-            collect_values(&element, path, valeurs)?;
+            collect_values(&element, path, values)?;
         }
         return Ok(());
     }
     let value = read_value(node)?;
     if value.is_leaf() {
-        valeurs.push(SemanticValue::new(path, value));
+        values.push(SemanticValue::new(path, value));
     }
     Ok(())
 }
@@ -394,16 +396,15 @@ fn parse(source: &str) -> Result<CstRootNode, GrammarError> {
         .map_err(|err| GrammarError::malformed(Jsonc::NAME, err))
 }
 
-/// Refuse en nommant la clé si `object` la définit plus d'une fois.
+/// Refuses, by naming the key, if `object` defines it more than once.
 ///
-/// Le format admet le doublon et laisse indéfini ce qu'un lecteur en fait
-/// (RFC 8259 § 4 : « the behavior … is unpredictable »). Lire la première
-/// occurrence serait un arbitrage, et un arbitrage muet : le produit
-/// écrirait dans un bloc dont rien ne dit qu'il est celui qui compte, la
-/// trace serait identique sur deux postes dont les politiques diffèrent, et
-/// le diagnostic rendrait `conforme` sur les deux. C'est le mode que C7
-/// existe pour fermer, et il ne dépend pas de la façon dont un hôte lit :
-/// il suffit que le format le permette.
+/// The format admits the duplicate and leaves undefined what a reader makes of
+/// it (RFC 8259 § 4: "the behavior … is unpredictable"). Reading the first
+/// occurrence would be an arbitration, and a silent one: the product would
+/// write into a block that nothing says is the one that counts, the trace would
+/// be identical on two machines whose policies differ, and the diagnosis would
+/// report both as compliant. That is the mode C7 exists to close, and it does
+/// not depend on how a host reads: it is enough that the format permits it.
 fn refuse_if_defined_twice(object: &CstObject, key: &str) -> Result<(), GrammarError> {
     let occurrences = object
         .properties()

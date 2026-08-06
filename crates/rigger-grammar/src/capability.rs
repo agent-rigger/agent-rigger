@@ -1,161 +1,161 @@
-//! La table de ce que chaque grammaire sait exprimer, **dérivée des
-//! implémentations** partout où cela se mesure, et déclarée avec sa source
-//! là où cela ne se mesure pas.
+//! The table of what each grammar can express, **derived from the
+//! implementations** wherever that can be measured, and declared with its
+//! source where it cannot.
 //!
-//! **Le point entier de ce module.** Répondre à « cette grammaire préserve-t-elle
-//! la trivia ? » **exécute** l'aller-retour sur la sonde de la grammaire et
-//! compare les octets. Répondre à « sait-elle désigner un élément de liste ? »
-//! **exécute** la recherche. Il n'existe aucun autre constructeur de
-//! [`Capabilities`] que [`Capabilities::of`] : une capacité ne peut pas être
-//! **annoncée** ailleurs que là où elle est **exécutée**. C'est ce que la
-//! tranche T3a existe pour fermer — un test de caractérisation décrit une
-//! limite, il ne l'impose pas.
+//! **The entire point of this module.** Answering "does this grammar preserve
+//! trivia?" **runs** the round trip on the grammar's probe and compares bytes.
+//! Answering "can it designate a list element?" **runs** the search. There
+//! exists no constructor of [`Capabilities`] other than [`Capabilities::of`]: a
+//! capability cannot be **announced** anywhere other than where it is
+//! **executed**. That is what slice T3a exists to close — a characterization
+//! test describes a limit, it does not impose one.
 //!
-//! **Ce que la dérivation garantit, et ce qu'elle ne garantit pas.** La
-//! phrase « une capacité annoncée sans implémentation est impossible à
-//! écrire » a figuré ici, et elle était fausse : la sonde comme l'aller-retour
-//! sont fournis par la grammaire jugée, donc une implémentation qui rend son
-//! entrée telle quelle sur une sonde édulcorée se créditait de tout. Ce que
-//! `measure_trivia` exige coûte quelque chose à qui voudrait recommencer —
-//! trois dimensions de trivia hostile dans la sonde, un fragment de
-//! commentaire dont l'optionalité est **exécutée**, et le refus de documents
-//! qui n'en sont pas, qui est ce qui distingue un analyseur d'une fonction
-//! identité.
+//! **What the derivation guarantees, and what it does not.** The sentence "a
+//! capability announced without an implementation is impossible to write" once
+//! stood here, and it was false: both the probe and the round trip are supplied
+//! by the grammar being judged, so an implementation returning its input
+//! unchanged on a watered-down probe credited itself with everything. What
+//! `measure_trivia` demands costs something to anyone who would try again —
+//! three dimensions of hostile trivia in the probe, a comment fragment whose
+//! optionality is **executed**, and the refusal of things that are not
+//! documents, which is what tells a parser apart from an identity function.
 //!
-//! **Deux choses que la sonde seule ne pouvait pas fermer, et qui sont
-//! fermées ici.** Elles ont toutes deux la même cause : ce sur quoi la mesure
-//! porte était choisi par celui qu'elle juge.
+//! **Two things the probe alone could not close, and which are closed here.**
+//! Both have the same cause: what the measurement bore on was chosen by the
+//! very thing it judges.
 //!
-//! *La sonde ne porte que la trivia que son auteur y met.* Les trois
-//! dimensions exigées nomment des catégories, pas des formes : une grammaire
-//! dont le rendu détruit les commentaires de **bloc**, avec une sonde ne
-//! portant qu'un commentaire de ligne, passait les trois et se créditait de
-//! la préservation. La mesure porte donc aussi sur [`SHARED_CORPUS`], les
-//! documents du dépôt — que l'auteur d'une grammaire ne choisit pas, dont les
-//! pièges sont gardés par `tests/conformance.rs`, et que **toute** grammaire
-//! se voit proposer quelle que soit leur extension. Ce qu'une grammaire lit
-//! d'eux, elle doit le rendre à l'octet près ; et une grammaire qui n'en lit
-//! aucun n'est mesurée que sur elle-même, donc n'est pas mesurée.
+//! *A probe carries only the trivia its author puts in it.* The three required
+//! dimensions name categories, not shapes: a grammar whose rendering destroys
+//! **block** comments, with a probe carrying only a line comment, passed all
+//! three and credited itself with preservation. The measurement therefore also
+//! bears on [`SHARED_CORPUS`], the documents of the repository — which the
+//! author of a grammar does not choose, whose traps are guarded by
+//! `tests/conformance.rs`, and which **every** grammar is offered whatever
+//! their extension. What a grammar reads of them, it must render back to the
+//! byte; and a grammar that reads none of them is measured only against itself,
+//! hence is not measured.
 //!
-//! *Un refus se contrefait.* Refuser un document préfixé d'une constante
-//! publique ne demande pas de savoir lire : `starts_with` suffit, et une
-//! fonction identité s'en trouvait créditée d'un analyseur. Les documents
-//! dont le refus est exigé sont donc **dérivés du document lui-même** — voir
-//! [`mutations`] : suivi de ce qui n'est pas un document, et concaténé à
-//! lui-même, deux formes qui commencent par les mêmes octets que l'original
-//! et que seule une lecture de la structure distingue.
+//! *A refusal can be counterfeited.* Refusing a document prefixed with a public
+//! constant requires no ability to read: `starts_with` is enough, and an
+//! identity function was thereby credited with having a parser. The documents
+//! whose refusal is demanded are therefore **derived from the document
+//! itself** — see [`mutations`]: followed by what is not a document, and
+//! concatenated with itself, two shapes that begin with the same bytes as the
+//! original and that only reading the structure tells apart.
 //!
-//! Aucune de ces épreuves ne rend la tricherie impossible : le corpus du
-//! dépôt est lisible, et ses mutations sont énumérables par qui veut les
-//! recopier en dur. Toutes la rendent visible et coûteuse, et aucune ne se
-//! satisfait plus d'un document que l'auteur de la grammaire a apporté.
+//! None of these trials makes cheating impossible: the repository corpus is
+//! readable, and its mutations can be enumerated by anyone willing to hard-code
+//! them. All of them make it visible and costly, and none is satisfied any
+//! longer by a document the author of the grammar brought along.
 //!
-//! **Deux termes ne s'exécutent pas.** La sensibilité à l'ordre de la
-//! [`Resolution`] est une propriété de qui lit le document et non du code qui
-//! l'écrit. Le [`GrammarRole`] est une **décision** produit sur ce que le
-//! produit s'autorise à écrire, et non une mesure. Les deux sont déclarés par
-//! chaque grammaire avec sa source datée, et la décision d'admission les lit
-//! dans cette table — jamais dans une liste d'hôtes.
+//! **Two terms do not execute.** The order sensitivity of [`Resolution`] is a
+//! property of whoever reads the document, not of the code that writes it. The
+//! [`GrammarRole`] is a product **decision** about what the product allows
+//! itself to write, not a measurement. Both are declared by each grammar with
+//! its dated source, and the admission decision reads them in this table —
+//! never in a list of host names.
 
 use std::fmt;
 
 use crate::{Grammar, Jsonc, Toml};
 
-/// Les documents du dépôt, embarqués dans la caisse : le second témoin de la
-/// dérivation, et le seul qui ne soit pas fourni par la grammaire jugée.
+/// The documents of the repository, embedded in the crate: the second witness
+/// of the derivation, and the only one not supplied by the grammar being
+/// judged.
 ///
-/// **Pourquoi ils vivent dans la bibliothèque et pas dans un test.** La porte
-/// d'admission doit être mécanique (`docs/specs/socle-neuf/tasks.md` § T3a) :
-/// une table qui se trompe pendant qu'un test rougit reste une table qui se
-/// trompe pour qui l'appelle. La mesure a donc besoin des documents au moment
-/// où elle répond, pas au moment où la suite tourne.
+/// **Why they live in the library and not in a test.** The admission gate must
+/// be mechanical (`docs/specs/socle-neuf/tasks.md` § T3a): a table that is
+/// wrong while a test goes red is still a table that is wrong for whoever calls
+/// it. The measurement therefore needs the documents at the moment it answers,
+/// not at the moment the suite runs.
 ///
-/// **Pourquoi ils restent physiquement dans `tests/corpus/`.** C'est le
-/// domicile que le plan de fichiers de T1 leur donne, et les gardes de
-/// fixture qui vérifient qu'ils portent encore leurs pièges y sont attachées.
-/// `tests/conformance.rs` vérifie que cette liste nomme chaque fichier du
-/// dossier : une liste et un dossier qui décrivent le même jeu sans se
-/// rencontrer divergeraient, et la divergence prendrait la forme d'un
-/// document ajouté au dépôt que la dérivation ne verrait jamais.
+/// **Why they stay physically in `tests/corpus/`.** That is the home the T1
+/// file plan gives them, and the fixture guards that check they still carry
+/// their traps are attached there. `tests/conformance.rs` checks that this list
+/// names every file of the directory: a list and a directory describing the
+/// same set without ever meeting would drift apart, and the drift would take
+/// the shape of a document added to the repository that the derivation would
+/// never see.
 ///
-/// Ils sont proposés à **toute** grammaire, sans considération d'extension :
-/// aiguiller un document vers une grammaire par son nom rendrait à l'auteur
-/// d'une grammaire le choix de ce sur quoi il est jugé.
+/// They are offered to **every** grammar, with no regard for extension:
+/// routing a document to a grammar by its name would hand the author of a
+/// grammar the choice of what they are judged on.
 ///
-/// **La liste est énumérée par `build.rs`, jamais recopiée** — le script dit
-/// les deux raisons, dont l'une est que le nom d'un de ces fichiers est un nom
-/// d'hôte, que le scénario C7 interdit d'écrire dans cette source.
-pub const SHARED_CORPUS: &[(&str, &str)] = genere::SHARED_CORPUS;
+/// **The list is enumerated by `build.rs`, never copied by hand** — the script
+/// gives both reasons, one of which is that the name of one of these files is
+/// the name of a host, which scenario C7 forbids writing into this source.
+pub const SHARED_CORPUS: &[(&str, &str)] = generated::SHARED_CORPUS;
 
-/// La liste écrite par `build.rs` à la compilation. Elle vit dans son propre
-/// module pour que la documentation de [`SHARED_CORPUS`] reste ici, où elle se
-/// lit avec le reste de la dérivation.
-mod genere {
+/// The list written by `build.rs` at compile time. It lives in its own module
+/// so that the documentation of [`SHARED_CORPUS`] stays here, where it reads
+/// together with the rest of the derivation.
+mod generated {
     include!(concat!(env!("OUT_DIR"), "/shared_corpus.rs"));
 }
 
-/// Les documents dérivés de `source` dont la dérivation exige le **refus**.
+/// The documents derived from `source` whose **refusal** the derivation
+/// demands.
 ///
-/// Ce que chacun coûte à contrefaire, qui est la seule raison de leur choix.
-/// Le premier est préfixé de [`crate::NOT_A_DOCUMENT`] : il se refuse par un
-/// `starts_with`, et il ne prouve donc rien à lui seul — il reste parce qu'un
-/// document qui commence par ce qui n'en est pas un doit être refusé, et que
-/// c'est la forme la plus lisible de l'épreuve. Les deux autres commencent
-/// par les **mêmes octets que l'original** : les refuser demande de lire au
-/// moins jusqu'à l'endroit où ils cessent d'être un document, c'est-à-dire
-/// d'analyser. La concaténation à soi-même n'emploie aucune constante de
-/// cette caisse : elle ne se reconnaît pas au motif, seulement à la structure
-/// — deux racines en JSON, une clé ou une table définie deux fois en TOML.
+/// What each of them costs to counterfeit is the only reason they were chosen.
+/// The first is prefixed with [`crate::NOT_A_DOCUMENT`]: it can be refused by a
+/// `starts_with`, so on its own it proves nothing — it stays because a document
+/// beginning with what is not one must be refused, and because it is the most
+/// readable shape of the trial. The other two begin with the **same bytes as
+/// the original**: refusing them requires reading at least as far as the point
+/// where they stop being a document, that is, parsing. Concatenation with
+/// itself uses no constant of this crate: it is recognisable by no pattern,
+/// only by structure — two roots in JSON, a key or a table defined twice in
+/// TOML.
 pub fn mutations(source: &str) -> [(&'static str, String); 3] {
     [
         (
-            "préfixé de ce qui n'est pas un document",
+            "prefixed with what is not a document",
             format!("{}{source}", crate::NOT_A_DOCUMENT),
         ),
         (
-            "suivi de ce qui n'est pas un document",
+            "followed by what is not a document",
             format!("{source}{}", crate::NOT_A_DOCUMENT),
         ),
-        ("concaténé à lui-même", format!("{source}{source}")),
+        ("concatenated with itself", format!("{source}{source}")),
     ]
 }
 
-/// Ce que le produit s'autorise à faire des documents d'une grammaire.
+/// What the product allows itself to do with the documents of a grammar.
 ///
-/// Ce terme-ci reste **déclaré**, comme [`Resolution`] : ce que le produit
-/// s'autorise à écrire est une décision, et aucune mesure ne la remplace. Une
-/// bibliothèque qui deviendrait fidèle ne rouvrirait pas une grammaire que le
-/// produit a décidé de ne pas écrire.
+/// This term stays **declared**, like [`Resolution`]: what the product allows
+/// itself to write is a decision, and no measurement replaces it. A library
+/// that became faithful would not reopen a grammar the product has decided not
+/// to write.
 ///
-/// **Ce que la déclaration ne suffit plus à obtenir, depuis T3b.** Elle ne
-/// donne que le droit d'être mesurée. Une grammaire qui se déclare
-/// [`GrammarRole::ReadWrite`] voit son chemin d'écriture **exécuté** par
-/// [`Capabilities::of`] — poser, relire ce qui a été posé, défaire en rendant
-/// la pré-image octet pour octet —, et le manque de l'un des trois la fait
-/// refuser en le nommant. C'est la dette que ce module portait par écrit tant
-/// qu'aucune grammaire n'avait de chemin d'écriture, et elle est collectée.
+/// **What the declaration no longer buys, since T3b.** It grants nothing but
+/// the right to be measured. A grammar declaring itself
+/// [`GrammarRole::ReadWrite`] has its write path **executed** by
+/// [`Capabilities::of`] — write, read back what was written, undo while
+/// returning the pre-image byte for byte — and missing any one of the three
+/// gets it refused, by name. That is the debt this module carried in writing
+/// for as long as no grammar had a write path, and it is now collected.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GrammarRole {
-    /// Le produit lit ces documents et n'y écrit jamais. Décision produit :
-    /// le refus est catégorique et ne dépend d'aucune mesure — ni d'une
-    /// bibliothèque, ni d'un octet perdu.
+    /// The product reads these documents and never writes into them. A product
+    /// decision: the refusal is categorical and depends on no measurement —
+    /// neither on a library, nor on a lost byte.
     ReadOnly,
-    /// Le produit écrit dans ces documents.
+    /// The product writes into these documents.
     ReadWrite,
 }
 
-/// La sensibilité à l'ordre de la résolution d'un document.
+/// How sensitive to order the resolution of a document is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Resolution {
-    /// L'ordre d'apparition décide de ce qui l'emporte. Poser une clé au
-    /// mauvais rang y est inopérant sans erreur et sans trace.
+    /// Order of appearance decides what wins. Writing a key at the wrong rank
+    /// there is ineffective with no error and no trace.
     DependsOnOrder,
-    /// L'ordre n'entre pas dans la résolution.
+    /// Order plays no part in the resolution.
     IndependentOfOrder,
 }
 
-/// Ce qui a divergé quand l'aller-retour n'a pas rendu les octets. Mesuré,
-/// jamais supposé : c'est ce que le refus nomme.
+/// What diverged when the round trip failed to return the bytes. Measured,
+/// never assumed: this is what the refusal names.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TriviaDivergence {
     first_divergent_offset: usize,
@@ -166,13 +166,12 @@ pub struct TriviaDivergence {
 }
 
 impl TriviaDivergence {
-    /// Ce qui a divergé entre deux rendus, ou rien s'ils sont identiques.
+    /// What diverged between two renderings, or nothing if they are identical.
     ///
-    /// Visible dans la caisse parce que [`crate::merge`] mesure la même chose
-    /// sur le document de l'utilisateur que la dérivation mesure sur la sonde.
-    /// Une seconde façon de dire « ces octets diffèrent » divergerait de
-    /// celle-ci, et le refus ne nommerait pas la même chose selon l'endroit
-    /// d'où il tombe.
+    /// Visible inside the crate because [`crate::merge`] measures on the user's
+    /// document the same thing the derivation measures on the probe. A second
+    /// way of saying "these bytes differ" would drift from this one, and the
+    /// refusal would not name the same thing depending on where it fell from.
     pub(crate) fn measure(input: &str, output: &str) -> Option<Self> {
         if input == output {
             return None;
@@ -195,89 +194,87 @@ impl TriviaDivergence {
 
 impl fmt::Display for TriviaDivergence {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // Le libellé se déduit de la mesure : nommer « les fins de ligne »
-        // quand ce sont elles qui manquent, et le seul offset quand la perte
-        // est ailleurs. Un libellé écrit à la main survivrait à un changement
-        // de cause en désignant toujours la mauvaise.
+        // The wording is deduced from the measurement: name "the line endings"
+        // when they are what went missing, and the offset alone when the loss
+        // is elsewhere. A hand-written wording would survive a change of cause
+        // by always pointing at the wrong one.
         if self.crlf_out < self.crlf_in {
             write!(
                 f,
-                "les fins de ligne ({} CRLF en entrée, {} en sortie)",
+                "the line endings ({} CRLF in, {} out)",
                 self.crlf_in, self.crlf_out
             )
         } else {
             write!(
                 f,
-                "les octets à partir de l'offset {} (entrée {} octets, sortie {})",
+                "the bytes from offset {} on (input {} bytes, output {})",
                 self.first_divergent_offset, self.bytes_in, self.bytes_out
             )
         }
     }
 }
 
-/// Pourquoi le comportement `merge` est refusé sur une grammaire.
+/// Why the `merge` behaviour is refused on a grammar.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RefusalReason {
-    /// Le produit n'écrit pas les documents de cette grammaire. Raison
-    /// **catégorique** : elle ne se lève par aucune mesure, et surtout pas
-    /// par la correction d'une bibliothèque.
+    /// The product does not write the documents of this grammar. A
+    /// **categorical** reason: no measurement lifts it, least of all a library
+    /// being fixed.
     ReadOnlyGrammar,
-    /// L'aller-retour sur la sonde n'a pas rendu les octets hors trace.
+    /// The round trip on the probe did not return the bytes outside the trace.
     TriviaNotPreserved(TriviaDivergence),
-    /// La résolution du document dépend de l'ordre d'apparition.
+    /// The resolution of the document depends on order of appearance.
     ResolutionDependsOnOrder,
-    /// La lecture de la sonde a elle-même échoué : une grammaire qui ne sait
-    /// pas relire son propre document ne peut rien promettre de ce qu'elle y
-    /// écrirait.
+    /// Reading the probe itself failed: a grammar that cannot read back its own
+    /// document can promise nothing about what it would write into one.
     ProbeUnreadable(crate::GrammarError),
-    /// La sonde ne porte pas la dimension de trivia hostile nommée, donc la
-    /// préservation ne s'y mesure pas sur cette dimension : un aller-retour
-    /// qui la détruit y passerait pour fidèle.
+    /// The probe does not carry the named dimension of hostile trivia, so
+    /// preservation cannot be measured on it along that dimension: a round trip
+    /// destroying it would pass for faithful.
     ProbeWithoutHostileTrivia {
-        /// La dimension absente.
+        /// The missing dimension.
         dimension: &'static str,
     },
-    /// La grammaire a accepté un document qui n'en est pas un. Il n'y a donc
-    /// pas d'analyseur derrière son aller-retour, et une fonction identité
-    /// rendrait n'importe quelle sonde à l'octet près sans avoir rien
-    /// compris du document.
+    /// The grammar accepted something that is not a document. There is
+    /// therefore no parser behind its round trip, and an identity function
+    /// would return any probe to the byte without having understood anything of
+    /// the document.
     MalformedDocumentAccepted {
-        /// Le document dont la mutation a été acceptée.
+        /// The document whose mutation was accepted.
         document: &'static str,
-        /// La mutation acceptée, nommée — voir [`mutations`].
+        /// The accepted mutation, named — see [`mutations`].
         mutation: &'static str,
     },
-    /// Un document du corpus du dépôt que la grammaire **lit** n'a pas été
-    /// rendu à l'octet près. C'est la mesure que sa propre sonde ne peut pas
-    /// donner : elle ne porte que la trivia que son auteur y a mise.
+    /// A document of the repository corpus that the grammar **reads** was not
+    /// returned to the byte. This is the measurement its own probe cannot
+    /// give: a probe carries only the trivia its author put in it.
     SharedCorpusNotPreserved {
-        /// Le document du dépôt qui n'a pas été rendu.
+        /// The repository document that was not returned.
         document: &'static str,
-        /// Ce qui a divergé, mesuré.
+        /// What diverged, measured.
         divergence: TriviaDivergence,
     },
-    /// La grammaire ne lit aucun document du corpus du dépôt. Sa préservation
-    /// n'est donc mesurée que sur la sonde qu'elle fournit elle-même, ce qui
-    /// laisse à son auteur le choix de ce sur quoi il est jugé.
+    /// The grammar reads no document of the repository corpus. Its preservation
+    /// is therefore measured only on the probe it supplies itself, which leaves
+    /// its author the choice of what they are judged on.
     NoSharedCorpusDocument,
-    /// Le fragment que la sonde déclare comme commentaire ne l'est pas : le
-    /// document privé de ce fragment n'est plus lisible, donc ce fragment
-    /// porte de la donnée et la dimension « commentaire » n'est pas mesurée.
+    /// The fragment the probe declares as a comment is not one: the document
+    /// stripped of that fragment is no longer readable, so the fragment carries
+    /// data and the "comment" dimension is not measured.
     ProbeCommentIsNotTrivia(crate::GrammarError),
-    /// La grammaire se déclare en écriture et n'a pas de chemin d'écriture :
-    /// son édition refuse. C'est une capacité annoncée sans implémentation, et
-    /// c'est la dette que ce module devait collecter le jour où un chemin
-    /// d'écriture existerait.
+    /// The grammar declares itself writable and has no write path: its edit
+    /// refuses. That is a capability announced without an implementation, and
+    /// it is the debt this module had to collect the day a write path existed.
     NoWritePath(crate::GrammarError),
-    /// L'édition a été appliquée mais le rendu ne porte pas ce qu'elle
-    /// demandait d'écrire, ou n'est plus lisible par sa propre grammaire.
+    /// The edit was applied but the rendering does not carry what it asked to
+    /// write, or is no longer readable by its own grammar.
     EditNotApplied(&'static str),
-    /// L'inverse de l'édition a refusé de s'appliquer : ce que la grammaire a
-    /// écrit, elle ne sait pas le défaire.
+    /// The inverse of the edit refused to apply: what the grammar wrote, it
+    /// cannot undo.
     InverseUnusable(crate::GrammarError),
-    /// L'inverse s'applique mais ne rend pas la pré-image octet pour octet :
-    /// le retrait reformaterait le document du propriétaire, à l'endroit où
-    /// personne ne regarde.
+    /// The inverse applies but does not return the pre-image byte for byte:
+    /// removal would reformat the owner's document, at the spot where nobody is
+    /// looking.
     InverseNotByteIdentical(TriviaDivergence),
 }
 
@@ -286,73 +283,74 @@ impl fmt::Display for RefusalReason {
         match self {
             Self::ReadOnlyGrammar => write!(
                 f,
-                "le produit n'écrit pas les documents de cette grammaire — elle est en lecture \
-                 seule par décision produit, et cette raison ne se lève par aucune mesure"
+                "the product does not write the documents of this grammar — it is read-only by \
+                 product decision, and that reason is lifted by no measurement"
             ),
             Self::TriviaNotPreserved(divergence) => write!(
                 f,
-                "l'aller-retour ne rend pas les octets hors trace : {divergence}"
+                "the round trip does not return the bytes outside the trace: {divergence}"
             ),
             Self::ResolutionDependsOnOrder => write!(
                 f,
-                "la résolution du document dépend de l'ordre d'apparition — une pose par clés y \
-                 serait inopérante sans erreur et sans trace"
+                "the resolution of the document depends on order of appearance — writing by keys \
+                 there would be ineffective with no error and no trace"
             ),
             Self::ProbeUnreadable(err) => {
-                write!(f, "la sonde de la grammaire n'est pas relisible : {err}")
+                write!(f, "the probe of the grammar cannot be read back: {err}")
             }
             Self::ProbeWithoutHostileTrivia { dimension } => write!(
                 f,
-                "la sonde de la grammaire ne porte pas la dimension « {dimension} » — la \
-                 préservation des octets hors trace n'y est pas mesurable"
+                "the probe of the grammar does not carry the \"{dimension}\" dimension — the \
+                 preservation of the bytes outside the trace cannot be measured on it"
             ),
             Self::MalformedDocumentAccepted { document, mutation } => write!(
                 f,
-                "la grammaire a accepté « {document} » {mutation}, qui n'est pas un document — \
-                 son aller-retour ne passe par aucun analyseur, et rendrait sa sonde à l'octet \
-                 près sans rien en avoir compris"
+                "the grammar accepted \"{document}\" {mutation}, which is not a document — its \
+                 round trip goes through no parser, and would return its probe to the byte \
+                 without having understood any of it"
             ),
             Self::SharedCorpusNotPreserved {
                 document,
                 divergence,
             } => write!(
                 f,
-                "l'aller-retour sur « {document} », document du dépôt que cette grammaire lit, \
-                 ne rend pas les octets hors trace : {divergence}"
+                "the round trip on \"{document}\", a repository document this grammar reads, \
+                 does not return the bytes outside the trace: {divergence}"
             ),
             Self::NoSharedCorpusDocument => write!(
                 f,
-                "la grammaire ne lit aucun document du dépôt — sa préservation n'est mesurée \
-                 que sur la sonde qu'elle fournit elle-même"
+                "the grammar reads no document of the repository — its preservation is measured \
+                 only on the probe it supplies itself"
             ),
             Self::ProbeCommentIsNotTrivia(err) => write!(
                 f,
-                "le fragment que la sonde déclare commentaire porte de la donnée : le document \
-                 privé de ce fragment n'est plus lisible — {err}"
+                "the fragment the probe declares to be a comment carries data: the document \
+                 stripped of that fragment is no longer readable — {err}"
             ),
             Self::NoWritePath(err) => write!(
                 f,
-                "la grammaire se déclare en écriture et n'a pas de chemin d'écriture — {err}"
+                "the grammar declares itself writable and has no write path — {err}"
             ),
             Self::EditNotApplied(detail) => {
-                write!(f, "l'édition n'a pas été appliquée à la sonde : {detail}")
+                write!(f, "the edit was not applied to the probe: {detail}")
             }
             Self::InverseUnusable(err) => write!(
                 f,
-                "l'inverse de l'édition ne s'applique pas — ce que la grammaire écrit, elle ne \
-                 sait pas le défaire : {err}"
+                "the inverse of the edit does not apply — what the grammar writes, it cannot \
+                 undo: {err}"
             ),
             Self::InverseNotByteIdentical(divergence) => write!(
                 f,
-                "l'inverse de l'édition ne rend pas la pré-image octet pour octet : {divergence}"
+                "the inverse of the edit does not return the pre-image byte for byte: \
+                 {divergence}"
             ),
         }
     }
 }
 
-/// Le refus lui-même : il nomme la grammaire, le comportement, et chaque
-/// raison. Chaque raison est portée séparément, parce qu'un refus qui n'en
-/// donne qu'une laisse croire que lever celle-là suffirait.
+/// The refusal itself: it names the grammar, the behaviour, and every reason.
+/// Each reason is carried separately, because a refusal giving only one of them
+/// suggests that lifting that one would be enough.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MergeRefusal {
     grammar: &'static str,
@@ -360,12 +358,12 @@ pub struct MergeRefusal {
 }
 
 impl MergeRefusal {
-    /// La grammaire refusée.
+    /// The refused grammar.
     pub fn grammar(&self) -> &'static str {
         self.grammar
     }
 
-    /// Les raisons du refus, dans l'ordre où elles ont été constatées.
+    /// The reasons for the refusal, in the order they were observed.
     pub fn reasons(&self) -> &[RefusalReason] {
         &self.reasons
     }
@@ -375,7 +373,7 @@ impl fmt::Display for MergeRefusal {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "le comportement `merge` est refusé sur la grammaire `{}`",
+            "the `merge` behaviour is refused on grammar `{}`",
             self.grammar
         )?;
         for reason in &self.reasons {
@@ -385,21 +383,20 @@ impl fmt::Display for MergeRefusal {
     }
 }
 
-/// L'admission d'une grammaire au comportement `merge`.
+/// The admission of a grammar to the `merge` behaviour.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MergeAdmission {
-    /// La grammaire est admise.
+    /// The grammar is admitted.
     Admitted,
-    /// La grammaire est refusée, en la nommant.
+    /// The grammar is refused, by name.
     Refused(MergeRefusal),
 }
 
-/// Ce qu'une grammaire sait exprimer.
+/// What a grammar can express.
 ///
-/// Les champs sont privés et [`Capabilities::of`] est le seul chemin qui en
-/// construit une. Ce n'est pas une précaution de style : c'est la garantie
-/// qu'aucune capacité ne peut être **annoncée** ailleurs que là où elle est
-/// **exécutée**.
+/// The fields are private and [`Capabilities::of`] is the only path that builds
+/// one. This is not a stylistic precaution: it is the guarantee that no
+/// capability can be **announced** anywhere other than where it is **executed**.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Capabilities {
     grammar: &'static str,
@@ -413,7 +410,7 @@ pub struct Capabilities {
 }
 
 impl Capabilities {
-    /// Mesure les capacités de `G` en exécutant ses propriétés sur sa sonde.
+    /// Measures the capabilities of `G` by running its properties on its probe.
     pub fn of<G: Grammar>() -> Self {
         let probe = G::PROBE;
 
@@ -422,9 +419,9 @@ impl Capabilities {
             shared_corpus_documents_read,
         } = measure_trivia::<G>();
 
-        // Désigner un élément de liste, c'est trouver celui qui y est et ne
-        // pas trouver celui qui n'y est pas. Une implémentation qui répond
-        // sans regarder le document échoue sur la seconde moitié.
+        // Designating a list element means finding the one that is there and
+        // not finding the one that is not. An implementation that answers
+        // without looking at the document fails on the second half.
         let designates_list_element = matches!(
             G::find_string_in_list(probe.source, probe.list_path, probe.value_present),
             Ok(true)
@@ -433,16 +430,15 @@ impl Capabilities {
             Ok(false)
         );
 
-        // Les raisons sont accumulées de la plus catégorique à la plus
-        // contingente, et toutes sont portées : un refus qui n'en donne
-        // qu'une laisse croire que lever celle-là suffirait. La lecture
-        // seule vient donc en tête — elle ne se lève par aucune mesure.
+        // Reasons are accumulated from the most categorical to the most
+        // contingent, and all of them are carried: a refusal giving only one
+        // suggests that lifting that one would be enough. Read-only therefore
+        // comes first — it is lifted by no measurement.
         //
-        // Le chemin d'écriture n'est mesuré que sur une grammaire qui se
-        // déclare en écriture. Sur une grammaire en lecture seule, l'absence
-        // d'un chemin d'écriture n'est pas un défaut mais la décision
-        // elle-même, et la publier en second motif laisserait croire qu'en
-        // écrire un rouvrirait la porte.
+        // The write path is measured only on a grammar that declares itself
+        // writable. On a read-only grammar, the absence of a write path is not
+        // a defect but the decision itself, and publishing it as a second
+        // motive would suggest that writing one would reopen the gate.
         let write = if G::ROLE == GrammarRole::ReadWrite {
             measure_write_path::<G>()
         } else {
@@ -480,104 +476,104 @@ impl Capabilities {
         }
     }
 
-    /// Le nom de la grammaire mesurée.
+    /// The name of the measured grammar.
     pub fn grammar(&self) -> &'static str {
         self.grammar
     }
 
-    /// Ce que le produit s'autorise à faire de ses documents.
+    /// What the product allows itself to do with its documents.
     pub fn role(&self) -> GrammarRole {
         self.role
     }
 
-    /// La grammaire rend-elle les octets hors trace à l'identique.
+    /// Whether the grammar returns the bytes outside the trace unchanged.
     pub fn preserves_trivia(&self) -> bool {
         self.trivia.is_empty()
     }
 
-    /// Combien de documents de [`SHARED_CORPUS`] cette grammaire lit.
+    /// How many documents of [`SHARED_CORPUS`] this grammar reads.
     ///
-    /// Zéro veut dire que sa préservation n'a été mesurée que sur la sonde
-    /// qu'elle fournit elle-même — c'est un défaut d'instrument, et il est
-    /// porté comme tel par [`RefusalReason::NoSharedCorpusDocument`].
+    /// Zero means its preservation was measured only on the probe it supplies
+    /// itself — that is a defect of the instrument, and it is carried as such
+    /// by [`RefusalReason::NoSharedCorpusDocument`].
     pub fn shared_corpus_documents_read(&self) -> usize {
         self.shared_corpus_documents_read
     }
 
-    /// La grammaire sait-elle désigner un élément de liste par sa valeur.
+    /// Whether the grammar can designate a list element by its value.
     pub fn designates_list_element(&self) -> bool {
         self.designates_list_element
     }
 
-    /// La grammaire sait-elle écrire une édition **et la défaire** en rendant
-    /// la pré-image octet pour octet. Mesuré en exécutant les deux sur sa
-    /// sonde, jamais déduit de son rôle déclaré.
+    /// Whether the grammar can write an edit **and undo it** while returning
+    /// the pre-image byte for byte. Measured by running both on its probe,
+    /// never deduced from its declared role.
     pub fn applies_edits(&self) -> bool {
         self.applies_edits
     }
 
-    /// La sensibilité à l'ordre de la résolution de ses documents.
+    /// How sensitive to order the resolution of its documents is.
     pub fn resolution(&self) -> Resolution {
         self.resolution
     }
 
-    /// L'admission au comportement `merge`, et son refus nommé le cas échéant.
+    /// Admission to the `merge` behaviour, and its named refusal where
+    /// applicable.
     pub fn merge(&self) -> &MergeAdmission {
         &self.merge
     }
 }
 
-/// Ce que la mesure de la trivia rapporte : les raisons de refuser, toutes,
-/// et le nombre de documents du dépôt que la grammaire a lus.
+/// What the trivia measurement reports: the reasons to refuse, all of them, and
+/// the number of repository documents the grammar read.
 ///
-/// **Toutes les raisons, et non la première.** Les épreuves ne s'arrêtent plus
-/// à la première qui échoue, et ce n'est pas une commodité de rapport : le
-/// décompte des documents du dépôt lus doit être établi même quand la sonde a
-/// déjà échoué, sans quoi une grammaire refusée sur sa sonde passerait pour
-/// une grammaire qui ne lit rien du dépôt, et les deux défauts d'instrument
-/// deviendraient indistinguables.
+/// **All the reasons, not the first one.** The trials no longer stop at the
+/// first failure, and that is not a reporting convenience: the count of
+/// repository documents read must be established even when the probe has
+/// already failed, failing which a grammar refused on its probe would pass for
+/// a grammar that reads nothing of the repository, and the two defects of
+/// instrument would become indistinguishable.
 struct TriviaMeasure {
     reasons: Vec<RefusalReason>,
     shared_corpus_documents_read: usize,
 }
 
-/// Mesure la préservation de la trivia de `G`, en épreuves qui vont de
-/// l'instrument vers la mesure, et sur deux jeux de documents dont un seul
-/// appartient à la grammaire jugée.
+/// Measures the trivia preservation of `G`, in trials that run from the
+/// instrument towards the measurement, and on two sets of documents of which
+/// only one belongs to the grammar being judged.
 ///
-/// **Les épreuves d'instrument** existent parce que la sonde comme
-/// l'aller-retour sont fournis par la grammaire jugée. Une sonde édulcorée, ou
-/// une implémentation qui rend son entrée telle quelle, rendrait la réponse
-/// trivialement vraie. Elles ne rendent pas l'annonce mensongère impossible —
-/// voir l'en-tête du module —, elles la rendent mesurablement fausse sur ce
-/// qui est mesurable.
+/// **The instrument trials** exist because both the probe and the round trip
+/// are supplied by the grammar being judged. A watered-down probe, or an
+/// implementation returning its input unchanged, would make the answer
+/// trivially true. They do not make a lying announcement impossible — see the
+/// module header — they make it measurably false on what is measurable.
 ///
-/// **Les épreuves sur [`SHARED_CORPUS`]** portent sur des documents que
-/// l'auteur d'une grammaire ne choisit pas. C'est la seule partie de la mesure
-/// dont il ne fournit pas l'instrument, et c'est pour cela qu'elle attrape ce
-/// que la sonde laisse passer : une forme de trivia que la sonde ne contient
-/// pas, et un refus contrefait qui n'a jamais eu à lire un document réel.
+/// **The trials on [`SHARED_CORPUS`]** bear on documents the author of a
+/// grammar does not choose. This is the only part of the measurement whose
+/// instrument they do not supply, and that is why it catches what the probe
+/// lets through: a form of trivia the probe does not contain, and a
+/// counterfeit refusal that never had to read a real document.
 fn measure_trivia<G: Grammar>() -> TriviaMeasure {
     let probe = G::PROBE;
     let mut reasons = Vec::new();
 
-    // 1. L'instrument porte les trois dimensions de trivia hostile. Les deux
-    //    premières se reconnaissent sans rien savoir de la grammaire ; la
-    //    troisième est déclarée, et vérifiée en 3. Ces trois dimensions
-    //    nomment des catégories et non des formes — un commentaire de bloc
-    //    absent de la sonde reste invisible ici, et c'est l'épreuve 5 qui le
-    //    rattrape.
+    // 1. The instrument carries the three dimensions of hostile trivia. The
+    //    first two can be recognised without knowing anything about the
+    //    grammar; the third is declared, and checked in 3. These three
+    //    dimensions name categories and not shapes — a block comment absent
+    //    from the probe stays invisible here, and it is trial 5 that catches
+    //    it.
     for (dimension, present) in [
-        ("fin de ligne CRLF", probe.source.contains("\r\n")),
+        ("CRLF line ending", probe.source.contains("\r\n")),
         (
-            "ligne indentée",
+            "indented line",
             probe
                 .source
                 .lines()
                 .any(|line| line.starts_with(' ') || line.starts_with('\t')),
         ),
         (
-            "commentaire",
+            "comment",
             !probe.comment.is_empty() && probe.source.contains(probe.comment),
         ),
     ] {
@@ -586,31 +582,31 @@ fn measure_trivia<G: Grammar>() -> TriviaMeasure {
         }
     }
 
-    // 2. Un analyseur existe. Ce qui distingue une grammaire d'une fonction
-    //    identité n'est pas ce qu'elle rend, c'est ce qu'elle **refuse** :
-    //    une identité rend n'importe quelle sonde à l'octet près et serait
-    //    créditée de tout. Le refus est donc une condition de la mesure, pas
-    //    une propriété distincte.
+    // 2. A parser exists. What tells a grammar apart from an identity function
+    //    is not what it returns, it is what it **refuses**: an identity returns
+    //    any probe to the byte and would be credited with everything. The
+    //    refusal is therefore a condition of the measurement, not a separate
+    //    property.
     //
-    //    Conséquence assumée, écrite ici plutôt que découverte plus tard :
-    //    une grammaire dont le langage accepte **tout texte** échoue cette
-    //    épreuve et n'est pas admise. C'est le bon sens du refus — sa
-    //    préservation ne se mesure pas par un aller-retour, elle se mesurera
-    //    sur son chemin d'écriture, et l'admission se rouvrira alors avec un
-    //    motif au lieu d'avoir été accordée par défaut.
-    reasons.extend(refused_mutations::<G>("la sonde", probe.source));
+    //    A consequence accepted and written here rather than discovered later:
+    //    a grammar whose language accepts **any text** fails this trial and is
+    //    not admitted. That is the right sense of the refusal — its
+    //    preservation cannot be measured by a round trip, it will be measured
+    //    on its write path, and admission will then reopen with a motive
+    //    instead of having been granted by default.
+    reasons.extend(refused_mutations::<G>("the probe", probe.source));
 
-    // 3. Le fragment déclaré commentaire en est un. Retiré, le document doit
-    //    rester lisible — sinon il portait de la donnée, et la dimension
-    //    « commentaire » n'était portée que dans la déclaration.
+    // 3. The fragment declared to be a comment is one. Removed, the document
+    //    must stay readable — otherwise it carried data, and the "comment"
+    //    dimension was carried by the declaration alone.
     if !probe.comment.is_empty() {
         if let Err(err) = G::round_trip(&probe.source.replace(probe.comment, "")) {
             reasons.push(RefusalReason::ProbeCommentIsNotTrivia(err));
         }
     }
 
-    // 4. La mesure sur la sonde : elle est relue, et les octets rendus sont
-    //    comparés aux octets d'entrée.
+    // 4. The measurement on the probe: it is read back, and the bytes returned
+    //    are compared to the bytes fed in.
     match G::round_trip(probe.source) {
         Err(err) => reasons.push(RefusalReason::ProbeUnreadable(err)),
         Ok(rendered) => {
@@ -620,10 +616,10 @@ fn measure_trivia<G: Grammar>() -> TriviaMeasure {
         }
     }
 
-    // 5. La mesure sur le corpus du dépôt. Chaque document est proposé, et un
-    //    document refusé n'est pas un défaut : une grammaire ne lit pas les
-    //    documents d'une autre. Ce qui est exigé porte sur ceux qu'elle
-    //    **accepte** — les rendre à l'octet près, et refuser leurs mutations.
+    // 5. The measurement on the repository corpus. Every document is offered,
+    //    and a refused document is not a defect: a grammar does not read the
+    //    documents of another. What is demanded bears on those it **accepts** —
+    //    returning them to the byte, and refusing their mutations.
     let mut shared_corpus_documents_read = 0;
     for &(document, source) in SHARED_CORPUS {
         let Ok(rendered) = G::round_trip(source) else {
@@ -648,30 +644,29 @@ fn measure_trivia<G: Grammar>() -> TriviaMeasure {
     }
 }
 
-/// Mesure le chemin d'écriture de `G` en l'**exécutant** sur sa sonde : une
-/// valeur que la sonde déclare absente y est posée, puis retirée par l'inverse
-/// que l'édition a rendu.
+/// Measures the write path of `G` by **running** it on its probe: a value the
+/// probe declares absent is written there, then removed by the inverse the edit
+/// returned.
 ///
-/// **Ce que cette mesure ferme.** Le rôle d'une grammaire est une décision
-/// produit, donc déclarée ; tant qu'aucune grammaire n'avait de chemin
-/// d'écriture, se déclarer en écriture ne coûtait rien et rien ne pouvait le
-/// contredire. C'est la dette que ce module portait par écrit. Une grammaire
-/// qui se déclare en écriture doit désormais **écrire**, **relire ce qu'elle a
-/// écrit**, et **rendre la pré-image octet pour octet** en le défaisant.
+/// **What this measurement closes.** The role of a grammar is a product
+/// decision, hence declared; for as long as no grammar had a write path,
+/// declaring oneself writable cost nothing and nothing could contradict it.
+/// That is the debt this module carried in writing. A grammar declaring itself
+/// writable must now **write**, **read back what it wrote**, and **return the
+/// pre-image byte for byte** when undoing it.
 ///
-/// **Ce qu'elle ne ferme pas.** La sonde appartient à la grammaire jugée, donc
-/// une édition triviale sur un document docile reste possible ici. C'est
-/// `tests/conformance.rs` qui exerce la même propriété sur les documents du
-/// dépôt, que l'auteur d'une grammaire ne choisit pas.
+/// **What it does not close.** The probe belongs to the grammar being judged,
+/// so a trivial edit on a docile document remains possible here. It is
+/// `tests/conformance.rs` that exercises the same property on the documents of
+/// the repository, which the author of a grammar does not choose.
 ///
-/// **Et ce qu'aucune des deux ne pouvait fermer.** Une seule édition est posée
-/// ici, et une seule là-bas : ce qu'elles établissent est qu'un chemin
-/// d'écriture existe et qu'il se défait **sur ce cas-là**. Rien n'en découle
-/// pour l'écriture suivante, sur un document que personne n'a vu — une clé dont
-/// la valeur porte un commentaire se remplace sans erreur et ne se défait pas.
-/// L'admission ne peut donc pas être le dernier mot : [`crate::merge`] défait
-/// chaque écriture qu'il calcule avant de la rendre, et refuse si les octets
-/// d'avant ne reviennent pas.
+/// **And what neither of the two could close.** One single edit is written
+/// here, and one single edit there: what they establish is that a write path
+/// exists and that it undoes itself **on that case**. Nothing follows for the
+/// next write, on a document nobody has seen — a key whose value carries a
+/// comment is replaced without error and does not undo. Admission therefore
+/// cannot be the last word: [`crate::merge`] undoes every write it computes
+/// before returning it, and refuses if the bytes from before do not come back.
 fn measure_write_path<G: Grammar>() -> Vec<RefusalReason> {
     let probe = G::PROBE;
     let edit = crate::Edit::values(probe.list_path, [probe.value_absent]);
@@ -681,24 +676,24 @@ fn measure_write_path<G: Grammar>() -> Vec<RefusalReason> {
         Err(err) => return vec![RefusalReason::NoWritePath(err)],
     };
 
-    // La relecture passe par l'énumération des valeurs, et non par la
-    // recherche dans une liste : c'est le témoin dont la post-condition se
-    // sert, donc c'est lui qui doit exister. Une grammaire qui écrit sans
-    // savoir relire ce qu'elle a écrit ne peut rien promettre de ce qu'elle a
-    // détruit.
+    // Reading back goes through the enumeration of values, and not through the
+    // search in a list: the enumeration is the witness the post-condition uses,
+    // so it is the one that must exist. A grammar that writes without being
+    // able to read back what it wrote can promise nothing about what it
+    // destroyed.
     let mut reasons = Vec::new();
-    let posee = crate::SemanticValue::new(
+    let written = crate::SemanticValue::new(
         probe.list_path.join("."),
         crate::Value::Text(probe.value_absent.to_string()),
     );
     match G::values(&applied.rendered) {
         Err(_) => reasons.push(RefusalReason::EditNotApplied(
-            "le rendu n'est plus lisible par sa propre grammaire",
+            "the rendering is no longer readable by its own grammar",
         )),
-        Ok(valeurs) => {
-            if !valeurs.contains(&posee) {
+        Ok(values) => {
+            if !values.contains(&written) {
                 reasons.push(RefusalReason::EditNotApplied(
-                    "la valeur posée est absente du rendu",
+                    "the written value is absent from the rendering",
                 ));
             }
         }
@@ -706,8 +701,8 @@ fn measure_write_path<G: Grammar>() -> Vec<RefusalReason> {
 
     match G::invert(&applied.rendered, &applied.inverse) {
         Err(err) => reasons.push(RefusalReason::InverseUnusable(err)),
-        Ok(defait) => {
-            if let Some(divergence) = TriviaDivergence::measure(probe.source, &defait) {
+        Ok(undone) => {
+            if let Some(divergence) = TriviaDivergence::measure(probe.source, &undone) {
                 reasons.push(RefusalReason::InverseNotByteIdentical(divergence));
             }
         }
@@ -716,8 +711,8 @@ fn measure_write_path<G: Grammar>() -> Vec<RefusalReason> {
     reasons
 }
 
-/// Exige de `G` qu'elle refuse chaque mutation de `source`, et nomme celles
-/// qu'elle a acceptées.
+/// Demands of `G` that it refuse every mutation of `source`, and names those it
+/// accepted.
 fn refused_mutations<G: Grammar>(document: &'static str, source: &str) -> Vec<RefusalReason> {
     mutations(source)
         .into_iter()
@@ -726,11 +721,11 @@ fn refused_mutations<G: Grammar>(document: &'static str, source: &str) -> Vec<Re
         .collect()
 }
 
-/// La table des capacités des grammaires que cette caisse porte aujourd'hui.
+/// The capability table of the grammars this crate carries today.
 ///
-/// Elle en portera d'autres — le bloc borné par marqueurs et la lecture
-/// d'entête —, et chacune s'ajoutera ici par une ligne d'appel, sa mesure
-/// venant de son implémentation.
+/// It will carry others — the block bounded by markers, and the header read —
+/// and each will be added here by one call line, its measurement coming from
+/// its implementation.
 pub fn table() -> Vec<Capabilities> {
     vec![Capabilities::of::<Jsonc>(), Capabilities::of::<Toml>()]
 }

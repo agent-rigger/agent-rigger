@@ -1,23 +1,22 @@
-//! Énumère les documents de `tests/corpus/` et en écrit la liste que
-//! `src/capability.rs` embarque sous le nom `SHARED_CORPUS`.
+//! Enumerates the documents of `tests/corpus/` and writes the list that
+//! `src/capability.rs` embeds under the name `SHARED_CORPUS`.
 //!
-//! **Pourquoi elle est générée et non écrite.** Deux raisons, et chacune
-//! suffirait.
+//! **Why it is generated rather than written.** Two reasons, and either would
+//! be enough.
 //!
-//! La première est la divergence. Une liste écrite à la main dans la source et
-//! un dossier de documents décrivent le même jeu sans se rencontrer : un
-//! document ajouté au dépôt et oublié dans la liste ne serait jamais proposé à
-//! une grammaire, et la mesure retomberait en silence sur les seuls documents
-//! déjà connus. C'est le mode que la table des capacités existe pour fermer,
-//! transposé à son propre instrument.
+//! The first is drift. A list written by hand in the source and a directory of
+//! documents describe the same set without ever meeting: a document added to
+//! the repository and forgotten in the list would never be offered to a
+//! grammar, and the measurement would silently fall back on the documents
+//! already known. That is the mode the capability table exists to close,
+//! transposed to its own instrument.
 //!
-//! La seconde est que le nom d'un de ces fichiers est un nom d'hôte. Le
-//! scénario C7 (`docs/specs/socle-neuf/requirements.md`) exige que la
-//! condition d'admission se dérive d'une propriété de la grammaire et
-//! **qu'aucun nom d'hôte n'apparaisse dans la source de la caisse** — une
-//! garde le vérifie fichier par fichier. Énumérer le dossier plutôt que le
-//! recopier est ce qui rend cette exigence tenable : la caisse ne nomme aucun
-//! document, elle les prend tous.
+//! The second is that the name of one of these files is the name of a host.
+//! Scenario C7 (`docs/specs/socle-neuf/requirements.md`) demands that the
+//! admission condition derive from a property of the grammar and that **no host
+//! name appear in the source of the crate** — a guard checks this file by file.
+//! Enumerating the directory rather than copying it out is what makes that
+//! requirement tenable: the crate names no document, it takes them all.
 
 use std::env;
 use std::fmt::Write as _;
@@ -28,43 +27,43 @@ fn main() {
     let manifest = env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR");
     let corpus = Path::new(&manifest).join("tests/corpus");
 
-    // Le dossier entier, et pas seulement ses fichiers : un document déposé
-    // après coup doit relancer cette génération, sans quoi la liste embarquée
-    // serait celle d'un état antérieur du dépôt.
+    // The whole directory, and not only its files: a document dropped in later
+    // must trigger this generation again, failing which the embedded list would
+    // be the one of an earlier state of the repository.
     println!("cargo::rerun-if-changed={}", corpus.display());
 
     let mut documents: Vec<_> = fs::read_dir(&corpus)
-        .unwrap_or_else(|err| panic!("{}: dossier corpus illisible — {err}", corpus.display()))
-        .map(|entry| entry.expect("entrée de dossier lisible").path())
+        .unwrap_or_else(|err| panic!("{}: corpus directory unreadable — {err}", corpus.display()))
+        .map(|entry| entry.expect("readable directory entry").path())
         .filter(|path| path.is_file())
         .collect();
     documents.sort();
 
     assert!(
         !documents.is_empty(),
-        "{}: aucun document — la dérivation des capacités n'aurait plus de second témoin",
+        "{}: no document — the capability derivation would lose its second witness",
         corpus.display()
     );
 
-    // Les durées de vie sont élidées : dans une constante elles valent
-    // `'static`, et `clippy::redundant_static_lifetimes` refuse qu'on les
-    // écrive. Le code généré passe les mêmes portes que le code écrit.
-    let mut rendu = String::from("pub const SHARED_CORPUS: &[(&str, &str)] = &[\n");
+    // Lifetimes are elided: in a constant they are `'static`, and
+    // `clippy::redundant_static_lifetimes` refuses to see them written. The
+    // generated code passes the same gates as the written code.
+    let mut rendered = String::from("pub const SHARED_CORPUS: &[(&str, &str)] = &[\n");
     for path in &documents {
-        let nom = path
+        let name = path
             .file_name()
-            .and_then(|nom| nom.to_str())
-            .unwrap_or_else(|| panic!("{}: nom de fichier non UTF-8", path.display()));
-        let chemin = path
+            .and_then(|name| name.to_str())
+            .unwrap_or_else(|| panic!("{}: non-UTF-8 file name", path.display()));
+        let full_path = path
             .to_str()
-            .unwrap_or_else(|| panic!("{}: chemin non UTF-8", path.display()));
-        writeln!(rendu, "    ({nom:?}, include_str!({chemin:?})),")
-            .expect("écriture en mémoire infaillible");
-        println!("cargo::rerun-if-changed={chemin}");
+            .unwrap_or_else(|| panic!("{}: non-UTF-8 path", path.display()));
+        writeln!(rendered, "    ({name:?}, include_str!({full_path:?})),")
+            .expect("writing to memory is infallible");
+        println!("cargo::rerun-if-changed={full_path}");
     }
-    rendu.push_str("];\n");
+    rendered.push_str("];\n");
 
     let out = Path::new(&env::var("OUT_DIR").expect("OUT_DIR")).join("shared_corpus.rs");
-    fs::write(&out, rendu)
-        .unwrap_or_else(|err| panic!("{}: écriture impossible — {err}", out.display()));
+    fs::write(&out, rendered)
+        .unwrap_or_else(|err| panic!("{}: cannot write — {err}", out.display()));
 }

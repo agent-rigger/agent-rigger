@@ -4,10 +4,10 @@ version = "0.0.0"
 edition = "2021"
 publish = false
 
-# Promues de [dev-dependencies] à [dependencies] par T3a : `src/jsonc.rs` et
-# `src/toml.rs` existent, et la table des capacités dérive ses réponses en
-# exécutant ces deux bibliothèques. Versions exactes, comme à T1 : la mesure
-# de préservation ne vaut que pour la version mesurée.
+# Promoted from [dev-dependencies] to [dependencies] by T3a: `src/jsonc.rs` and
+# `src/toml.rs` exist, and the capability table derives its answers by running
+# these two libraries. Exact versions, as at T1: a preservation measurement
+# holds only for the version it was measured on.
 [dependencies]
 jsonc-parser = { version = "=0.33.1", features = ["cst"] }
 toml_edit = { version = "=0.25.13" }

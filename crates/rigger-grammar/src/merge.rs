@@ -1,40 +1,38 @@
-//! Le comportement `merge`, dans sa partie **pure** : la porte d'admission,
-//! l'édition, et la post-condition sur la sortie. Aucune entrée-sortie ici —
-//! l'écriture conditionnée du document appartient à la caisse qui la porte.
+//! The `merge` behaviour, in its **pure** part: the admission gate, the edit,
+//! and the post-condition on the output. No input or output here — the
+//! conditional write of the document belongs to the crate that carries it.
 //!
-//! **Trois étapes, dans cet ordre, et l'ordre est le fond.**
+//! **Three steps, in this order, and the order is the substance.**
 //!
-//! La porte d'admission d'abord : une grammaire dont l'implémentation ne rend
-//! pas les octets hors trace ne doit pas atteindre le document. Le refus tombe
-//! donc **avant** qu'un rendu existe, et à plus forte raison avant qu'il
-//! remplace quoi que ce soit.
+//! The admission gate first: a grammar whose implementation does not return the
+//! bytes outside the trace must not reach the document. The refusal therefore
+//! falls **before** a rendering exists, and a fortiori before it replaces
+//! anything.
 //!
-//! L'édition ensuite, sur la structure de la grammaire.
+//! The edit next, on the structure of the grammar.
 //!
-//! La post-condition enfin, et elle porte **sur la sortie**. Ce que les
-//! contrôles d'entrée disent est ce qu'on a cru comprendre ; ce que la
-//! post-condition dit est ce qu'on a fait. Elle compare les valeurs
-//! sémantiques d'avant et d'après : constater la présence de ce qu'on a ajouté
-//! ne dit **rien** de ce qu'on a détruit, et c'est par ce trou qu'une valeur
-//! écrite par l'utilisateur est sortie d'un tableau.
+//! The post-condition last, and it bears **on the output**. What the input
+//! checks say is what we thought we understood; what the post-condition says is
+//! what we did. It compares the semantic values from before and after:
+//! observing the presence of what we added says **nothing** about what we
+//! destroyed, and it is through that hole that a value written by the user left
+//! an array.
 //!
-//! **Elle a deux moitiés, et la seconde est en octets.** La comparaison des
-//! valeurs sémantiques ne voit que des feuilles : un commentaire, une
-//! indentation, un échappement n'en sont pas, donc leur disparition la laisse
-//! muette. C1 exige l'inverse — la différence entre le document d'avant et
-//! celui d'après doit se réduire **exactement** à ce que la trace enregistre,
-//! sinon la transaction annule. La seule façon de le constater sans le
-//! supposer est de **défaire l'écriture qu'on vient de calculer** et de
-//! comparer les octets à ceux d'avant. C'est ce que la dérivation des capacités
-//! exige d'une grammaire sur sa sonde ; ici, la même épreuve porte sur le
-//! document de l'utilisateur, que personne n'a choisi.
+//! **It has two halves, and the second is in bytes.** Comparing semantic values
+//! sees leaves only: a comment, an indentation, an escape are not leaves, so
+//! their disappearance leaves it silent. C1 demands the opposite — the
+//! difference between the document before and the document after must reduce
+//! **exactly** to what the trace records, otherwise the transaction aborts. The
+//! only way to observe that without assuming it is to **undo the write we have
+//! just computed** and compare the bytes to those from before. That is what the
+//! capability derivation demands of a grammar on its probe; here, the same
+//! trial bears on the user's document, which nobody chose.
 //!
-//! Ce que cette moitié attrape et que rien d'autre n'attrapait : la trace d'une
-//! clé remplacée n'enregistre que la valeur **sémantique** de sa pré-image, si
-//! bien qu'un commentaire vivant à l'intérieur de cette valeur était détruit à
-//! la pose et jamais rendu au retrait. Le refus tombe désormais avant que le
-//! document ne soit remplacé, et il tombe pour toute écriture qui ne se défait
-//! pas — pas seulement pour celles auxquelles on aurait pensé.
+//! What this half catches and nothing else caught: the trace of a replaced key
+//! records only the **semantic** value of its pre-image, so a comment living
+//! inside that value was destroyed on write and never restored on removal. The
+//! refusal now falls before the document is replaced, and it falls for any
+//! write that does not undo — not only for the ones we would have thought of.
 
 use std::fmt;
 
@@ -44,40 +42,40 @@ use crate::{
     MergeRefusal, SemanticValue,
 };
 
-/// Ce qu'une fusion réussie rend : le document à écrire, et la trace qui le
-/// défait.
+/// What a successful merge returns: the document to write, and the trace that
+/// undoes it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Merged {
-    /// Le document rendu, à écrire tel quel.
+    /// The rendered document, to be written as is.
     pub rendered: String,
-    /// Ce qui défait cette fusion.
+    /// What undoes this merge.
     pub inverse: Inverse,
 }
 
-/// Pourquoi une fusion n'a pas eu lieu. Aucune de ces quatre variantes ne
-/// laisse un document remplacé : la première tombe avant tout rendu, les
-/// autres rendent un document qui n'a jamais quitté la mémoire.
+/// Why a merge did not happen. None of these four variants leaves a document
+/// replaced: the first falls before any rendering, the others return a document
+/// that never left memory.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MergeError {
-    /// La grammaire n'est pas admise au comportement `merge`.
+    /// The grammar is not admitted to the `merge` behaviour.
     NotAdmitted(MergeRefusal),
-    /// La grammaire a refusé de lire ou d'écrire, en se nommant.
+    /// The grammar refused to read or to write, while naming itself.
     Grammar(GrammarError),
-    /// La post-condition a constaté la disparition de valeurs que le document
-    /// portait avant l'édition.
+    /// The post-condition observed the disappearance of values the document
+    /// carried before the edit.
     ValuesLost {
-        /// La grammaire qui a écrit.
+        /// The grammar that wrote.
         grammar: &'static str,
-        /// Les valeurs disparues, avec leur chemin.
+        /// The values that disappeared, with their path.
         lost: Vec<SemanticValue>,
     },
-    /// La trace calculée ne rend pas le document d'avant octet pour octet. La
-    /// pose serait donc irréversible, et l'écart porte sur ce que la trace
-    /// n'enregistre pas — un commentaire, une indentation, un échappement.
+    /// The computed trace does not return the document from before byte for
+    /// byte. The write would therefore be irreversible, and the gap bears on
+    /// what the trace does not record — a comment, an indentation, an escape.
     PreimageNotRestored {
-        /// La grammaire qui a écrit.
+        /// The grammar that wrote.
         grammar: &'static str,
-        /// Ce qui a divergé entre la pré-image et ce que la trace rend.
+        /// What diverged between the pre-image and what the trace returns.
         divergence: TriviaDivergence,
     },
 }
@@ -96,12 +94,12 @@ impl fmt::Display for MergeError {
             Self::ValuesLost { grammar, lost } => {
                 write!(
                     f,
-                    "grammaire `{grammar}` : l'écriture a fait disparaître {} valeur(s) que le \
-                     document portait —",
+                    "grammar `{grammar}`: the write made {} value(s) the document carried \
+                     disappear —",
                     lost.len()
                 )?;
-                for valeur in lost {
-                    write!(f, " {valeur}")?;
+                for value in lost {
+                    write!(f, " {value}")?;
                 }
                 Ok(())
             }
@@ -110,9 +108,9 @@ impl fmt::Display for MergeError {
                 divergence,
             } => write!(
                 f,
-                "grammaire `{grammar}` : cette écriture ne se défait pas — la trace calculée ne \
-                 rend pas le document d'avant, {divergence}. La transaction annule plutôt que de \
-                 poser dans un document possédé ce qu'elle ne saurait pas retirer"
+                "grammar `{grammar}`: this write does not undo — the computed trace does not \
+                 return the document from before, {divergence}. The transaction aborts rather \
+                 than write into an owned document something it would not know how to remove"
             ),
         }
     }
@@ -120,39 +118,38 @@ impl fmt::Display for MergeError {
 
 impl std::error::Error for MergeError {}
 
-/// Fusionne `edit` dans `source` sous la grammaire `G`.
+/// Merges `edit` into `source` under grammar `G`.
 ///
-/// Rend le document à écrire et sa trace inverse, ou dit pourquoi il n'y en a
-/// pas — sans jamais rendre un document partiellement édité : une fusion qui
-/// échoue ne rend rien du tout, et c'est ce qui fait de l'annulation la
-/// conduite par défaut plutôt qu'une conduite à écrire à chaque appelant.
+/// Returns the document to write and its inverse trace, or says why there is
+/// none — without ever returning a partially edited document: a merge that
+/// fails returns nothing at all, and that is what makes aborting the default
+/// conduct rather than a conduct every caller has to write.
 pub fn merge<G: Grammar>(source: &str, edit: &Edit) -> Result<Merged, MergeError> {
-    // La porte est interrogée à chaque appel, et sa réponse est **mesurée**,
-    // pas lue dans une table calculée ailleurs : le corpus du dépôt y est
-    // retraversé. Le coût est celui de quelques documents de réglages, et il
-    // est payé pour que la table ne puisse pas se tromper entre le moment où
-    // elle est calculée et celui où elle sert. Le jour où il pèsera, le
-    // remède est un cache — donc une invalidation à écrire, et une raison de
-    // ne pas le faire avant d'avoir mesuré.
+    // The gate is queried on every call, and its answer is **measured**, not
+    // read from a table computed elsewhere: the repository corpus is traversed
+    // again. The cost is that of a handful of settings documents, and it is
+    // paid so that the table cannot be wrong between the moment it is computed
+    // and the moment it is used. The day it weighs, the remedy is a cache —
+    // hence an invalidation to write, and a reason not to do it before having
+    // measured.
     match Capabilities::of::<G>().merge() {
         MergeAdmission::Admitted => {}
         MergeAdmission::Refused(refusal) => return Err(MergeError::NotAdmitted(refusal.clone())),
     }
 
-    let avant = G::values(source)?;
+    let before = G::values(source)?;
     let Applied { rendered, inverse } = G::apply(source, edit)?;
 
-    // Relire le rendu est ce qui rend la post-condition possible, et c'est
-    // aussi ce qui prouve que la sortie est reparsable : une sortie que sa
-    // propre grammaire ne relit pas est un document détruit, quoi qu'en dise
-    // le reste.
-    let apres = G::values(&rendered)?;
-    // Ce que la trace enregistre est soustrait de ce qui a disparu : la
-    // différence doit se réduire **exactement** à la trace, ni plus — une
-    // valeur détruite hors trace est irretirable — ni moins — une mise à jour
-    // remplace une valeur, et c'est son objet.
-    let disparues = values_lost(&avant, &apres);
-    let lost = values_lost(&disparues, &inverse.recorded_values());
+    // Reading the rendering back is what makes the post-condition possible, and
+    // it also proves the output can be parsed again: an output its own grammar
+    // does not read back is a destroyed document, whatever the rest may say.
+    let after = G::values(&rendered)?;
+    // What the trace records is subtracted from what disappeared: the
+    // difference must reduce **exactly** to the trace, no more — a value
+    // destroyed outside the trace cannot be removed — and no less — an update
+    // replaces a value, and that is its purpose.
+    let disappeared = values_lost(&before, &after);
+    let lost = values_lost(&disappeared, &inverse.recorded_values());
     if !lost.is_empty() {
         return Err(MergeError::ValuesLost {
             grammar: G::NAME,
@@ -160,21 +157,20 @@ pub fn merge<G: Grammar>(source: &str, edit: &Edit) -> Result<Merged, MergeError
         });
     }
 
-    // La seconde moitié de la post-condition, en octets : la trace est
-    // **exécutée** sur le rendu, et ce qu'elle rend doit être le document
-    // d'avant. Une trace qui ne rend pas la pré-image décrit une pose
-    // irréversible, et l'écart tombe exactement là où la comparaison des
-    // valeurs sémantiques est aveugle — un commentaire, une indentation, un
-    // échappement ne sont pas des feuilles.
+    // The second half of the post-condition, in bytes: the trace is **run** on
+    // the rendering, and what it returns must be the document from before. A
+    // trace that does not return the pre-image describes an irreversible write,
+    // and the gap falls exactly where comparing semantic values is blind — a
+    // comment, an indentation, an escape are not leaves.
     //
-    // Elle vient **après** la comparaison des valeurs, et cet ordre est du
-    // fond : une écriture qui détruit une valeur de l'utilisateur doit être
-    // refusée en nommant cette valeur, qui est ce que son propriétaire
-    // reconnaît, plutôt qu'en nommant un offset.
+    // It comes **after** the comparison of values, and that order is
+    // substantive: a write that destroys a user's value must be refused by
+    // naming that value, which is what its owner recognises, rather than by
+    // naming an offset.
     match G::invert(&rendered, &inverse) {
         Err(err) => return Err(MergeError::Grammar(err)),
-        Ok(defait) => {
-            if let Some(divergence) = TriviaDivergence::measure(source, &defait) {
+        Ok(undone) => {
+            if let Some(divergence) = TriviaDivergence::measure(source, &undone) {
                 return Err(MergeError::PreimageNotRestored {
                     grammar: G::NAME,
                     divergence,

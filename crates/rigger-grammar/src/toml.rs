@@ -1,31 +1,30 @@
-//! La grammaire TOML, servie par `toml_edit 0.25.13`, **en lecture seule**.
+//! The TOML grammar, served by `toml_edit 0.25.13`, **read-only**.
 //!
-//! **Pourquoi elle n'écrit pas** (tranché le 2026-08-06,
+//! **Why it does not write** (settled on 2026-08-06,
 //! `docs/specs/refondation-multi-assistants/04-design-socle-neuf.md`
-//! § Plan de fichiers). Son rôle d'écriture était un fichier de configuration
-//! d'un hôte qui n'est plus servi, et aucun document possédé par l'hôte servi
-//! n'est en TOML. Elle sert la lecture du fichier de catalogue et des
-//! descripteurs, et rien d'autre.
+//! § Plan de fichiers). Its writing role was the configuration file of a host
+//! that is no longer served, and no document owned by the host that is served
+//! is in TOML. It serves the reading of the catalogue file and of the
+//! descriptors, and nothing else.
 //!
-//! **Ce qui refuse le `merge`, et dans quel ordre.** La lecture seule est la
-//! raison **catégorique** : elle vient de la décision ci-dessus, elle est
-//! portée par [`GrammarRole::ReadOnly`](crate::GrammarRole), et aucune mesure
-//! ne la lève. C'est le refus que le plan de fichiers demande — « un `merge`
-//! déclaré sur cette grammaire est refusé en la nommant, comme sur
-//! `frontmatter_read` » —, et `frontmatter_read` est refusée parce qu'elle
-//! n'écrit pas, jamais parce qu'une bibliothèque perdrait des octets.
+//! **What refuses `merge`, and in what order.** Read-only is the
+//! **categorical** reason: it comes from the decision above, it is carried by
+//! [`GrammarRole::ReadOnly`](crate::GrammarRole), and no measurement lifts it.
+//! It is the refusal the file plan asks for — "a `merge` declared on this
+//! grammar is refused by name, as on `frontmatter_read`" — and
+//! `frontmatter_read` is refused because it does not write, never because a
+//! library would lose bytes.
 //!
-//! **Ce que cela fait de la limite mesurée à T1.** `toml_edit 0.25.13`
-//! normalise toute fin de ligne CRLF en LF **au rendu** — cause au source,
-//! non contournable par option, caractérisée dans
-//! `tests/limites_connues.rs`. Cette limite n'est plus un obstacle de
-//! production, et elle n'est plus non plus ce qui ferme la porte : elle est
-//! une **seconde** raison, mesurée sur la sonde ci-dessous, publiée à côté de
-//! la première. Le jour où la bibliothèque corrige, cette raison-là
-//! disparaîtra du refus et l'admission **ne se rouvrira pas** — une grammaire
-//! dont le produit a décidé qu'il n'écrit pas n'a pas de porte à rouvrir.
-//! Les deux raisons sont publiées séparément précisément pour qu'un lecteur
-//! ne prenne pas la seconde pour la première.
+//! **What that makes of the limit measured at T1.** `toml_edit 0.25.13`
+//! normalises every CRLF line ending to LF **on render** — a cause at the
+//! source, not avoidable by any option, characterized in
+//! `tests/known_limits.rs`. That limit is no longer an obstacle in production,
+//! and it is no longer what closes the gate either: it is a **second** reason,
+//! measured on the probe below, published alongside the first. The day the
+//! library fixes it, that reason will disappear from the refusal and admission
+//! **will not reopen** — a grammar the product has decided not to write has no
+//! gate to reopen. The two reasons are published separately precisely so that a
+//! reader does not mistake the second for the first.
 
 use std::str::FromStr;
 
@@ -33,40 +32,40 @@ use toml_edit::DocumentMut;
 
 use crate::{Grammar, GrammarError, GrammarRole, Probe, Resolution};
 
-/// La grammaire TOML.
+/// The TOML grammar.
 pub struct Toml;
 
-/// La sonde : même trivia hostile que le corpus, en CRLF, parce que c'est
-/// exactement la dimension sur laquelle la préservation se perd.
+/// The probe: the same hostile trivia as the corpus, in CRLF, because that is
+/// exactly the dimension on which preservation is lost.
 const PROBE_SOURCE: &str = concat!(
-    "# sonde — commentaire de tête\r\n",
+    "# probe — leading comment\r\n",
     "[sandbox]\r\n",
     "allow = [\r\n",
     "    \"read\",\r\n",
     "    \"write\",\r\n",
-    "]  # verrouillé\r\n",
+    "]  # locked\r\n",
 );
 
 impl Grammar for Toml {
     const NAME: &'static str = "toml";
 
-    /// Lecture seule, tranché le 2026-08-06
+    /// Read-only, settled on 2026-08-06
     /// (`docs/specs/refondation-multi-assistants/04-design-socle-neuf.md`
-    /// § Plan de fichiers, et `docs/specs/socle-neuf/requirements.md` § C1).
-    /// Le produit lit avec cette grammaire le fichier de catalogue et les
-    /// descripteurs ; il n'écrit dans aucun document en TOML, parce
-    /// qu'aucun document possédé par l'hôte servi n'en est.
+    /// § Plan de fichiers, and `docs/specs/socle-neuf/requirements.md` § C1).
+    /// The product reads the catalogue file and the descriptors with this
+    /// grammar; it writes into no TOML document, because no document owned by
+    /// the host that is served is one.
     const ROLE: GrammarRole = GrammarRole::ReadOnly;
 
-    /// Aucune valeur n'y est arbitrée par son rang : le format interdit de
-    /// définir une clé plusieurs fois (TOML v1.0.0 § Keys, « Defining a key
-    /// multiple times is invalid »), donc il n'existe pas de second candidat
-    /// qu'une position départagerait.
+    /// No value here is arbitrated by its rank: the format forbids defining a
+    /// key more than once (TOML v1.0.0 § Keys, "Defining a key multiple times
+    /// is invalid"), so there exists no second candidate that a position would
+    /// have to separate.
     const RESOLUTION: Resolution = Resolution::IndependentOfOrder;
 
     const PROBE: Probe = Probe {
         source: PROBE_SOURCE,
-        comment: "# sonde — commentaire de tête",
+        comment: "# probe — leading comment",
         list_path: &["sandbox", "allow"],
         value_present: "read",
         value_absent: "network",
@@ -78,9 +77,9 @@ impl Grammar for Toml {
             .map_err(|err| GrammarError::malformed(Self::NAME, err))
     }
 
-    /// Non implémenté, et ce n'est pas un manque à combler : désigner un
-    /// élément de liste sert à en enregistrer l'inverse, ce qu'une grammaire
-    /// sans chemin d'écriture n'a rien à faire.
+    /// Not implemented, and this is not a gap to be filled: designating a list
+    /// element serves to record its inverse, which a grammar with no write path
+    /// has no business doing.
     fn find_string_in_list(
         _source: &str,
         _path: &[&str],
@@ -88,7 +87,7 @@ impl Grammar for Toml {
     ) -> Result<bool, GrammarError> {
         Err(GrammarError::unsupported(
             Self::NAME,
-            "désigner un élément de liste",
+            "designating a list element",
         ))
     }
 }

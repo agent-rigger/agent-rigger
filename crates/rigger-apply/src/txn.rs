@@ -1,37 +1,36 @@
-//! L'écriture atomique **et conditionnée** d'un document possédé.
+//! The atomic **and conditional** write of an owned document.
 //!
-//! Trois gestes, dans cet ordre, et chacun paie une défaillance nommée.
+//! Three gestures, in this order, and each one pays for a named failure.
 //!
-//! **Un temporaire dans le même répertoire que la cible.** Un renommage n'est
-//! atomique qu'à l'intérieur d'un même système de fichiers ; écrire le
-//! temporaire dans le répertoire des fichiers temporaires du système rendrait
-//! le renommage non atomique sur les postes où le dossier personnel et le
-//! dépôt vivent sur des volumes différents, c'est-à-dire là où on ne l'aurait
-//! pas vu en le testant.
+//! **A temporary in the same directory as the target.** A rename is atomic only
+//! within one filesystem; writing the temporary into the system's temporary
+//! directory would make the rename non-atomic on the machines where the home
+//! directory and the repository live on different volumes — that is, exactly
+//! where testing would not have shown it.
 //!
-//! **Une revérification de l'empreinte juste avant le renommage.** Elle porte
-//! sur ce que la **capture** a lu, jamais sur une seconde lecture — une
-//! seconde lecture rouvrirait la fenêtre qu'on cherche à fermer.
+//! **A re-check of the fingerprint just before the rename.** It bears on what
+//! the **capture** read, never on a second read — a second read would reopen the
+//! window this is meant to close.
 //!
-//! **Un renommage.** Le document possédé est donc, à tout instant
-//! observable, soit celui d'avant, soit celui d'après.
+//! **A rename.** The owned document is therefore, at every observable instant,
+//! either the one from before or the one from after.
 //!
-//! **Le renommage porte sur le document, jamais sur le lien qui le désigne.**
-//! Un fichier de réglages du dossier personnel est couramment un lien vers un
-//! dépôt de configurations versionné — c'est même la raison d'être de ce genre
-//! de dépôt. Renommer sur le lien le remplacerait par un fichier ordinaire :
-//! le lien disparaîtrait sans trace, le document réel ne recevrait jamais la
-//! pose, et l'appel rapporterait un succès. Le produit suit donc le lien
-//! jusqu'au document, et c'est à côté de **celui-là** que le temporaire est
-//! écrit — sans quoi le renommage traverserait un système de fichiers et
-//! cesserait d'être atomique.
+//! **The rename bears on the document, never on the link that designates it.** A
+//! settings file in the home directory is commonly a link into a versioned
+//! configuration repository — that is the very purpose of that kind of
+//! repository. Renaming onto the link would replace it with an ordinary file:
+//! the link would disappear without a trace, the real document would never
+//! receive the pose, and the call would report success. The product therefore
+//! follows the link down to the document, and it is next to **that one** that
+//! the temporary is written — without which the rename would cross a filesystem
+//! and stop being atomic.
 //!
-//! **Ce que l'empreinte est ici, et pourquoi.** Le contenu lu au calcul
-//! lui-même. La comparaison est alors exacte et ne peut pas se tromper, là où
-//! un condensé échange cette certitude contre de la mémoire — un arbitrage
-//! qui vaudrait pour des documents de taille inconnue, et qui ne vaut pas
-//! pour un fichier de réglages que la capture vient de charger en entier de
-//! toute façon. Le jour où il vaudra, ce type est le seul endroit à changer.
+//! **What the fingerprint is here, and why.** The content read at the moment it
+//! is computed, itself. The comparison is then exact and cannot be mistaken,
+//! where a digest trades that certainty for memory — an arbitration that would
+//! hold for documents of unknown size, and that does not hold for a settings
+//! file the capture has just loaded whole anyway. The day it does hold, this
+//! type is the only place to change.
 
 use std::fmt;
 use std::fs;
@@ -40,27 +39,27 @@ use std::path::{Path, PathBuf};
 
 use rigger_grammar::{merge, Edit, Grammar, Inverse, MergeError};
 
-/// L'état d'un document au moment où le plan a été calculé.
+/// The state of a document at the moment the plan was computed.
 #[derive(Clone, PartialEq, Eq)]
 pub struct Fingerprint(Vec<u8>);
 
 impl Fingerprint {
-    /// L'empreinte de ces octets.
+    /// The fingerprint of these bytes.
     pub fn of(bytes: &[u8]) -> Self {
         Self(bytes.to_vec())
     }
 }
 
 impl fmt::Debug for Fingerprint {
-    /// Ne rend que la taille : le contenu d'un document possédé porte des
-    /// jetons, et un message de diagnostic voyage plus loin qu'on ne le croit.
+    /// Renders the size only: the content of an owned document carries tokens,
+    /// and a diagnostic message travels further than one thinks.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Fingerprint({} octets)", self.0.len())
+        write!(f, "Fingerprint({} bytes)", self.0.len())
     }
 }
 
-/// Ce que la capture a lu : le document, et son empreinte, d'**une seule**
-/// lecture.
+/// What the capture read: the document, and its fingerprint, from **one single**
+/// read.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Capture {
     content: String,
@@ -68,46 +67,46 @@ pub struct Capture {
 }
 
 impl Capture {
-    /// Le document tel qu'il était au calcul.
+    /// The document as it stood at the moment of the computation.
     pub fn content(&self) -> &str {
         &self.content
     }
 
-    /// Son empreinte, dérivée de ce que cette lecture-là a rendu.
+    /// Its fingerprint, derived from what that one read returned.
     pub fn fingerprint(&self) -> &Fingerprint {
         &self.fingerprint
     }
 }
 
-/// Pourquoi une écriture n'a pas eu lieu. Aucune de ces variantes ne laisse
-/// une écriture partiellement appliquée.
+/// Why a write did not happen. None of these variants leaves a write partially
+/// applied.
 #[derive(Debug)]
 pub enum TxnError {
-    /// Le document n'a pas pu être lu.
+    /// The document could not be read.
     Read {
-        /// Le fichier concerné.
+        /// The file concerned.
         path: PathBuf,
-        /// Ce que le système a rapporté.
+        /// What the system reported.
         detail: io::Error,
     },
-    /// Le temporaire ou le renommage a échoué.
+    /// The temporary or the rename failed.
     Write {
-        /// Le fichier concerné.
+        /// The file concerned.
         path: PathBuf,
-        /// Ce que le système a rapporté.
+        /// What the system reported.
         detail: io::Error,
     },
-    /// Le document a changé entre le calcul et l'écriture. C'est un échec, et
-    /// jamais une écriture appliquée.
+    /// The document changed between the computation and the write. That is a
+    /// failure, and never an applied write.
     Changed {
-        /// Le fichier concerné.
+        /// The file concerned.
         path: PathBuf,
     },
-    /// Le document n'est pas de l'UTF-8, donc aucune grammaire servie ne le
-    /// lit. Refusé plutôt que réécrit avec des octets de remplacement, qui
-    /// détruiraient silencieusement ce qu'ils remplacent.
+    /// The document is not UTF-8, so no grammar served reads it. Refused rather
+    /// than rewritten with replacement bytes, which would silently destroy what
+    /// they replace.
     NotUtf8 {
-        /// Le fichier concerné.
+        /// The file concerned.
         path: PathBuf,
     },
 }
@@ -116,20 +115,21 @@ impl fmt::Display for TxnError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Read { path, detail } => {
-                write!(f, "{} : lecture impossible — {detail}", path.display())
+                write!(f, "{}: cannot be read — {detail}", path.display())
             }
             Self::Write { path, detail } => {
-                write!(f, "{} : écriture impossible — {detail}", path.display())
+                write!(f, "{}: cannot be written — {detail}", path.display())
             }
             Self::Changed { path } => write!(
                 f,
-                "{} : le document a changé entre le calcul et l'écriture — rien n'a été écrit",
+                "{}: the document changed between the computation and the write — nothing was \
+                 written",
                 path.display()
             ),
             Self::NotUtf8 { path } => write!(
                 f,
-                "{} : le document n'est pas de l'UTF-8 — le produit refuse plutôt que de \
-                 remplacer les octets qu'il ne sait pas lire",
+                "{}: the document is not UTF-8 — the product refuses rather than replace the bytes \
+                 it does not know how to read",
                 path.display()
             ),
         }
@@ -138,8 +138,8 @@ impl fmt::Display for TxnError {
 
 impl std::error::Error for TxnError {}
 
-/// Lit un document possédé et rend son contenu **et** son empreinte, d'une
-/// seule lecture. C'est de cette capture-là que l'écriture se conditionne.
+/// Reads an owned document and returns its content **and** its fingerprint, from
+/// one single read. It is on that capture that the write is conditioned.
 pub fn capture(path: &Path) -> Result<Capture, TxnError> {
     let bytes = fs::read(path).map_err(|detail| TxnError::Read {
         path: path.to_path_buf(),
@@ -155,52 +155,51 @@ pub fn capture(path: &Path) -> Result<Capture, TxnError> {
     })
 }
 
-/// Un contenu déjà entièrement écrit à côté de sa cible, qui n'attend plus que
-/// la revérification et le renommage.
+/// A content already written whole next to its target, waiting for nothing but
+/// the re-check and the rename.
 ///
-/// Tant qu'il n'est pas validé, il se **supprime tout seul** : un temporaire
-/// abandonné est un fragment de document possédé qui traîne dans le répertoire
-/// de son propriétaire, et un abandon arrive aussi par une erreur plus haut ou
-/// par une panique.
+/// Until it is committed, it **removes itself**: an abandoned temporary is a
+/// fragment of an owned document left lying in its owner's directory, and
+/// abandonment also happens through an error higher up, or through a panic.
 #[derive(Debug)]
 pub struct Staged {
-    /// Le chemin tel que l'appelant l'a donné. C'est lui que les refus
-    /// nomment : c'est celui que son propriétaire reconnaît.
+    /// The path as the caller gave it. It is the one refusals name: it is the
+    /// one its owner recognises.
     target: PathBuf,
-    /// Le document que le renommage remplace — la cible, ou ce vers quoi elle
-    /// pointe quand elle est un lien symbolique.
+    /// The document the rename replaces — the target, or what it points to when
+    /// it is a symbolic link.
     document: PathBuf,
     temporary: Option<PathBuf>,
 }
 
 impl Staged {
-    /// Le chemin du temporaire, dans le répertoire de la cible.
+    /// The path of the temporary, in the directory of the target.
     pub fn temporary_path(&self) -> &Path {
         self.temporary
             .as_deref()
-            .expect("un temporaire validé n'est plus interrogeable")
+            .expect("a committed temporary can no longer be queried")
     }
 
-    /// Revérifie l'empreinte, puis renomme. Toute divergence est un échec qui
-    /// nomme le fichier, et jamais une écriture appliquée.
+    /// Re-checks the fingerprint, then renames. Any divergence is a failure that
+    /// names the file, and never an applied write.
     pub fn commit(mut self, expected: &Fingerprint) -> Result<(), TxnError> {
         let temporary = self
             .temporary
             .take()
-            .expect("un temporaire n'est validé qu'une fois");
+            .expect("a temporary is committed only once");
 
-        let actuel = fs::read(&self.document).map_err(|detail| TxnError::Read {
+        let current = fs::read(&self.document).map_err(|detail| TxnError::Read {
             path: self.target.clone(),
             detail,
         });
-        let actuel = match actuel {
-            Ok(actuel) => actuel,
+        let current = match current {
+            Ok(current) => current,
             Err(err) => {
                 let _ = fs::remove_file(&temporary);
                 return Err(err);
             }
         };
-        if Fingerprint::of(&actuel) != *expected {
+        if Fingerprint::of(&current) != *expected {
             let _ = fs::remove_file(&temporary);
             return Err(TxnError::Changed {
                 path: self.target.clone(),
@@ -225,11 +224,11 @@ impl Drop for Staged {
     }
 }
 
-/// Écrit `contents` dans un temporaire du **répertoire du document**, sans
-/// toucher ni au document ni à `target`. Quand `target` est un lien
-/// symbolique, le document est ce vers quoi il pointe.
+/// Writes `contents` into a temporary of the **directory of the document**,
+/// touching neither the document nor `target`. When `target` is a symbolic link,
+/// the document is what it points to.
 pub fn stage(target: &Path, contents: &str) -> Result<Staged, TxnError> {
-    let document = document_designe(target)?;
+    let document = designated_document(target)?;
     let temporary = temporary_path(&document);
     fs::write(&temporary, contents).map_err(|detail| TxnError::Write {
         path: temporary.clone(),
@@ -242,71 +241,69 @@ pub fn stage(target: &Path, contents: &str) -> Result<Staged, TxnError> {
     })
 }
 
-/// Le nombre de liens qu'un chemin peut enchaîner avant que le suivi ne
-/// refuse. Un lien qui pointe sur lui-même boucle sans cette borne, et ce
-/// module doit le dire lui-même : personne d'autre ne lira ce chemin.
-const LIENS_MAX: usize = 40;
+/// How many links a path may chain before the walk refuses. A link pointing at
+/// itself loops without this bound, and this module has to say so itself: nobody
+/// else will read this path.
+const MAX_LINKS: usize = 40;
 
-/// Le document que `target` désigne : `target` lui-même, ou ce vers quoi il
-/// pointe quand c'est un lien symbolique — le maillon final, en suivant la
-/// chaîne.
+/// The document `target` designates: `target` itself, or what it points to when
+/// it is a symbolic link — the final link, following the chain.
 ///
-/// Seul le **dernier segment** est résolu, et pas le chemin entier : un
-/// répertoire intermédiaire qui serait un lien ne change rien au document
-/// désigné, et le résoudre ferait nommer, dans les refus, un chemin que le
-/// propriétaire du document n'a jamais écrit.
-fn document_designe(target: &Path) -> Result<PathBuf, TxnError> {
-    let mut chemin = target.to_path_buf();
-    for _ in 0..LIENS_MAX {
-        let metadata = fs::symlink_metadata(&chemin).map_err(|detail| TxnError::Read {
+/// Only the **last segment** is resolved, and not the whole path: an intermediate
+/// directory that happened to be a link changes nothing about the document
+/// designated, and resolving it would make refusals name a path the owner of the
+/// document never wrote.
+fn designated_document(target: &Path) -> Result<PathBuf, TxnError> {
+    let mut path = target.to_path_buf();
+    for _ in 0..MAX_LINKS {
+        let metadata = fs::symlink_metadata(&path).map_err(|detail| TxnError::Read {
             path: target.to_path_buf(),
             detail,
         })?;
         if !metadata.file_type().is_symlink() {
-            return Ok(chemin);
+            return Ok(path);
         }
-        let pointe = fs::read_link(&chemin).map_err(|detail| TxnError::Read {
+        let pointed_to = fs::read_link(&path).map_err(|detail| TxnError::Read {
             path: target.to_path_buf(),
             detail,
         })?;
-        chemin = if pointe.is_absolute() {
-            pointe
+        path = if pointed_to.is_absolute() {
+            pointed_to
         } else {
-            // Un lien relatif se lit depuis le répertoire du lien, jamais
-            // depuis le répertoire courant du processus.
-            chemin
-                .parent()
+            // A relative link reads from the directory of the link, never from
+            // the current directory of the process.
+            path.parent()
                 .unwrap_or_else(|| Path::new("."))
-                .join(pointe)
+                .join(pointed_to)
         };
     }
     Err(TxnError::Read {
         path: target.to_path_buf(),
         detail: io::Error::other(format!(
-            "plus de {LIENS_MAX} liens symboliques enchaînés — le document désigné n'est pas \
-             déterminable"
+            "more than {MAX_LINKS} symbolic links chained — the designated document is not \
+             determinable"
         )),
     })
 }
 
-/// Le chemin du temporaire d'un document : même répertoire, nom dérivé du sien
-/// et de l'identifiant du processus.
+/// The path of a document's temporary: same directory, name derived from its own
+/// and from the process identifier.
 fn temporary_path(document: &Path) -> PathBuf {
-    let nom = document
+    let name = document
         .file_name()
-        .map(|nom| nom.to_string_lossy().into_owned())
+        .map(|name| name.to_string_lossy().into_owned())
         .unwrap_or_else(|| "document".to_string());
-    let dossier = document.parent().unwrap_or_else(|| Path::new("."));
-    dossier.join(format!(".{nom}.rigger-{}.tmp", std::process::id()))
+    let directory = document.parent().unwrap_or_else(|| Path::new("."));
+    directory.join(format!(".{name}.rigger-{}.tmp", std::process::id()))
 }
 
-/// Pourquoi une pose n'a pas eu lieu.
+/// Why a pose did not happen.
 #[derive(Debug)]
 pub enum ApplyError {
-    /// La fusion n'a pas eu lieu : grammaire non admise, refus de la
-    /// grammaire, ou post-condition en échec.
+    /// The merge did not happen: grammar not admitted, refusal from the grammar,
+    /// or post-condition failed.
     Merge(MergeError),
-    /// La lecture ou l'écriture du document n'a pas eu lieu.
+    /// Reading or writing the document did not happen.
     Txn(TxnError),
 }
 
@@ -333,11 +330,12 @@ impl From<TxnError> for ApplyError {
     }
 }
 
-/// Fusionne `edit` dans le document de `path` et rend la trace qui le défait.
+/// Merges `edit` into the document at `path` and returns the trace that undoes
+/// it.
 ///
-/// L'enchaînement complet, et il n'y en a pas d'autre : capture, fusion —
-/// porte d'admission, édition, post-condition —, temporaire, revérification,
-/// renommage. Chaque étape échoue en laissant le document tel qu'il était.
+/// The full sequence, and there is no other: capture, merge — admission gate,
+/// edit, post-condition —, temporary, re-check, rename. Every step fails leaving
+/// the document as it was.
 pub fn merge_into_file<G: Grammar>(path: &Path, edit: &Edit) -> Result<Inverse, ApplyError> {
     let captured = capture(path)?;
     let merged = merge::<G>(captured.content(), edit)?;
