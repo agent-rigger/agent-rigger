@@ -4,9 +4,10 @@ version = "0.0.0"
 edition = "2021"
 publish = false
 
-# En [dev-dependencies] : aucun code de src/ ne les utilise encore (lib.rs
-# est vide par mandat de T1) ; seuls les tests les touchent. T3 les
-# promouvra en [dependencies] quand src/jsonc.rs et src/toml.rs existeront.
-[dev-dependencies]
+# Promues de [dev-dependencies] à [dependencies] par T3a : `src/jsonc.rs` et
+# `src/toml.rs` existent, et la table des capacités dérive ses réponses en
+# exécutant ces deux bibliothèques. Versions exactes, comme à T1 : la mesure
+# de préservation ne vaut que pour la version mesurée.
+[dependencies]
 jsonc-parser = { version = "=0.33.1", features = ["cst"] }
 toml_edit = { version = "=0.25.13" }

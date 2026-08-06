@@ -1,13 +1,27 @@
-//! Une seule propriété active sur la grammaire : pour chaque document du
-//! corpus, `parse` puis `render` sans aucune édition, et l'octet de sortie
-//! doit être identique à l'octet d'entrée. La comparaison porte sur des
-//! `Vec<u8>`, jamais sur des `String` normalisées, pour ne pas masquer une
-//! fin de ligne convertie de CRLF en LF.
+//! Les propriétés que **toute** grammaire passe. Ajouter une grammaire est
+//! une ligne d'appel ; ajouter un document est un fichier déposé dans un des
+//! deux répertoires de corpus.
+//!
+//! **Aller-retour byte-identique** (T1) : pour chaque document de
+//! `tests/corpus/`, `parse` puis `render` sans aucune édition, et l'octet de
+//! sortie doit être identique à l'octet d'entrée. La comparaison porte sur
+//! des `Vec<u8>`, jamais sur des `String` normalisées, pour ne pas masquer
+//! une fin de ligne convertie de CRLF en LF.
+//!
+//! **Refus nommé sur document malformé** (T3a) : pour chaque document des
+//! **deux** répertoires, une version rendue illisible doit faire refuser la
+//! grammaire en se nommant.
+//!
+//! `tests/corpus/` porte les documents dont la grammaire préserve la trivia ;
+//! `tests/corpus-limites/` porte ceux dont elle ne la préserve pas, et le
+//! second est câblé ici à ce que la table des capacités en dit — un document
+//! qui ne serait exercé par aucune propriété resterait testé pour une
+//! propriété unique, pour toujours.
 //!
 //! `docs/specs/socle-neuf/tasks.md` § T1 : aucun octet du corpus n'est
-//! recopié depuis un fichier réel de la machine, et la propriété testée ne
-//! lit jamais une valeur — la neutralité du contenu ne coûte donc rien à la
-//! mesure.
+//! recopié depuis un fichier réel de la machine, et les propriétés testées ne
+//! lisent jamais une valeur — la neutralité du contenu ne coûte donc rien à
+//! la mesure.
 //!
 //! Ce fichier porte aussi une garde de fixture (`garde_pieges_du_corpus_...`,
 //! tout en bas) : elle vérifie que le corpus porte encore ses pièges, pas
@@ -16,15 +30,55 @@
 //!
 //! La limite mesurée de `toml_edit` sur les fins de ligne CRLF n'est pas
 //! ici : elle est enregistrée comme test de caractérisation dans
-//! `tests/limites_connues.rs`, hors de ce corpus.
+//! `tests/limites_connues.rs`, qui porte sur la **bibliothèque**, là où ce
+//! fichier porte sur la caisse.
 
 use std::fs;
-use std::path::Path;
-use std::str::FromStr;
+use std::path::{Path, PathBuf};
 
-use jsonc_parser::cst::CstRootNode;
-use jsonc_parser::ParseOptions;
-use toml_edit::DocumentMut;
+use rigger_grammar::{Capabilities, Grammar, GrammarError, Jsonc, MergeAdmission, Toml};
+
+/// Le préfixe qui rend un document illisible dans les deux grammaires : ni
+/// une valeur JSON, ni une ligne de clé TOML. Une seule forme pour les deux,
+/// parce que la propriété est commune et qu'une forme par grammaire
+/// laisserait croire que le refus dépend de la façon de casser le document.
+const PREFIXE_MALFORME: &str = "!!! ceci n'est pas un document !!!\n";
+
+/// La grammaire d'un document du corpus, déduite de son extension. C'est le
+/// seul aiguillage : les propriétés ci-dessous ne connaissent que ce type.
+#[derive(Clone, Copy, Debug)]
+enum Grammaire {
+    Jsonc,
+    Toml,
+}
+
+impl Grammaire {
+    fn pour(path: &Path) -> Result<Self, String> {
+        match path.extension().and_then(|ext| ext.to_str()) {
+            Some("json") => Ok(Self::Jsonc),
+            Some("toml") => Ok(Self::Toml),
+            other => Err(format!(
+                "{}: extension de corpus non reconnue ({:?}) — aucune grammaire ne sait la servir",
+                path.display(),
+                other
+            )),
+        }
+    }
+
+    fn round_trip(self, source: &str) -> Result<String, GrammarError> {
+        match self {
+            Self::Jsonc => Jsonc::round_trip(source),
+            Self::Toml => Toml::round_trip(source),
+        }
+    }
+
+    fn capacites(self) -> Capabilities {
+        match self {
+            Self::Jsonc => Capabilities::of::<Jsonc>(),
+            Self::Toml => Capabilities::of::<Toml>(),
+        }
+    }
+}
 
 /// Compare deux tampons d'octets et retourne, en cas de divergence, un
 /// message qui nomme le fichier et l'offset du premier octet divergent —
@@ -54,35 +108,34 @@ fn compare_byte_identical(path: &Path, input: &[u8], output: &[u8]) -> Result<()
     ))
 }
 
-fn check_jsonc(path: &Path) -> Result<(), String> {
+fn lire_utf8(path: &Path) -> Result<(Vec<u8>, String), String> {
     let input =
         fs::read(path).map_err(|err| format!("{}: lecture impossible — {err}", path.display()))?;
     let text = std::str::from_utf8(&input)
-        .map_err(|err| format!("{}: le corpus doit être UTF-8 — {err}", path.display()))?;
-    let root = CstRootNode::parse(text, &ParseOptions::default())
-        .map_err(|err| format!("{}: échec du parse JSONC — {err}", path.display()))?;
-    let output = root.to_string();
+        .map_err(|err| format!("{}: le corpus doit être UTF-8 — {err}", path.display()))?
+        .to_string();
+    Ok((input, text))
+}
+
+fn check_round_trip(path: &Path) -> Result<(), String> {
+    let grammaire = Grammaire::pour(path)?;
+    let (input, text) = lire_utf8(path)?;
+    let output = grammaire
+        .round_trip(&text)
+        .map_err(|err| format!("{}: {err}", path.display()))?;
     compare_byte_identical(path, &input, output.as_bytes())
 }
 
-fn check_toml(path: &Path) -> Result<(), String> {
-    let input =
-        fs::read(path).map_err(|err| format!("{}: lecture impossible — {err}", path.display()))?;
-    let text = std::str::from_utf8(&input)
-        .map_err(|err| format!("{}: le corpus doit être UTF-8 — {err}", path.display()))?;
-    let doc = DocumentMut::from_str(text)
-        .map_err(|err| format!("{}: échec du parse TOML — {err}", path.display()))?;
-    let output = doc.to_string();
-    compare_byte_identical(path, &input, output.as_bytes())
-}
-
-fn corpus_dir() -> std::path::PathBuf {
+fn corpus_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/corpus")
 }
 
-fn corpus_entries() -> Vec<std::path::PathBuf> {
-    let dir = corpus_dir();
-    let mut entries: Vec<_> = fs::read_dir(&dir)
+fn corpus_limites_dir() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/corpus-limites")
+}
+
+fn documents_de(dir: &Path) -> Vec<PathBuf> {
+    let mut entries: Vec<_> = fs::read_dir(dir)
         .unwrap_or_else(|err| panic!("{}: dossier corpus introuvable — {err}", dir.display()))
         .filter_map(|entry| entry.ok())
         .map(|entry| entry.path())
@@ -90,6 +143,19 @@ fn corpus_entries() -> Vec<std::path::PathBuf> {
         .collect();
     entries.sort();
     entries
+}
+
+fn corpus_entries() -> Vec<PathBuf> {
+    documents_de(&corpus_dir())
+}
+
+/// Tous les documents, les deux répertoires confondus. C'est cette
+/// énumération que prennent les propriétés qui ne dépendent pas de la
+/// préservation de la trivia.
+fn tous_les_documents() -> Vec<PathBuf> {
+    let mut documents = corpus_entries();
+    documents.extend(documents_de(&corpus_limites_dir()));
+    documents
 }
 
 #[test]
@@ -112,18 +178,7 @@ fn aller_retour_sans_edition_est_byte_identique() {
     // échec ne doit pas masquer les suivants dans le rapport de passe.
     let failures: Vec<String> = entries
         .iter()
-        .filter_map(|path| {
-            let result = match path.extension().and_then(|ext| ext.to_str()) {
-                Some("json") => check_jsonc(path),
-                Some("toml") => check_toml(path),
-                other => Err(format!(
-                    "{}: extension de corpus non reconnue ({:?}) — aucune grammaire ne sait la servir",
-                    path.display(),
-                    other
-                )),
-            };
-            result.err()
-        })
+        .filter_map(|path| check_round_trip(path).err())
         .collect();
 
     if !failures.is_empty() {
@@ -134,6 +189,118 @@ fn aller_retour_sans_edition_est_byte_identique() {
             failures.join("\n\n")
         );
     }
+}
+
+/// Deuxième propriété commune : un document que la grammaire ne sait pas
+/// lire produit un refus qui **la nomme**. Elle porte sur les deux
+/// répertoires, ce qui est le seul câblage par lequel `corpus-limites/` est
+/// exercé par une propriété de conformité et non par son seul test de
+/// caractérisation.
+#[test]
+fn refus_nomme_sur_document_malforme() {
+    let documents = tous_les_documents();
+    assert!(
+        documents.len() > corpus_entries().len(),
+        "aucun document dans {} — la propriété ne porterait que sur le corpus admis",
+        corpus_limites_dir().display()
+    );
+
+    let failures: Vec<String> = documents
+        .iter()
+        .filter_map(|path| {
+            let grammaire = Grammaire::pour(path).ok()?;
+            let (_, text) = lire_utf8(path).ok()?;
+            let malforme = format!("{PREFIXE_MALFORME}{text}");
+            match grammaire.round_trip(&malforme) {
+                Ok(_) => Some(format!(
+                    "{}: document malformé accepté par la grammaire `{}`",
+                    path.display(),
+                    grammaire.capacites().grammar()
+                )),
+                Err(err) => {
+                    let nom = grammaire.capacites().grammar();
+                    let message = err.to_string();
+                    if err.grammar() == nom && message.contains(nom) {
+                        None
+                    } else {
+                        Some(format!(
+                            "{}: le refus ne nomme pas la grammaire `{nom}` — {message}",
+                            path.display()
+                        ))
+                    }
+                }
+            }
+        })
+        .collect();
+
+    if !failures.is_empty() {
+        panic!(
+            "{} document(s) dont le refus n'est pas nommé :\n\n{}",
+            failures.len(),
+            failures.join("\n\n")
+        );
+    }
+}
+
+/// Le câblage lui-même : un document vit dans `corpus-limites/` parce que sa
+/// grammaire ne rend pas ses octets, et c'est ce que la table des capacités
+/// doit dire de cette grammaire. Sans ce test, la table pourrait admettre au
+/// `merge` une grammaire dont le dépôt porte la contre-preuve.
+#[test]
+fn les_documents_de_corpus_limites_confirment_la_table() {
+    let documents = documents_de(&corpus_limites_dir());
+    assert!(
+        !documents.is_empty(),
+        "{} est vide — le seul document portant le cas dur aurait disparu",
+        corpus_limites_dir().display()
+    );
+
+    let mut failures = Vec::new();
+    for path in &documents {
+        let grammaire = match Grammaire::pour(path) {
+            Ok(grammaire) => grammaire,
+            Err(err) => {
+                failures.push(err);
+                continue;
+            }
+        };
+        let capacites = grammaire.capacites();
+
+        // Ce que la table déclare.
+        if capacites.preserves_trivia() {
+            failures.push(format!(
+                "{}: la table crédite `{}` de la préservation de la trivia",
+                path.display(),
+                capacites.grammar()
+            ));
+        }
+        if capacites.merge() == &MergeAdmission::Admitted {
+            failures.push(format!(
+                "{}: la table admet `{}` au comportement `merge`",
+                path.display(),
+                capacites.grammar()
+            ));
+        }
+
+        // Ce que le document en dit, sur pièces : l'aller-retour réel doit
+        // diverger, sans quoi la table refuserait sur une limite que ce
+        // dépôt ne porte plus.
+        if check_round_trip(path).is_ok() {
+            failures.push(format!(
+                "{}: l'aller-retour est byte-identique — ce document n'a plus de raison de \
+                 vivre hors de tests/corpus/, et la table refuse `{}` sur une limite disparue",
+                path.display(),
+                capacites.grammar()
+            ));
+        }
+    }
+
+    assert!(
+        failures.is_empty(),
+        "{} désaccord(s) entre le corpus des limites et la table des capacités :\n\n{}",
+        failures.len(),
+        failures.join("\n\n")
+    );
 }
 
 /// Garde de fixture, pas une propriété de grammaire : un `opencode.json`
