@@ -69,6 +69,17 @@
 //! unbalanced — owned by nobody, unremovable for good — with every value in the
 //! document still in place. Both writes therefore also compare what the
 //! document says about the **other** markers, before and after.
+//!
+//! **Every one of those looks for something lost, and that is a whole class of
+//! damage they cannot see.** A pose at the end of a document whose last line
+//! carries no terminator has to write one; nothing is lost, one byte is
+//! **added**, and the trace did not record it, so removal gave the document back
+//! one line ending longer than it went in — a C1 violation invisible to a
+//! harness that otherwise measures. [`place`] therefore closes with a check that
+//! is not about values at all: take out of the source the bytes it owned, take
+//! out of the rendering the bytes the new trace accounts for, and demand the
+//! same bytes. That states C1 whole, in both directions, and it is what
+//! [`PlaceError::WroteOutsideTrace`] reports.
 
 use std::fmt;
 use std::ops::Range;
@@ -699,21 +710,45 @@ fn parse_token(text: &str) -> Option<(Kind, Marker)> {
 }
 
 /// What the registry records for a posed block: its identity, where it was
-/// posed, and the values the product itself wrote there.
+/// posed, the values the product itself wrote there, and the line terminator it
+/// had to add in front of them.
 ///
 /// **The values are what makes the post-condition of removal possible.** The
 /// requirement is not that nothing disappear — the passage does, and that is
 /// the point. It is that what disappears reduces exactly to what the trace
 /// records.
+///
+/// **The terminator is here because a pose can add a byte that is not in the
+/// block.** Posing at the end of a document whose last line carries no
+/// terminator — what every editor that does not add one produces — forces the
+/// pose to write one, or its opening delimiter would be glued to the last line
+/// its owner wrote. That byte lies *before* the opening delimiter, so it is
+/// outside the passage the recogniser hands back, and removal cannot take back
+/// what no trace records: the document would come back one line ending longer
+/// than it went in. C1 requires the opposite — outside its trace, the document
+/// is rendered byte for byte.
+///
+/// **Two ways of closing that were weighed, and why this one.** The other was
+/// to let the recorded region *begin* at that terminator, so the existing trace
+/// would cover it with no new field. It does not survive contact with C3:
+/// removal finds its bounds by **re-reading the document**, never by reading
+/// the trace, and no re-reading can tell a terminator the product wrote from
+/// one its owner always had. Closing it that way would have meant either
+/// widening the single recogniser on a fact no document carries, or having
+/// removal correct its bounds from the trace after all — which is this field,
+/// arrived at by a longer road. Recording it is the honest statement: the pose
+/// did two things, and the trace says both.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BlockTrace {
     marker: Marker,
     address: String,
     values: Vec<String>,
+    added_terminator: String,
 }
 
 impl BlockTrace {
-    /// The trace of a block posed at `address`, carrying `values`.
+    /// The trace of a block posed at `address`, carrying `values`, in a
+    /// document that already ended with a line terminator.
     pub fn new(
         marker: Marker,
         address: impl Into<String>,
@@ -723,7 +758,25 @@ impl BlockTrace {
             marker,
             address: address.into(),
             values: values.into_iter().map(Into::into).collect(),
+            added_terminator: String::new(),
         }
+    }
+
+    /// The same trace, recording that the pose also wrote `terminator`
+    /// immediately before the opening delimiter.
+    pub fn with_added_terminator(mut self, terminator: impl Into<String>) -> Self {
+        self.added_terminator = terminator.into();
+        self
+    }
+
+    /// The line terminator the pose added in front of the block, empty when it
+    /// added none.
+    ///
+    /// It is the document's **own** terminator — CRLF in a document in CRLF —
+    /// because writing LF there is the reformatting C1 forbids, applied to the
+    /// bytes the product adds rather than to the ones it found.
+    pub fn added_terminator(&self) -> &str {
+        &self.added_terminator
     }
 
     /// The identity of the block.
@@ -870,6 +923,25 @@ pub enum PlaceError {
         /// What it is after.
         now: Classification,
     },
+    /// **A post-condition on the output, and the general one.** Take out of the
+    /// rendering everything the new trace accounts for, take out of the source
+    /// everything the old one did, and the two must be the same bytes. They
+    /// were not: the write touched the document outside what any trace records,
+    /// which is exactly what C1 forbids — outside its trace, the document is
+    /// rendered byte for byte.
+    WroteOutsideTrace {
+        /// The marker being posed.
+        marker: Marker,
+        /// The document.
+        address: String,
+        /// The offset, in what is left of the document once the traced bytes
+        /// are taken out, where the two stop agreeing.
+        at: usize,
+        /// How many bytes were left outside the trace before the write.
+        was: usize,
+        /// How many are left after it.
+        now: usize,
+    },
 }
 
 impl fmt::Display for PlaceError {
@@ -937,11 +1009,40 @@ impl fmt::Display for PlaceError {
                  go — and a block whose delimiters no longer pair up belongs to nobody and can \
                  never be removed"
             ),
+            Self::WroteOutsideTrace {
+                marker,
+                address,
+                at,
+                was,
+                now,
+            } => write!(
+                f,
+                "posing `{marker}` changed `{address}` outside the bytes any trace accounts for: \
+                 with the traced passage taken out, the document held {was} byte(s) before the \
+                 write and {now} after, and the two stop agreeing at offset {at}. Whatever the \
+                 difference is, no removal can undo it, so the pose aborts"
+            ),
         }
     }
 }
 
 impl std::error::Error for PlaceError {}
+
+/// What a writer produced, and what it added **outside** the block while
+/// producing it.
+///
+/// The two travel together because the second is not deducible from the first:
+/// a terminator the pose wrote in front of its opening delimiter is, on the
+/// page, indistinguishable from one the owner always had. Only the writer knows,
+/// and this is where it says so.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Written {
+    /// The document to write.
+    pub document: String,
+    /// The line terminator written immediately before the opening delimiter,
+    /// empty when none was needed.
+    pub added_terminator: String,
+}
 
 /// Poses a bounded block, or says why it does not.
 ///
@@ -954,6 +1055,24 @@ impl std::error::Error for PlaceError {}
 /// last three was destroying, on its update path, exactly what removal refuses
 /// to destroy on the same document.
 pub fn place(source: &str, pose: &Pose<'_>) -> Result<Placed, PlaceError> {
+    place_by(source, pose, assemble)
+}
+
+/// The same pose, with the writing supplied by the caller.
+///
+/// **Why this seam exists**, and it is the reason [`remove_by`] exists: a
+/// post-condition no test can redden is a promise, not a measurement. The
+/// general one below — outside its trace, the document comes back byte for byte
+/// — can only be shown to measure something by handing in a write that every
+/// input check accepts and that changes a byte anyway. That is what a real
+/// defect looks like, and the one this module carried for a while: an added
+/// terminator no trace recorded. Production goes through [`place`], which
+/// supplies the writing this module performs.
+pub fn place_by(
+    source: &str,
+    pose: &Pose<'_>,
+    write: impl Fn(&str, Option<&Range<usize>>, &str) -> Written,
+) -> Result<Placed, PlaceError> {
     let mut distinct: Vec<&str> = Vec::new();
     for root in pose.roots {
         if !distinct.contains(root) {
@@ -977,34 +1096,37 @@ pub fn place(source: &str, pose: &Pose<'_>) -> Result<Placed, PlaceError> {
         }
     }
 
-    let eol = line_ending(source);
-    let block = render_block(pose.marker, pose.wrapping, pose.body, eol);
-    let rendered = match &reading.recognition {
-        // The marker is already there and the registry knows it: this is an
-        // update, and its bounds are the ones the same read just gave.
-        Recognition::Unique { bounds, .. } => {
-            let mut rendered = String::with_capacity(source.len() + block.len());
-            rendered.push_str(&source[..bounds.start]);
-            rendered.push_str(&block);
-            rendered.push_str(&source[bounds.end..]);
-            rendered
-        }
-        Recognition::Absent => {
-            let mut rendered = String::with_capacity(source.len() + block.len() + eol.len());
-            rendered.push_str(source);
-            if !source.is_empty() && !source.ends_with('\n') {
-                rendered.push_str(eol);
-            }
-            rendered.push_str(&block);
-            rendered
-        }
-        Recognition::Duplicated { .. } | Recognition::Unbalanced { .. } => {
-            return Err(PlaceError::NotSeparable {
-                marker: pose.marker.clone(),
-                address: pose.address.to_string(),
-                classification: reading.recognition.classification(),
-            })
-        }
+    if matches!(
+        reading.recognition,
+        Recognition::Duplicated { .. } | Recognition::Unbalanced { .. }
+    ) {
+        return Err(PlaceError::NotSeparable {
+            marker: pose.marker.clone(),
+            address: pose.address.to_string(),
+            classification: reading.recognition.classification(),
+        });
+    }
+
+    // The marker already there and known to the registry is an update, and its
+    // bounds are the ones the same read just gave.
+    let bounds = reading.recognition.bounds().cloned();
+    let block = render_block(pose.marker, pose.wrapping, pose.body, line_ending(source));
+    let Written {
+        document: rendered,
+        added_terminator,
+    } = write(source, bounds.as_ref(), &block);
+
+    // An update writes no terminator — it replaces bytes between delimiters
+    // that already exist — but the one an earlier pose wrote is still in front
+    // of them, and still the product's. The new trace carries it forward, or
+    // the account of it dies with the update and the byte surfaces at the
+    // removal that follows.
+    let added_terminator = match &bounds {
+        Some(_) => pose
+            .posed
+            .map(|posed| posed.added_terminator.clone())
+            .unwrap_or_default(),
+        None => added_terminator,
     };
 
     // Read the rendering back with the **same** recogniser. A block the writer
@@ -1049,10 +1171,121 @@ pub fn place(source: &str, pose: &Pose<'_>) -> Result<Placed, PlaceError> {
         });
     }
 
-    Ok(Placed {
-        rendered,
-        trace: BlockTrace::new(pose.marker.clone(), pose.address, pose.body.iter().copied()),
-    })
+    let trace = BlockTrace::new(pose.marker.clone(), pose.address, pose.body.iter().copied())
+        .with_added_terminator(added_terminator);
+
+    // **The general post-condition.** Take out of the source the bytes the
+    // product owned before the write, take out of the rendering the bytes the
+    // new trace accounts for, and demand the same bytes. That is C1 stated
+    // exactly — outside its trace, the document is rendered byte for byte.
+    //
+    // It runs **last** on purpose. A destroyed value and a broken neighbour are
+    // both byte differences, so this would catch them too, and catch them worse:
+    // it can name an offset where the other two name the value its owner wrote
+    // and the block that stopped belonging to anybody. What it adds is the
+    // difference neither of them can see — a byte **added**. Every check above
+    // subtracts the values of the rendering from the values of the source and
+    // asks what is missing, and nothing was ever missing here; a bare line
+    // terminator is no value at all, so no comparison of values could have
+    // caught it however it were written. This one compares what is *left*,
+    // which is symmetric by construction.
+    if let Some((at, was, now)) =
+        wrote_outside(source, bounds.as_ref(), pose.posed, &rendered, &trace)
+    {
+        return Err(PlaceError::WroteOutsideTrace {
+            marker: pose.marker.clone(),
+            address: pose.address.to_string(),
+            at,
+            was,
+            now,
+        });
+    }
+
+    Ok(Placed { rendered, trace })
+}
+
+/// The writing production performs: the block in place of the passage already
+/// there, or appended, preceded by a terminator when the document's last line
+/// carries none.
+///
+/// Writing that terminator is not optional — without it the opening delimiter
+/// would be glued to the last line its owner wrote, and the recogniser, which
+/// reads delimiters as whole lines, would not find the block back. What is
+/// optional is *lying about it*, and the second field is how it does not.
+fn assemble(source: &str, bounds: Option<&Range<usize>>, block: &str) -> Written {
+    match bounds {
+        Some(bounds) => {
+            let mut document = String::with_capacity(source.len() + block.len());
+            document.push_str(&source[..bounds.start]);
+            document.push_str(block);
+            document.push_str(&source[bounds.end..]);
+            Written {
+                document,
+                added_terminator: String::new(),
+            }
+        }
+        None => {
+            let terminator = if source.is_empty() || source.ends_with('\n') {
+                ""
+            } else {
+                line_ending(source)
+            };
+            let mut document = String::with_capacity(source.len() + terminator.len() + block.len());
+            document.push_str(source);
+            document.push_str(terminator);
+            document.push_str(block);
+            Written {
+                document,
+                added_terminator: terminator.to_string(),
+            }
+        }
+    }
+}
+
+/// What is left of a document once the bytes a trace accounts for are taken
+/// out, compared before and after a write. `Some` when they differ, with the
+/// offset where they stop agreeing and the two lengths.
+///
+/// The **same** notion of region is applied to both sides — passage plus
+/// recorded terminator — or a pose that legitimately carries a terminator
+/// forward would read as having moved a byte.
+fn wrote_outside(
+    source: &str,
+    bounds: Option<&Range<usize>>,
+    posed: Option<&BlockTrace>,
+    rendered: &str,
+    trace: &BlockTrace,
+) -> Option<(usize, usize, usize)> {
+    let before = match bounds {
+        Some(bounds) => {
+            let terminator = posed.map(BlockTrace::added_terminator).unwrap_or("");
+            excise(source, &owned_region(source, bounds, terminator))
+        }
+        // Nothing was owned, so the whole document must come back.
+        None => source.to_string(),
+    };
+    // The rendering has already been read back and found to carry exactly one
+    // passage, so this cannot be `None`.
+    let after = read(rendered, &trace.address, &trace.marker)
+        .recognition
+        .bounds()
+        .map(|bounds| {
+            excise(
+                rendered,
+                &owned_region(rendered, bounds, &trace.added_terminator),
+            )
+        })?;
+
+    if before == after {
+        return None;
+    }
+    let at = before
+        .as_bytes()
+        .iter()
+        .zip(after.as_bytes())
+        .position(|(left, right)| left != right)
+        .unwrap_or(before.len().min(after.len()));
+    Some((at, before.len(), after.len()))
 }
 
 /// What a write did to the blocks of the **other** catalogues, if it did
@@ -1225,7 +1458,11 @@ pub fn remove_by(
 ) -> Result<Removed, RemoveError> {
     let before = read(source, &trace.address, &trace.marker);
     let bounds = match &before.recognition {
-        Recognition::Unique { bounds, .. } => bounds.clone(),
+        // The passage the recogniser gives back, widened to the terminator the
+        // pose wrote in front of it. That byte is the one thing the product
+        // added outside its own delimiters, and leaving it would render the
+        // document one line ending longer than it was before the pose.
+        Recognition::Unique { bounds, .. } => owned_region(source, bounds, &trace.added_terminator),
         Recognition::Absent => {
             return Err(RemoveError::NotFound {
                 marker: trace.marker.clone(),
@@ -1293,6 +1530,31 @@ fn all_values(reading: &Reading) -> Vec<SemanticValue> {
     let mut values = reading.outside.clone();
     values.extend(reading.inside.iter().cloned());
     values
+}
+
+/// The bytes a trace accounts for in `document`: the passage the recogniser
+/// gives back, plus the terminator the pose wrote in front of it.
+///
+/// **The extension is conditional, and the condition is the whole safety of
+/// it.** The bytes are taken back only if they are still, right there, the ones
+/// the trace says the product wrote. An owner who edited around the block since
+/// leaves them unmatched, and then the region is the passage alone: one byte of
+/// theirs stays in the document, which is inert, where taking one of theirs
+/// would not be.
+///
+/// A recorded LF sitting at the end of a CRLF is refused for the same reason,
+/// and it is not a corner: the document was in LF when it was posed and its
+/// owner has converted it since. Taking the LF alone would leave a dangling CR
+/// — a byte-level corruption that no comparison of values would ever see.
+fn owned_region(document: &str, bounds: &Range<usize>, terminator: &str) -> Range<usize> {
+    if terminator.is_empty() || bounds.start < terminator.len() {
+        return bounds.clone();
+    }
+    let head = &document[..bounds.start];
+    if !head.ends_with(terminator) || (terminator == "\n" && head.ends_with("\r\n")) {
+        return bounds.clone();
+    }
+    bounds.start - terminator.len()..bounds.end
 }
 
 /// The excision production uses: the owned bytes, and nothing else.

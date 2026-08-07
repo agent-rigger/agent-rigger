@@ -21,8 +21,8 @@
 //! others measure something.
 
 use rigger_grammar::marker::{
-    place, read, read_with, remove, remove_by, Branch, Classification, Marker, PlaceError, Placed,
-    Pose, Reading, RemoveError, Wrapping,
+    place, place_by, read, read_with, remove, remove_by, Branch, Classification, Marker,
+    PlaceError, Placed, Pose, Reading, RemoveError, Wrapping, Written,
 };
 use rigger_grammar::SemanticValue;
 
@@ -801,4 +801,155 @@ fn guard_the_four_wrappings_are_four_distinct_documents() {
             );
         }
     }
+}
+
+/// A document whose last line carries **no terminator** is what every editor
+/// that does not add one produces, and it forces the pose to write one: without
+/// it the opening delimiter would be glued to the last line its owner wrote.
+///
+/// C1 requires that, outside what the trace records, the document come back
+/// byte for byte. That terminator is outside the block, so unless the trace
+/// carries it, removal cannot take it back and the document comes back one line
+/// ending **longer** than it went in. Nothing is lost, so no post-condition that
+/// looks for a missing value can see it — which is why this went unnoticed.
+///
+/// Both families of line ending are exercised, because the terminator written
+/// must be the document's own: writing LF into a document in CRLF is the very
+/// reformatting C1 forbids, applied to the bytes the product adds.
+#[test]
+fn c1_a_pose_on_a_document_with_no_final_terminator_adds_no_byte_the_trace_does_not_carry() {
+    for source in ["docs/a.md\ndocs/b.md", "docs/a.md\r\ndocs/b.md"] {
+        let Placed { rendered, trace } = place(
+            source,
+            &Pose {
+                marker: &marker(),
+                address: ADDRESS,
+                roots: &["/home/u/.config/rig"],
+                traced: &[],
+                posed: None,
+                body: &["docs/posed.md"],
+                wrapping: Wrapping::LineComment,
+            },
+        )
+        .expect("nothing stands in the way of this pose");
+
+        assert!(
+            rendered.starts_with(source),
+            "the pose must leave the bytes it found where they were: {rendered:?}"
+        );
+        assert_eq!(
+            rendered.matches('\n').count(),
+            if source.contains("\r\n") {
+                rendered.matches("\r\n").count()
+            } else {
+                rendered.matches('\n').count()
+            },
+            "the terminator written must be the document's own: {rendered:?}"
+        );
+
+        assert_eq!(
+            remove(&rendered, &trace)
+                .expect("what was posed is removable")
+                .rendered,
+            source,
+            "removal must give back the bytes from before, and give back no others"
+        );
+    }
+}
+
+/// The same document, posed then **updated** then removed. The terminator the
+/// first pose had to add is still outside the second block, so the trace the
+/// update yields owes it too — otherwise the leak survives an update and only
+/// shows at the removal that follows it.
+#[test]
+fn c1_an_update_of_a_block_posed_without_a_final_terminator_still_gives_the_bytes_back() {
+    let source = "docs/a.md\r\ndocs/b.md";
+    let mine = marker();
+    let pose = Pose {
+        marker: &mine,
+        address: ADDRESS,
+        roots: &["/home/u/.config/rig"],
+        traced: &[],
+        posed: None,
+        body: &["docs/posed.md"],
+        wrapping: Wrapping::LineComment,
+    };
+    let first = place(source, &pose).expect("nothing stands in the way of this pose");
+
+    let updated = place(
+        &first.rendered,
+        &Pose {
+            traced: std::slice::from_ref(&mine),
+            posed: Some(&first.trace),
+            body: &["docs/posed.md", "docs/added.md"],
+            ..pose
+        },
+    )
+    .expect("rewriting the interior the product wrote is what an update is");
+
+    assert_eq!(
+        remove(&updated.rendered, &updated.trace)
+            .expect("what was posed is removable")
+            .rendered,
+        source,
+        "an update must not lose the account of what the first pose added"
+    );
+}
+
+/// The post-condition of C1 in its general form: outside the bytes any trace
+/// accounts for, the rendering must be the source byte for byte.
+///
+/// **A post-condition no test can redden is a promise, not a measurement**, and
+/// that is the whole reason `place_by` exists. The write handed in here passes
+/// every input check — the marker is traced, the roots agree, the block reads
+/// back as one passage, no value disappears, no neighbour is broken — and adds
+/// a byte outside the block while declaring nothing. That is the shape of the
+/// defect this post-condition was written for: a terminator the pose wrote and
+/// the trace did not carry, which removal could not take back.
+///
+/// It also states what the value comparisons structurally cannot: the byte
+/// added here is a bare line terminator, which is **no value at all**, so no
+/// subtraction of values before from values after could ever see it.
+#[test]
+fn c1_a_write_that_adds_a_byte_outside_the_trace_makes_the_pose_abort() {
+    let source = "docs/a.md\ndocs/b.md\n";
+    let pose = Pose {
+        marker: &marker(),
+        address: ADDRESS,
+        roots: &["/home/u/.config/rig"],
+        traced: &[],
+        posed: None,
+        body: &["docs/posed.md"],
+        wrapping: Wrapping::LineComment,
+    };
+
+    // The same writing production performs, plus one byte nobody records.
+    let error = place_by(source, &pose, |source, bounds, block| {
+        assert!(bounds.is_none(), "this document carries no block yet");
+        Written {
+            document: format!("{source}{block}\n"),
+            added_terminator: String::new(),
+        }
+    })
+    .expect_err("a byte written outside every trace must make the pose abort");
+
+    match &error {
+        PlaceError::WroteOutsideTrace { was, now, .. } => {
+            assert_eq!(
+                (*was, *now),
+                (source.len(), source.len() + 1),
+                "the refusal must count the bytes left outside the trace on both sides"
+            );
+        }
+        other => panic!("the refusal must name the write, got {other:?}"),
+    }
+    assert!(
+        error.to_string().contains(ADDRESS),
+        "the refusal must name the document: {error}"
+    );
+
+    // And the writing production actually performs goes through the same
+    // check, or the test above would only be measuring a rejection of
+    // everything.
+    place(source, &pose).expect("what production writes accounts for every byte it adds");
 }
