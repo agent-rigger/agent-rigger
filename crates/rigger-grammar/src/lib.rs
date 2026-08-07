@@ -7,12 +7,18 @@
 //! by line number. The exact shapes of `Edit` and `Inverse` were meant to come
 //! out of the write-grammar scenarios: they did, and they live in [`edit`].
 //!
-//! The third shape of trace — "this block between these bounds" — lives in
-//! [`marker`], apart from [`Edit`] and [`Inverse`], and the separation is
-//! measured rather than stylistic: a bounded block needs delimiters the
-//! document knows how to carry, and the settings document that is served is
-//! strict JSON. The documents that shape has an object on are the text ones,
-//! which no grammar of this crate parses.
+//! The shape of trace "this block between these bounds" lives in [`marker`],
+//! apart from [`Edit`] and [`Inverse`], and the separation is measured rather
+//! than stylistic: a bounded block needs delimiters the document knows how to
+//! carry, and the settings document that is served is strict JSON. The
+//! documents that shape has an object on are the text ones, which no grammar of
+//! this crate parses.
+//!
+//! [`element`] carries what a list whose elements are **objects** needs and
+//! [`Edit::Values`] cannot give: an element found by an identity lodged inside
+//! it, hence independent of its value. The [`marker::Marker`] identifying a
+//! bounded block identifies such an element too — one type, because what it
+//! names is the same thing and two definitions of it would drift.
 //!
 //! **What is not here, and why.** The crate performs **no input or output**:
 //! the conditional write of an owned document lives in `rigger-apply`, because
@@ -20,6 +26,7 @@
 
 pub mod capability;
 pub mod edit;
+pub mod element;
 pub mod jsonc;
 pub mod marker;
 pub mod merge;
@@ -29,7 +36,7 @@ pub use capability::{
     mutations, table, Capabilities, GrammarRole, MergeAdmission, MergeRefusal, RefusalReason,
     Resolution, TriviaDivergence, SHARED_CORPUS,
 };
-pub use edit::{values_lost, Applied, Edit, Inverse, SemanticValue, Value};
+pub use edit::{values_lost, Applied, Edit, ElementUndo, Inverse, SemanticValue, Value};
 pub use jsonc::Jsonc;
 pub use merge::{merge, MergeError, Merged};
 pub use toml::Toml;
@@ -113,6 +120,31 @@ pub enum GrammarError {
         /// The number of definitions found.
         occurrences: usize,
     },
+    /// More than one element of the same list carries the same identity of the
+    /// product. Nothing says which one it wrote, so it claims neither: picking
+    /// one would be removing an element from a list somebody else owns on a
+    /// coin toss, which is the one damage this crate treats as irreversible.
+    DuplicatedIdentity {
+        /// The grammar that refuses.
+        grammar: &'static str,
+        /// The path of the list.
+        path: String,
+        /// The identity found more than once.
+        identity: String,
+        /// The number of elements carrying it.
+        occurrences: usize,
+    },
+    /// The edit declares the field a list element carries the identity of the
+    /// product in. Writing it would let a fragment forge an identity, or
+    /// overwrite the one that tells another catalogue's element apart from its
+    /// own — and the identity is precisely what keeps a removal from taking the
+    /// wrong element.
+    ReservedField {
+        /// The grammar that refuses.
+        grammar: &'static str,
+        /// The reserved field the edit declared.
+        field: &'static str,
+    },
 }
 
 impl GrammarError {
@@ -151,13 +183,35 @@ impl GrammarError {
         }
     }
 
+    /// Identity refusal, naming the grammar, the list, the identity, and how
+    /// many elements carry it.
+    pub fn duplicated_identity(
+        grammar: &'static str,
+        path: &[String],
+        identity: impl fmt::Display,
+        occurrences: usize,
+    ) -> Self {
+        Self::DuplicatedIdentity {
+            grammar,
+            path: if path.is_empty() {
+                "(root)".to_string()
+            } else {
+                path.join(".")
+            },
+            identity: identity.to_string(),
+            occurrences,
+        }
+    }
+
     /// The grammar that refused.
     pub fn grammar(&self) -> &'static str {
         match self {
             Self::Malformed { grammar, .. }
             | Self::Unsupported { grammar, .. }
             | Self::PathNotFound { grammar, .. }
-            | Self::Ambiguous { grammar, .. } => grammar,
+            | Self::Ambiguous { grammar, .. }
+            | Self::DuplicatedIdentity { grammar, .. }
+            | Self::ReservedField { grammar, .. } => grammar,
         }
     }
 }
@@ -185,6 +239,23 @@ impl fmt::Display for GrammarError {
                 "grammar `{grammar}`: the key `{key}` is defined {occurrences} times on the path \
                  being read — the format does not say which one is honoured on read, and the \
                  product does not choose in its place"
+            ),
+            Self::DuplicatedIdentity {
+                grammar,
+                path,
+                identity,
+                occurrences,
+            } => write!(
+                f,
+                "grammar `{grammar}`: {occurrences} elements of `{path}` carry the identity \
+                 `{identity}` — nothing says which one the product wrote, and it removes an \
+                 element from a list somebody else owns on no coin toss"
+            ),
+            Self::ReservedField { grammar, field } => write!(
+                f,
+                "grammar `{grammar}`: the field `{field}` carries the identity of an element and \
+                 is written by the product alone — a fragment able to write it could forge an \
+                 identity, or overwrite the one that tells another catalogue's element apart"
             ),
         }
     }
@@ -230,6 +301,36 @@ pub trait Grammar {
     /// is designated by value equality and never by index — an index survives
     /// a reordering no better than a line number survives a reformat.
     fn find_string_in_list(source: &str, path: &[&str], value: &str) -> Result<bool, GrammarError>;
+
+    /// The fields of the element of the list at `path` that carries `identity`
+    /// **inside** it, or `None` when no element does. The identity itself is
+    /// not among them: it is what was searched for, not something the product
+    /// reports having written.
+    ///
+    /// **Inside the element, never beside it.** Measured on 2026-08-06 on the
+    /// host that is served (`docs/specs/socle-neuf/reconnaissance-hotes.md`):
+    /// it destroys a key it does not know at the root of the document, and
+    /// preserves one inside an object element. An identity written anywhere
+    /// else does not survive the first configuration command its owner runs,
+    /// and an element that cannot be found again cannot be removed.
+    ///
+    /// **By identity, never by rank, and never by value.** A rank designates
+    /// nothing once the host has reordered the list, which it does. A value
+    /// designates nothing once the catalogue has published a different one,
+    /// which is the whole reason an element needs an identity at all.
+    ///
+    /// Two elements carrying the same identity make this refuse: nothing says
+    /// which of them the product wrote.
+    fn find_element_by_identity(
+        _source: &str,
+        _path: &[String],
+        _identity: &marker::Marker,
+    ) -> Result<Option<Vec<(String, Value)>>, GrammarError> {
+        Err(GrammarError::unsupported(
+            Self::NAME,
+            "finding a list element by its identity",
+        ))
+    }
 
     /// Applies `edit` to `source` and returns the edited document **together
     /// with** the trace that undoes it, both produced by the same parse.

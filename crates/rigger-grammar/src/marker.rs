@@ -71,15 +71,22 @@ const PROVENANCE_FIELD: &str = "catalogue=";
 /// The label of the entry field.
 const ENTRY_FIELD: &str = "entry=";
 
-/// The identity a posed block carries **inside the document**: the provenance
-/// of the catalogue and the entry identifier, and never the entry identifier
-/// alone.
+/// The identity a pose carries **inside the document**: the provenance of the
+/// catalogue and the entry identifier, and never the entry identifier alone.
 ///
 /// **Why both, and why in clear.** Two catalogues may legitimately carry an
 /// entry of the same name — `context/agents` is a name two independent authors
 /// will choose. If they produced the same marker, two distinct blocks would
 /// read as one, and removing the first would take the values of the second with
 /// no recovery, since the marker is precisely what told them apart.
+///
+/// **One type for two shapes of trace, on purpose.** It delimits a bounded
+/// block here, and it is lodged inside an object element of a list in
+/// [`crate::element`]. What it identifies is the same thing — a pose — and the
+/// hazard it closes is the same one; two definitions of it would drift, and the
+/// drift would show at removal, where it destroys. What differs between the two
+/// is only how a document **carries** it, which is a property of the document
+/// and not of the identity — the same reason [`Wrapping`] is not part of it.
 ///
 /// The form stays **readable** because the marker lives in a file its owner
 /// opens: provenance and entry, separated and in clear. An opaque digest would
