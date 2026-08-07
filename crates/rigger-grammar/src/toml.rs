@@ -1,11 +1,10 @@
 //! The TOML grammar, served by `toml_edit 0.25.13`, **read-only**.
 //!
-//! **Why it does not write** (settled on 2026-08-06,
-//! `docs/specs/refondation-multi-assistants/04-design-socle-neuf.md`
-//! § Plan de fichiers). Its writing role was the configuration file of a host
-//! that is no longer served, and no document owned by the host that is served
-//! is in TOML. It serves the reading of the catalogue file and of the
-//! descriptors, and nothing else.
+//! **Why it does not write** (a product decision settled on 2026-08-06). Its
+//! writing role was the configuration file of a host that is no longer
+//! served, and no document owned by the host that is served is in TOML. It
+//! serves the reading of the catalogue file and of the descriptors, and
+//! nothing else.
 //!
 //! **What refuses `merge`, and in what order.** Read-only is the
 //! **categorical** reason: it comes from the decision above, it is carried by
@@ -49,12 +48,10 @@ const PROBE_SOURCE: &str = concat!(
 impl Grammar for Toml {
     const NAME: &'static str = "toml";
 
-    /// Read-only, settled on 2026-08-06
-    /// (`docs/specs/refondation-multi-assistants/04-design-socle-neuf.md`
-    /// § Plan de fichiers, and `docs/specs/socle-neuf/requirements.md` § C1).
-    /// The product reads the catalogue file and the descriptors with this
-    /// grammar; it writes into no TOML document, because no document owned by
-    /// the host that is served is one.
+    /// Read-only, a product decision settled on 2026-08-06. The product reads
+    /// the catalogue file and the descriptors with this grammar; it writes
+    /// into no TOML document, because no document owned by the host that is
+    /// served is one.
     const ROLE: GrammarRole = GrammarRole::ReadOnly;
 
     /// No value here is arbitrated by its rank: the format forbids defining a

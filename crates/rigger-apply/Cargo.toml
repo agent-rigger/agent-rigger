@@ -6,8 +6,8 @@ publish = false
 
 # The crate that carries the **input and output** of writing. `rigger-grammar`
 # is pure and stays so: that constraint is what settled where the write guard,
-# the lock and the transient backup live (`04-design-socle-neuf.md`
-# § Plan de fichiers, amendment of 2026-08-06).
+# the lock and the transient backup live (a design decision made on
+# 2026-08-06).
 # No third-party dependency: what this crate does — read, write alongside,
 # rename — is standard library, and one more dependency on this path would be a
 # dependency on the path that touches the user's documents.

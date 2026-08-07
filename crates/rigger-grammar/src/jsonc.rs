@@ -36,10 +36,8 @@ impl Grammar for Jsonc {
 
     /// The product writes into these documents: this is the grammar of the
     /// documents owned by the host that is served — settings and tool servers —
-    /// and the only one on which the `merge` behaviour has an object (decision
-    /// of 2026-08-06,
-    /// `docs/specs/refondation-multi-assistants/04-design-socle-neuf.md`
-    /// § Plan de fichiers).
+    /// and the only one on which the `merge` behaviour has an object (a
+    /// product decision made on 2026-08-06).
     ///
     /// **This declaration is no longer taken on trust since T3b.** The
     /// derivation runs the write path on the probe: write, read back what was

@@ -2,12 +2,10 @@
 //! document somebody else owns. This crate knows nothing of assistants, of
 //! catalogues, or of the registry.
 //!
-//! The file plan
-//! (`docs/specs/refondation-multi-assistants/04-design-socle-neuf.md`
-//! § Plan de fichiers) gives this module a trait carrying `parse`,
+//! This crate's design puts, in this module, a trait carrying `parse`,
 //! `apply(Edit) -> Inverse` and `render`, addressed by grammar path and never
 //! by line number. The exact shapes of `Edit` and `Inverse` were meant to come
-//! out of the family-C scenarios: they did, and they live in [`edit`].
+//! out of the write-grammar scenarios: they did, and they live in [`edit`].
 //!
 //! The third shape of trace — "this block between these bounds" — lives in
 //! [`marker`], apart from [`Edit`] and [`Inverse`], and the separation is
