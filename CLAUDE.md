@@ -37,6 +37,17 @@ The **identifier** carries the traceability — that is why they are flat and ne
 the English name carries the meaning. Do not transliterate the French scenario title; state what the
 test establishes.
 
+**Cite the identifier, never the path.** `C1`, `MD-22`, `ADR-0034` are stable names a reader can
+carry into a conversation and ask about. `docs/specs/socle-neuf/requirements.md` is a path into a
+repository they do not have, and it will one day move without anything here going red. So a comment
+may say *what C1 requires* and name it; it must not tell a reader to go and read a file that, for
+them, does not exist.
+
+The consequence is the same one as above, and it is the whole point: a comment that names an
+identifier still has to **say what that identifier requires**, in English, right there. If removing
+the citation would leave the sentence meaningless, the sentence was a pointer rather than an
+explanation.
+
 ## Quality gates
 
 Run all three from the repository root. A change is not done until the three are green.

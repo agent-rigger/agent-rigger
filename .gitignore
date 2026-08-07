@@ -1,1 +1,6 @@
 /target
+
+# Agent harness scratch: worktrees, session state. Never part of the product,
+# and this repository is public — an accidental commit here publishes machine
+# paths and session artifacts.
+/.claude/
