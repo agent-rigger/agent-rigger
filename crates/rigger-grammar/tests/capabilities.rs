@@ -18,6 +18,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use rigger_grammar::marker::{self, Marker, Pose, Wrapping};
 use rigger_grammar::{
     Applied, Capabilities, Edit, Grammar, GrammarError, GrammarRole, Inverse, Jsonc,
     MergeAdmission, MergeForm, Probe, RefusalReason, Resolution, SemanticValue, Toml,
@@ -96,6 +97,61 @@ impl Grammar for OrderSensitiveProbe {
 
     fn values(source: &str) -> Result<Vec<SemanticValue>, GrammarError> {
         Jsonc::values(source)
+    }
+}
+
+/// The probe of the instruction-file grammars of this file: text, whose
+/// structure is its lines, carrying the three dimensions of hostile trivia the
+/// derivation demands — CRLF line ending, indented line, comment.
+const INSTRUCTION_PROBE: &str = concat!(
+    "# house rules\r\n",
+    "\tnever run a destructive command without asking\r\n",
+    "// reviewed by hand, do not reorder\r\n",
+    "the first rule that matches wins\r\n",
+);
+
+/// A grammar of **instruction files**: text whose structure is its lines, read
+/// first-match-first, hence resolved by order.
+///
+/// **Its round trip returns its input, and that is its language rather than a
+/// counterfeit.** Every text is a document of an instruction file, so nothing
+/// it could refuse would tell a parser from an identity — and the derivation
+/// says so where it matters: the form "these keys at this path" is refused on
+/// it, naming that it accepts what is not a document. What is left is the form
+/// this shape exists for, and the trial that decides it does not go through a
+/// parser at all: it poses a block and asks the recogniser of this crate
+/// whether it finds it again.
+///
+/// This is the family `marker` names as the object of the bounded block, and
+/// no grammar of the crate parses one yet. Without it, the road C7 leaves open
+/// on an order-sensitive grammar would be a road no test ever walks.
+struct InstructionLines;
+
+impl Grammar for InstructionLines {
+    const NAME: &'static str = "instruction-lines";
+    const ROLE: GrammarRole = GrammarRole::ReadWrite;
+    const RESOLUTION: Resolution = Resolution::DependsOnOrder;
+    const PROBE: Probe = Probe {
+        source: INSTRUCTION_PROBE,
+        comment: "// reviewed by hand, do not reorder",
+        list_path: &["rules"],
+        value_present: "the first rule that matches wins",
+        value_absent: "nothing here says this",
+    };
+
+    fn round_trip(source: &str) -> Result<String, GrammarError> {
+        Ok(source.to_string())
+    }
+
+    fn find_string_in_list(
+        _source: &str,
+        _path: &[&str],
+        _value: &str,
+    ) -> Result<bool, GrammarError> {
+        Err(GrammarError::unsupported(
+            Self::NAME,
+            "designating a list element",
+        ))
     }
 }
 
@@ -271,16 +327,108 @@ fn c7_the_grammar_of_the_served_host_is_admitted() {
     );
 }
 
+/// The documents `G` reads that the block a pose writes would **destroy**: the
+/// pose succeeds, and what it produced is no longer a document its own grammar
+/// reads.
+///
+/// The block is posed by [`marker::place`], the very function a pose runs, and
+/// it carries a **body** — a block with none is the one shape a pose never
+/// writes, and it is the shape on which two comments a parser tolerates pass
+/// for a block a document can carry.
+///
+/// **It deliberately does not call the derivation.** What the scenario below
+/// observes is that the table agrees with what a pose actually does to a real
+/// document; asking the derivation whether it agrees with itself would observe
+/// nothing.
+fn documents_the_block_would_destroy<G: Grammar>() -> Vec<String> {
+    let marker = Marker::new("capability-derivation", "delimiter-trial");
+    let body = ["a line a catalogue would pose"];
+    let mut destroyed = Vec::new();
+
+    for &(document, source) in rigger_grammar::SHARED_CORPUS {
+        if G::round_trip(source).is_err() {
+            continue;
+        }
+        for &wrapping in Wrapping::ALL {
+            let pose = Pose {
+                marker: &marker,
+                address: document,
+                roots: &[],
+                traced: &[],
+                posed: None,
+                body: &body,
+                wrapping,
+            };
+            let Ok(placed) = marker::place(source, &pose) else {
+                continue;
+            };
+            if let Err(err) = G::round_trip(&placed.rendered) {
+                destroyed.push(format!("{document} under {wrapping:?} — {err}"));
+            }
+        }
+    }
+    destroyed
+}
+
+#[test]
+fn c7_the_bounded_block_is_refused_where_posing_it_would_destroy_the_document() {
+    // GIVEN the grammar of the settings file of the host that is served, and
+    // the documents of the repository it reads.
+    let destroyed = documents_the_block_would_destroy::<Jsonc>();
+
+    // The trial has an object: there is at least one document, read by this
+    // grammar, that a posed block leaves unreadable. Without this the assertion
+    // below would hold for a grammar nobody ever poses into.
+    assert!(
+        !destroyed.is_empty(),
+        "no document of the repository read by this grammar is destroyed by a posed block — the \
+         assertion below would then measure nothing"
+    );
+
+    // WHEN the capability table is asked whether the form "this block between
+    // these bounds" is open on it.
+    let capabilities = Capabilities::of::<Jsonc>();
+
+    // THEN it is refused. A table answering "yes" here says a pose may write a
+    // block into a document whose owner would stop being able to read it, and
+    // the pose reports success while the host no longer loads its own settings.
+    let refusal = match capabilities.merge_bounded_block() {
+        MergeAdmission::Refused(refusal) => refusal,
+        MergeAdmission::Admitted => panic!(
+            "the bounded block is admitted on a grammar whose documents a posed block \
+             destroys:\n{}",
+            destroyed.join("\n")
+        ),
+    };
+    assert!(
+        !capabilities.carries_delimiters(),
+        "the column says the documents carry a block that would destroy them"
+    );
+    assert!(
+        capabilities.delimiter_wrappings().is_empty(),
+        "a wrapping is published as carriable on documents no wrapping survives: {:?}",
+        capabilities.delimiter_wrappings()
+    );
+    assert!(
+        refusal
+            .reasons()
+            .iter()
+            .any(|reason| matches!(reason, RefusalReason::NoDelimiterTheDocumentCanCarry { .. })),
+        "the refusal does not name the reason that motivates it: {:?}",
+        refusal.reasons()
+    );
+}
+
 #[test]
 fn c7_an_order_sensitive_grammar_keeps_the_bounded_block() {
     // GIVEN a grammar whose resolution depends on order, and whose documents
-    // carry a comment — hence a delimiter.
-    let capabilities = Capabilities::of::<OrderSensitiveProbe>();
+    // can carry a block — text, whose structure is its lines.
+    let capabilities = Capabilities::of::<InstructionLines>();
     assert_eq!(capabilities.resolution(), Resolution::DependsOnOrder);
     assert!(
         capabilities.carries_delimiters(),
-        "the documents of this grammar carry a comment, so a delimiter must be measured as \
-         carriable — failing which the refusal below would prove nothing about order"
+        "the documents of this grammar are lines, so a block posed among them must be measured \
+         as carriable — failing which the refusal below would prove nothing about order"
     );
 
     // WHEN a descriptor declares a `merge` on it in the form "this block
@@ -415,14 +563,31 @@ fn c7_neither_form_is_available_when_the_document_carries_no_delimiter() {
     assert!(
         !by_keys
             .reasons()
-            .contains(&RefusalReason::NoDelimiterTheDocumentCanCarry),
+            .iter()
+            .any(|reason| matches!(reason, RefusalReason::NoDelimiterTheDocumentCanCarry { .. })),
         "the refusal of the keys borrows the reason of the block"
     );
-    assert_eq!(
-        bounded_block.reasons(),
-        [RefusalReason::NoDelimiterTheDocumentCanCarry],
-        "the refusal of the block must carry the one reason that motivates it, and above all not \
-         the order — order arbitrates a position, and a block is designated by its delimiters"
+    // The refusal of the block carries the one reason that motivates it, and
+    // above all not the order — order arbitrates a position, and a block is
+    // designated by its delimiters. It carries one per document that can carry
+    // none, and the probe is among them: this grammar reads its own document
+    // and those of the repository its syntax admits.
+    assert!(
+        bounded_block
+            .reasons()
+            .iter()
+            .all(|reason| matches!(reason, RefusalReason::NoDelimiterTheDocumentCanCarry { .. })),
+        "the refusal of the block carries a reason that is not its own: {:?}",
+        bounded_block.reasons()
+    );
+    assert!(
+        bounded_block
+            .reasons()
+            .contains(&RefusalReason::NoDelimiterTheDocumentCanCarry {
+                document: "the probe"
+            }),
+        "the refusal of the block does not name the document it was measured on: {:?}",
+        bounded_block.reasons()
     );
 
     // The keys carry a second reason, and it is not noise: a document with no
@@ -455,6 +620,113 @@ fn c7_neither_form_is_available_when_the_document_carries_no_delimiter() {
                 "the refusal does not name \"{expected}\": {message}"
             );
         }
+    }
+}
+
+/// A guard, not a scenario: the trial must pose **every** wrapping and keep
+/// what survived, rather than settle for the one that suits the documents of
+/// today.
+///
+/// A trial narrowed to one wrapping is a rule written by name in another
+/// alphabet: it would go on answering "yes" the day a document changes format,
+/// with nothing going red. And the fold into a single boolean is what this
+/// checks on the other side — a caller has to pick a wrapping before it poses
+/// anything, and "at least one of them works" names no road.
+#[test]
+fn guard_the_delimiter_trial_poses_every_wrapping() {
+    let capabilities = Capabilities::of::<InstructionLines>();
+
+    assert_eq!(
+        capabilities.delimiter_wrappings(),
+        Wrapping::ALL,
+        "the documents of a line-oriented grammar carry all four wrappings — a published set \
+         missing one is a wrapping the trial never posed"
+    );
+}
+
+/// A guard, not a scenario: the half of the trial that says "the recogniser
+/// finds the block again" must decide something.
+///
+/// A block the recogniser does not find delimits nothing: it is invisible,
+/// hence unremovable, and every further pose appends another copy. The document
+/// here makes that half, and only that half, fail: its last line is an
+/// unterminated `/*`, which the lexer rightly treats as an ordinary line — and
+/// a block-comment delimiter appended after it closes that opening instead of
+/// being read as a delimiter of its own. The grammar reads the rendering
+/// perfectly well, so the wrapping is refused by the recogniser or by nothing.
+#[test]
+fn guard_a_block_the_recogniser_cannot_find_again_is_not_carried() {
+    /// The instruction-file grammar, on a document whose last line opens a
+    /// block comment nobody closed. Prose does that.
+    struct DanglingOpener;
+
+    impl Grammar for DanglingOpener {
+        const NAME: &'static str = "instruction-lines-dangling-opener";
+        const ROLE: GrammarRole = GrammarRole::ReadWrite;
+        const RESOLUTION: Resolution = Resolution::DependsOnOrder;
+        const PROBE: Probe = Probe {
+            source: concat!(
+                "# house rules\r\n",
+                "\tnever run a destructive command without asking\r\n",
+                "// reviewed by hand, do not reorder\r\n",
+                "the note below was never finished\r\n",
+                "/*\r\n",
+            ),
+            comment: "// reviewed by hand, do not reorder",
+            list_path: &["rules"],
+            value_present: "the note below was never finished",
+            value_absent: "nothing here says this",
+        };
+
+        fn round_trip(source: &str) -> Result<String, GrammarError> {
+            Ok(source.to_string())
+        }
+
+        fn find_string_in_list(
+            _source: &str,
+            _path: &[&str],
+            _value: &str,
+        ) -> Result<bool, GrammarError> {
+            Err(GrammarError::unsupported(
+                Self::NAME,
+                "designating a list element",
+            ))
+        }
+    }
+
+    let capabilities = Capabilities::of::<DanglingOpener>();
+
+    assert_eq!(
+        capabilities.delimiter_wrappings(),
+        [Wrapping::LineComment, Wrapping::Bare],
+        "a wrapping whose delimiters the recogniser cannot find again in this document was \
+         credited: the block would be posed, invisible, and duplicated by the next pose"
+    );
+
+    // What the two refused wrappings are refused **by**: not the grammar, which
+    // reads any text of this language, but the recogniser reading back what the
+    // writer produced. Drop that half of the trial and the two come back.
+    for wrapping in [Wrapping::BlockCommentInline, Wrapping::BlockCommentSpanning] {
+        let marker = Marker::new("capability-derivation", "delimiter-trial");
+        let body = ["a line a catalogue would pose"];
+        let pose = Pose {
+            marker: &marker,
+            address: "the probe",
+            roots: &[],
+            traced: &[],
+            posed: None,
+            body: &body,
+            wrapping,
+        };
+        let refusal = marker::place(DanglingOpener::PROBE.source, &pose)
+            .expect_err("the pose must refuse the wrapping the table does not publish");
+        assert!(
+            matches!(
+                refusal,
+                rigger_grammar::marker::PlaceError::NotRecognised { .. }
+            ),
+            "the wrapping is refused by something other than the recogniser: {refusal}"
+        );
     }
 }
 
@@ -736,6 +1008,154 @@ fn guard_a_round_trip_without_a_parser_credits_nothing() {
     assert!(
         matches!(capabilities.merge_by_keys(), MergeAdmission::Refused(_)),
         "an implementation with no parser was admitted to `merge`"
+    );
+
+    // The bounded block is the one thing this grammar is **not** brought back
+    // from, and that is measured rather than conceded. The form needs no
+    // parser: a block is written on the lines of the document and read back by
+    // the recogniser of this crate, never rendered by a grammar. A language
+    // that accepts any text is the language an instruction file has, and it is
+    // the family this form exists for — so the answer here is the same one an
+    // honest instruction-file grammar gets, and refusing it would refuse the
+    // form to the documents it was written for.
+    //
+    // What the counterfeit does buy is refused right beside it, on the same
+    // line of the table: the form that does need a parser. A reader holding
+    // both sees a grammar that accepts what is not a document, named.
+    assert!(
+        capabilities.carries_delimiters(),
+        "a language that accepts any text cannot be broken by lines posed among its lines — \
+         refusing here would refuse the form to the very documents it has an object on"
+    );
+    assert!(
+        matches!(
+            capabilities.merge_by_keys(),
+            MergeAdmission::Refused(refusal)
+                if refusal.reasons().iter().any(|reason| matches!(
+                    reason,
+                    RefusalReason::MalformedDocumentAccepted { .. }
+                ))
+        ),
+        "the absence of a parser is not published anywhere a reader of this line would meet it: \
+         {:?}",
+        capabilities.merge_by_keys()
+    );
+}
+
+/// A guard, not a scenario, and the demonstration of why the delimiter trial
+/// does **not** demand a parser the way the trivia measurement does.
+///
+/// The trial that tells a parser from an identity is that the grammar refuses
+/// its document followed by what is not one. A grammar strict enough to do that
+/// has a significant tail — and the block a pose appends there is, to it, more
+/// text after the end of the document. It refuses the block for the same reason
+/// it refuses the mutation, so demanding a parser would not raise the bar on
+/// this column: it would empty it, for good and for every grammar, including
+/// the instruction files this form exists for.
+///
+/// The grammar below is a real parser by the derivation's own trial, and the
+/// only thing it cannot carry is what a pose puts **between** the bounds.
+#[test]
+fn guard_demanding_a_parser_would_close_the_bounded_block_for_good() {
+    /// Lines that are either a comment or `key = value`, no key twice, at least
+    /// one. Its delimiters can be comments; the body a pose writes between them
+    /// is a line of neither kind.
+    struct KeyLines;
+
+    impl KeyLines {
+        fn reads(source: &str) -> Result<(), GrammarError> {
+            let mut keys: Vec<&str> = Vec::new();
+            for line in source.lines() {
+                let line = line.trim();
+                if line.is_empty() || line.starts_with("//") {
+                    continue;
+                }
+                let Some((key, _)) = line.split_once(" = ") else {
+                    return Err(GrammarError::malformed(
+                        Self::NAME,
+                        format!("`{line}` is neither a comment nor a `key = value` line"),
+                    ));
+                };
+                if keys.contains(&key) {
+                    return Err(GrammarError::malformed(
+                        Self::NAME,
+                        format!("the key `{key}` is defined twice"),
+                    ));
+                }
+                keys.push(key);
+            }
+            if keys.is_empty() {
+                return Err(GrammarError::malformed(
+                    Self::NAME,
+                    "a document of this language carries at least one key",
+                ));
+            }
+            Ok(())
+        }
+    }
+
+    impl Grammar for KeyLines {
+        const NAME: &'static str = "key-lines";
+        const ROLE: GrammarRole = GrammarRole::ReadWrite;
+        const RESOLUTION: Resolution = Resolution::IndependentOfOrder;
+        const PROBE: Probe = Probe {
+            source: "// probe\r\n\tallow = read\r\n",
+            comment: "// probe",
+            list_path: &["allow"],
+            value_present: "read",
+            value_absent: "network",
+        };
+
+        fn round_trip(source: &str) -> Result<String, GrammarError> {
+            Self::reads(source)?;
+            Ok(source.to_string())
+        }
+
+        fn find_string_in_list(
+            _source: &str,
+            _path: &[&str],
+            _value: &str,
+        ) -> Result<bool, GrammarError> {
+            Err(GrammarError::unsupported(
+                Self::NAME,
+                "designating a list element",
+            ))
+        }
+    }
+
+    // It is a parser by the trial the derivation uses: no mutation of its
+    // document is accepted, so nothing here is refused for want of one.
+    let capabilities = Capabilities::of::<KeyLines>();
+    let MergeAdmission::Refused(by_keys) = capabilities.merge_by_keys() else {
+        panic!("this grammar has no write path — the keys cannot be admitted");
+    };
+    assert!(
+        !by_keys
+            .reasons()
+            .iter()
+            .any(|reason| matches!(reason, RefusalReason::MalformedDocumentAccepted { .. })),
+        "the grammar was taken for an identity, so what follows would prove nothing: {:?}",
+        by_keys.reasons()
+    );
+
+    // And it carries no block, under any wrapping: the delimiters are comments
+    // it reads, and the body between them is a line of neither kind.
+    assert!(
+        capabilities.delimiter_wrappings().is_empty(),
+        "a wrapping was credited on a document whose language the posed body leaves: {:?}",
+        capabilities.delimiter_wrappings()
+    );
+    let MergeAdmission::Refused(bounded_block) = capabilities.merge_bounded_block() else {
+        panic!("the block is admitted on a document a posed body makes unreadable");
+    };
+    assert!(
+        bounded_block
+            .reasons()
+            .contains(&RefusalReason::NoDelimiterTheDocumentCanCarry {
+                document: "the probe"
+            }),
+        "the refusal does not name the document that cannot carry: {:?}",
+        bounded_block.reasons()
     );
 }
 
@@ -1163,6 +1583,7 @@ fn c6_the_table_publishes_each_derived_capability_per_grammar() {
             applies_edits: capabilities.applies_edits(),
             resolution: capabilities.resolution(),
             carries_delimiters: capabilities.carries_delimiters(),
+            delimiter_wrappings: capabilities.delimiter_wrappings().to_vec(),
             merge_by_keys: capabilities.merge_by_keys() == &MergeAdmission::Admitted,
             merge_bounded_block: capabilities.merge_bounded_block() == &MergeAdmission::Admitted,
         })
@@ -1171,6 +1592,13 @@ fn c6_the_table_publishes_each_derived_capability_per_grammar() {
     assert_eq!(
         published,
         vec![
+            // The keys are open on it, the block is not, and the two answers
+            // come from different measurements. Its documents are values, and
+            // a block posed among them puts between its bounds lines that are
+            // values of no language: the delimiters can be comments this
+            // grammar tolerates, and what stands between them makes the file
+            // unreadable — for this grammar, and for the host whose settings
+            // it is.
             Row {
                 grammar: Jsonc::NAME,
                 role: GrammarRole::ReadWrite,
@@ -1178,14 +1606,15 @@ fn c6_the_table_publishes_each_derived_capability_per_grammar() {
                 designates_list_element: true,
                 applies_edits: true,
                 resolution: Resolution::IndependentOfOrder,
-                carries_delimiters: true,
+                carries_delimiters: false,
+                delimiter_wrappings: Vec::new(),
                 merge_by_keys: true,
-                merge_bounded_block: true,
+                merge_bounded_block: false,
             },
             // Read-only by product decision, so no form of `merge` is open on
-            // it — and its documents carry none of the delimiters a pose
-            // writes: the wrappings are all C-style or bare, and neither is a
-            // line this grammar reads.
+            // it — and its documents carry no block either, for the same reason
+            // as above and one more: the wrappings are all C-style or bare, and
+            // neither is a line this grammar reads.
             Row {
                 grammar: Toml::NAME,
                 role: GrammarRole::ReadOnly,
@@ -1194,6 +1623,7 @@ fn c6_the_table_publishes_each_derived_capability_per_grammar() {
                 applies_edits: false,
                 resolution: Resolution::IndependentOfOrder,
                 carries_delimiters: false,
+                delimiter_wrappings: Vec::new(),
                 merge_by_keys: false,
                 merge_bounded_block: false,
             },
@@ -1213,6 +1643,7 @@ struct Row {
     applies_edits: bool,
     resolution: Resolution,
     carries_delimiters: bool,
+    delimiter_wrappings: Vec<Wrapping>,
     merge_by_keys: bool,
     merge_bounded_block: bool,
 }

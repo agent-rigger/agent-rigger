@@ -65,15 +65,24 @@
 //! them, so nothing but a rule derived from the two properties would refuse the
 //! day one does.
 //!
-//! The second capacity is **measured** like the rest, by [`carries_delimiters`]:
-//! the delimiters a pose writes are written into the grammar's probe and read
-//! back. Writing a bounded block goes through no [`Grammar`] — see
+//! The second capacity is **measured** like the rest, by [`measure_delimiters`]:
+//! a block is **posed** — by the very function a pose runs — into every document
+//! the grammar reads, and what comes out must still be a document that grammar
+//! reads. Writing a bounded block goes through no [`Grammar`] — see
 //! [`crate::marker`] — but being able to carry one is a property of the
 //! document's format, and admission must read one table rather than two.
+//!
+//! **The answer is by wrapping, and it is published that way.** A pose writes
+//! four, and they are not carried alike by the same document: a comment is a
+//! comment where a bare token is a syntax error. A single boolean folded by
+//! "at least one of them" hands a caller a "yes" that names no road, and the
+//! caller then picks the wrapping the trial had measured as destroying the
+//! file. [`Capabilities::delimiter_wrappings`] therefore carries the set, and
+//! the boolean is derived from it rather than the other way round.
 
 use std::fmt;
 
-use crate::marker::{self, Classification, Marker, Wrapping};
+use crate::marker::{self, Marker, Pose, Wrapping};
 use crate::{Grammar, Jsonc, Toml};
 
 /// The documents of the repository, embedded in the crate: the second witness
@@ -242,12 +251,20 @@ pub enum RefusalReason {
     TriviaNotPreserved(TriviaDivergence),
     /// The resolution of the document depends on order of appearance.
     ResolutionDependsOnOrder,
-    /// The document has no way of carrying a delimiter: of the wrappings a pose
-    /// writes, not one is at once recognised in a document of this grammar and
-    /// leaves it readable. A block posed there would have no bounds, so the
-    /// form "this block between these bounds" is unavailable — and it is the
-    /// road a grammar refused for its order would otherwise have been left.
-    NoDelimiterTheDocumentCanCarry,
+    /// A document this grammar reads has no way of carrying a bounded block: of
+    /// the wrappings a pose writes, not one leaves at once a block the
+    /// recogniser finds again and a document the grammar still reads. Such a
+    /// block would either have no bounds — invisible, hence unremovable — or
+    /// have destroyed the document it was posed into, so the form "this block
+    /// between these bounds" is unavailable, and it is the road a grammar
+    /// refused for its order would otherwise have been left.
+    NoDelimiterTheDocumentCanCarry {
+        /// The document that can carry none, named: a grammar reads several,
+        /// and one of them being unable to carry a block is what refuses the
+        /// form. A refusal that did not name it would send its reader looking
+        /// through all of them.
+        document: &'static str,
+    },
     /// Reading the probe itself failed: a grammar that cannot read back its own
     /// document can promise nothing about what it would write into one.
     ProbeUnreadable(crate::GrammarError),
@@ -318,11 +335,12 @@ impl fmt::Display for RefusalReason {
                 "the resolution of the document depends on order of appearance — writing by keys \
                  there would be ineffective with no error and no trace"
             ),
-            Self::NoDelimiterTheDocumentCanCarry => write!(
+            Self::NoDelimiterTheDocumentCanCarry { document } => write!(
                 f,
-                "this document cannot carry a delimiter — of the wrappings a pose writes, none is \
-                 at once found again in a document of this grammar and leaves it readable, so a \
-                 block posed here would have no bounds"
+                "\"{document}\", a document this grammar reads, cannot carry a bounded block — of \
+                 the four wrappings a pose writes its delimiters in, none leaves at once a block \
+                 the recogniser finds again and a document this grammar still reads, so a block \
+                 posed here would either have no bounds or destroy the document"
             ),
             Self::ProbeUnreadable(err) => {
                 write!(f, "the probe of the grammar cannot be read back: {err}")
@@ -468,7 +486,7 @@ pub struct Capabilities {
     designates_list_element: bool,
     applies_edits: bool,
     resolution: Resolution,
-    carries_delimiters: bool,
+    delimiter_wrappings: Vec<Wrapping>,
     merge_by_keys: MergeAdmission,
     merge_bounded_block: MergeAdmission,
 }
@@ -527,15 +545,13 @@ impl Capabilities {
         // lines of the document and never rendered by a parser, which is why
         // `marker` goes through no `Grammar`. What is left is the decision not
         // to write these documents at all — categorical, and it holds for any
-        // form — and whether the document can carry the delimiters.
-        let carries_delimiters = carries_delimiters::<G>();
+        // form — and whether the documents can carry a block.
+        let delimiters = measure_delimiters::<G>();
         let mut bounded_block = Vec::new();
         if G::ROLE == GrammarRole::ReadOnly {
             bounded_block.push(RefusalReason::ReadOnlyGrammar);
         }
-        if !carries_delimiters {
-            bounded_block.push(RefusalReason::NoDelimiterTheDocumentCanCarry);
-        }
+        bounded_block.extend(delimiters.reasons);
 
         Self {
             grammar: G::NAME,
@@ -545,7 +561,7 @@ impl Capabilities {
             designates_list_element,
             applies_edits,
             resolution: G::RESOLUTION,
-            carries_delimiters,
+            delimiter_wrappings: delimiters.wrappings,
             merge_by_keys: admission::<G>(MergeForm::Keys, by_keys),
             merge_bounded_block: admission::<G>(MergeForm::BoundedBlock, bounded_block),
         }
@@ -592,11 +608,25 @@ impl Capabilities {
         self.resolution
     }
 
-    /// Whether a document of this grammar can carry the delimiters a bounded
-    /// block needs. Measured by writing them into its probe and reading them
-    /// back — see [`carries_delimiters`].
+    /// The wrappings under which a block can be posed into **every** document
+    /// this grammar reads. Measured by posing one — see [`measure_delimiters`].
+    ///
+    /// **Why a set and not a verdict.** The four wrappings are not carried
+    /// alike by the same document, and a caller has to choose one before it
+    /// poses anything. Publishing "at least one works" hands it a yes that
+    /// names no road, and the road it then takes may be the one the trial
+    /// measured as destroying the file.
+    pub fn delimiter_wrappings(&self) -> &[Wrapping] {
+        &self.delimiter_wrappings
+    }
+
+    /// Whether the documents of this grammar can carry a bounded block at all,
+    /// that is, whether [`Capabilities::delimiter_wrappings`] is not empty. It
+    /// is derived from the set and never measured on its own: a verdict
+    /// computed apart from the list it summarises would sooner or later
+    /// disagree with it.
     pub fn carries_delimiters(&self) -> bool {
-        self.carries_delimiters
+        !self.delimiter_wrappings.is_empty()
     }
 
     /// Admission to `merge` in the form "these keys at this path", and its
@@ -631,48 +661,126 @@ fn admission<G: Grammar>(form: MergeForm, reasons: Vec<RefusalReason>) -> MergeA
     }
 }
 
-/// Measures whether a document of `G` is able to **carry** the delimiters of a
-/// bounded block: they are written into its probe, and what comes out must be
-/// at once a block the recogniser finds and a document the grammar still reads.
+/// The body the delimiter trial poses between the bounds.
 ///
-/// **Every wrapping, at both ends of the document.** A pose writes four
-/// wrappings, and the one that suits the documents served today would be a rule
-/// by name in another alphabet: it would go on answering "yes" the day a
-/// document changes format, with nothing going red. The trial therefore asks
-/// each of the four, at the head and at the tail, and concludes "cannot carry"
-/// only when every one of them fails.
+/// **A block with nothing between its bounds is the one shape a pose never
+/// writes**, and measuring on it is what credited the grammar of a strict
+/// settings document with carrying a block: its two delimiters can be two
+/// comments the parser of this crate tolerates, while the first line put
+/// between them is a value of no language and the file its owner opens stops
+/// being read at all. What a pose writes there is the text a catalogue
+/// publishes — lines of prose, which are not values of the document's grammar —
+/// so that is what the trial writes.
+const TRIAL_BODY: &[&str] = &["a line a catalogue would pose"];
+
+/// What the delimiter measurement reports: the wrappings every document the
+/// grammar reads can carry a block under, and the reason it can carry none.
+struct DelimiterMeasure {
+    wrappings: Vec<Wrapping>,
+    reasons: Vec<RefusalReason>,
+}
+
+/// Measures under which wrappings a document of `G` is able to **carry** a
+/// bounded block, by posing one into it.
 ///
-/// **Both conditions, because neither alone is the capacity.** A delimiter pair
-/// the recogniser does not find again delimits nothing: the block is invisible,
-/// hence unremovable, and every further pose appends another copy. A delimiter
-/// pair that breaks the document has destroyed what it was posed into. Only a
-/// wrapping that survives both is one this document can carry.
+/// **The trial poses; it does not imitate a pose.** It calls [`marker::place`],
+/// the very function a pose runs, with the body a pose writes. A rendering
+/// built here for the trial would drift from the one production writes, and the
+/// drift has already been paid: two bare delimiters with nothing between them
+/// pass through a JSON parser where the block a pose actually writes does not,
+/// so a strict settings document was credited with carrying what would make its
+/// host stop reading it.
 ///
-/// **What it does not establish**, and it is the same limit the rest of this
-/// module lives with: the probe belongs to the grammar being judged. A document
-/// admitting a comment at its head and nowhere else passes here, and where a
-/// block may be posed inside a given document is decided by the pose, which
-/// reads its own rendering back and refuses when the recogniser cannot find
-/// what it just wrote.
-fn carries_delimiters<G: Grammar>() -> bool {
-    let source = G::PROBE.source;
+/// **Both conditions, because neither alone is the capacity.** A block the
+/// recogniser does not find again delimits nothing: it is invisible, hence
+/// unremovable, and every further pose appends another copy — that half is
+/// [`marker::place`]'s own post-condition, and it is why the trial reads its
+/// verdict rather than its own. A block that breaks the document has destroyed
+/// what it was posed into — that half is `G::round_trip` on the rendering, and
+/// no other code in this crate can answer it.
+///
+/// **Every wrapping, and the set is kept.** A pose writes four, and the one
+/// that suits the documents served today would be a rule by name in another
+/// alphabet: it would go on answering "yes" the day a document changes format,
+/// with nothing going red. Each of the four is posed, and what is published is
+/// those that survived — not a fold of them into a single yes.
+///
+/// **Every document the grammar reads, and the answer is their intersection.**
+/// The capacity belongs to the document, the table has a line per grammar, and
+/// a caller reads that line before posing into a document the table cannot name
+/// for it. The only wrapping it can be handed safely is therefore one that
+/// carried in **all** of them; a document that carries none refuses the form and
+/// is named in the refusal.
+///
+/// **What it does not establish.** The rendering is judged by `G::round_trip`,
+/// which is the parser of this product and not the program that reads the
+/// document. A grammar accepting more than that program credits its documents
+/// with more than they carry; what keeps that from being free is that the same
+/// permissiveness is measured, published and refused for the other form, on the
+/// same line of the table.
+fn measure_delimiters<G: Grammar>() -> DelimiterMeasure {
+    let probe = G::PROBE.source;
+    if let Err(err) = G::round_trip(probe) {
+        // A grammar that cannot read its own probe renders nothing to judge,
+        // and naming the document here would report a property of the document
+        // where the defect is in the instrument.
+        return DelimiterMeasure {
+            wrappings: Vec::new(),
+            reasons: vec![RefusalReason::ProbeUnreadable(err)],
+        };
+    }
+
+    let mut reasons = Vec::new();
+    let mut carried: Option<Vec<Wrapping>> = None;
+    let documents = std::iter::once(("the probe", probe)).chain(SHARED_CORPUS.iter().copied());
+
+    for (document, source) in documents {
+        // A refused document is not a defect: a grammar does not read the
+        // documents of another, and what it does not read it cannot be asked to
+        // carry anything in.
+        if G::round_trip(source).is_err() {
+            continue;
+        }
+        let here = wrappings_posed::<G>(document, source);
+        if here.is_empty() {
+            reasons.push(RefusalReason::NoDelimiterTheDocumentCanCarry { document });
+        }
+        carried = Some(match carried {
+            None => here,
+            Some(kept) => kept.into_iter().filter(|w| here.contains(w)).collect(),
+        });
+    }
+
+    DelimiterMeasure {
+        wrappings: carried.unwrap_or_default(),
+        reasons,
+    }
+}
+
+/// The wrappings under which a block can be posed into `source` and leave a
+/// document `G` still reads.
+fn wrappings_posed<G: Grammar>(document: &'static str, source: &str) -> Vec<Wrapping> {
     // The identity names the trial, and nothing of a catalogue: what is
-    // measured here is the document's ability to carry a delimiter, which does
-    // not depend on whose delimiter it is.
+    // measured here is the document's ability to carry a block, which does not
+    // depend on whose block it is.
     let marker = Marker::new("capability-derivation", "delimiter-trial");
 
-    Wrapping::ALL.iter().any(|&wrapping| {
-        let block = marker::delimiters(source, &marker, wrapping);
-        [format!("{block}{source}"), format!("{source}{block}")]
-            .into_iter()
-            .any(|document| {
-                marker::read(&document, "the probe", &marker)
-                    .recognition
-                    .classification()
-                    == Classification::Unique
-                    && G::round_trip(&document).is_ok()
-            })
-    })
+    Wrapping::ALL
+        .iter()
+        .copied()
+        .filter(|&wrapping| {
+            let pose = Pose {
+                marker: &marker,
+                address: document,
+                roots: &[],
+                traced: &[],
+                posed: None,
+                body: TRIAL_BODY,
+                wrapping,
+            };
+            marker::place(source, &pose).is_ok_and(|placed| G::round_trip(&placed.rendered).is_ok())
+        })
+        .collect()
 }
 
 /// What the trivia measurement reports: the reasons to refuse, all of them, and
