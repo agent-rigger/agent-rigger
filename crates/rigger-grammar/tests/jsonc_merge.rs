@@ -21,6 +21,9 @@
 //! short fragments come out. That is stronger than an equality of the remainder,
 //! which can be obtained by luck on a simple document.
 
+use rigger_grammar::marker::{
+    place, read, remove, BlockTrace, Classification, Marker, Pose, Wrapping,
+};
 use rigger_grammar::{merge, Edit, Grammar, Jsonc, MergeError, Value};
 
 /// What disappeared and what appeared between `before` and `after`, with the
@@ -226,11 +229,14 @@ fn c1_the_document_is_not_re_emitted_whole() {
 /// them is what tells a structural implementation apart from one that looks like
 /// it works.
 ///
-/// What "the insertion point" means here: the place where the posed value lands
-/// in the array. The markers that will bound a posed block do not exist yet —
-/// their syntax and their four wrappings are slice T3c — so the observations of
-/// C2 that bear on them are not realised here, and that is written down rather
-/// than passed over in silence.
+/// What "the insertion point" means depends on which shape of trace is being
+/// written. For a value posed into the array it is the place that value lands
+/// in. For a **bounded block** it is the place the block is written, and the
+/// three observations C2 makes about the delimiters of such a block — the
+/// opening delimiter shares no line with a value that is not its own, the
+/// reading back yields one single passage, the later removal is an effective
+/// removal — are realised on these same four documents by the three
+/// `c2_…marker…` tests below.
 const LAYOUTS: [(&str, &str); 4] = [
     (
         "pre-existing value before the insertion point, on the same line",
@@ -337,6 +343,252 @@ fn c2_an_end_of_line_comment_glued_to_the_array_keeps_its_place() {
         "the posed value did not go in before the closing of the array: {}",
         merged.rendered
     );
+}
+
+/// The provenance of the catalogue publishing the entry the three tests below
+/// pose, and that entry's own identifier. A marker carries both, in clear.
+const CATALOGUE: &str = "github.com/acme/rig";
+const ENTRY: &str = "context/agents";
+
+/// The address the trace records for the document those three write in. It is
+/// what a refusal names alongside a value, and it is never a line number.
+const ADDRESS: &str = "settings.json";
+
+/// The line a catalogue publishes and a pose writes between its bounds.
+const POSED_BODY: &[&str] = &["a line a catalogue would pose"];
+
+fn marker() -> Marker {
+    Marker::new(CATALOGUE, ENTRY)
+}
+
+/// The four layouts, as documents a block is posed at the **end** of: each one
+/// is the layout stripped of its final line terminator.
+///
+/// **Why stripped, and why that is not a contrivance.** A pose writes its
+/// opening delimiter at the end of the document, so the question C2 asks — does
+/// that delimiter share a line with a value that is not its own — only has an
+/// answer where the last line carries a value and no terminator. Leave the
+/// terminator on and no writer could glue anything onto that line even by
+/// accident, and the clause would measure nothing. A file whose last line
+/// carries no terminator is what an editor that does not add one produces, which
+/// is most of them.
+fn documents_ending_on_a_value() -> Vec<(&'static str, String)> {
+    LAYOUTS
+        .iter()
+        .map(|(layout, source)| {
+            let document = source.trim_end_matches('\n').to_string();
+            assert!(
+                !document.is_empty() && !document.ends_with('\n'),
+                "{layout}: the last line must carry a value and no terminator, or the clause on \
+                 the opening delimiter measures nothing"
+            );
+            (*layout, document)
+        })
+        .collect()
+}
+
+/// The pose those three tests run, in the wrapping the archived defect happened
+/// under: a line comment, which is what turned a value of the owner into a
+/// comment the day it was written onto that value's line.
+///
+/// Whether a JSON settings document is **able** to carry a bounded block is a
+/// different question, answered by the capability table — by running this same
+/// function and reading the rendering back with the grammar — and answered `no`.
+/// What is measured here is the writer: it splits nothing into lines to decide
+/// where to write, and the four layouts are four line dispositions of one
+/// document, which is exactly where a writer that did would come apart.
+fn pose<'a>(
+    marker: &'a Marker,
+    traced: &'a [Marker],
+    posed: Option<&'a BlockTrace>,
+    body: &'a [&'a str],
+) -> Pose<'a> {
+    Pose {
+        marker,
+        address: ADDRESS,
+        roots: &["/home/u/.config/rig"],
+        traced,
+        posed,
+        body,
+        wrapping: Wrapping::LineComment,
+    }
+}
+
+/// The one line of `rendered` carrying `token`, and the demand that there be
+/// exactly one: a token on two lines is a block nothing can tell from another.
+fn sole_line_carrying<'a>(rendered: &'a str, token: &str, layout: &str) -> &'a str {
+    let mut carrying = rendered.lines().filter(|line| line.contains(token));
+    let line = carrying
+        .next()
+        .unwrap_or_else(|| panic!("{layout}: no line of the rendering carries `{token}`"));
+    assert!(
+        carrying.next().is_none(),
+        "{layout}: `{token}` sits on more than one line of the rendering"
+    );
+    line
+}
+
+/// C2 on the delimiters of a posed block: **the opening delimiter shares no
+/// line with a value that is not its own.**
+///
+/// This is the clause the archived implementation broke, and the damage it did
+/// is the reason C2 exists: the opening delimiter was written onto a line that
+/// already carried the owner's values, and everything following it on that line
+/// left the document as a comment. In an array of instruction paths, that is a
+/// path the owner had asked for and no longer gets.
+///
+/// What keeps it from happening is the write itself — a pose puts its block on
+/// lines of its own — and, behind it, the post-condition `place` runs on its own
+/// rendering: a delimiter glued to somebody else's text is a delimiter the
+/// recogniser cannot read back, and a block the recogniser cannot find delimits
+/// nothing, so the pose refuses rather than leave one.
+#[test]
+fn c2_the_opening_marker_shares_no_line_with_a_value_that_is_not_its_own() {
+    let marker = marker();
+
+    for (layout, before) in documents_ending_on_a_value() {
+        // GIVEN one of the four layouts, whose last line carries the owner's
+        // values, and an entry posed as a bounded block.
+        // WHEN the pose runs.
+        let placed = place(&before, &pose(&marker, &[], None, POSED_BODY)).unwrap_or_else(|err| {
+            panic!("{layout}: the block was not posed on lines of its own — {err}")
+        });
+
+        // THEN the opening delimiter is alone on its line — and so is the
+        // closing one, which owes the same and for the same reason.
+        for token in [marker.open(), marker.close()] {
+            assert_eq!(
+                sole_line_carrying(&placed.rendered, &token, layout).trim(),
+                format!("// {token}"),
+                "{layout}: the delimiter shares its line with text the product did not write"
+            );
+        }
+
+        // AND no value the owner wrote was passed into a comment: every line of
+        // the document from before is still a whole line of the rendering.
+        for line in before.lines() {
+            assert!(
+                placed.rendered.lines().any(|rendered| rendered == line),
+                "{layout}: {line:?} is no longer a line of the document"
+            );
+        }
+    }
+}
+
+/// C2 on the delimiters of a posed block: **reading it back yields one single
+/// passage, never an ambiguous one.**
+///
+/// The pose that decides this is the **second** one. A first pose writes a block
+/// where there was none; an update has to rewrite the bounds of the block it
+/// already owns, and a writer that appends instead leaves two passages under one
+/// marker. Nothing then says which of the two the product wrote, so it can
+/// remove neither: the entry becomes permanently unremovable, and every further
+/// pose adds another copy.
+#[test]
+fn c2_the_marker_reads_back_as_one_passage_and_never_as_an_ambiguous_one() {
+    let marker = marker();
+    let traced = [marker.clone()];
+    const UPDATED_BODY: &[&str] = &["a line a catalogue would pose", "and one the update adds"];
+
+    for (layout, before) in documents_ending_on_a_value() {
+        // GIVEN one of the four layouts, and a block posed into it.
+        let placed = place(&before, &pose(&marker, &[], None, POSED_BODY))
+            .unwrap_or_else(|err| panic!("{layout}: the first pose failed — {err}"));
+        assert_eq!(
+            read(&placed.rendered, ADDRESS, &marker)
+                .recognition
+                .classification(),
+            Classification::Unique,
+            "{layout}: what the pose just wrote does not read back as one single passage"
+        );
+
+        // WHEN the same entry is posed again — an update, carrying the trace of
+        // what the product wrote here the first time.
+        let updated = place(
+            &placed.rendered,
+            &pose(&marker, &traced, Some(&placed.trace), UPDATED_BODY),
+        )
+        .unwrap_or_else(|err| panic!("{layout}: the update failed — {err}"));
+
+        // THEN the rendering still carries one single passage, and the update
+        // did land.
+        assert_eq!(
+            read(&updated.rendered, ADDRESS, &marker)
+                .recognition
+                .classification(),
+            Classification::Unique,
+            "{layout}: the update left a passage nothing can tell apart from another"
+        );
+        assert!(
+            updated.rendered.contains("and one the update adds"),
+            "{layout}: the update rewrote nothing, so the check above measures a pose that did \
+             not happen"
+        );
+    }
+}
+
+/// C2 on the delimiters of a posed block: **the later removal is an effective
+/// removal, never a "leave it in place".**
+///
+/// A write that gives back the document it was handed destroys nothing and
+/// disturbs no neighbour, so no comparison of values can see anything wrong with
+/// it. Reported as a removal, it leaves a machine that believes itself clean:
+/// the entry is gone from the registry and the block is still in the file, where
+/// no trace will ever name it again.
+///
+/// **Why this one does not compare the bytes, where the other removals do.** On
+/// a document whose last line carried no terminator, the pose had to write one
+/// so that its opening delimiter would not land on that line — the clause above.
+/// The trace records the body it wrote and not that terminator, so the removal
+/// gives back the document from before plus one line ending. That is a byte
+/// added and never a value lost, which is why no post-condition sees it; and
+/// closing it means recording the terminator in the trace, which is a change to
+/// what a trace carries and not an observation about markers. It is stated here
+/// rather than asserted, so that a reader comparing this test with the removals
+/// that do check the bytes finds the reason instead of a silence.
+#[test]
+fn c2_the_marker_is_removed_effectively_and_never_left_in_place() {
+    let marker = marker();
+
+    for (layout, before) in documents_ending_on_a_value() {
+        // GIVEN one of the four layouts, and a block posed into it.
+        let placed = place(&before, &pose(&marker, &[], None, POSED_BODY))
+            .unwrap_or_else(|err| panic!("{layout}: the pose failed — {err}"));
+
+        // WHEN the removal runs, by replaying the trace the pose recorded.
+        let removed = remove(&placed.rendered, &placed.trace)
+            .unwrap_or_else(|err| panic!("{layout}: the removal did not happen — {err}"));
+
+        // THEN nothing of the block is left: no delimiter, no body line, and the
+        // recogniser finds no passage.
+        assert_eq!(
+            read(&removed.rendered, ADDRESS, &marker)
+                .recognition
+                .classification(),
+            Classification::Absent,
+            "{layout}: the removal left the passage where it was"
+        );
+        for token in [marker.open(), marker.close()] {
+            assert!(
+                !removed.rendered.contains(&token),
+                "{layout}: `{token}` survived the removal"
+            );
+        }
+        for body in POSED_BODY {
+            assert!(
+                !removed.rendered.contains(body),
+                "{layout}: the posed line {body:?} survived the removal"
+            );
+        }
+
+        // AND every line the owner wrote is back, whatever the layout put on it.
+        for line in before.lines() {
+            assert!(
+                removed.rendered.lines().any(|rendered| rendered == line),
+                "{layout}: the removal took {line:?} with it"
+            );
+        }
+    }
 }
 
 /// C6's own fixture: a `deny` rule the product poses among rules the user
