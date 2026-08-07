@@ -349,6 +349,7 @@ fn c4_a_marker_with_no_trace_makes_the_pose_refuse_by_naming_it() {
             address: ADDRESS,
             roots: &["/home/u/.config"],
             traced: std::slice::from_ref(&stranger),
+            posed: None,
             body: &["docs/other.md"],
             wrapping: Wrapping::LineComment,
         },
@@ -379,6 +380,7 @@ fn c4_two_roots_designating_the_same_document_make_the_pose_refuse_by_naming_bot
             address: ADDRESS,
             roots: &["/home/u/.config/rig", "/srv/shared/rig"],
             traced: &[],
+            posed: None,
             body: &["docs/posed.md"],
             wrapping: Wrapping::LineComment,
         },
@@ -401,6 +403,7 @@ fn c4_a_pose_writes_a_block_carrying_the_identity_of_the_pose() {
             address: ADDRESS,
             roots: &["/home/u/.config/rig"],
             traced: &[],
+            posed: None,
             body: &["docs/posed.md"],
             wrapping: Wrapping::LineComment,
         },
@@ -435,6 +438,7 @@ fn c1_a_block_posed_in_a_document_in_crlf_is_written_in_crlf() {
             address: ADDRESS,
             roots: &["/home/u/.config/rig"],
             traced: &[],
+            posed: None,
             body: &["docs/posed.md"],
             wrapping: Wrapping::LineComment,
         },
@@ -453,6 +457,234 @@ fn c1_a_block_posed_in_a_document_in_crlf_is_written_in_crlf() {
         source,
         "removal must give back the bytes from before"
     );
+}
+
+/// The documents this shape has an object on are **text** files, and `//` is
+/// not comment syntax in an instruction file — it is two characters a person
+/// typed. A line the lexer happens to classify as a comment is therefore a
+/// value of whoever wrote it, exactly like any other line, and removal owes it
+/// the same post-condition.
+#[test]
+fn c3_a_removal_that_destroys_a_commented_line_of_the_user_fails_on_the_output() {
+    let marker = marker();
+    let note = "// NOTE: I need this, do not delete";
+
+    let mut source = String::from("docs/a.md\n");
+    source.push_str(&wrap(Wrapping::LineComment, &marker.open()));
+    source.push_str("docs/posed.md\n");
+    source.push_str(note);
+    source.push('\n');
+    source.push_str(&wrap(Wrapping::LineComment, &marker.close()));
+    source.push_str("docs/b.md\n");
+
+    let reading = read(&source, ADDRESS, &marker);
+    assert!(
+        texts(&reading.inside).contains(&format!("{ADDRESS} = {note:?}")),
+        "the line is a value of its author, whatever the lexer calls it: {:?}",
+        texts(&reading.inside)
+    );
+
+    // The production path, not the seam: this is what a real removal does.
+    let error = remove(&source, &trace()).expect_err(
+        "the write destroyed a line the trace does not record, so the removal must refuse",
+    );
+    match &error {
+        RemoveError::ValuesLost { lost, .. } => {
+            assert_eq!(texts(lost), [format!("{ADDRESS} = {note:?}")]);
+        }
+        other => panic!("the refusal must name the line that disappeared, got {other:?}"),
+    }
+}
+
+/// The same blindness, on the other side of the bounds and under the other
+/// comment syntax: a line enclosed in `/* … */` that carries no delimiter is
+/// read by nobody, so no post-condition can see it go.
+#[test]
+fn c3_a_line_enclosed_in_a_block_comment_is_a_value_of_its_author() {
+    let marker = marker();
+    let note = "my own note";
+
+    let mut source = String::from("docs/a.md\n/*\n");
+    source.push_str(note);
+    source.push_str("\n*/\n");
+    source.push_str(&wrap(Wrapping::LineComment, &marker.open()));
+    source.push_str("docs/posed.md\n");
+    source.push_str(&wrap(Wrapping::LineComment, &marker.close()));
+    source.push_str("docs/b.md\n");
+
+    let reading = read(&source, ADDRESS, &marker);
+    assert!(
+        texts(&reading.outside).contains(&format!("{ADDRESS} = {note:?}")),
+        "a line the product did not write is a value wherever the lexer files it: {:?}",
+        texts(&reading.outside)
+    );
+
+    let error = remove_by(&source, &trace(), |source, bounds| {
+        let mut rendered = String::from(&source[..bounds.start]);
+        rendered.push_str(&source[bounds.end..]);
+        rendered.replace("my own note\n", "")
+    })
+    .expect_err("the write destroyed a line the trace does not record");
+    assert!(
+        error.to_string().contains(note),
+        "the refusal must name what the write destroyed: {error}"
+    );
+}
+
+/// Indentation is the norm in a fragment of an instruction file — nested
+/// lists, code blocks. If the reading and the trace do not normalise a line the
+/// same way, the block cannot subtract from itself and becomes permanently
+/// unremovable, while the product accuses itself of a destruction that never
+/// happened.
+#[test]
+fn c3_a_body_line_carrying_indentation_stays_removable() {
+    let source = "docs/a.md\n";
+    let Placed { rendered, trace } = place(
+        source,
+        &Pose {
+            marker: &marker(),
+            address: ADDRESS,
+            roots: &["/home/u/.config/rig"],
+            traced: &[],
+            posed: None,
+            body: &["# Rules", "  - run the tests"],
+            wrapping: Wrapping::LineComment,
+        },
+    )
+    .expect("nothing stands in the way of this pose");
+
+    let removed = remove(&rendered, &trace).expect("what was posed must be removable");
+    assert_eq!(
+        removed.rendered, source,
+        "removal must give back the bytes from before"
+    );
+}
+
+/// A marker the recogniser cannot read back out of the document it was written
+/// into delimits nothing: the block is invisible to every later read, so it is
+/// unremovable, and every further pose appends another copy of it.
+#[test]
+fn c4_a_marker_the_document_cannot_carry_makes_the_pose_refuse() {
+    // The whitespace `parse_token` rejects, and a `*/` that closes the very
+    // comment meant to carry the token. Both are illegal for the same reason,
+    // and neither is a character on a list: the recogniser cannot read them.
+    let cases = [
+        (Marker::new(PROVENANCE, "context agents"), Wrapping::Bare),
+        (
+            Marker::new(PROVENANCE, "context*/agents"),
+            Wrapping::BlockCommentInline,
+        ),
+    ];
+
+    for (marker, wrapping) in cases {
+        let error = place(
+            "docs/a.md\n",
+            &Pose {
+                marker: &marker,
+                address: ADDRESS,
+                roots: &["/home/u/.config/rig"],
+                traced: &[],
+                posed: None,
+                body: &["docs/posed.md"],
+                wrapping,
+            },
+        )
+        .expect_err("a marker the document cannot carry must make the pose refuse");
+
+        assert!(
+            error.to_string().contains(marker.entry()),
+            "the refusal must name the marker it could not read back: {error}"
+        );
+    }
+}
+
+/// A delimiter carries no value, so the value post-condition cannot see one
+/// disappear. Bounds that straddle the delimiter of another catalogue therefore
+/// leave that block unbalanced — unremovable, its bytes owned by nobody — and
+/// nothing goes red. That is the damage C4 names, and it is checked on the
+/// output like everything else.
+#[test]
+fn c4_a_removal_does_not_take_the_delimiter_of_another_catalogue() {
+    let (first, second) = (marker(), homonym());
+
+    // The interleaving an owner produces by moving a block around.
+    let mut source = String::from("docs/a.md\n");
+    source.push_str(&wrap(Wrapping::LineComment, &first.open()));
+    source.push_str("acme.md\n");
+    source.push_str(&wrap(Wrapping::LineComment, &second.open()));
+    source.push_str(&wrap(Wrapping::LineComment, &first.close()));
+    source.push_str("zenith.md\n");
+    source.push_str(&wrap(Wrapping::LineComment, &second.close()));
+
+    assert_eq!(
+        read(&source, ADDRESS, &second).recognition.classification(),
+        Classification::Unique,
+        "the second block must be whole before the removal, or this measures nothing"
+    );
+
+    let error = remove(&source, &trace_of(first, "acme.md"))
+        .expect_err("the bounds straddle the opening delimiter of the second catalogue");
+    let message = error.to_string();
+    assert!(
+        message.contains(HOMONYM_PROVENANCE),
+        "the refusal must name the block it would have broken: {message}"
+    );
+}
+
+/// The two paths must judge the same line the same way. Removal calls a line
+/// the owner added inside the bounds a value of the user and refuses; the
+/// update path of a pose was overwriting it without looking.
+#[test]
+fn c4_an_update_does_not_destroy_what_the_owner_wrote_inside_the_bounds() {
+    let marker = marker();
+    let note = "docs/user-note.md";
+
+    let mut source = String::from("docs/a.md\n");
+    source.push_str(&wrap(Wrapping::LineComment, &marker.open()));
+    source.push_str("docs/posed.md\n");
+    source.push_str(note);
+    source.push('\n');
+    source.push_str(&wrap(Wrapping::LineComment, &marker.close()));
+
+    let update = Pose {
+        marker: &marker,
+        address: ADDRESS,
+        roots: &["/home/u/.config/rig"],
+        traced: std::slice::from_ref(&marker),
+        posed: Some(&trace()),
+        body: &["docs/posed.md"],
+        wrapping: Wrapping::LineComment,
+    };
+
+    let error = place(&source, &update).expect_err(
+        "the update would erase a line the owner wrote, which removal refuses on this same document",
+    );
+    match &error {
+        PlaceError::ValuesLost { lost, .. } => {
+            assert_eq!(texts(lost), [format!("{ADDRESS} = {note:?}")]);
+        }
+        other => panic!("the refusal must name the line it would have erased, got {other:?}"),
+    }
+
+    // The same removal on the same document refuses in the same terms. That
+    // agreement is the point: one line, one verdict.
+    let refused = remove(&source, &trace()).expect_err("removal refuses for the same reason");
+    assert!(
+        refused.to_string().contains(note),
+        "the two paths must judge this line the same way: {refused}"
+    );
+
+    // And an update that only rewrites what the product itself posed goes
+    // through, or the check above would just be a way of never updating.
+    let placed = place(
+        &document(Wrapping::LineComment),
+        &Pose {
+            body: &["docs/posed.md", "docs/added.md"],
+            ..update
+        },
+    )
+    .expect("rewriting the interior the product wrote is what an update is");
+    assert!(placed.rendered.contains("docs/added.md"));
 }
 
 #[test]

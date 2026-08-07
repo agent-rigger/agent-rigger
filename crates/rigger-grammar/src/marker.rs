@@ -18,10 +18,16 @@
 //! believes it owns widens in silence — at removal, where it destroys.
 //!
 //! **Lexing first, recognition second, and that separation is the substance.**
-//! [`regions`] cuts the document into three disjoint kinds — a block comment, a
-//! line comment, a plain line — and it is **not** a recognition branch: it
-//! knows nothing of markers. Each branch then reads one kind and only that
+//! [`regions`] cuts the document into disjoint stretches — a comment occupying
+//! its lines whole, or a plain line — and it is **not** a recognition branch:
+//! it knows nothing of markers. Each branch then reads one kind and only that
 //! kind, so no branch can cover another.
+//!
+//! **Being a comment exempts nothing.** A stretch that carries no delimiter is
+//! made of lines its author wrote, comment syntax or not, and every one of them
+//! is a value the post-conditions weigh. In an instruction file `//` is two
+//! characters somebody typed, and the exemption that once stood in [`scan`] let
+//! removal destroy such lines while returning `Ok`.
 //!
 //! That shape was not the first one written, and the mutation trial is what
 //! rejected the first. Branches that each demanded a whole line shape looked
@@ -31,11 +37,25 @@
 //! green under mutation — a second read path, found by the one test whose
 //! object is to check that the others measure something.
 //!
-//! **What the post-condition of removal is for.** The input checks say what we
-//! thought we understood; the post-condition on the output says what we did.
-//! [`remove`] therefore reads its **own rendering** back and refuses when a
-//! value the trace does not record has disappeared — never deducing anything
-//! from the success of what came before.
+//! **What the post-conditions are for.** The input checks say what we thought
+//! we understood; the post-condition on the output says what we did. [`remove`]
+//! therefore reads its **own rendering** back and refuses when a value the
+//! trace does not record has disappeared — never deducing anything from the
+//! success of what came before.
+//!
+//! [`place`] owes the same, and for a while did not. Its update path rewrites
+//! its own bounds, so it destroys whatever the owner added inside them; on the
+//! same document, removal called that line a value of the user and refused. It
+//! now reads its rendering back too, which closes a second failure besides:
+//! a marker the recogniser cannot find in what the writer just produced
+//! delimits nothing — invisible, therefore unremovable, and duplicated by every
+//! further pose.
+//!
+//! **A delimiter carries no value, so no comparison of values can see one go.**
+//! Bounds that straddle the delimiter of another catalogue leave that block
+//! unbalanced — owned by nobody, unremovable for good — with every value in the
+//! document still in place. Both writes therefore also compare what the
+//! document says about the **other** markers, before and after.
 
 use std::fmt;
 use std::ops::Range;
@@ -79,6 +99,16 @@ pub struct Marker {
 impl Marker {
     /// The marker of a pose, from the provenance of its catalogue and its entry
     /// identifier.
+    ///
+    /// **Nothing is validated here, and that is where the check would be
+    /// weakest.** Whether a marker is legible is not a property of its
+    /// characters: an entry carrying a space is unreadable under every
+    /// wrapping, while one carrying `*/` is unreadable only inside a block
+    /// comment — the same identity, legal in one document and not in the next.
+    /// A check here would have to be a list of forbidden characters, which is
+    /// the shape of rule this crate refuses to write. So legibility is measured
+    /// where it is decidable: [`place`] reads its own rendering back, and
+    /// refuses when the recogniser cannot find the block the writer just wrote.
     pub fn new(provenance: impl Into<String>, entry: impl Into<String>) -> Self {
         Self {
             provenance: provenance.into(),
@@ -432,21 +462,44 @@ fn lines_of(source: &str) -> Vec<Line<'_>> {
     lines
 }
 
+/// The one normalisation of a line, applied to **both** sides of the
+/// subtraction the post-conditions perform.
+///
+/// [`regions`] normalises what it reads out of a document; [`BlockTrace`]
+/// normalises what the registry recorded. Were the two to differ — a trim on
+/// one side only — a body line carrying indentation would never subtract from
+/// itself: the block would be permanently unremovable while the product accused
+/// itself of destroying a value of its owner. Indentation is the norm in a
+/// fragment of an instruction file, so that is not a corner.
+///
+/// Trimming, rather than keeping the bytes, is what makes the comparison a
+/// comparison of **values**: re-indenting a document is not destroying it, and
+/// C1 already forbids the product to reformat what it did not write.
+fn normalise(line: &str) -> &str {
+    line.trim()
+}
+
 /// A stretch of the document, as **lexing** cuts it — before any question
 /// about markers is asked.
 #[derive(Debug)]
 enum Region {
-    /// A block comment occupying its lines whole, and what it encloses.
-    BlockComment {
+    /// A comment occupying its lines whole, and what it encloses.
+    Comment {
+        /// What the comment encloses, introducers stripped: the only thing a
+        /// delimiter could be read out of.
         interior: String,
-        /// Whether it opened and closed on one line.
-        inline: bool,
+        /// The wrapping a delimiter would be carried in here.
+        wrapping: Wrapping,
         span: Range<usize>,
-    },
-    /// A line comment, and what follows its introducer.
-    LineComment {
-        interior: String,
-        span: Range<usize>,
+        /// The lines the comment is made of, as the document carries them.
+        ///
+        /// A comment that turns out not to be a delimiter is **not a region at
+        /// all**: it is the lines it was cut out of, and they belong to whoever
+        /// wrote them. Keeping them here is what lets the analysis hand them
+        /// back one by one instead of as one lump, so that a body the product
+        /// itself wrote — recorded line by line in its trace — still subtracts
+        /// from what a later read gives back.
+        lines: Vec<(String, Range<usize>)>,
     },
     /// Anything else: a line of the document, which is a value of whoever
     /// wrote it.
@@ -475,15 +528,18 @@ fn regions(source: &str) -> Vec<Region> {
             continue;
         }
         let line = &lines[index];
-        let trimmed = line.text.trim();
+        let trimmed = normalise(line.text);
+        let span = line.start..line.end;
         match trimmed.strip_prefix("//") {
-            Some(interior) => regions.push(Region::LineComment {
-                interior: interior.trim().to_string(),
-                span: line.start..line.end,
+            Some(interior) => regions.push(Region::Comment {
+                interior: normalise(interior).to_string(),
+                wrapping: Wrapping::LineComment,
+                span: span.clone(),
+                lines: vec![(trimmed.to_string(), span)],
             }),
             None => regions.push(Region::Line {
                 text: trimmed.to_string(),
-                span: line.start..line.end,
+                span,
             }),
         }
         index += 1;
@@ -509,52 +565,64 @@ fn block_comment(lines: &[Line<'_>], index: usize) -> Option<(usize, Region)> {
             closing += 1;
             continue;
         };
-        if !text[offset + 2..].trim().is_empty() {
+        if !normalise(&text[offset + 2..]).is_empty() {
             return None;
         }
         interior.push_str(&text[..offset]);
+        let raw = lines[index..=closing]
+            .iter()
+            .map(|line| (normalise(line.text).to_string(), line.start..line.end))
+            .collect();
         return Some((
             closing - index + 1,
-            Region::BlockComment {
-                interior: interior.trim().to_string(),
-                inline: closing == index,
+            Region::Comment {
+                interior: normalise(&interior).to_string(),
+                wrapping: if closing == index {
+                    Wrapping::BlockCommentInline
+                } else {
+                    Wrapping::BlockCommentSpanning
+                },
                 span: first.start..line.end,
+                lines: raw,
             },
         ));
     }
 }
 
 /// The single analysis. Every region is offered to the **one** branch that
-/// reads its kind; a region no branch claims is a value if it carries text, and
-/// nothing at all if it is a comment.
+/// reads its kind; a region no branch claims is made of lines, and every
+/// non-blank one of them is a value of whoever wrote it.
 ///
-/// A comment that no branch claims carries no value, and that is not a detail:
-/// were it counted as one, switching a branch off would turn a delimiter into a
-/// value of the user, and the post-condition of removal would then report a
-/// loss where there was none.
+/// **A comment no branch claims is not exempt from that**, and the exemption
+/// that used to stand here is what this rule replaces. The documents this shape
+/// has an object on are text files — instruction files — where `//` is not
+/// comment syntax but two characters somebody typed, and `/* … */` encloses
+/// prose rather than code. Exempting them made removal destroy those lines
+/// while returning `Ok`: the post-condition compares values, and a line that is
+/// no value cannot be seen to disappear.
+///
+/// The exemption was justified by a case that cannot arise: switching a branch
+/// off would turn a delimiter into a value, and removal would report a loss
+/// where there was none. But removal reads through [`read`], which passes
+/// [`Branch::ALL`]; the branch parameter exists for the mutation trial, and the
+/// trial never removes. A reason that derives from no property of the code is
+/// the mechanical lie this crate exists to close, and it cost the silent
+/// destruction above.
 fn scan(source: &str, branches: &[Branch]) -> Vec<Segment> {
     let mut segments = Vec::new();
     for region in regions(source) {
         match region {
-            Region::BlockComment {
+            Region::Comment {
                 interior,
-                inline,
+                wrapping,
                 span,
-            } => {
-                let wrapping = if inline {
-                    Wrapping::BlockCommentInline
-                } else {
-                    Wrapping::BlockCommentSpanning
-                };
-                if let Some(segment) = delimiter(&interior, wrapping, span, branches) {
-                    segments.push(segment);
-                }
-            }
-            Region::LineComment { interior, span } => {
-                if let Some(segment) = delimiter(&interior, Wrapping::LineComment, span, branches) {
-                    segments.push(segment);
-                }
-            }
+                lines,
+            } => match delimiter(&interior, wrapping, span, branches) {
+                Some(segment) => segments.push(segment),
+                None => segments.extend(lines.into_iter().filter_map(|(text, span)| {
+                    (!text.is_empty()).then_some(Segment::Content { text, span })
+                })),
+            },
             Region::Line { text, span } => {
                 match delimiter(&text, Wrapping::Bare, span.clone(), branches) {
                     Some(segment) => segments.push(segment),
@@ -650,10 +718,19 @@ impl BlockTrace {
 
     /// The values the trace records, in the shape the reading yields them, so
     /// the two can be subtracted from one another.
+    ///
+    /// [`normalise`] is applied here for that reason and no other: it is the
+    /// same function the reading applies, and a body line the product itself
+    /// wrote must subtract from itself or the block it belongs to can never be
+    /// removed. A blank line is dropped for the same reason — the reading
+    /// yields no value for one, so a trace carrying it would be comparing
+    /// against something that cannot appear.
     pub fn recorded_values(&self) -> Vec<SemanticValue> {
         self.values
             .iter()
-            .map(|value| SemanticValue::new(&self.address, Value::Text(value.clone())))
+            .map(|value| normalise(value))
+            .filter(|value| !value.is_empty())
+            .map(|value| SemanticValue::new(&self.address, Value::Text(value.to_string())))
             .collect()
     }
 }
@@ -672,6 +749,16 @@ pub struct Pose<'a> {
     /// The markers the registry holds a trace for. A marker found in the
     /// document and absent from here makes the pose refuse.
     pub traced: &'a [Marker],
+    /// What the registry records for a block of this marker **already posed in
+    /// this document**, when there is one.
+    ///
+    /// An update rewrites the interior of its own bounds. Without this, it has
+    /// no way of telling the lines it wrote there itself from lines the owner
+    /// added inside them, and it destroys the second kind in silence — which
+    /// removal, on the very same document, refuses to do. The asymmetry is the
+    /// defect: one path calls such a line a value of the user, the other
+    /// overwrites it without looking.
+    pub posed: Option<&'a BlockTrace>,
     /// The lines the product writes inside its bounds.
     pub body: &'a [&'a str],
     /// The wrapping the document can carry.
@@ -719,6 +806,39 @@ pub enum PlaceError {
         /// What the recogniser concluded.
         classification: Classification,
     },
+    /// **A post-condition on the output.** The rendering was read back and the
+    /// block it was supposed to carry is not there, or is not one single
+    /// passage. Whatever was written delimits nothing, so no later read can
+    /// find it and no removal can undo it.
+    NotRecognised {
+        /// The marker that was to be written.
+        marker: Marker,
+        /// The document.
+        address: String,
+        /// What the recogniser concluded about the rendering.
+        classification: Classification,
+    },
+    /// **A post-condition on the output.** The rendering lost values that
+    /// neither the block already posed here nor the new body accounts for: the
+    /// owner wrote them inside the bounds, and an update would erase them.
+    ValuesLost {
+        /// The marker being posed.
+        marker: Marker,
+        /// The values that would disappear, each with its path.
+        lost: Vec<SemanticValue>,
+    },
+    /// **A post-condition on the output.** The write changed what the document
+    /// says about the block of another catalogue.
+    NeighbourBroken {
+        /// The marker being posed.
+        marker: Marker,
+        /// The block of the other catalogue.
+        neighbour: Marker,
+        /// What that block was before the write.
+        was: Classification,
+        /// What it is after.
+        now: Classification,
+    },
 }
 
 impl fmt::Display for PlaceError {
@@ -748,6 +868,44 @@ impl fmt::Display for PlaceError {
                 "`{address}`: the delimiters of `{marker}` do not describe one single passage \
                  ({classification:?}), and nothing says which bytes the product owns"
             ),
+            Self::NotRecognised {
+                marker,
+                address,
+                classification,
+            } => write!(
+                f,
+                "the block written for `{marker}` in `{address}` reads back as {classification:?}, \
+                 not as one single passage: the recogniser cannot find what the writer just wrote. \
+                 Such a block delimits nothing — no later read finds it, no removal undoes it, and \
+                 every further pose appends another copy. The pose aborts"
+            ),
+            Self::ValuesLost { marker, lost } => {
+                write!(
+                    f,
+                    "posing `{marker}` would make {} value(s) disappear that no trace records —",
+                    lost.len()
+                )?;
+                for value in lost {
+                    write!(f, " {value}")?;
+                }
+                write!(
+                    f,
+                    ". They live inside the bounds and the product did not write them, so it does \
+                     not overwrite them"
+                )
+            }
+            Self::NeighbourBroken {
+                marker,
+                neighbour,
+                was,
+                now,
+            } => write!(
+                f,
+                "posing `{marker}` would leave the block of `{neighbour}` {now:?} where it was \
+                 {was:?}. A delimiter carries no value, so nothing else in this check can see it \
+                 go — and a block whose delimiters no longer pair up belongs to nobody and can \
+                 never be removed"
+            ),
         }
     }
 }
@@ -756,8 +914,14 @@ impl std::error::Error for PlaceError {}
 
 /// Poses a bounded block, or says why it does not.
 ///
-/// The two refusals come **before** any rendering exists, and they are the two
-/// C4 demands: two roots on one document, and a marker with no trace.
+/// Two refusals come **before** any rendering exists, and they are the two C4
+/// demands: two roots on one document, and a marker with no trace. Three more
+/// come **after**, and they bear on the rendering rather than on anything
+/// decided before it — the same doctrine removal follows, for the same reason:
+/// the input checks say what we thought we understood, the post-conditions say
+/// what the write did. A pose that returned the first three and skipped the
+/// last three was destroying, on its update path, exactly what removal refuses
+/// to destroy on the same document.
 pub fn place(source: &str, pose: &Pose<'_>) -> Result<Placed, PlaceError> {
     let mut distinct: Vec<&str> = Vec::new();
     for root in pose.roots {
@@ -812,10 +976,86 @@ pub fn place(source: &str, pose: &Pose<'_>) -> Result<Placed, PlaceError> {
         }
     };
 
+    // Read the rendering back with the **same** recogniser. A block the writer
+    // produced and the recogniser cannot find is the worst of the failures this
+    // module has: it is invisible, therefore unremovable, and the next pose
+    // appends a second copy of it. Nothing about the marker's characters is
+    // judged here — legality is whether the document can carry it, which
+    // depends on the wrapping, so it is measured rather than listed.
+    let after = read(&rendered, pose.address, pose.marker);
+    let classification = after.recognition.classification();
+    if classification != Classification::Unique {
+        return Err(PlaceError::NotRecognised {
+            marker: pose.marker.clone(),
+            address: pose.address.to_string(),
+            classification,
+        });
+    }
+
+    // What the update overwrote, minus what the block already posed here
+    // recorded. The remainder is what the owner wrote inside the bounds.
+    let disappeared = values_lost(&all_values(&reading), &all_values(&after));
+    let recorded = pose
+        .posed
+        .map(BlockTrace::recorded_values)
+        .unwrap_or_default();
+    let lost = values_lost(&disappeared, &recorded);
+    if !lost.is_empty() {
+        return Err(PlaceError::ValuesLost {
+            marker: pose.marker.clone(),
+            lost,
+        });
+    }
+
+    if let Some((neighbour, was, now)) =
+        neighbour_broken(&reading, source, &rendered, pose.address, pose.marker)
+    {
+        return Err(PlaceError::NeighbourBroken {
+            marker: pose.marker.clone(),
+            neighbour,
+            was,
+            now,
+        });
+    }
+
     Ok(Placed {
         rendered,
         trace: BlockTrace::new(pose.marker.clone(), pose.address, pose.body.iter().copied()),
     })
+}
+
+/// What a write did to the blocks of the **other** catalogues, if it did
+/// anything.
+///
+/// A delimiter carries no value, so the value post-conditions cannot see one
+/// disappear. A write whose bounds straddle the delimiter of another marker
+/// therefore leaves that block unbalanced — its bytes owned by nobody and
+/// unremovable for good — while every value in the document is still where it
+/// was and nothing goes red. That is the damage C4 names, and it is observed
+/// the way everything else here is: by reading the output back with the same
+/// recogniser, and comparing the verdict to the one before the write.
+///
+/// The markers come from the reading that was already performed; only their
+/// classification is measured again, once per neighbour. A document carrying
+/// many blocks therefore pays one scan per block at each write — visible if a
+/// document ever carries many, and the remedy is for the reading to yield the
+/// delimiter counts it already computes rather than for this to guess.
+fn neighbour_broken(
+    before: &Reading,
+    source: &str,
+    rendered: &str,
+    address: &str,
+    mine: &Marker,
+) -> Option<(Marker, Classification, Classification)> {
+    before
+        .markers
+        .iter()
+        .filter(|other| *other != mine)
+        .find_map(|other| {
+            let was = read(source, address, other).recognition.classification();
+            let now = read(rendered, address, other).recognition.classification();
+            (was != now).then(|| (other.clone(), was, now))
+        })
 }
 
 /// A removal that happened.
@@ -853,6 +1093,18 @@ pub enum RemoveError {
         marker: Marker,
         /// The values that disappeared, each with its path.
         lost: Vec<SemanticValue>,
+    },
+    /// **A post-condition on the output.** The write changed what the document
+    /// says about the block of another catalogue.
+    NeighbourBroken {
+        /// The marker being removed.
+        marker: Marker,
+        /// The block of the other catalogue.
+        neighbour: Marker,
+        /// What that block was before the write.
+        was: Classification,
+        /// What it is after.
+        now: Classification,
     },
     /// The write returned a document where the passage is still recognised.
     /// Reporting the entry as removed would leave a machine that believes
@@ -898,6 +1150,18 @@ impl fmt::Display for RemoveError {
                      understood, and this is what the write did"
                 )
             }
+            Self::NeighbourBroken {
+                marker,
+                neighbour,
+                was,
+                now,
+            } => write!(
+                f,
+                "removing `{marker}` would leave the block of `{neighbour}` {now:?} where it was \
+                 {was:?}. A delimiter carries no value, so the check above cannot see it go — and \
+                 a block whose delimiters no longer pair up belongs to nobody and can never be \
+                 removed. The transaction aborts"
+            ),
             Self::StillPresent { marker, address } => write!(
                 f,
                 "after the write, `{address}` still carries the passage of `{marker}` — reporting \
@@ -967,9 +1231,20 @@ pub fn remove_by(
         });
     }
 
+    if let Some((neighbour, was, now)) =
+        neighbour_broken(&before, source, &rendered, &trace.address, &trace.marker)
+    {
+        return Err(RemoveError::NeighbourBroken {
+            marker: trace.marker.clone(),
+            neighbour,
+            was,
+            now,
+        });
+    }
+
     // Naming a destroyed value comes first, because that is what its owner
-    // recognises. A passage still standing comes second, and it is the other
-    // half of the same post-condition.
+    // recognises. A passage still standing comes last, and it is the other half
+    // of the same post-condition.
     if after.recognition.classification() != Classification::Absent {
         return Err(RemoveError::StillPresent {
             marker: trace.marker.clone(),
