@@ -1,0 +1,19 @@
+[package]
+name = "rigger-registry"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+# The registry: what the product recorded of everything it posed, and the one
+# link between a pose and its undoing. It depends on `rigger-apply` for the
+# exclusion its write window holds under — the lock lives with the input and
+# output, not with the record.
+# No third-party dependency, and the format is written by hand for the same
+# reason the rest of this workspace has none on the path that touches a user's
+# files: a serialization library decides what an unreadable entry costs, and
+# every library available decides it the same way — the whole document is
+# refused. That is the one thing this crate must never do, because eleven valid
+# traces would be lost for one corrupt entry, and everything they describe would
+# become permanently unremovable.
+[dependencies]
+rigger-apply = { path = "../rigger-apply" }
