@@ -42,9 +42,11 @@
 use std::fmt;
 
 use crate::capability::TriviaDivergence;
+use crate::edit::record_fields;
+use crate::element::IDENTITY_KEY;
 use crate::{
-    values_lost, Applied, Capabilities, Edit, Grammar, GrammarError, Inverse, MergeAdmission,
-    MergeRefusal, SemanticValue,
+    values_lost, Applied, Capabilities, Edit, ElementUndo, Grammar, GrammarError, Inverse,
+    MergeAdmission, MergeRefusal, SemanticValue, Value,
 };
 
 /// What a successful merge returns: the document to write, and the trace that
@@ -83,6 +85,29 @@ pub enum MergeError {
         /// What diverged between the pre-image and what the trace returns.
         divergence: TriviaDivergence,
     },
+    /// **The post-condition of the removal, on the output.** Replaying the
+    /// trace backwards made values disappear that the trace does not name.
+    RemovalLostValues {
+        /// The grammar that wrote.
+        grammar: &'static str,
+        /// The values that disappeared, each with its path.
+        lost: Vec<SemanticValue>,
+    },
+    /// **The post-condition of the removal, on the output.** Replaying the
+    /// trace backwards destroyed comments the document carried. The product
+    /// writes none through this path, so every one of them was its owner's, and
+    /// the trace holds nothing able to give them back.
+    ///
+    /// It is a variant of its own rather than a shade of
+    /// [`MergeError::RemovalLostValues`]: a comment is not a leaf, so nothing
+    /// that compares values can see it go, and merging the two refusals would
+    /// leave a reader unable to tell which of the two witnesses fired.
+    RemovalLostComments {
+        /// The grammar that wrote.
+        grammar: &'static str,
+        /// The comments that disappeared, under the raw text the document held.
+        lost: Vec<String>,
+    },
 }
 
 impl From<GrammarError> for MergeError {
@@ -117,6 +142,38 @@ impl fmt::Display for MergeError {
                  return the document from before, {divergence}. The transaction aborts rather \
                  than write into an owned document something it would not know how to remove"
             ),
+            Self::RemovalLostValues { grammar, lost } => {
+                write!(
+                    f,
+                    "grammar `{grammar}`: replaying this trace backwards made {} value(s) \
+                     disappear that the trace does not name —",
+                    lost.len()
+                )?;
+                for value in lost {
+                    write!(f, " {value}")?;
+                }
+                write!(
+                    f,
+                    ". The transaction aborts: the product takes back only what it put there"
+                )
+            }
+            Self::RemovalLostComments { grammar, lost } => {
+                write!(
+                    f,
+                    "grammar `{grammar}`: replaying this trace backwards destroyed {} comment(s) \
+                     the document carried —",
+                    lost.len()
+                )?;
+                for comment in lost {
+                    write!(f, " {comment:?}")?;
+                }
+                write!(
+                    f,
+                    ". The product writes no comment through this path, so these bytes were its \
+                     owner's and the trace holds nothing able to give them back. The transaction \
+                     aborts"
+                )
+            }
         }
     }
 }
@@ -185,4 +242,206 @@ pub fn merge<G: Grammar>(source: &str, edit: &Edit) -> Result<Merged, MergeError
     }
 
     Ok(Merged { rendered, inverse })
+}
+
+/// Replays `inverse` backwards on `source` under grammar `G`, and returns the
+/// document to write — or says what the removal destroyed, without returning
+/// anything at all.
+///
+/// # Why the removal needs its own post-condition
+///
+/// [`merge`] proves a pose reversible **against the document it read**: it runs
+/// the computed trace backwards on its own rendering and demands the bytes from
+/// before. That proof is taken at the moment of the pose, and it is worth
+/// exactly what the document is still worth afterwards. Between a pose and its
+/// removal the owner writes, and the host that is served rewrites these
+/// documents routinely — so what the trace excises at removal time is a passage
+/// nobody has proved anything about.
+///
+/// The gap this closes, measured: a pose adds a key, its owner annotates that
+/// very line, the removal takes the key **and the annotation**, gives back a
+/// document whose byte count matches the one from before the pose, and reports
+/// success. Nothing in [`Grammar::invert`] is wrong; what was missing is a
+/// witness on the output, and this is it.
+///
+/// # The two witnesses, and why there are two
+///
+/// **The values**, compared as a multiset, before against after: what
+/// disappeared must reduce to what the trace names. That is the removal's half
+/// of the symmetry — the pose's half lives in [`merge`].
+///
+/// **The comments**, likewise: a comment is not a leaf, so the comparison of
+/// values is blind to it, and it is precisely where an owner's annotation
+/// lives. See [`Grammar::comments`] for why every one of them belongs to the
+/// owner.
+///
+/// # What this deliberately does not do
+///
+/// **It does not consult the admission gate.** The gate keeps a grammar that
+/// reformats from writing **new** bytes into a document; asking it again here
+/// would let a capability that degrades — a corpus document edited, a library
+/// upgraded — make everything already posed unremovable, which is the one
+/// outcome this product treats as worse than a refusal to pose.
+pub fn unmerge<G: Grammar>(source: &str, inverse: &Inverse) -> Result<String, MergeError> {
+    let before = G::values(source)?;
+    let comments_before = G::comments(source)?;
+    // Read before the write, because it is read **off the document being
+    // undone**: for an element the pose created, what the trace is entitled to
+    // take back is that element as it stands, and after the write there is
+    // nothing left to read it from.
+    let accounted = accounted_for::<G>(source, inverse)?;
+
+    let rendered = G::invert(source, inverse)?;
+
+    // Reading the rendering back is what makes the post-condition possible, and
+    // it also proves the output can be parsed again: an output its own grammar
+    // does not read back is a destroyed document, whatever the rest may say.
+    let after = G::values(&rendered)?;
+    let lost = accounted.unaccounted(&values_lost(&before, &after));
+    if !lost.is_empty() {
+        return Err(MergeError::RemovalLostValues {
+            grammar: G::NAME,
+            lost,
+        });
+    }
+
+    let comments_after = G::comments(&rendered)?;
+    let lost = comments_lost(&comments_before, &comments_after);
+    if !lost.is_empty() {
+        return Err(MergeError::RemovalLostComments {
+            grammar: G::NAME,
+            lost,
+        });
+    }
+
+    Ok(rendered)
+}
+
+/// What a removal replaying a given trace is entitled to take out of a
+/// document.
+///
+/// **Two buckets, because a trace names its passage in two ways.** Sometimes it
+/// names the values themselves — the strings it added to an array, which it
+/// removes by value equality — and those are compared as a multiset, so that a
+/// removal taking two identical values where the trace added one is caught.
+/// Sometimes it names only a **place** — a key it created, whose value it never
+/// recorded because it did not need to — and there everything living at that
+/// place, or under it, is the product's to take back.
+///
+/// Collapsing the two into one would cost the multiset on one side or the
+/// precision on the other, and both losses fall on the same document: somebody
+/// else's.
+struct Accounted {
+    values: Vec<SemanticValue>,
+    places: Vec<String>,
+}
+
+impl Accounted {
+    /// The values of `disappeared` this trace does not account for.
+    fn unaccounted(&self, disappeared: &[SemanticValue]) -> Vec<SemanticValue> {
+        values_lost(disappeared, &self.values)
+            .into_iter()
+            .filter(|value| !self.covers(value.path()))
+            .collect()
+    }
+
+    /// Whether `path` is one of the places the trace names, or lives under one.
+    fn covers(&self, path: &str) -> bool {
+        self.places.iter().any(|place| {
+            path == place
+                || (path.starts_with(place) && path.as_bytes().get(place.len()) == Some(&b'.'))
+        })
+    }
+}
+
+/// What `inverse` is entitled to take out of `source`.
+fn accounted_for<G: Grammar>(source: &str, inverse: &Inverse) -> Result<Accounted, GrammarError> {
+    let mut values = Vec::new();
+    let mut places = Vec::new();
+    match inverse {
+        // A key the pose created is removed whole, and a key whose value it
+        // replaced gives that value back — in both cases what the trace names
+        // is the key, and the trace never recorded what the document currently
+        // holds there.
+        Inverse::Keys {
+            path,
+            added,
+            replaced,
+        } => {
+            for name in added {
+                places.push(address(path, name));
+            }
+            for (name, _) in replaced {
+                places.push(address(path, name));
+            }
+        }
+        // The strings the pose put in the array, named one by one. The array
+        // itself is **not** a place: the values of somebody else live at the
+        // very same path, and covering the path would let the removal empty the
+        // array with the post-condition looking on.
+        Inverse::Values { path, added } => {
+            for value in added {
+                values.push(SemanticValue::new(path.join("."), Value::text(value)));
+            }
+        }
+        // The pose created the element, so the whole element is the passage it
+        // owns — read as it stands, since the trace of a creation records
+        // nothing of the document from before. An element the identity no
+        // longer finds accounts for nothing, and the post-condition then
+        // catches whatever the write took.
+        Inverse::Element {
+            path,
+            identity,
+            undo: ElementUndo::Remove,
+        } => {
+            if let Some(fields) = G::find_element_by_identity(source, path, identity)? {
+                values.push(SemanticValue::new(
+                    address(path, IDENTITY_KEY),
+                    Value::text(identity.to_string()),
+                ));
+                record_fields(path, &fields, &mut values);
+            }
+        }
+        // An update inside an element that a list somebody else owns carries:
+        // only the fields the pose wrote there are its own.
+        Inverse::Element {
+            path,
+            undo: ElementUndo::Restore { added, replaced },
+            ..
+        } => {
+            for name in added {
+                places.push(address(path, name));
+            }
+            for (name, _) in replaced {
+                places.push(address(path, name));
+            }
+        }
+    }
+    Ok(Accounted { values, places })
+}
+
+/// The path of `name` inside `path`, in the shape a grammar enumerates values
+/// in.
+fn address(path: &[String], name: &str) -> String {
+    let mut segments = path.to_vec();
+    segments.push(name.to_string());
+    segments.join(".")
+}
+
+/// The comments of `before` that the multiset `after` does not contain.
+///
+/// **A multiset, not a set.** A document may carry the same comment twice — two
+/// `// keep` on two lines — and losing one of them is a loss.
+fn comments_lost(before: &[String], after: &[String]) -> Vec<String> {
+    let mut remaining: Vec<&String> = after.iter().collect();
+    let mut lost = Vec::new();
+    for comment in before {
+        match remaining.iter().position(|candidate| *candidate == comment) {
+            Some(rank) => {
+                remaining.remove(rank);
+            }
+            None => lost.push(comment.clone()),
+        }
+    }
+    lost
 }

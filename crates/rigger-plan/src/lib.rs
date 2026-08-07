@@ -33,63 +33,133 @@
 use std::fmt;
 use std::path::{Path, PathBuf};
 
-use rigger_grammar::{merge, Edit, Inverse, Jsonc, MergeError, Toml};
+use rigger_grammar::{merge, unmerge, Edit, Inverse, Jsonc, MergeError, Toml};
 
-/// The name of a member of the closed set. **This enumeration is the closure.**
+/// Declares the closed set **once**, and derives from that one declaration the
+/// three things that must never disagree about it: the members, the written
+/// name of each, and the reading of a name back into a member.
 ///
-/// A catalogue and a registry trace carry a **name**, never a type: closing the
-/// set is therefore something that has to happen where names are turned into
-/// members, and that is here. Nothing outside these four parses, so nothing
-/// outside these four can ever be selected.
+/// # Why a macro, when three hand-written matches would read the same
 ///
-/// The set may **shrink** between two versions of the product — that is why the
-/// registry records the version that posed each thing. A name that no longer
-/// parses is refused by naming it; it is never resolved to a neighbour, and the
-/// shape of what was posed is never recognised in order to undo it anyway.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum BehaviourName {
-    /// Pose a file by link, out of a shared store.
-    Link,
-    /// Merge a fragment into a document owned by the user.
-    Merge,
-    /// Delegate the pose to a mechanism of the host.
-    Delegate,
-    /// Observe a presence, and write nothing.
-    Probe,
+/// Because they would read the same right up to the day they stopped agreeing.
+/// Written by hand, the closure held in **one** direction only: `as_str` and
+/// the resolution of bodies are exhaustive matches, so the compiler forced them
+/// on a new member — but the reading of a name ended in a catch-all, and the
+/// list of members was an array written out by hand. A member could therefore
+/// be added to the set whose own name the product refused as unknown, and whom
+/// the list of members left out, with the whole suite green.
+///
+/// What that costs is not an inconsistency in a table. The registry records the
+/// **name**: a pose through such a member would succeed and write that name
+/// into the trace, and the removal would then refuse — "the product computes no
+/// inverse for a behaviour it cannot resolve" — leaving the posed thing
+/// permanently unremovable, which is the one damage this crate is shaped
+/// against.
+///
+/// A test cannot close that gap: no test can add a variant to an enumeration,
+/// so no test can be red on the omission. Only the declaration can, by making
+/// the omission **unwritable** — there is no way to add a member here without
+/// giving it, in the same breath, its written name, its place among the
+/// members, and its arm in the reading. The exhaustive matches then keep doing
+/// their half, and [`behaviour`] still refuses to build until the new member
+/// has a body.
+///
+/// # What this declaration does not close, and what does
+///
+/// **Two members declared under the same written name.** The declaration
+/// accepts it; three other things refuse it, and they are named here rather
+/// than left to be rediscovered. The reading becomes an unreachable arm, which
+/// the compiler reports and the quality gate denies. And two guards in the
+/// tests go red: the one that pins the written names of the set, and the one
+/// that demands every member be found again through its own name.
+macro_rules! closed_set {
+    (@count) => { 0usize };
+    (@count $head:ident $($tail:ident)*) => { 1usize + closed_set!(@count $($tail)*) };
+    (
+        $( #[$set_doc:meta] )*
+        pub enum $Name:ident {
+            $(
+                $( #[$member_doc:meta] )*
+                $Member:ident => $written:literal,
+            )+
+        }
+    ) => {
+        $( #[$set_doc] )*
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+        pub enum $Name {
+            $(
+                $( #[$member_doc] )*
+                $Member,
+            )+
+        }
+
+        impl $Name {
+            /// The members, all of them. The length of this array **is** the
+            /// size of the set: it is counted from the declaration above rather
+            /// than written down, so it cannot fall behind it.
+            pub const ALL: [Self; closed_set!(@count $($Member)+)] = [$(Self::$Member),+];
+
+            /// The name a catalogue writes and a trace records.
+            pub fn as_str(self) -> &'static str {
+                match self {
+                    $(Self::$Member => $written,)+
+                }
+            }
+
+            /// The member `named` designates, or a refusal that names what was
+            /// asked.
+            ///
+            /// **No fallback, no neighbour, no default.** Trying a member that
+            /// resembles the one asked for is the recognition cascade that was
+            /// removed from this product: it ended in an undefined return, that
+            /// is, in a thing posed that nothing could remove.
+            ///
+            /// The catch-all below refuses; it can no longer **hide** a member,
+            /// because the arms above it come from the same declaration as the
+            /// members themselves.
+            pub fn parse(named: &str) -> Result<Self, BehaviourError> {
+                match named {
+                    $($written => Ok(Self::$Member),)+
+                    _ => Err(BehaviourError::Unknown {
+                        named: named.to_string(),
+                    }),
+                }
+            }
+        }
+    };
 }
 
-impl BehaviourName {
-    /// The members, all of them. The length of this array **is** the size of
-    /// the set, and a test pins it: the count is part of what the product
-    /// promises, not an implementation detail.
-    pub const ALL: [Self; 4] = [Self::Link, Self::Merge, Self::Delegate, Self::Probe];
-
-    /// The name a catalogue writes and a trace records.
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Link => "link",
-            Self::Merge => "merge",
-            Self::Delegate => "delegate",
-            Self::Probe => "probe",
-        }
-    }
-
-    /// The member `named` designates, or a refusal that names what was asked.
+closed_set! {
+    /// The name of a member of the closed set. **This enumeration is the
+    /// closure.**
     ///
-    /// **No fallback, no neighbour, no default.** Trying a member that
-    /// resembles the one asked for is the recognition cascade that was removed
-    /// from this product: it ended in an undefined return, that is, in a thing
-    /// posed that nothing could remove.
-    pub fn parse(named: &str) -> Result<Self, BehaviourError> {
-        match named {
-            "link" => Ok(Self::Link),
-            "merge" => Ok(Self::Merge),
-            "delegate" => Ok(Self::Delegate),
-            "probe" => Ok(Self::Probe),
-            _ => Err(BehaviourError::Unknown {
-                named: named.to_string(),
-            }),
-        }
+    /// A catalogue and a registry trace carry a **name**, never a type: closing
+    /// the set is therefore something that has to happen where names are turned
+    /// into members, and that is here. Nothing outside these four parses, so
+    /// nothing outside these four can ever be selected.
+    ///
+    /// The set may **shrink** between two versions of the product — that is why
+    /// the registry records the version that posed each thing. A name that no
+    /// longer parses is refused by naming it; it is never resolved to a
+    /// neighbour, and the shape of what was posed is never recognised in order
+    /// to undo it anyway.
+    ///
+    /// **A member and its written name are declared together**, and the members
+    /// of [`BehaviourName::ALL`] and the arms of [`BehaviourName::parse`] are
+    /// derived from that one declaration. Adding a member without its name, or
+    /// without its place in the set, is not a state this file can be brought
+    /// into: the declaration takes a member and its name together or not at
+    /// all. What that omission used to cost is written where the declaration
+    /// is made.
+    pub enum BehaviourName {
+        /// Pose a file by link, out of a shared store.
+        Link => "link",
+        /// Merge a fragment into a document owned by the user.
+        Merge => "merge",
+        /// Delegate the pose to a mechanism of the host.
+        Delegate => "delegate",
+        /// Observe a presence, and write nothing.
+        Probe => "probe",
     }
 }
 
@@ -587,16 +657,24 @@ impl Behaviour for Merge {
         })
     }
 
+    /// **The inverse, under the post-condition of the removal.**
+    ///
+    /// It goes through [`unmerge`] and never through the bare inverse of the
+    /// grammar, and the difference is a document its owner keeps. The pose
+    /// proves itself reversible against the document it read, at the moment it
+    /// read it; the owner writes afterwards, and the host that is served
+    /// rewrites these documents routinely. So the passage a trace excises at
+    /// removal time is one nobody has proved anything about, and a bare inverse
+    /// takes whatever has since moved into it — measured: a key posed here, an
+    /// end-of-line comment its owner added to that key, and a removal that
+    /// returned the byte count from before while the comment was gone.
     fn undo(&self, subject: Subject<'_>, trace: &Trace) -> Result<Undone, BehaviourError> {
-        use rigger_grammar::Grammar;
-
         let Trace::Grammar { grammar, inverse } = trace;
         let source = self.document(subject)?;
         let contents = match grammar {
-            GrammarName::Jsonc => Jsonc::invert(source, inverse),
-            GrammarName::Toml => Toml::invert(source, inverse),
-        }
-        .map_err(|err| BehaviourError::Merge(MergeError::Grammar(err)))?;
+            GrammarName::Jsonc => unmerge::<Jsonc>(source, inverse),
+            GrammarName::Toml => unmerge::<Toml>(source, inverse),
+        }?;
         Ok(Undone { contents })
     }
 

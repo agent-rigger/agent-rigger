@@ -341,6 +341,28 @@ impl Grammar for Jsonc {
         }
         Ok(values)
     }
+
+    /// Walked off the **same** concrete syntax tree everything else in this
+    /// module reads. A second pass over the raw text looking for `//` would be
+    /// a second recogniser, and it would drift from this one exactly where a
+    /// document puts those two characters inside a string.
+    fn comments(source: &str) -> Result<Vec<String>, GrammarError> {
+        let root = parse(source)?;
+        let mut comments = Vec::new();
+        collect_comments(&root.children(), &mut comments);
+        Ok(comments)
+    }
+}
+
+/// Gathers every comment of the tree, in document order, under the raw text the
+/// document holds — delimiters included, since those bytes are the owner's too.
+fn collect_comments(nodes: &[CstNode], comments: &mut Vec<String>) {
+    for node in nodes {
+        if let Some(comment) = node.as_comment() {
+            comments.push(comment.raw_value());
+        }
+        collect_comments(&node.children(), comments);
+    }
 }
 
 /// The object at the end of `path`, refusing along the way any key defined

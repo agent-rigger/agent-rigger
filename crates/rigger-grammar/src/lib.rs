@@ -38,7 +38,7 @@ pub use capability::{
 };
 pub use edit::{values_lost, Applied, Edit, ElementUndo, Inverse, SemanticValue, Value};
 pub use jsonc::Jsonc;
-pub use merge::{merge, MergeError, Merged};
+pub use merge::{merge, unmerge, MergeError, Merged};
 pub use toml::Toml;
 
 use std::fmt;
@@ -372,6 +372,33 @@ pub trait Grammar {
         Err(GrammarError::unsupported(
             Self::NAME,
             "enumerating the values of the document",
+        ))
+    }
+
+    /// The comments the document carries, in document order, each under the raw
+    /// text the document holds.
+    ///
+    /// **This is the second witness of the removal's post-condition, and it
+    /// exists because the first one is blind to it.** [`Grammar::values`]
+    /// enumerates leaves; a comment is not one, so a removal that destroys a
+    /// comment leaves the comparison of values silent — which is exactly the
+    /// gap [`unmerge`] closes.
+    ///
+    /// **Every comment in these documents belongs to its owner.** [`Edit`]
+    /// carries no shape that writes one, and no variant of [`Value`] is a
+    /// comment, so nothing the product writes through this path can put one
+    /// there. A comment that disappears while a trace is replayed backwards is
+    /// therefore its owner's work destroyed, and the trace holds nothing able
+    /// to give it back. That reasoning is a property of the types above, not a
+    /// list of the documents we happen to have seen — which is why it keeps
+    /// holding the day a new grammar arrives.
+    ///
+    /// Refusal by default, like the write path: a grammar that cannot say what
+    /// comments its documents carry cannot show that a removal spared them.
+    fn comments(_source: &str) -> Result<Vec<String>, GrammarError> {
+        Err(GrammarError::unsupported(
+            Self::NAME,
+            "enumerating the comments of the document",
         ))
     }
 }
