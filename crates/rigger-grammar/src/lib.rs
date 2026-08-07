@@ -9,15 +9,21 @@
 //! by line number. The exact shapes of `Edit` and `Inverse` were meant to come
 //! out of the family-C scenarios: they did, and they live in [`edit`].
 //!
-//! **What is not here, and why.** The third shape of trace — "this block
-//! between these bounds" — depends on a marker syntax that does not exist yet,
-//! and the crate performs **no input or output**: the conditional write of an
-//! owned document lives in `rigger-apply`, because this plan wants this crate
-//! pure.
+//! The third shape of trace — "this block between these bounds" — lives in
+//! [`marker`], apart from [`Edit`] and [`Inverse`], and the separation is
+//! measured rather than stylistic: a bounded block needs delimiters the
+//! document knows how to carry, and the settings document that is served is
+//! strict JSON. The documents that shape has an object on are the text ones,
+//! which no grammar of this crate parses.
+//!
+//! **What is not here, and why.** The crate performs **no input or output**:
+//! the conditional write of an owned document lives in `rigger-apply`, because
+//! this plan wants this crate pure.
 
 pub mod capability;
 pub mod edit;
 pub mod jsonc;
+pub mod marker;
 pub mod merge;
 pub mod toml;
 

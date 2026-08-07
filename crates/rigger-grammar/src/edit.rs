@@ -6,12 +6,15 @@
 //! there exists here no type able to say "at this line", so no implementation
 //! can fabricate one without adding the missing type, under a reviewer's eyes.
 //!
-//! **Two shapes of edit, and the third is not here.** The plan gives three:
+//! **Two shapes of edit, and the third is elsewhere.** The plan gives three:
 //! "these keys at this path", "these values in this array at this path", and
-//! "this block between these bounds". The first two live here; the third
-//! depends on a marker syntax that does not exist yet and is the next slice.
-//! Writing it today would freeze the shape of a trace ahead of the scenarios
-//! that constrain it.
+//! "this block between these bounds". The first two live here; the third lives
+//! in [`crate::marker`], and the separation is measured rather than stylistic.
+//! A bounded block needs delimiters the document knows how to carry, and the
+//! settings document that is served is strict JSON. So its trace is not a
+//! variant of these two: it addresses a text document, which no grammar of this
+//! crate parses, and it carries an identity — provenance and entry — that these
+//! two have no place for.
 //!
 //! **An array value is designated by value equality.** An index survives a
 //! reordering no better than a line number survives a reformat — that is the
