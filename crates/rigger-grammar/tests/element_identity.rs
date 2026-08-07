@@ -23,7 +23,10 @@
 
 use rigger_grammar::element::{self, ElementTrace, FieldDivergence, RemoveError};
 use rigger_grammar::marker::Marker;
-use rigger_grammar::{merge, Edit, Grammar, Jsonc, MergeError, Value};
+use rigger_grammar::{
+    merge, Applied, Edit, Grammar, GrammarError, GrammarRole, Inverse, Jsonc, MergeError, Probe,
+    Resolution, SemanticValue, Value,
+};
 
 /// The identity of the entry this catalogue poses.
 fn identity() -> Marker {
@@ -366,6 +369,135 @@ fn c5_an_element_without_the_identity_of_the_product_is_not_claimed() {
     }
 }
 
+/// Declares a grammar that reads, enumerates and writes exactly as JSONC does,
+/// save for the one thing the post-conditions of a removal judge: what the write
+/// actually leaves in the document.
+///
+/// **Why the seam is a grammar and not a fixture.** Both post-conditions bear on
+/// the output, and a test can only show that by handing in a write that every
+/// input check accepts and that is wrong anyway — the element is found, its
+/// identity is unique, the fields are read, and then the write does something
+/// else. No document produces that, because the honest write is right on all of
+/// them. So the write itself is what has to be replaced, and the removal being
+/// generic over its grammar, a test grammar is the whole seam: production keeps
+/// exactly **one** write path, which is the property the removal rests on.
+macro_rules! grammar_whose_write {
+    ($name:ident, $render:expr) => {
+        struct $name;
+
+        impl Grammar for $name {
+            const NAME: &'static str = Jsonc::NAME;
+            const ROLE: GrammarRole = Jsonc::ROLE;
+            const RESOLUTION: Resolution = Jsonc::RESOLUTION;
+            const PROBE: Probe = Jsonc::PROBE;
+
+            fn round_trip(source: &str) -> Result<String, GrammarError> {
+                Jsonc::round_trip(source)
+            }
+
+            fn find_string_in_list(
+                source: &str,
+                path: &[&str],
+                value: &str,
+            ) -> Result<bool, GrammarError> {
+                Jsonc::find_string_in_list(source, path, value)
+            }
+
+            fn find_element_by_identity(
+                source: &str,
+                path: &[String],
+                identity: &Marker,
+            ) -> Result<Option<Vec<(String, Value)>>, GrammarError> {
+                Jsonc::find_element_by_identity(source, path, identity)
+            }
+
+            fn apply(source: &str, edit: &Edit) -> Result<Applied, GrammarError> {
+                Jsonc::apply(source, edit)
+            }
+
+            fn invert(source: &str, inverse: &Inverse) -> Result<String, GrammarError> {
+                let render: fn(&str, String) -> String = $render;
+                Ok(render(source, Jsonc::invert(source, inverse)?))
+            }
+
+            fn values(source: &str) -> Result<Vec<SemanticValue>, GrammarError> {
+                Jsonc::values(source)
+            }
+        }
+    };
+}
+
+grammar_whose_write!(WriteThatTouchesNothing, |source, _honest| source
+    .to_string());
+
+grammar_whose_write!(WriteThatAlsoTakesTheModelAway, |_source, honest| honest
+    .replace("  \"model\": \"acme/model-small\",\n", ""));
+
+/// The values a refusal names, in a form a failure message can compare.
+fn lost(values: &[SemanticValue]) -> Vec<String> {
+    values.iter().map(|value| value.to_string()).collect()
+}
+
+/// A write that takes the element away and one of its owner's values with it —
+/// a value the trace does not record and the divergence report does not name.
+/// The element does go, so reading it back finds nothing; the only property left
+/// that tells this apart from a clean removal is accounting for what disappeared
+/// against what the removal is able to name.
+#[test]
+fn c5_a_removal_that_destroys_a_value_it_cannot_name_is_refused() {
+    let error = element::remove::<WriteThatAlsoTakesTheModelAway>(
+        REWRITTEN_BY_THE_HOST,
+        &trace("scripts/guard.sh"),
+    )
+    .expect_err("the write destroyed a value neither the trace nor the report accounts for");
+
+    match &error {
+        RemoveError::ValuesLost {
+            identity: named,
+            lost: values,
+        } => {
+            assert_eq!(*named, identity());
+            assert_eq!(lost(values), ["model = \"acme/model-small\""]);
+        }
+        other => panic!("the refusal must name the value that disappeared, got {other:?}"),
+    }
+    let message = error.to_string();
+    assert!(
+        message.contains("acme/model-small") && message.contains("model ="),
+        "the refusal must name the value and its path: {message}"
+    );
+}
+
+/// A write that does not touch the source at all destroys no value, so the
+/// accounting above stays silent — the only property left that tells this apart
+/// from a real removal is looking the identity up again in the rendering and
+/// finding it still there. Reporting the entry as removed would leave an element
+/// nothing will ever remove again, since the registry would have forgotten it.
+#[test]
+fn c5_a_removal_whose_write_left_the_element_in_the_list_is_reported_still_present() {
+    let error = element::remove::<WriteThatTouchesNothing>(
+        REWRITTEN_BY_THE_HOST,
+        &trace("scripts/guard.sh"),
+    )
+    .expect_err("a write that leaves the element in the list must not be reported as done");
+
+    match &error {
+        RemoveError::StillPresent {
+            identity: found,
+            path,
+        } => {
+            assert_eq!(*found, identity());
+            assert_eq!(path, "hooks");
+        }
+        other => panic!("the refusal must report the element as still present, got {other:?}"),
+    }
+    let message = error.to_string();
+    assert!(
+        message.contains("hooks") && message.contains(&identity().to_string()),
+        "the refusal must name the list and the identity: {message}"
+    );
+}
+
 /// Guard, not scenario: two catalogues may legitimately publish an entry of the
 /// same name. Were the identity derived from the entry alone, removing one
 /// would take the other's element away — and the identity is precisely what
@@ -440,6 +572,15 @@ fn guard_two_elements_carrying_the_same_identity_are_refused() {
 /// Guard, not scenario: a fragment that could write the field carrying the
 /// identity could forge one — or overwrite the one that tells another
 /// catalogue's element apart from its own.
+///
+/// **The refusal is named, and that is what this guard holds.** Such a fragment
+/// is turned back twice over, and only the first refusal is the rule. Take the
+/// reserved-field check away and the write still fails, further down and for
+/// another reason: the appended element then carries `agent-rigger` twice, the
+/// merge post-condition runs the inverse on its own rendering, and the read
+/// refuses a key defined twice on the path it is reading. Asserting only "some
+/// grammar refusal happened" therefore passes on that accident, and the field
+/// would be reserved in prose alone.
 #[test]
 fn guard_a_fragment_declaring_the_identity_field_is_refused() {
     let failure = merge::<Jsonc>(
@@ -461,10 +602,88 @@ fn guard_a_fragment_declaring_the_identity_field_is_refused() {
             "the refusal does not name \"{expected}\": {message}"
         );
     }
-    assert!(
-        matches!(failure, MergeError::Grammar(_)),
-        "the refusal must come from the grammar: {failure:?}"
-    );
+    match &failure {
+        MergeError::Grammar(GrammarError::ReservedField { grammar, field }) => {
+            assert_eq!(*grammar, Jsonc::NAME);
+            assert_eq!(*field, element::IDENTITY_KEY);
+        }
+        other => panic!(
+            "the refusal must name the reserved field the fragment declared, and not come from \
+             some later check that happens to turn this write back too: {other:?}"
+        ),
+    }
+}
+
+/// A list holding one single element, whose `agent-rigger` field carries
+/// `value` — written out by hand, so that the shape under that name is the
+/// fixture and not something the crate rendered.
+fn element_whose_identity_field_carries(value: &str) -> String {
+    format!(
+        concat!(
+            "{{\n",
+            "  \"hooks\": [\n",
+            "    {{\n",
+            "      \"agent-rigger\": {},\n",
+            "      \"matcher\": \"Bash\",\n",
+            "      \"command\": \"scripts/guard.sh\"\n",
+            "    }}\n",
+            "  ]\n",
+            "}}\n",
+        ),
+        value
+    )
+}
+
+/// Guard, not scenario: the product writes the identity as a **string** and as
+/// nothing else, so an element carrying any other shape under that name was not
+/// written by it. Claiming such an element would be claiming bytes somebody else
+/// wrote — and then removing them.
+///
+/// The shapes tried are every one a JSON document can put there beside a
+/// string, and each is tried on both sides of the claim: a removal must not find
+/// the element, and a pose must add its own element beside it rather than write
+/// into it.
+#[test]
+fn guard_an_element_whose_identity_field_is_not_a_string_is_not_claimed() {
+    for shape in [
+        "42",
+        "true",
+        "{ \"catalogue\": \"jr-catalogue\", \"entry\": \"hooks/guard\" }",
+        "[\"catalogue=jr-catalogue entry=hooks/guard\"]",
+        "null",
+    ] {
+        let document = element_whose_identity_field_carries(shape);
+
+        // The removal does not claim it: no element of the list carries the
+        // identity, and the refusal says so rather than take the nearest thing.
+        let failure = element::remove::<Jsonc>(&document, &trace("scripts/guard.sh"))
+            .err()
+            .unwrap_or_else(|| panic!("the removal claimed an element carrying {shape}"));
+        assert!(
+            matches!(failure, RemoveError::NotFound { .. }),
+            "the identity is carried by no element, and {shape} is not it: {failure:?}"
+        );
+
+        // And the pose does not claim it either: it appends an element of its
+        // own, carrying the identity as a string, and leaves the list one
+        // element longer than it found it.
+        let posed = merge::<Jsonc>(&document, &published("scripts/guard.sh"))
+            .expect("the pose must succeed")
+            .rendered;
+        assert!(
+            posed.contains(POSED_IDENTITY),
+            "the pose wrote into the element carrying {shape} instead of posing its own: {posed}"
+        );
+        assert_eq!(
+            posed.matches("\"matcher\"").count(),
+            2,
+            "the list does not hold the element carrying {shape} and the posed one: {posed}"
+        );
+        assert!(
+            posed.contains(&format!("\"agent-rigger\": {shape}")),
+            "the element the product never wrote lost what it carried: {posed}"
+        );
+    }
 }
 
 /// Guard, not scenario: a removal that finds nothing does not guess. Reporting
