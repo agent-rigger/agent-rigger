@@ -8,6 +8,11 @@
 //! directory and the repository live on different volumes — that is, exactly
 //! where testing would not have shown it.
 //!
+//! **The temporary is written under the permissions of the document it will
+//! replace.** The rename swaps the inodes: a temporary created from nothing
+//! carries the process umask, and the document would come out of the pose under
+//! that mode instead of its own. See `write_alongside`.
+//!
 //! **A re-check of the fingerprint just before the rename.** It bears on what
 //! the **capture** read, never on a second read — a second read would reopen the
 //! window this is meant to close.
@@ -230,7 +235,7 @@ impl Drop for Staged {
 pub fn stage(target: &Path, contents: &str) -> Result<Staged, TxnError> {
     let document = designated_document(target)?;
     let temporary = temporary_path(&document);
-    fs::write(&temporary, contents).map_err(|detail| TxnError::Write {
+    write_alongside(&document, &temporary, contents).map_err(|detail| TxnError::Write {
         path: temporary.clone(),
         detail,
     })?;
@@ -239,6 +244,50 @@ pub fn stage(target: &Path, contents: &str) -> Result<Staged, TxnError> {
         document,
         temporary: Some(temporary),
     })
+}
+
+/// Writes `contents` into `temporary`, under the permissions of `document`.
+///
+/// **The rename swaps the inodes, so the mode the temporary carries is the mode
+/// the document ends up with.** Created from nothing, a file gets what the
+/// process umask leaves of `0666` — commonly `0644`. A settings file its owner
+/// had restricted to `0600` because it holds tokens would therefore come out of
+/// a pose readable by every account on the machine, silently, with success
+/// reported. The product does not destroy what the owner of a document wrote,
+/// and the mode is part of what they wrote.
+///
+/// The mode is read from the **designated document** — the one the rename
+/// replaces — and not from the path the caller gave: a symbolic link carries a
+/// mode of its own, and it is not the one of the document behind it.
+///
+/// It is set twice, and neither call is redundant. At creation, so that the
+/// content never exists on disk under a mode wider than the document's own; then
+/// on the open file, because the first mode is only a request — the umask can
+/// only take bits away from it, and it applies to nothing at all if a temporary
+/// left behind by an interrupted run is being truncated rather than created.
+fn write_alongside(document: &Path, temporary: &Path, contents: &str) -> io::Result<()> {
+    use std::io::Write;
+
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+
+    #[cfg(unix)]
+    let permissions = {
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+
+        let mode = fs::metadata(document)?.permissions().mode() & 0o7777;
+        options.mode(mode);
+        fs::Permissions::from_mode(mode)
+    };
+    // Elsewhere, permissions are not a mode and the notion this carries over does
+    // not exist; the parameter is read on the platforms where it does.
+    #[cfg(not(unix))]
+    let _ = document;
+
+    let mut file = options.open(temporary)?;
+    #[cfg(unix)]
+    file.set_permissions(permissions)?;
+    file.write_all(contents.as_bytes())
 }
 
 /// How many links a path may chain before the walk refuses. A link pointing at

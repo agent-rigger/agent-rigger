@@ -175,6 +175,139 @@ fn c8_a_document_changed_between_the_computation_and_the_write_aborts() {
     fs::remove_dir_all(&dir).expect("clean up");
 }
 
+/// Guard, not scenario: no scenario of C8 distinguishes *what* changed from
+/// *how much* changed, and every other test of the guard here rewrites the
+/// document to a different length. A guard that compared sizes instead of
+/// content would pass all of them, and this one is the only place that would
+/// go red.
+///
+/// What the weakened guard would let through is precisely what C8 exists to
+/// forbid: a host rewriting a value in place between the capture and the rename
+/// — same byte count, different bytes — would match, the pose would land on top
+/// of it, the host's write would be gone, and the call would report success.
+#[test]
+fn c8_the_guard_compares_the_content_and_never_its_size() {
+    // GIVEN a plan computed on a document whose fingerprint was taken.
+    let dir = directory("same-length");
+    let target = document(&dir, SETTINGS);
+    let capture = capture(&target).expect("the capture must succeed");
+
+    // AND that document rewritten in place, one value changed, same length.
+    let by_the_host = SETTINGS.replace("acme/model-small", "acme/model-SMALL");
+    assert_eq!(
+        by_the_host.len(),
+        SETTINGS.len(),
+        "the rewrite must be the same length, or this test measures nothing"
+    );
+    assert_ne!(by_the_host, SETTINGS);
+    fs::write(&target, &by_the_host).expect("rewrite by the host");
+
+    // WHEN the write runs.
+    let staged = stage(&target, "{\n\t\"pose\": true\n}\n").expect("the temporary must be written");
+    let failure = staged
+        .commit(capture.fingerprint())
+        .expect_err("the write applied on a document whose content had changed");
+
+    // THEN it fails while naming the file.
+    assert!(
+        matches!(&failure, TxnError::Changed { path } if path == &target),
+        "the guard did not see a rewrite that kept the size: {failure}"
+    );
+
+    // AND the document carries what the host wrote, intact.
+    assert_eq!(
+        fs::read_to_string(&target).expect("read back"),
+        by_the_host,
+        "the pose was applied on top of what the host wrote"
+    );
+    assert_eq!(files(&dir), vec!["settings.json".to_string()]);
+    fs::remove_dir_all(&dir).expect("clean up");
+}
+
+/// The permission bits of a path, file type excluded.
+#[cfg(unix)]
+fn mode(path: &Path) -> u32 {
+    use std::os::unix::fs::PermissionsExt;
+
+    fs::metadata(path)
+        .expect("read the metadata")
+        .permissions()
+        .mode()
+        & 0o7777
+}
+
+/// Guard, not scenario: no scenario of C8 names the mode, and yet the write
+/// replaces the document by a temporary and the rename swaps the inodes — so
+/// whatever mode the temporary carries is the mode the document ends up with.
+///
+/// A settings file restricted to `0600` is restricted because it holds tokens.
+/// Coming out of a pose at `0644`, it would be readable by every account on the
+/// machine, silently, with success reported. The product does not destroy what
+/// the owner of a document wrote, and the mode is part of what they wrote.
+#[cfg(unix)]
+#[test]
+fn guard_the_pose_keeps_the_mode_the_owner_set() {
+    use std::os::unix::fs::PermissionsExt;
+
+    // GIVEN a document its owner restricted to themselves.
+    let dir = directory("mode");
+    let target = document(&dir, SETTINGS);
+    fs::set_permissions(&target, fs::Permissions::from_mode(0o600)).expect("restrict the document");
+
+    // WHEN the pose runs.
+    merge_into_file::<Jsonc>(&target, &fragment()).expect("the pose must succeed");
+
+    // THEN the document received it, and still carries the mode from before.
+    assert!(fs::read_to_string(&target)
+        .expect("read back")
+        .contains("docs/pose.md"));
+    assert_eq!(
+        mode(&target),
+        0o600,
+        "the pose widened the mode of the document"
+    );
+    assert_eq!(files(&dir), vec!["settings.json".to_string()]);
+    fs::remove_dir_all(&dir).expect("clean up");
+}
+
+/// The same guard through a symbolic link, and it is not the same measurement:
+/// the mode that has to be carried over is the one of the **designated
+/// document**, never the one of the link — a link of its own carries `0777` on
+/// most systems, and posing that onto the versioned document would open it to
+/// everybody rather than merely widen it.
+#[cfg(unix)]
+#[test]
+fn guard_the_pose_keeps_the_mode_of_the_document_a_link_designates() {
+    use std::os::unix::fs::PermissionsExt;
+
+    // GIVEN a versioned document its owner restricted, designated from the home
+    // directory by a link — the layout of a dotfiles repository.
+    let dir = directory("mode-symlink");
+    let repository = dir.join("dotfiles");
+    let home = dir.join("home");
+    fs::create_dir_all(&repository).expect("create the repository");
+    fs::create_dir_all(&home).expect("create the home directory");
+    let real = repository.join("settings.json");
+    fs::write(&real, SETTINGS).expect("write the versioned document");
+    fs::set_permissions(&real, fs::Permissions::from_mode(0o600)).expect("restrict the document");
+    let link = home.join("settings.json");
+    std::os::unix::fs::symlink(&real, &link).expect("create the link");
+
+    // WHEN the pose runs on the link.
+    merge_into_file::<Jsonc>(&link, &fragment()).expect("the pose must succeed");
+
+    // THEN the versioned document received it, and still carries its own mode.
+    assert!(fs::read_to_string(&real)
+        .expect("read back")
+        .contains("docs/pose.md"));
+    assert_eq!(
+        mode(&real),
+        0o600,
+        "the pose did not carry over the mode of the designated document"
+    );
+    fs::remove_dir_all(&dir).expect("clean up");
+}
+
 #[test]
 fn c8_the_write_is_atomic() {
     // GIVEN a write stopped between writing the temporary and the rename — that
