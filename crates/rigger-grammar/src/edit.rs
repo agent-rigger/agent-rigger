@@ -26,8 +26,7 @@
 //! identity. Neither is designated by rank.** An index survives a reordering no
 //! better than a line number survives a reformat — that is the original motive
 //! for banning positional addressing, applied to one more axis. The host
-//! reorders: measured on 2026-08-06 on the host that is served
-//! (`docs/specs/socle-neuf/reconnaissance-hotes.md`).
+//! reorders: measured on 2026-08-06 on the host that is served.
 
 use std::fmt;
 

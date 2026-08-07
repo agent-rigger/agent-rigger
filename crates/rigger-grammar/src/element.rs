@@ -2,16 +2,15 @@
 //! it, and the removal that finds it again by that identity.
 //!
 //! **Where the identity goes is a measurement, not a preference.** Measured on
-//! 2026-08-06 on the host that is served
-//! (`docs/specs/socle-neuf/reconnaissance-hotes.md`): it rewrites its own
-//! settings through a round trip across a typed model, which reconstructs the
-//! shape it knows. A key it does not know is **destroyed at the root of the
-//! document** and **preserved inside an object element** — it rebuilds what it
-//! knows at the level where it knows, and passes through the contents of an
-//! entry it treats as opaque. An identity written beside the element, or at the
-//! root, would therefore be wiped by the first configuration command its owner
-//! runs, and the element would become impossible to find again — hence
-//! impossible to remove, with no error and nobody noticing.
+//! 2026-08-06 on the host that is served: it rewrites its own settings through
+//! a round trip across a typed model, which reconstructs the shape it knows. A
+//! key it does not know is **destroyed at the root of the document** and
+//! **preserved inside an object element** — it rebuilds what it knows at the
+//! level where it knows, and passes through the contents of an entry it treats
+//! as opaque. An identity written beside the element, or at the root, would
+//! therefore be wiped by the first configuration command its owner runs, and
+//! the element would become impossible to find again — hence impossible to
+//! remove, with no error and nobody noticing.
 //!
 //! **The rule this module enforces derives from that property of the document,
 //! never from the name of a host.** Any writer that round-trips a document

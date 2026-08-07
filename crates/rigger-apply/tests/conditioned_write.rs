@@ -1,9 +1,14 @@
 //! Writing an owned document, in scenarios.
 //!
-//! Tests prefixed with an identifier carry the name of the scenario of
-//! `docs/specs/socle-neuf/requirements.md` they realise. Those of C1 and C2 that
-//! live here are the ones whose observation bears on the **disk** — "the
-//! document on disk is the one from before" is measured nowhere else.
+//! A test prefixed with an identifier realises that requirement. C8 is the one
+//! this file exists for: **the write is conditioned on the fingerprint read
+//! when the edit was computed** — a document that changed in between makes the
+//! transaction abort instead of overwriting what its owner did. C1 — outside
+//! the trace, the document comes back byte for byte — and C2 — the write
+//! operates on the structure of the grammar, never on lines — are realised in
+//! the grammar crate as well; what lives here are the observations that bear on
+//! the **disk**, because "the document on disk is the one from before" is
+//! measured nowhere else.
 //!
 //! Each test works in its own directory: the temporary of a write lives next to
 //! its target, so two tests sharing a directory would see each other.

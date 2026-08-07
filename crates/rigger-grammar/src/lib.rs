@@ -308,11 +308,11 @@ pub trait Grammar {
     /// reports having written.
     ///
     /// **Inside the element, never beside it.** Measured on 2026-08-06 on the
-    /// host that is served (`docs/specs/socle-neuf/reconnaissance-hotes.md`):
-    /// it destroys a key it does not know at the root of the document, and
-    /// preserves one inside an object element. An identity written anywhere
-    /// else does not survive the first configuration command its owner runs,
-    /// and an element that cannot be found again cannot be removed.
+    /// host that is served: it destroys a key it does not know at the root of
+    /// the document, and preserves one inside an object element. An identity
+    /// written anywhere else does not survive the first configuration command
+    /// its owner runs, and an element that cannot be found again cannot be
+    /// removed.
     ///
     /// **By identity, never by rank, and never by value.** A rank designates
     /// nothing once the host has reordered the list, which it does. A value

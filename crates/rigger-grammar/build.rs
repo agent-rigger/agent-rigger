@@ -12,11 +12,11 @@
 //! transposed to its own instrument.
 //!
 //! The second is that the name of one of these files is the name of a host.
-//! Scenario C7 (`docs/specs/socle-neuf/requirements.md`) demands that the
-//! admission condition derive from a property of the grammar and that **no host
-//! name appear in the source of the crate** — a guard checks this file by file.
-//! Enumerating the directory rather than copying it out is what makes that
-//! requirement tenable: the crate names no document, it takes them all.
+//! Scenario C7 demands that the admission condition derive from a property of
+//! the grammar and that **no host name appear in the source of the crate** — a
+//! guard checks this file by file. Enumerating the directory rather than
+//! copying it out is what makes that requirement tenable: the crate names no
+//! document, it takes them all.
 
 use std::env;
 use std::fmt::Write as _;

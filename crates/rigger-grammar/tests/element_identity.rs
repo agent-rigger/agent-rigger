@@ -1,15 +1,15 @@
-//! An element of a list of objects, found again by its identity. Scenarios of
-//! `docs/specs/socle-neuf/requirements.md` § C5.
+//! An element of a list of objects, found again by its identity — C5: **an
+//! element is found again by the identity the product lodges inside it**, never
+//! by its rank, which a reordering destroys, and never by its value, which the
+//! catalogue is free to change.
 //!
 //! **Why the identity lives inside the element, and why that is not a
-//! preference.** Measured on 2026-08-06 on the host that is served
-//! (`docs/specs/socle-neuf/reconnaissance-hotes.md`): it rewrites its own
-//! settings through a round trip across a typed model. A key it does not know
-//! is **destroyed at the root of the document** and **preserved inside an
-//! object element**. An identity written beside the
-//! element would therefore be wiped by the first configuration command its
-//! owner runs, and the element would become impossible to find again — hence
-//! impossible to remove.
+//! preference.** Measured on 2026-08-06 on the host that is served: it rewrites
+//! its own settings through a round trip across a typed model. A key it does
+//! not know is **destroyed at the root of the document** and **preserved inside
+//! an object element**. An identity written beside the element would therefore
+//! be wiped by the first configuration command its owner runs, and the element
+//! would become impossible to find again — hence impossible to remove.
 //!
 //! **The fixtures are written by hand, and the identity syntax with them.**
 //! Asking the crate to render the documents these tests read would make them

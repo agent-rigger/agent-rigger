@@ -6,14 +6,15 @@
 //! `parser/document.rs:252` breaks on `Newline` without recording its span, and
 //! `encode.rs:337` refabricates the line separator through `writeln!`, which
 //! writes a hard-coded `\n` — no access to the `Decor` allows recovering the
-//! lost byte. This is the observable of MD-22 word for word
-//! (`docs/specs/refondation-multi-assistants/07-registre-modes-de-defaillance.md`
-//! § MD-22), which makes the preservation of trivia a condition of a grammar's
-//! admission to the `merge` behaviour: TOML is therefore not yet admissible on a
-//! CRLF document. See `docs/specs/socle-neuf/PROGRESS.md` of 2026-08-05 for the
-//! arbitration: T3 decides between a fail-closed refusal on CRLF TOML and a
-//! normalisation declared acceptable, the second path requiring MD-22 to be
-//! amended.
+//! lost byte. This is the observable of MD-22 word for word — *after an
+//! installation, the comments, the indentation and the line endings its owner
+//! had written have disappeared or changed, and nothing announced it* — and
+//! MD-22 is what makes the preservation of trivia a condition of a grammar's
+//! admission to the `merge` behaviour: TOML is therefore not yet admissible on
+//! a CRLF document. The arbitration was opened on 2026-08-05 and belongs to T3,
+//! between a fail-closed refusal on CRLF TOML and a normalisation declared
+//! acceptable — and the second path cannot be taken without amending MD-22
+//! itself.
 //!
 //! These tests **characterize** that behaviour, they do not endorse it: they pass
 //! today because they describe what `toml_edit` actually does. The day

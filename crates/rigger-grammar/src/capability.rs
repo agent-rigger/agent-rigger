@@ -89,11 +89,12 @@ use crate::{Grammar, Jsonc, Toml};
 /// of the derivation, and the only one not supplied by the grammar being
 /// judged.
 ///
-/// **Why they live in the library and not in a test.** The admission gate must
-/// be mechanical (`docs/specs/socle-neuf/tasks.md` § T3a): a table that is
-/// wrong while a test goes red is still a table that is wrong for whoever calls
-/// it. The measurement therefore needs the documents at the moment it answers,
-/// not at the moment the suite runs.
+/// **Why they live in the library and not in a test.** T3a asks that the
+/// admission gate be **mechanical** — declared per grammar, derived from the
+/// implementation, never announced by hand — and a table that is wrong while a
+/// test goes red is still a table that is wrong for whoever calls it. The
+/// measurement therefore needs the documents at the moment it answers, not at
+/// the moment the suite runs.
 ///
 /// **Why they stay physically in `tests/corpus/`.** That is the home the T1
 /// file plan gives them, and the fixture guards that check they still carry

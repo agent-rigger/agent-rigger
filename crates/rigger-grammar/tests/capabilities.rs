@@ -1,12 +1,15 @@
 //! The admission gate to the `merge` behaviour, in scenarios.
 //!
-//! Tests prefixed with an identifier carry the name of the scenario of
-//! `docs/specs/socle-neuf/requirements.md` they realise. Those prefixed with
-//! `guard_` realise none: they check that the scenarios still measure
-//! something, as the fixture guard of `conformance.rs` does for the corpus. Two
-//! of them guard a guard — the reading of the crate sources, on which C7 leans
-//! — because a guard that stops holding without going red is the mode they
-//! close.
+//! A test prefixed with an identifier realises that requirement. C7 is the one
+//! this gate answers to: **a key-based `merge` is refused when the resolution
+//! of the document depends on the order of its keys**, and the refusal must
+//! derive from a property of the grammar — never from a list of host names,
+//! which stops protecting the day a host changes without anything going red.
+//! Those prefixed with `guard_` realise none: they check that the scenarios
+//! still measure something, as the fixture guard of `conformance.rs` does for
+//! the corpus. Two of them guard a guard — the reading of the crate sources, on
+//! which C7 leans — because a guard that stops holding without going red is the
+//! mode they close.
 //!
 //! What these tests observe of C1, and what they leave to another crate: the
 //! scenario asks that a transaction abort "before the document is replaced".

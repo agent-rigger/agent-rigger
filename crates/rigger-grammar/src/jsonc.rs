@@ -64,12 +64,14 @@ impl Grammar for Jsonc {
     ///
     /// The fact measured on 2026-08-06 on the settings file that is served —
     /// its resolution goes **by category** and not by position — remains true
-    /// and remains sourced (`docs/specs/socle-neuf/requirements.md` § C7,
-    /// `docs/specs/refondation-multi-assistants/05-contrat-catalogue.md` § 5,
-    /// documentary probe of 2026-08-05). It cannot populate this column on its
-    /// own: it bears on **who reads** the document, whereas the admission
-    /// condition must derive from the grammar. An undated claim on this point
-    /// must be held to be stale.
+    /// and remains sourced: C7 refuses a key-based `merge` as soon as the
+    /// resolution of a document depends on the order of its keys, the
+    /// catalogue contract carries that refusal for what a catalogue may
+    /// declare, and both rest on a documentary probe of 2026-08-05 quoting the
+    /// host's own documentation. It cannot populate this column on its own: it
+    /// bears on **who reads** the document, whereas the admission condition
+    /// must derive from the grammar. An undated claim on this point must be
+    /// held to be stale.
     const RESOLUTION: Resolution = Resolution::IndependentOfOrder;
 
     const PROBE: Probe = Probe {

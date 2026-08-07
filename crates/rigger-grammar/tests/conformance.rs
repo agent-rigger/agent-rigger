@@ -32,9 +32,10 @@
 //! second is wired here to what the capability table says about it — a document
 //! exercised by no property would stay tested for one single property, forever.
 //!
-//! `docs/specs/socle-neuf/tasks.md` § T1: no byte of the corpus is copied from
-//! a real file on the machine, and the properties tested never read a value —
-//! so the neutrality of the content costs the measurement nothing.
+//! T1 requires that **no byte of the corpus be copied from a real file on the
+//! machine** — this repository is public, and a configuration lifted from a
+//! workstation would be published with it. The properties tested never read a
+//! value, so the neutrality of the content costs the measurement nothing.
 //!
 //! This file also carries a fixture guard
 //! (`guard_the_corpus_still_carries_its_traps`, right at the bottom): it checks

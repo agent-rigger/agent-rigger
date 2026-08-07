@@ -1,8 +1,11 @@
 //! The `merge` slice on JSONC, in scenarios.
 //!
-//! Tests prefixed with an identifier carry the name of the scenario of
-//! `docs/specs/socle-neuf/requirements.md` they realise; those prefixed with
-//! `guard_` realise none, and check that the scenarios still measure something.
+//! A test prefixed with an identifier realises that requirement. C1 — outside
+//! the trace, the document comes back byte for byte. C2 — the write operates on
+//! the structure of the grammar, never on lines. C6 — in a list of strings an
+//! element is found again by its **value**, which is a declared limit and not a
+//! design. Those prefixed with `guard_` realise none, and check that the
+//! scenarios still measure something.
 //!
 //! **What this file does not do, and where that lives.** The scenarios of C1, C2
 //! and C8 that bear on the **disk** — the transaction aborting before the

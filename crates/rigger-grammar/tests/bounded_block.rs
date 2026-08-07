@@ -1,6 +1,9 @@
 //! The bounded block: its marker, its single recogniser, and the post-condition
-//! of removal. Scenarios of `docs/specs/socle-neuf/requirements.md` § C3 and
-//! § C4.
+//! of removal. C3 asks for **one recogniser and one only**, and for a removal
+//! whose post-condition is symmetric to it: what was posed is gone, and nothing
+//! its owner wrote moved. C4 asks that the marker of a block **derive from the
+//! recorded identity** of whoever posed it, so that two catalogues never share
+//! one and neither can remove the other's block.
 //!
 //! **The four wrapping variants are written by hand here, on purpose.** Asking
 //! the crate to render them would make this file agree with the implementation
