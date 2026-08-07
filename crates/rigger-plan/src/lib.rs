@@ -18,14 +18,14 @@
 //! seize the state it changes and give it back **cannot enter a transaction
 //! whose rollback is promised**.
 //!
-//! **This crate is pure.** It reads no file and writes none: what it is handed
-//! is what somebody else read, and what it returns is what somebody else
-//! writes. That is not tidiness — it is what lets a capture and a restoration
-//! be exercised as values, with no disk, no ordering and no interruption to
-//! stage.
+//! **This crate is pure.** It reads no file and writes none. A pose returns
+//! [`Effect`]s — values saying what has to happen on a disk — and the trace that
+//! undoes them; somebody else carries them out. That is not tidiness: it is what
+//! lets a capture and a restoration be exercised as values, with no disk, no
+//! ordering and no interruption to stage.
 //!
-//! **One behaviour has a body today: `merge`.** The other three refuse by
-//! naming themselves. A refusal is not a hole: it names the member, it says
+//! **Two members have a body today: `link` and `merge`.** The other two refuse
+//! by naming themselves. A refusal is not a hole: it names the member, it says
 //! that nothing was posed and nothing was undone, and it is written out in each
 //! implementation rather than inherited from a default — a default body on this
 //! contract is precisely the thing [`Behaviour`] exists to make impossible.
@@ -217,10 +217,333 @@ impl fmt::Display for GrammarName {
     }
 }
 
+/// The fingerprint of the bytes a pose put on a machine.
+///
+/// # Why the algorithm is written out here and named
+///
+/// What the registry records has to read back the same under **every later
+/// build of the product**. A fingerprint whose algorithm moved would report
+/// every entry on a machine as rewritten by somebody else, on the very day the
+/// product was updated — and the diagnostic exists precisely to tell "the
+/// product wrote this" from "somebody else rewrote it". The hasher of the
+/// standard library is documented as free to change between releases, which is
+/// that failure with nothing to warn of it.
+///
+/// This is FNV-1a over 64 bits: offset basis `0xcbf2_9ce4_8422_2325`, prime
+/// `0x0000_0100_0000_01b3`, one byte at a time. Naming it is the point — a
+/// reader can reimplement it and get the same answer.
+///
+/// **What it is for, and what it is not.** It tells an accidental rewrite from
+/// no rewrite at all. It is not a defence against bytes chosen to collide with
+/// it, and nothing here treats it as one: the product never grants a right over
+/// a document because a fingerprint matched.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Digest(u64);
+
+impl Digest {
+    /// The offset basis of FNV-1a, 64 bits.
+    const BASIS: u64 = 0xcbf2_9ce4_8422_2325;
+    /// The prime of FNV-1a, 64 bits.
+    const PRIME: u64 = 0x0000_0100_0000_01b3;
+
+    /// The fingerprint of these bytes.
+    pub fn of(bytes: &[u8]) -> Self {
+        let mut state = Self::BASIS;
+        for byte in bytes {
+            state ^= u64::from(*byte);
+            state = state.wrapping_mul(Self::PRIME);
+        }
+        Self(state)
+    }
+}
+
+impl fmt::Display for Digest {
+    /// Sixteen lowercase hexadecimal digits, always — a rendering of fixed
+    /// width cannot be confused with a truncated one.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:016x}", self.0)
+    }
+}
+
+/// How a link pose put the artefact at its address.
+///
+/// **The trace records which of the two was done, and the removal reads it
+/// there.** Without that, a removal facing a regular file cannot tell a copy it
+/// posed from a document somebody wrote, and the only way left to decide would
+/// be to recognise the shape of what is on disk — the cascade this product
+/// removed.
+///
+/// **It is a decision handed in, never a silent fallback.** A pose that tried a
+/// symbolic link and quietly copied when the machine refused would record
+/// whichever branch ran, and the branch that never runs on the machines the
+/// suite runs on would be code nobody measures. The caller — which knows
+/// whether the machine grants the privilege — says which, and both are
+/// exercised.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Placement {
+    /// A symbolic link at the address, designating the shared store entry.
+    Link,
+    /// A copy of the artefact's bytes at the address. The store entry stays,
+    /// and stays counted: the reference count and the removal are the same
+    /// either way.
+    Copy,
+}
+
+impl Placement {
+    /// The word a trace records.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Link => "link",
+            Self::Copy => "copy",
+        }
+    }
+
+    /// The placement `written` names, or nothing. A word outside the two is not
+    /// guessed at: a removal that guessed would undo something other than what
+    /// was posed.
+    pub fn read(written: &str) -> Option<Self> {
+        match written {
+            "link" => Some(Self::Link),
+            "copy" => Some(Self::Copy),
+            _ => None,
+        }
+    }
+}
+
+impl fmt::Display for Placement {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// What the registry still records against a shared store entry, besides the
+/// thing being removed.
+///
+/// **It is an answer the registry gives, never a count taken off the disk.**
+/// Counting links found on disk would be a second description of the same fact,
+/// and two descriptions drift: the day they do, either a store entry is taken
+/// away while something still designates it, or it is kept forever.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Referents {
+    /// Something else the registry records still designates the store entry.
+    Remaining,
+    /// Nothing else does. Undoing this one leaves the store entry with nobody.
+    Last,
+}
+
+/// One change to make on a disk. **A value**: this crate decides, and somebody
+/// else carries out.
+///
+/// Every variant carries its own **pre-condition**, and that is the substance
+/// rather than a formality. "Put these bytes here" and "put these bytes here if
+/// what is here is still what I posed" are different promises, and only the
+/// second one can be made to a directory somebody else owns.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Effect {
+    /// Write these bytes where there is **nothing**. If something is there, the
+    /// step fails naming the address: the product does not write over what it
+    /// has not observed and recorded.
+    Create {
+        /// The address.
+        address: PathBuf,
+        /// The bytes.
+        contents: String,
+    },
+    /// Replace the document at this address, **conditioned on the bytes the
+    /// capture read**. Any divergence is a failure naming the file, never an
+    /// applied write: the host rewrites its own settings documents, and it is
+    /// the only concurrent writer the product can neither exclude nor foresee.
+    Write {
+        /// The address.
+        address: PathBuf,
+        /// The bytes to leave there.
+        contents: String,
+        /// The bytes the capture read — what the write is conditioned on.
+        expected: String,
+    },
+    /// Put these bytes in the **shared store**, once. Already there with these
+    /// bytes, there is nothing to do — that is what lets many things share one
+    /// materialisation. Already there with **other** bytes, the step fails
+    /// naming the entry: one store entry standing for two different contents is
+    /// the one state a shared store must never reach.
+    Materialise {
+        /// The store entry.
+        address: PathBuf,
+        /// The bytes.
+        contents: String,
+    },
+    /// Make a symbolic link at this address, designating `to`. If something is
+    /// already at the address, the step fails naming it.
+    Link {
+        /// The address.
+        address: PathBuf,
+        /// What it designates.
+        to: PathBuf,
+    },
+    /// Take away the symbolic link at this address, **only if it still
+    /// designates `to`**. Anything else there is left alone and the step fails
+    /// naming it: the product takes back what it posed, and nothing else.
+    Unlink {
+        /// The address.
+        address: PathBuf,
+        /// What the trace says it designates.
+        to: PathBuf,
+    },
+    /// Take away the file at this address, **only if it still carries the same
+    /// bytes as the store entry it was copied from**. Anything else is left
+    /// alone and the step fails naming it.
+    ///
+    /// The comparison is against the store entry and not against bytes written
+    /// into the trace, so that a removal needs nothing but what was recorded —
+    /// and so that the registry never holds a second copy of an artefact whose
+    /// one materialisation is the whole point of the shared store.
+    Discard {
+        /// The address.
+        address: PathBuf,
+        /// The store entry the copy was made from.
+        same_as: PathBuf,
+    },
+    /// Leave nothing at this address. Already nothing there is success, not a
+    /// failure: absence is what this step is for, and it is reached.
+    ///
+    /// **It is used on the product's own store, never on a document somebody
+    /// owns** — there is nothing of an owner's to protect inside the store, and
+    /// the store entry's bytes are the product's own materialisation.
+    Remove {
+        /// The address.
+        address: PathBuf,
+    },
+    /// Give an address back the state a capture seized, whatever is there now.
+    /// This is the one step a rollback is made of.
+    Restore {
+        /// The state to give back.
+        seized: Seized,
+    },
+}
+
+impl Effect {
+    /// The address this step changes.
+    ///
+    /// It is what the transaction checks against the capture: a step touching
+    /// an address the capture never named is a step whose rollback would give
+    /// nothing back.
+    pub fn address(&self) -> &Path {
+        match self {
+            Self::Create { address, .. }
+            | Self::Write { address, .. }
+            | Self::Materialise { address, .. }
+            | Self::Link { address, .. }
+            | Self::Unlink { address, .. }
+            | Self::Discard { address, .. }
+            | Self::Remove { address } => address,
+            Self::Restore { seized } => seized.address(),
+        }
+    }
+}
+
+/// What was at one address before anything was changed.
+///
+/// It carries the state **itself**, and not the fact that there was one. The
+/// distinction is the whole of the requirement: a flag saying "this pose was
+/// fresh" restores an absence and nothing else, so an update interrupted on an
+/// entry already present gives back nothing at all.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Seized {
+    /// Nothing was there.
+    Absent {
+        /// The address.
+        address: PathBuf,
+    },
+    /// A file was there, carrying these bytes.
+    Document {
+        /// The address.
+        address: PathBuf,
+        /// The bytes it carried, whole.
+        contents: String,
+    },
+    /// A symbolic link was there, designating this.
+    Link {
+        /// The address.
+        address: PathBuf,
+        /// What it designated.
+        to: PathBuf,
+    },
+}
+
+impl Seized {
+    /// The address this state was seized at.
+    pub fn address(&self) -> &Path {
+        match self {
+            Self::Absent { address }
+            | Self::Document { address, .. }
+            | Self::Link { address, .. } => address,
+        }
+    }
+}
+
+/// The state a behaviour seized **before** it changed anything: every address
+/// it was about to change, and what was at each.
+///
+/// The shared store is in here as an address like any other, and that is what
+/// makes the rollback cover a store entry the transaction removed. A
+/// compensation written per kind of operation never covered it — it knew how to
+/// undo a write to a file at a path, and a store entry that had lost its last
+/// referent was not one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Captured {
+    seized: Vec<Seized>,
+}
+
+impl Captured {
+    /// The capture of these states, in the order their addresses were about to
+    /// be changed.
+    pub fn of(seized: Vec<Seized>) -> Self {
+        Self { seized }
+    }
+
+    /// The states, in that same order.
+    pub fn seized(&self) -> &[Seized] {
+        &self.seized
+    }
+
+    /// Whether this capture seized the state of `address`.
+    pub fn holds(&self, address: &Path) -> bool {
+        self.seized.iter().any(|held| held.address() == address)
+    }
+}
+
+/// What giving a captured state back amounts to. A value, because this crate
+/// writes nothing: the caller carries it out.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Restoration {
+    /// The steps, in the order they must be carried out.
+    pub effects: Vec<Effect>,
+}
+
+/// Turns a capture into the steps that give it back.
+///
+/// **In the reverse order of the changes**, and that is not a detail: a pose
+/// materialises a store entry and then links to it, so giving it back the other
+/// way round would take the store entry away while the link still designated
+/// it. There would be an instant — and, if the rollback then failed, a lasting
+/// state — in which a link on the machine pointed at nothing.
+fn give_back(captured: &Captured) -> Restoration {
+    Restoration {
+        effects: captured
+            .seized()
+            .iter()
+            .rev()
+            .map(|seized| Effect::Restore {
+                seized: seized.clone(),
+            })
+            .collect(),
+    }
+}
+
 /// Where a behaviour acts, and what the caller **read** there.
 ///
 /// `observed` is `None` when nothing is at the address. The read happened
-/// elsewhere: this crate is handed its result so that a capture can be measured
+/// elsewhere: this crate is handed its result so that a pose can be computed
 /// without a disk.
 #[derive(Debug, Clone, Copy)]
 pub struct Subject<'a> {
@@ -230,12 +553,8 @@ pub struct Subject<'a> {
     pub observed: Option<&'a str>,
 }
 
-/// What a catalogue publishes for one thing to pose.
-///
-/// One shape today, because one member of the set has a body today. `link` and
-/// `delegate` add theirs when they are built; the variant they add is what
-/// makes their `pose` able to mean something, and until then their refusal is
-/// the honest answer.
+/// What a pose is given: what the catalogue publishes, and what the product
+/// decided about where it goes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Fragment {
     /// An edit expressed in the structure of a named grammar.
@@ -244,6 +563,19 @@ pub enum Fragment {
         grammar: GrammarName,
         /// What to write.
         edit: Edit,
+    },
+    /// A whole artefact, materialised once in the shared store and designated
+    /// from as many addresses as there are things asking for it.
+    Artefact {
+        /// The entry in the shared store. **The product decides it, not the
+        /// catalogue**: it travels here as a value so that this crate stays
+        /// able to compute a pose without knowing where anybody's home
+        /// directory is.
+        store: PathBuf,
+        /// The bytes of the artefact.
+        contents: String,
+        /// Whether the address gets a link or a copy.
+        placement: Placement,
     },
 }
 
@@ -258,76 +590,118 @@ pub enum Trace {
         /// What undoes it.
         inverse: Inverse,
     },
+    /// A link out of the shared store, to be undone by taking the address back
+    /// and — when nothing else designates it any more — the store entry with
+    /// it.
+    Link {
+        /// The store entry the pose materialised.
+        store: PathBuf,
+        /// What the pose put at the address.
+        placement: Placement,
+    },
 }
 
-/// What a pose produces: the bytes to write, and the trace that undoes them.
+impl Trace {
+    /// The store entry this trace designates, when it designates one.
+    ///
+    /// It is what the registry counts referents by: a store entry is taken away
+    /// at the last of them, and "the last" is a question about the registry.
+    pub fn store(&self) -> Option<&Path> {
+        match self {
+            Self::Link { store, .. } => Some(store),
+            Self::Grammar { .. } => None,
+        }
+    }
+}
+
+/// The trace as the registry writes it: escaped fields, decided by the
+/// behaviour that posed.
 ///
-/// The two come out of the **same** computation, and that is the point: a trace
-/// derived afterwards from what is on disk would describe a document nobody
-/// promised had stayed put.
+/// **The registry does not read them**, and that is deliberate. It holds the
+/// behaviour as a *name*, unresolved, because the closed set may shrink between
+/// two versions and an entry naming a behaviour this build no longer carries
+/// has to stay a **readable** entry with an **unresolved** behaviour. Resolving
+/// it while decoding would turn it into a corrupt line, reported unjudgeable
+/// with the wrong reason, and the refusal that must name the behaviour, the
+/// version that posed it and the file would never happen.
+pub fn record(trace: &Trace) -> Result<Vec<String>, BehaviourError> {
+    match trace {
+        Trace::Link { store, placement } => {
+            let spelled = store
+                .to_str()
+                .ok_or_else(|| BehaviourError::AddressNotSpellable {
+                    behaviour: BehaviourName::Link,
+                    address: store.clone(),
+                })?;
+            Ok(vec![spelled.to_string(), placement.as_str().to_string()])
+        }
+        Trace::Grammar { .. } => Err(BehaviourError::NotRecordable {
+            behaviour: BehaviourName::Merge,
+        }),
+    }
+}
+
+/// Reads a trace back out of what the registry recorded.
+///
+/// The behaviour is resolved **first**, by the caller, out of the name the
+/// entry carries — that is where the closed set closes. What arrives here is a
+/// member and its fields, and a field this build cannot read is a refusal that
+/// says so, never a guess: a guessed trace undoes something other than what was
+/// posed.
+pub fn replay(name: BehaviourName, fields: &[String]) -> Result<Trace, BehaviourError> {
+    match name {
+        BehaviourName::Link => match fields {
+            [store, placement] => {
+                let placement =
+                    Placement::read(placement).ok_or_else(|| BehaviourError::TraceUnreadable {
+                        behaviour: name,
+                        reason: format!(
+                            "`{placement}` is not a placement this build wrote — the two it writes \
+                             are `link` and `copy`"
+                        ),
+                    })?;
+                Ok(Trace::Link {
+                    store: PathBuf::from(store),
+                    placement,
+                })
+            }
+            other => Err(BehaviourError::TraceUnreadable {
+                behaviour: name,
+                reason: format!(
+                    "the trace carries {} fields, and a link trace is a store entry and a \
+                     placement",
+                    other.len()
+                ),
+            }),
+        },
+        BehaviourName::Merge => Err(BehaviourError::NotRecordable {
+            behaviour: BehaviourName::Merge,
+        }),
+        other => Err(BehaviourError::NotBuilt { behaviour: other }),
+    }
+}
+
+/// What a pose produces: the steps to carry out, the trace that undoes them,
+/// and the fingerprint of what was posed.
+///
+/// All three come out of the **same** computation, and that is the point: a
+/// trace derived afterwards from what is on disk would describe a document
+/// nobody promised had stayed put.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Posed {
-    /// The bytes to write at the address of the subject.
-    pub contents: String,
+    /// The steps, in the order they must be carried out.
+    pub effects: Vec<Effect>,
     /// What undoes this pose, in the form the registry records.
     pub trace: Trace,
+    /// The fingerprint of the bytes that were posed.
+    pub fingerprint: Digest,
 }
 
 /// What replaying a trace backwards produces.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Undone {
-    /// The bytes to write at the address of the subject.
-    pub contents: String,
-}
-
-/// The state a behaviour seized **before** it changed anything.
-///
-/// It carries the previous state itself, and not the fact that there was one.
-/// The distinction is the whole of the requirement: a flag saying "this pose
-/// was fresh" restores an absence and nothing else, so an update interrupted on
-/// an entry already present gives back nothing at all.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Captured {
-    /// Nothing was at the address.
-    Absent {
-        /// The address.
-        address: PathBuf,
-    },
-    /// A document was at the address, carrying these bytes.
-    Document {
-        /// The address.
-        address: PathBuf,
-        /// The bytes it carried, whole.
-        contents: String,
-    },
-}
-
-impl Captured {
-    /// The address this capture was taken at.
-    pub fn address(&self) -> &Path {
-        match self {
-            Self::Absent { address } | Self::Document { address, .. } => address,
-        }
-    }
-}
-
-/// What giving a captured state back amounts to. A value, because this crate
-/// writes nothing: the caller carries it out, under the same conditional write
-/// as any other.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Restoration {
-    /// Take away what is at the address: there was nothing there before.
-    Remove {
-        /// The address.
-        address: PathBuf,
-    },
-    /// Put these bytes back at the address.
-    Write {
-        /// The address.
-        address: PathBuf,
-        /// The bytes from before, whole.
-        contents: String,
-    },
+    /// The steps, in the order they must be carried out.
+    pub effects: Vec<Effect>,
 }
 
 /// Why a behaviour did nothing. Every variant names the member it concerns, and
@@ -352,6 +726,44 @@ pub enum BehaviourError {
         /// The member.
         behaviour: BehaviourName,
         /// The address.
+        address: PathBuf,
+    },
+    /// The fragment, or the trace, is not of the shape this member serves. It
+    /// is refused rather than interpreted: reading a link trace as a merge one
+    /// is the recognition cascade wearing another name.
+    WrongShape {
+        /// The member.
+        behaviour: BehaviourName,
+        /// What it serves.
+        serves: &'static str,
+    },
+    /// This version of the product records no registry trace for this member,
+    /// so it does not pose through it either.
+    ///
+    /// **Nothing is ever put on a machine whose trace the registry could not
+    /// hold**: the transaction asks for the record before it changes anything.
+    /// A pose recorded by nothing is a thing permanently unremovable, which is
+    /// the one damage this crate is shaped against — and it is worse than a
+    /// refusal, because nobody sees it.
+    NotRecordable {
+        /// The member.
+        behaviour: BehaviourName,
+    },
+    /// What the registry recorded does not read back as a trace of this member.
+    TraceUnreadable {
+        /// The member.
+        behaviour: BehaviourName,
+        /// What could not be read.
+        reason: String,
+    },
+    /// A path the registry cannot spell — it is a UTF-8 document, and a path is
+    /// an arbitrary byte string. Recording it under another spelling would name
+    /// an address that does not exist, and what was posed could never be found
+    /// again.
+    AddressNotSpellable {
+        /// The member.
+        behaviour: BehaviourName,
+        /// The path that was offered.
         address: PathBuf,
     },
     /// The grammar refused to read or to write, or the post-condition of the
@@ -383,6 +795,29 @@ impl fmt::Display for BehaviourError {
                 f,
                 "behaviour `{behaviour}`: there is no document at {} — the product writes only \
                  where it has observed existence, never where it has just invented something",
+                address.display()
+            ),
+            Self::WrongShape { behaviour, serves } => write!(
+                f,
+                "behaviour `{behaviour}` serves {serves}, and it was handed something else — it \
+                 refuses rather than interpret, because reading one shape as another is how a \
+                 removal comes to undo what it never posed"
+            ),
+            Self::NotRecordable { behaviour } => write!(
+                f,
+                "behaviour `{behaviour}`: this version of the product records no registry trace \
+                 for it, so it does not pose through it — a pose the registry cannot describe is a \
+                 thing nothing can ever remove"
+            ),
+            Self::TraceUnreadable { behaviour, reason } => write!(
+                f,
+                "behaviour `{behaviour}`: the recorded trace does not read back — {reason}"
+            ),
+            Self::AddressNotSpellable { behaviour, address } => write!(
+                f,
+                "behaviour `{behaviour}`: {} is not UTF-8, and the registry is a UTF-8 document — \
+                 it is not recorded under another spelling, because a record naming an address \
+                 that does not exist can never be undone",
                 address.display()
             ),
             Self::Merge(err) => write!(f, "{err}"),
@@ -446,11 +881,11 @@ impl std::error::Error for BehaviourError {}
 /// and it runs:
 ///
 /// ```
-/// use std::path::Path;
+/// use std::path::{Path, PathBuf};
 ///
 /// use rigger_plan::{
-///     Behaviour, BehaviourError, BehaviourName, Captured, Fragment, Posed, Restoration, Subject,
-///     Trace, Undone,
+///     Behaviour, BehaviourError, BehaviourName, Captured, Effect, Fragment, Posed, Referents,
+///     Restoration, Subject, Trace, Undone,
 /// };
 ///
 /// struct Outsider;
@@ -462,21 +897,21 @@ impl std::error::Error for BehaviourError {}
 ///     fn pose(&self, _: Subject<'_>, _: &Fragment) -> Result<Posed, BehaviourError> {
 ///         Err(BehaviourError::NotBuilt { behaviour: self.name() })
 ///     }
-///     fn undo(&self, _: Subject<'_>, _: &Trace) -> Result<Undone, BehaviourError> {
+///     fn undo(&self, _: Subject<'_>, _: &Trace, _: Referents) -> Result<Undone, BehaviourError> {
 ///         Err(BehaviourError::NotBuilt { behaviour: self.name() })
 ///     }
-///     fn capture(&self, subject: Subject<'_>) -> Result<Captured, BehaviourError> {
-///         Ok(Captured::Absent { address: subject.address.to_path_buf() })
+///     fn capture(&self, effects: &[Effect]) -> Result<Vec<PathBuf>, BehaviourError> {
+///         Ok(effects.iter().map(|effect| effect.address().to_path_buf()).collect())
 ///     }
 ///     fn restore(&self, captured: &Captured) -> Result<Restoration, BehaviourError> {
-///         Ok(Restoration::Remove { address: captured.address().to_path_buf() })
+///         Ok(Restoration { effects: Vec::new() })
 ///     }
 /// }
 ///
-/// let subject = Subject { address: Path::new("settings.json"), observed: None };
+/// let effects = vec![Effect::Remove { address: PathBuf::from("settings.json") }];
 /// assert_eq!(
-///     Outsider.capture(subject).unwrap(),
-///     Captured::Absent { address: Path::new("settings.json").to_path_buf() }
+///     Outsider.capture(&effects).unwrap(),
+///     vec![PathBuf::from("settings.json")]
 /// );
 /// ```
 ///
@@ -484,11 +919,11 @@ impl std::error::Error for BehaviourError {}
 /// the requirement:
 ///
 /// ```compile_fail
-/// use std::path::Path;
+/// use std::path::{Path, PathBuf};
 ///
 /// use rigger_plan::{
-///     Behaviour, BehaviourError, BehaviourName, Captured, Fragment, Posed, Restoration, Subject,
-///     Trace, Undone,
+///     Behaviour, BehaviourError, BehaviourName, Captured, Effect, Fragment, Posed, Referents,
+///     Restoration, Subject, Trace, Undone,
 /// };
 ///
 /// struct Outsider;
@@ -500,18 +935,18 @@ impl std::error::Error for BehaviourError {}
 ///     fn pose(&self, _: Subject<'_>, _: &Fragment) -> Result<Posed, BehaviourError> {
 ///         Err(BehaviourError::NotBuilt { behaviour: self.name() })
 ///     }
-///     fn undo(&self, _: Subject<'_>, _: &Trace) -> Result<Undone, BehaviourError> {
+///     fn undo(&self, _: Subject<'_>, _: &Trace, _: Referents) -> Result<Undone, BehaviourError> {
 ///         Err(BehaviourError::NotBuilt { behaviour: self.name() })
 ///     }
 ///     fn restore(&self, captured: &Captured) -> Result<Restoration, BehaviourError> {
-///         Ok(Restoration::Remove { address: captured.address().to_path_buf() })
+///         Ok(Restoration { effects: Vec::new() })
 ///     }
 /// }
 ///
-/// let subject = Subject { address: Path::new("settings.json"), observed: None };
+/// let effects = vec![Effect::Remove { address: PathBuf::from("settings.json") }];
 /// assert_eq!(
-///     Outsider.capture(subject).unwrap(),
-///     Captured::Absent { address: Path::new("settings.json").to_path_buf() }
+///     Outsider.capture(&effects).unwrap(),
+///     vec![PathBuf::from("settings.json")]
 /// );
 /// ```
 ///
@@ -519,11 +954,11 @@ impl std::error::Error for BehaviourError {}
 /// capture nothing gives back does not make a rollback:
 ///
 /// ```compile_fail
-/// use std::path::Path;
+/// use std::path::{Path, PathBuf};
 ///
 /// use rigger_plan::{
-///     Behaviour, BehaviourError, BehaviourName, Captured, Fragment, Posed, Restoration, Subject,
-///     Trace, Undone,
+///     Behaviour, BehaviourError, BehaviourName, Captured, Effect, Fragment, Posed, Referents,
+///     Restoration, Subject, Trace, Undone,
 /// };
 ///
 /// struct Outsider;
@@ -535,42 +970,56 @@ impl std::error::Error for BehaviourError {}
 ///     fn pose(&self, _: Subject<'_>, _: &Fragment) -> Result<Posed, BehaviourError> {
 ///         Err(BehaviourError::NotBuilt { behaviour: self.name() })
 ///     }
-///     fn undo(&self, _: Subject<'_>, _: &Trace) -> Result<Undone, BehaviourError> {
+///     fn undo(&self, _: Subject<'_>, _: &Trace, _: Referents) -> Result<Undone, BehaviourError> {
 ///         Err(BehaviourError::NotBuilt { behaviour: self.name() })
 ///     }
-///     fn capture(&self, subject: Subject<'_>) -> Result<Captured, BehaviourError> {
-///         Ok(Captured::Absent { address: subject.address.to_path_buf() })
+///     fn capture(&self, effects: &[Effect]) -> Result<Vec<PathBuf>, BehaviourError> {
+///         Ok(effects.iter().map(|effect| effect.address().to_path_buf()).collect())
 ///     }
 /// }
 ///
-/// let subject = Subject { address: Path::new("settings.json"), observed: None };
+/// let effects = vec![Effect::Remove { address: PathBuf::from("settings.json") }];
 /// assert_eq!(
-///     Outsider.capture(subject).unwrap(),
-///     Captured::Absent { address: Path::new("settings.json").to_path_buf() }
+///     Outsider.capture(&effects).unwrap(),
+///     vec![PathBuf::from("settings.json")]
 /// );
 /// ```
 pub trait Behaviour {
     /// The member of the closed set this implementation serves.
     fn name(&self) -> BehaviourName;
 
-    /// **The grammar.** Computes what to write and the trace that undoes it,
-    /// out of one and the same reading of the subject.
+    /// **The grammar.** Computes the steps to carry out and the trace that
+    /// undoes them, out of one and the same reading of the subject.
     fn pose(&self, subject: Subject<'_>, fragment: &Fragment) -> Result<Posed, BehaviourError>;
 
     /// **The inverse.** Replays a recorded trace backwards, and returns the
-    /// document as it stands once it has been. Never a recognition of shapes:
-    /// the trace is the only link between a pose and its undoing.
-    fn undo(&self, subject: Subject<'_>, trace: &Trace) -> Result<Undone, BehaviourError>;
+    /// steps that take the pose back off. Never a recognition of shapes: the
+    /// trace is the only link between a pose and its undoing, which is why
+    /// `referents` — the one thing the trace cannot know, because it is a
+    /// question about the registry as it stands **now** — is handed in rather
+    /// than counted off the disk.
+    fn undo(
+        &self,
+        subject: Subject<'_>,
+        trace: &Trace,
+        referents: Referents,
+    ) -> Result<Undone, BehaviourError>;
 
-    /// **The capture.** Seizes the state the pose is about to change, whole and
-    /// as it stands, before anything is written.
+    /// **The capture.** Names every address these steps are about to change, so
+    /// that what is there can be seized whole before anything is written.
+    ///
+    /// It names addresses and does not read them, because this crate reads
+    /// nothing. The transaction that carries the steps out **refuses any step
+    /// touching an address this did not name**: a behaviour that under-declares
+    /// what it changes would leave a rollback with nothing to give back, and no
+    /// test written after the fact recovers that.
     ///
     /// It has no default body, and that is the requirement rather than a style:
-    /// a behaviour that cannot seize what it changes cannot give it back, so it
+    /// a behaviour that cannot say what it changes cannot give it back, so it
     /// cannot enter a transaction whose rollback is promised. See the examples
     /// on this trait — the second of them is this sentence, checked by the
     /// compiler.
-    fn capture(&self, subject: Subject<'_>) -> Result<Captured, BehaviourError>;
+    fn capture(&self, effects: &[Effect]) -> Result<Vec<PathBuf>, BehaviourError>;
 
     /// **The restoration.** Says what giving a captured state back amounts to.
     ///
@@ -591,13 +1040,36 @@ fn not_built<T>(behaviour: BehaviourName) -> Result<T, BehaviourError> {
     Err(BehaviourError::NotBuilt { behaviour })
 }
 
-/// Pose a file by link, out of a shared store. **No body in this version.**
+/// Every address a list of steps changes, each named once, in the order they
+/// are first touched.
 ///
-/// What it will have to do, and what decides its shape rather than its schedule:
-/// its removal of a store entry that has lost its last referent must go through
-/// the capture of the quadruplet, and never through a direct path that deletes
-/// as soon as a reference count reaches zero. With that second path, a rollback
-/// has nothing to give back, and no amount of test added later recovers it.
+/// The order is the one the restoration reverses, so it is part of the promise
+/// rather than an artefact of how the list was built.
+fn addresses(effects: &[Effect]) -> Vec<PathBuf> {
+    let mut named: Vec<PathBuf> = Vec::new();
+    for effect in effects {
+        let address = effect.address().to_path_buf();
+        if !named.contains(&address) {
+            named.push(address);
+        }
+    }
+    named
+}
+
+/// Pose a file by link, out of a shared store.
+///
+/// **The simplest member of the set, and the one the tracer bullet goes
+/// through.** It materialises the artefact **once** in a shared store, and
+/// designates it from as many addresses as ask for it. It writes into no
+/// document anybody owns, it parses nothing, it leaves no marker: there is
+/// nothing here that can destroy what a user wrote.
+///
+/// **Its removal of a store entry that has lost its last referent goes through
+/// the transaction's capture, and never through a direct path that deletes as
+/// soon as a count reaches zero.** With that second path a rollback has nothing
+/// to give back, and no amount of test added later recovers it — which is why
+/// the removal of the store entry is a step of the same list as the rest,
+/// seized like the rest.
 pub struct Link;
 
 impl Behaviour for Link {
@@ -605,31 +1077,104 @@ impl Behaviour for Link {
         BehaviourName::Link
     }
 
-    fn pose(&self, _subject: Subject<'_>, _fragment: &Fragment) -> Result<Posed, BehaviourError> {
-        not_built(BehaviourName::Link)
+    /// Materialise once, then designate.
+    ///
+    /// The store entry comes **first** in the list, and the address second.
+    /// That order is what lets the rollback reverse it and never leave a link
+    /// designating something already taken away.
+    fn pose(&self, subject: Subject<'_>, fragment: &Fragment) -> Result<Posed, BehaviourError> {
+        let Fragment::Artefact {
+            store,
+            contents,
+            placement,
+        } = fragment
+        else {
+            return Err(BehaviourError::WrongShape {
+                behaviour: BehaviourName::Link,
+                serves: "an artefact materialised in the shared store",
+            });
+        };
+        let at_the_address = match placement {
+            Placement::Link => Effect::Link {
+                address: subject.address.to_path_buf(),
+                to: store.clone(),
+            },
+            Placement::Copy => Effect::Create {
+                address: subject.address.to_path_buf(),
+                contents: contents.clone(),
+            },
+        };
+        Ok(Posed {
+            effects: vec![
+                Effect::Materialise {
+                    address: store.clone(),
+                    contents: contents.clone(),
+                },
+                at_the_address,
+            ],
+            trace: Trace::Link {
+                store: store.clone(),
+                placement: *placement,
+            },
+            fingerprint: Digest::of(contents.as_bytes()),
+        })
     }
 
-    fn undo(&self, _subject: Subject<'_>, _trace: &Trace) -> Result<Undone, BehaviourError> {
-        not_built(BehaviourName::Link)
+    /// Take the address back, and the store entry with it at the last referent.
+    ///
+    /// **Nothing here reads the disk, and nothing here recognises a shape on
+    /// it.** What the address carries is read out of the trace — that is what
+    /// `placement` is recorded for — and the step that takes it away carries
+    /// the condition that it still be that: a link still designating the store
+    /// entry, or a file still carrying the bytes. Anything else is left alone
+    /// and named, because the product takes back what it posed and nothing
+    /// else.
+    fn undo(
+        &self,
+        subject: Subject<'_>,
+        trace: &Trace,
+        referents: Referents,
+    ) -> Result<Undone, BehaviourError> {
+        let Trace::Link { store, placement } = trace else {
+            return Err(BehaviourError::WrongShape {
+                behaviour: BehaviourName::Link,
+                serves: "an artefact materialised in the shared store",
+            });
+        };
+        let mut effects = vec![match placement {
+            Placement::Link => Effect::Unlink {
+                address: subject.address.to_path_buf(),
+                to: store.clone(),
+            },
+            Placement::Copy => Effect::Discard {
+                address: subject.address.to_path_buf(),
+                same_as: store.clone(),
+            },
+        }];
+        if referents == Referents::Last {
+            effects.push(Effect::Remove {
+                address: store.clone(),
+            });
+        }
+        Ok(Undone { effects })
     }
 
-    fn capture(&self, _subject: Subject<'_>) -> Result<Captured, BehaviourError> {
-        not_built(BehaviourName::Link)
+    fn capture(&self, effects: &[Effect]) -> Result<Vec<PathBuf>, BehaviourError> {
+        Ok(addresses(effects))
     }
 
-    fn restore(&self, _captured: &Captured) -> Result<Restoration, BehaviourError> {
-        not_built(BehaviourName::Link)
+    fn restore(&self, captured: &Captured) -> Result<Restoration, BehaviourError> {
+        Ok(give_back(captured))
     }
 }
 
-/// Merge a fragment into a document owned by the user. **The one member with a
-/// body in this version.**
+/// Merge a fragment into a document owned by the user.
 ///
 /// The pose delegates to the merge of the grammar crate, which carries the
 /// admission gate, the edit and the post-condition — including the half of it
 /// that runs the computed trace backwards and demands the bytes from before.
 /// Nothing of that is re-decided here: this member's own substance is the
-/// quadruplet, and its capture is the whole document.
+/// quadruplet.
 pub struct Merge;
 
 impl Behaviour for Merge {
@@ -638,7 +1183,12 @@ impl Behaviour for Merge {
     }
 
     fn pose(&self, subject: Subject<'_>, fragment: &Fragment) -> Result<Posed, BehaviourError> {
-        let Fragment::Grammar { grammar, edit } = fragment;
+        let Fragment::Grammar { grammar, edit } = fragment else {
+            return Err(BehaviourError::WrongShape {
+                behaviour: BehaviourName::Merge,
+                serves: "an edit written against a named grammar",
+            });
+        };
         let source = self.document(subject)?;
         let merged = match grammar {
             GrammarName::Jsonc => merge::<Jsonc>(source, edit),
@@ -649,7 +1199,14 @@ impl Behaviour for Merge {
             GrammarName::Toml => merge::<Toml>(source, edit),
         }?;
         Ok(Posed {
-            contents: merged.rendered,
+            fingerprint: Digest::of(merged.rendered.as_bytes()),
+            effects: vec![Effect::Write {
+                address: subject.address.to_path_buf(),
+                contents: merged.rendered,
+                // What the capture read, and never a second reading: a second
+                // one would reopen the window the conditional write closes.
+                expected: source.to_string(),
+            }],
             trace: Trace::Grammar {
                 grammar: *grammar,
                 inverse: merged.inverse,
@@ -668,45 +1225,45 @@ impl Behaviour for Merge {
     /// takes whatever has since moved into it — measured: a key posed here, an
     /// end-of-line comment its owner added to that key, and a removal that
     /// returned the byte count from before while the comment was gone.
-    fn undo(&self, subject: Subject<'_>, trace: &Trace) -> Result<Undone, BehaviourError> {
-        let Trace::Grammar { grammar, inverse } = trace;
+    fn undo(
+        &self,
+        subject: Subject<'_>,
+        trace: &Trace,
+        _referents: Referents,
+    ) -> Result<Undone, BehaviourError> {
+        let Trace::Grammar { grammar, inverse } = trace else {
+            return Err(BehaviourError::WrongShape {
+                behaviour: BehaviourName::Merge,
+                serves: "an edit written against a named grammar",
+            });
+        };
         let source = self.document(subject)?;
         let contents = match grammar {
             GrammarName::Jsonc => unmerge::<Jsonc>(source, inverse),
             GrammarName::Toml => unmerge::<Toml>(source, inverse),
         }?;
-        Ok(Undone { contents })
+        Ok(Undone {
+            effects: vec![Effect::Write {
+                address: subject.address.to_path_buf(),
+                contents,
+                expected: source.to_string(),
+            }],
+        })
     }
 
-    /// The **whole** document, and not the fact that there was one.
+    /// The one address it changes — the document.
     ///
-    /// A capture that recorded only presence restores an absence and nothing
-    /// else: an update interrupted on an entry already present would then give
-    /// back nothing, leaving the disk on the new version and the registry on
-    /// the old one. That is the failure this element of the quadruplet was
-    /// added to close, and seizing the bytes is what closes it.
-    fn capture(&self, subject: Subject<'_>) -> Result<Captured, BehaviourError> {
-        Ok(match subject.observed {
-            Some(contents) => Captured::Document {
-                address: subject.address.to_path_buf(),
-                contents: contents.to_string(),
-            },
-            None => Captured::Absent {
-                address: subject.address.to_path_buf(),
-            },
-        })
+    /// What the transaction then seizes there is the **whole** document, and
+    /// not the fact that there was one. A capture that recorded presence only
+    /// would restore an absence, so an update interrupted on an entry already
+    /// present would give back nothing, leaving the disk on the new version and
+    /// the registry on the old one.
+    fn capture(&self, effects: &[Effect]) -> Result<Vec<PathBuf>, BehaviourError> {
+        Ok(addresses(effects))
     }
 
     fn restore(&self, captured: &Captured) -> Result<Restoration, BehaviourError> {
-        Ok(match captured {
-            Captured::Document { address, contents } => Restoration::Write {
-                address: address.clone(),
-                contents: contents.clone(),
-            },
-            Captured::Absent { address } => Restoration::Remove {
-                address: address.clone(),
-            },
-        })
+        Ok(give_back(captured))
     }
 }
 
@@ -741,11 +1298,16 @@ impl Behaviour for Delegate {
         not_built(BehaviourName::Delegate)
     }
 
-    fn undo(&self, _subject: Subject<'_>, _trace: &Trace) -> Result<Undone, BehaviourError> {
+    fn undo(
+        &self,
+        _subject: Subject<'_>,
+        _trace: &Trace,
+        _referents: Referents,
+    ) -> Result<Undone, BehaviourError> {
         not_built(BehaviourName::Delegate)
     }
 
-    fn capture(&self, _subject: Subject<'_>) -> Result<Captured, BehaviourError> {
+    fn capture(&self, _effects: &[Effect]) -> Result<Vec<PathBuf>, BehaviourError> {
         not_built(BehaviourName::Delegate)
     }
 
@@ -772,11 +1334,16 @@ impl Behaviour for Probe {
         not_built(BehaviourName::Probe)
     }
 
-    fn undo(&self, _subject: Subject<'_>, _trace: &Trace) -> Result<Undone, BehaviourError> {
+    fn undo(
+        &self,
+        _subject: Subject<'_>,
+        _trace: &Trace,
+        _referents: Referents,
+    ) -> Result<Undone, BehaviourError> {
         not_built(BehaviourName::Probe)
     }
 
-    fn capture(&self, _subject: Subject<'_>) -> Result<Captured, BehaviourError> {
+    fn capture(&self, _effects: &[Effect]) -> Result<Vec<PathBuf>, BehaviourError> {
         not_built(BehaviourName::Probe)
     }
 

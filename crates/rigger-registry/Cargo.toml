@@ -15,5 +15,11 @@ publish = false
 # refused. That is the one thing this crate must never do, because eleven valid
 # traces would be lost for one corrupt entry, and everything they describe would
 # become permanently unremovable.
+# `rigger-plan` was added by the link slice, and for one question only: how many
+# things the registry still records against a shared store entry. Answering it
+# means reading a trace back, and a trace is written by the behaviour that
+# posed. The registry still holds the behaviour as an unresolved **name** — the
+# resolution happens where the removal is decided, never while decoding.
 [dependencies]
 rigger-apply = { path = "../rigger-apply" }
+rigger-plan = { path = "../rigger-plan" }

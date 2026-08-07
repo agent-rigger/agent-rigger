@@ -26,7 +26,7 @@ use std::path::{Path, PathBuf};
 
 use rigger_apply::{LockError, SystemLiveness};
 use rigger_registry::{
-    transact, Address, Consent, Decision, Entry, Mutation, Outcome, Proposal, Registry,
+    transact, Address, Consent, Decision, Entry, Mutation, Outcome, Posting, Proposal, Registry,
     RegistryError,
 };
 
@@ -38,9 +38,12 @@ fn directory(name: &str) -> PathBuf {
     path
 }
 
-/// One entry line, as the format writes it.
+/// One entry line, as the format writes it: the seven fixed fields, then the
+/// trace of the behaviour that posed.
 fn entry_line(id: &str) -> String {
-    format!("entry\t{id}\tmerge\t1.4\t/home/someone/{id}.json")
+    format!(
+        "entry\t{id}\tacme\tlink\t1.4\t/home/someone\t{id}.json\t0123456789abcdef\t/store/{id}\tlink"
+    )
 }
 
 /// A registry carrying these identifiers, written by the test.
@@ -57,12 +60,16 @@ fn registry_with(dir: &Path, name: &str, ids: &[&str]) -> Registry {
 }
 
 fn posing(id: &str) -> Mutation {
-    Mutation::Upsert(Entry::new(
-        id,
-        "merge",
-        "1.5",
-        Address::new(format!("/home/someone/{id}.json")).expect("a UTF-8 address"),
-    ))
+    Mutation::Upsert(Entry::posted(Posting {
+        id: id.to_string(),
+        provenance: "acme".to_string(),
+        behaviour: "link".to_string(),
+        posed_by: "1.5".to_string(),
+        root: Address::new("/home/someone").expect("a UTF-8 address"),
+        address: Address::new(format!("{id}.json")).expect("a UTF-8 address"),
+        fingerprint: "0123456789abcdef".to_string(),
+        trace: vec![format!("/store/{id}"), "link".to_string()],
+    }))
 }
 
 fn identifiers(registry: &Registry) -> Vec<String> {

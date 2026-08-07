@@ -59,6 +59,7 @@ name = "rigger-apply"
 version = "0.0.0"
 dependencies = [
  "rigger-grammar",
+ "rigger-plan",
 ]
 
 [[package]]
@@ -81,6 +82,7 @@ name = "rigger-registry"
 version = "0.0.0"
 dependencies = [
  "rigger-apply",
+ "rigger-plan",
 ]
 
 [[package]]

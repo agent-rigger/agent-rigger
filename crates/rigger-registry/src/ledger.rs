@@ -48,6 +48,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use rigger_apply::LockError;
+use rigger_plan::{replay, BehaviourName, Referents};
 
 /// The marker every registry document opens with.
 pub(crate) const MARKER: &str = "rigger-registry";
@@ -57,6 +58,21 @@ pub(crate) const FORMAT_VERSION: u32 = 1;
 
 /// The word that opens an entry's line.
 const ENTRY: &str = "entry";
+
+/// How many fields an entry carries before its trace: the identifier, the
+/// provenance, the behaviour, the posing version, the effective root, the
+/// address and the fingerprint.
+const FIXED_FIELDS: usize = 7;
+
+/// The version of the product, as this build was compiled.
+///
+/// **From the build and never from a string written out by hand.** What it is
+/// for is the day the closed set of behaviours *shrinks*: an entry naming a
+/// behaviour this build no longer carries is refused by naming the behaviour,
+/// the version that posed it, the file and what to undo by hand — and a version
+/// copied by hand goes stale without anything going red, at which point the
+/// refusal sends its reader to a build that never posed anything.
+pub const POSED_BY: &str = env!("CARGO_PKG_VERSION");
 
 /// Where a thing was posed, in the one spelling the registry is able to hold.
 ///
@@ -77,10 +93,10 @@ const ENTRY: &str = "entry";
 /// than after a document has been rewritten around a spelling that names
 /// nowhere.
 ///
-/// [`Entry::new`] takes one of these and nothing else. Recording a path the
-/// registry cannot spell is therefore not something anybody can write down; the
-/// check is not one a caller is trusted to remember, because a caller who
-/// forgets it compiles exactly as well as one who does not.
+/// [`Posting`] holds these and nothing else. Recording a path the registry
+/// cannot spell is therefore not something anybody can write down; the check is
+/// not one a caller is trusted to remember, because a caller who forgets it
+/// compiles exactly as well as one who does not.
 ///
 /// A path the registry can spell goes in:
 ///
@@ -195,50 +211,105 @@ impl std::error::Error for AddressNotUtf8 {}
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Entry {
     id: String,
+    provenance: String,
     behaviour: String,
     posed_by: String,
+    root: Address,
     address: Address,
+    fingerprint: String,
+    trace: Vec<String>,
+}
+
+/// Everything one pose has to record, named field by field.
+///
+/// **It is a struct and not a row of positional arguments**, and that is not
+/// presentation. Eight values, six of which are strings, is a signature in
+/// which two neighbours can be swapped and nothing goes red — and the pair that
+/// would be swapped is the effective root and the address, which is exactly the
+/// pair that decides where a removal looks.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Posting {
+    /// What the catalogue called this thing.
+    pub id: String,
+    /// Which catalogue it came from. Two catalogues may legitimately carry an
+    /// entry of the same name, and without this the two records are one.
+    pub provenance: String,
+    /// The **name** of the behaviour that posed it.
+    pub behaviour: String,
+    /// The version of the product that posed it — see [`POSED_BY`].
+    pub posed_by: String,
+    /// The effective root **at the moment of the pose**.
+    pub root: Address,
+    /// The address, under that root.
+    pub address: Address,
+    /// The fingerprint of the bytes that were posed.
+    pub fingerprint: String,
+    /// The inverse, in the fields the behaviour that posed it writes.
+    pub trace: Vec<String>,
 }
 
 impl Entry {
-    /// Records `id` as posed at `address` by the behaviour named `behaviour`,
-    /// by the version `posed_by` of the product.
+    /// Records one pose.
     ///
-    /// The address is an [`Address`] and not a path, so a path the registry
-    /// cannot spell is refused where it is offered rather than recorded as a
-    /// different one:
+    /// The root and the address are [`Address`]es and not paths, so a path the
+    /// registry cannot spell is refused where it is offered rather than
+    /// recorded as a different one:
     ///
     /// ```
-    /// use rigger_registry::{Address, Entry};
-    /// let address = Address::new("/home/someone/settings.json").expect("a UTF-8 path");
-    /// let entry = Entry::new("acme/skill", "merge/jsonc", "1.5", address);
-    /// assert_eq!(entry.address(), std::path::Path::new("/home/someone/settings.json"));
+    /// use rigger_registry::{Address, Entry, Posting};
+    /// let entry = Entry::posted(Posting {
+    ///     id: "acme/skill".to_string(),
+    ///     provenance: "acme".to_string(),
+    ///     behaviour: "link".to_string(),
+    ///     posed_by: "1.5".to_string(),
+    ///     root: Address::new("/home/someone/.claude").expect("a UTF-8 path"),
+    ///     address: Address::new("skills/review.md").expect("a UTF-8 path"),
+    ///     fingerprint: "0123456789abcdef".to_string(),
+    ///     trace: vec!["/home/someone/.rigger/store/acme-skill".to_string(), "link".to_string()],
+    /// });
+    /// assert_eq!(
+    ///     entry.at(),
+    ///     std::path::Path::new("/home/someone/.claude/skills/review.md"),
+    /// );
     /// ```
     ///
     /// Handing it the path itself does not compile, which is what keeps the
     /// check from being one a caller has to remember:
     ///
     /// ```compile_fail
-    /// use rigger_registry::Entry;
-    /// let _ = Entry::new("acme/skill", "merge/jsonc", "1.5", "/home/someone/settings.json");
+    /// use rigger_registry::{Address, Entry, Posting};
+    /// let _ = Posting {
+    ///     id: "acme/skill".to_string(),
+    ///     provenance: "acme".to_string(),
+    ///     behaviour: "link".to_string(),
+    ///     posed_by: "1.5".to_string(),
+    ///     root: "/home/someone/.claude".to_string(),
+    ///     address: "skills/review.md".to_string(),
+    ///     fingerprint: "0123456789abcdef".to_string(),
+    ///     trace: Vec::new(),
+    /// };
     /// ```
-    pub fn new(
-        id: impl Into<String>,
-        behaviour: impl Into<String>,
-        posed_by: impl Into<String>,
-        address: Address,
-    ) -> Self {
+    pub fn posted(posting: Posting) -> Self {
         Self {
-            id: id.into(),
-            behaviour: behaviour.into(),
-            posed_by: posed_by.into(),
-            address,
+            id: posting.id,
+            provenance: posting.provenance,
+            behaviour: posting.behaviour,
+            posed_by: posting.posed_by,
+            root: posting.root,
+            address: posting.address,
+            fingerprint: posting.fingerprint,
+            trace: posting.trace,
         }
     }
 
     /// What the catalogue called this thing.
     pub fn id(&self) -> &str {
         &self.id
+    }
+
+    /// Which catalogue it came from.
+    pub fn provenance(&self) -> &str {
+        &self.provenance
     }
 
     /// The **name** of the behaviour that posed it, unresolved.
@@ -253,21 +324,59 @@ impl Entry {
         &self.posed_by
     }
 
-    /// Where it was posed.
+    /// The effective root at the moment of the pose.
+    pub fn root(&self) -> &Path {
+        self.root.as_path()
+    }
+
+    /// The address, under the root of the pose.
     pub fn address(&self) -> &Path {
         self.address.as_path()
     }
 
+    /// Where it actually is: the address, resolved against the root **this
+    /// entry recorded**.
+    ///
+    /// Never against the root the environment names now. A machine whose root
+    /// is overridden between the pose and the removal would otherwise be
+    /// searched at the wrong place: nothing would be found, the entry would come
+    /// out of the registry all the same, and the files would stay — a dirty
+    /// machine that believes itself clean, which is the one outcome this
+    /// registry exists to prevent.
+    pub fn at(&self) -> PathBuf {
+        self.root.as_path().join(self.address.as_path())
+    }
+
+    /// The fingerprint of the bytes that were posed.
+    pub fn fingerprint(&self) -> &str {
+        &self.fingerprint
+    }
+
+    /// The inverse, in the fields the behaviour that posed it writes. The
+    /// registry does not read them; the behaviour does, once it has been
+    /// resolved.
+    pub fn trace(&self) -> &[String] {
+        &self.trace
+    }
+
     fn render(&self) -> String {
-        format!(
-            "{ENTRY}\t{}\t{}\t{}\t{}",
+        let mut line = format!(
+            "{ENTRY}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
             escape(&self.id),
+            escape(&self.provenance),
             escape(&self.behaviour),
             escape(&self.posed_by),
             // Not a lossy conversion, and there is nowhere left to put one: the
-            // address was checked when it was built.
+            // root and the address were checked when they were built.
+            escape(self.root.as_str()),
             escape(self.address.as_str()),
-        )
+            escape(&self.fingerprint),
+        );
+        for field in &self.trace {
+            line.push('\t');
+            line.push_str(&escape(field));
+        }
+        line
     }
 }
 
@@ -335,6 +444,42 @@ impl Ledger {
     /// Takes out the entry with this identifier, if there is one.
     pub fn remove(&mut self, id: &str) {
         self.entries.retain(|entry| entry.id != id);
+    }
+
+    /// Whether anything else the registry records still designates the shared
+    /// store entry `store`, once `besides` is taken out.
+    ///
+    /// **The count is a question about the registry, never about the disk.**
+    /// Counting the links found on a machine would be a second description of
+    /// the same fact, and two descriptions drift: the day they did, either a
+    /// store entry would be taken away while something still designated it, or
+    /// it would be kept forever with nobody able to say why.
+    ///
+    /// **An entry whose trace this build cannot read counts as a referent.**
+    /// The two errors are not symmetric. Keeping a store entry nobody
+    /// designates wastes a file somebody can delete; taking away one that is
+    /// still designated leaves links on the machine pointing at nothing, and
+    /// the thing they pointed at is gone. So an unreadable trace is treated as
+    /// possibly designating it, and that is written here rather than left to
+    /// the shape of an `unwrap_or`.
+    pub fn referents(&self, store: &Path, besides: &str) -> Referents {
+        let still = self
+            .entries
+            .iter()
+            .filter(|entry| entry.id() != besides)
+            .any(|entry| {
+                match BehaviourName::parse(entry.behaviour())
+                    .and_then(|name| replay(name, entry.trace()))
+                {
+                    Ok(trace) => trace.store() == Some(store),
+                    Err(_) => true,
+                }
+            });
+        if still {
+            Referents::Remaining
+        } else {
+            Referents::Last
+        }
     }
 
     /// The document this registry is written as.
@@ -462,26 +607,44 @@ fn decode_entry(line: &str) -> Result<Entry, String> {
         unescape(field).map_err(|reason| format!("the {what} cannot be read — {reason}"))
     };
     let id = read("identifier")?;
+    let provenance = read("provenance")?;
     let behaviour = read("behaviour name")?;
     let posed_by = read("posing version")?;
+    let root = read("effective root")?;
     let address = read("address")?;
-    if let Some(extra) = fields.next() {
-        return Err(format!(
-            "the line carries a field this build does not read — `{extra}`"
-        ));
+    let fingerprint = read("fingerprint")?;
+    // **Everything after the fixed fields is the trace, however many fields it
+    // is.** Its arity belongs to the behaviour that posed, not to the registry:
+    // reading it here would mean resolving the behaviour while decoding, and an
+    // entry naming a behaviour this build no longer carries would become a
+    // corrupt line reported unjudgeable with the wrong reason — while the
+    // refusal that has to name the behaviour, its version and the file never
+    // happened.
+    let mut trace = Vec::new();
+    for (index, field) in fields.enumerate() {
+        trace.push(unescape(field).map_err(|reason| {
+            format!(
+                "field {} of the trace cannot be read — {reason}",
+                FIXED_FIELDS + index + 1
+            )
+        })?);
     }
     if id.is_empty() {
         return Err("the identifier is empty".to_string());
     }
-    // The address came out of a UTF-8 document, so it is one: no check is
-    // possible here, and the one that matters happened where the path was
-    // offered.
-    Ok(Entry::new(
+    // The root and the address came out of a UTF-8 document, so they are ones:
+    // no check is possible here, and the one that matters happened where the
+    // paths were offered.
+    Ok(Entry::posted(Posting {
         id,
+        provenance,
         behaviour,
         posed_by,
-        Address::from_document(address),
-    ))
+        root: Address::from_document(root),
+        address: Address::from_document(address),
+        fingerprint,
+        trace,
+    }))
 }
 
 /// Renders a field so that no value can produce a separator or a line break.

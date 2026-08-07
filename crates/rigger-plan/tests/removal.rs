@@ -15,7 +15,9 @@
 use std::path::{Path, PathBuf};
 
 use rigger_grammar::{Edit, Inverse, MergeError, Value};
-use rigger_plan::{behaviour, BehaviourError, BehaviourName, Fragment, GrammarName, Subject};
+use rigger_plan::{
+    behaviour, BehaviourError, BehaviourName, Effect, Fragment, GrammarName, Referents, Subject,
+};
 
 /// A settings document with hostile trivia: a tab indentation, and a comment on
 /// a key the product does not touch.
@@ -38,6 +40,16 @@ fn fragment() -> Fragment {
     }
 }
 
+/// The bytes a single step leaves at the address. A merge produces exactly one,
+/// and reading it here rather than in every scenario keeps them about what they
+/// establish.
+fn written(effects: &[Effect]) -> String {
+    match effects {
+        [Effect::Write { contents, .. }] => contents.clone(),
+        other => panic!("a merge writes one document and only one: {other:?}"),
+    }
+}
+
 /// Poses the fragment into `DOCUMENT` and hands back what a registry would
 /// record: the document as written, and the trace that undoes it.
 fn posed() -> (String, rigger_plan::Trace) {
@@ -50,7 +62,7 @@ fn posed() -> (String, rigger_plan::Trace) {
             &fragment(),
         )
         .expect("the pose must succeed");
-    (posed.contents, posed.trace)
+    (written(&posed.effects), posed.trace)
 }
 
 /// Replays `trace` backwards on `document`, as a removal does.
@@ -62,8 +74,11 @@ fn remove(document: &str, trace: &rigger_plan::Trace) -> Result<String, Behaviou
                 observed: Some(document),
             },
             trace,
+            // A merge designates no shared store entry, so there is nothing for
+            // this answer to decide.
+            Referents::Last,
         )
-        .map(|undone| undone.contents)
+        .map(|undone| written(&undone.effects))
 }
 
 #[test]

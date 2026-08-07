@@ -15,8 +15,8 @@ use std::path::{Path, PathBuf};
 
 use rigger_grammar::{Edit, Grammar, Inverse, Jsonc, MergeError, Value};
 use rigger_plan::{
-    behaviour, BehaviourError, BehaviourName, Captured, Fragment, GrammarName, Restoration,
-    Subject, Trace,
+    behaviour, BehaviourError, BehaviourName, Captured, Effect, Fragment, GrammarName, Referents,
+    Restoration, Seized, Subject, Trace,
 };
 
 /// A settings document with hostile trivia: a tab indentation, and a comment on
@@ -109,16 +109,12 @@ fn guard_every_member_of_the_closed_set_round_trips_through_its_name() {
 
 #[test]
 fn a4_a_member_with_no_body_refuses_by_naming_itself_rather_than_leaving_a_hole() {
-    let unbuilt = [
-        BehaviourName::Link,
-        BehaviourName::Delegate,
-        BehaviourName::Probe,
-    ];
+    let unbuilt = [BehaviourName::Delegate, BehaviourName::Probe];
     let subject = Subject {
         address: &address(),
         observed: Some(DOCUMENT),
     };
-    let captured = Captured::Absent { address: address() };
+    let captured = Captured::of(vec![Seized::Absent { address: address() }]);
     let trace = Trace::Grammar {
         grammar: GrammarName::Jsonc,
         inverse: Inverse::Keys {
@@ -140,8 +136,11 @@ fn a4_a_member_with_no_body_refuses_by_naming_itself_rather_than_leaving_a_hole(
             served.pose(subject, &fragment(GrammarName::Jsonc)),
             Err(expected.clone())
         );
-        assert_eq!(served.undo(subject, &trace), Err(expected.clone()));
-        assert_eq!(served.capture(subject), Err(expected.clone()));
+        assert_eq!(
+            served.undo(subject, &trace, Referents::Last),
+            Err(expected.clone())
+        );
+        assert_eq!(served.capture(&[]), Err(expected.clone()));
         assert_eq!(served.restore(&captured), Err(expected.clone()));
         assert!(
             expected.to_string().contains(member.as_str()),
@@ -151,78 +150,87 @@ fn a4_a_member_with_no_body_refuses_by_naming_itself_rather_than_leaving_a_hole(
 }
 
 #[test]
-fn a4_merge_seizes_the_document_it_is_about_to_change_and_gives_it_back_whole() {
+fn a4_merge_names_the_document_it_is_about_to_change() {
     let served = behaviour(BehaviourName::Merge);
     let subject = Subject {
         address: &address(),
         observed: Some(DOCUMENT),
     };
 
-    let captured = served.capture(subject).expect("the capture must succeed");
+    let posed = served
+        .pose(subject, &fragment(GrammarName::Jsonc))
+        .expect("the pose must succeed");
 
-    // The capture carries the bytes, not the fact that there were some. A
-    // capture that recorded presence only would restore an absence, so an
-    // update interrupted on an entry already present would give back nothing:
-    // the disk would stay on the new version and the registry on the old one.
-    assert_eq!(
-        captured,
-        Captured::Document {
-            address: address(),
-            contents: DOCUMENT.to_string(),
-        }
-    );
     assert_eq!(
         served
-            .restore(&captured)
+            .capture(&posed.effects)
+            .expect("the capture must succeed"),
+        vec![address()],
+        "a step touching an address the capture did not name is a step whose rollback would give \
+         nothing back"
+    );
+}
+
+#[test]
+fn a4_a_seized_document_is_given_back_whole_and_a_seized_absence_is_not() {
+    // The pair, and it is the pair that has teeth: a restoration answering the
+    // same thing to both would pass either of them alone. The distinction is
+    // the whole of the requirement — a capture recording presence only would
+    // restore an absence, so an update interrupted on an entry already present
+    // would give back nothing, leaving the disk on the new version and the
+    // registry on the old one.
+    let served = behaviour(BehaviourName::Merge);
+    let document = Captured::of(vec![Seized::Document {
+        address: address(),
+        contents: DOCUMENT.to_string(),
+    }]);
+    let absence = Captured::of(vec![Seized::Absent { address: address() }]);
+
+    assert_eq!(
+        served
+            .restore(&document)
             .expect("the restoration must succeed"),
-        Restoration::Write {
-            address: address(),
-            contents: DOCUMENT.to_string(),
+        Restoration {
+            effects: vec![Effect::Restore {
+                seized: Seized::Document {
+                    address: address(),
+                    contents: DOCUMENT.to_string(),
+                },
+            }],
         },
         "restoring an update must put the document from before back, byte for byte"
     );
+    assert_ne!(served.restore(&document), served.restore(&absence));
 }
 
 #[test]
-fn a4_merge_restores_the_absence_it_captured_when_there_was_no_document() {
-    let served = behaviour(BehaviourName::Merge);
-    let subject = Subject {
-        address: &address(),
-        observed: None,
-    };
+fn a4_a_restoration_gives_the_addresses_back_in_the_reverse_order_they_were_changed() {
+    // A link pose materialises the store entry and then designates it. Giving
+    // them back the other way round would take the materialisation away while
+    // the link still designated it, and a rollback that then failed would leave
+    // a link on the machine pointing at nothing.
+    let served = behaviour(BehaviourName::Link);
+    let store = PathBuf::from("/store/acme-skill");
+    let captured = Captured::of(vec![
+        Seized::Absent {
+            address: store.clone(),
+        },
+        Seized::Absent { address: address() },
+    ]);
 
-    let captured = served.capture(subject).expect("the capture must succeed");
+    let restoration = served
+        .restore(&captured)
+        .expect("the restoration must succeed");
 
-    assert_eq!(captured, Captured::Absent { address: address() });
     assert_eq!(
-        served
-            .restore(&captured)
-            .expect("the restoration must succeed"),
-        Restoration::Remove { address: address() },
-        "restoring a fresh pose must take away what was put there"
+        restoration.effects.first().map(|effect| effect.address()),
+        Some(address().as_path()),
+        "the address must be given back before the store entry it designates"
     );
-}
-
-#[test]
-fn a4_the_capture_of_a_document_and_the_capture_of_an_absence_do_not_restore_alike() {
-    // The two above, put side by side: a restoration that answered the same
-    // thing to both would pass either of them alone. It is the pair that has
-    // teeth, and this is where the pair is stated.
-    let served = behaviour(BehaviourName::Merge);
-    let present = served
-        .capture(Subject {
-            address: &address(),
-            observed: Some(DOCUMENT),
-        })
-        .expect("the capture must succeed");
-    let absent = served
-        .capture(Subject {
-            address: &address(),
-            observed: None,
-        })
-        .expect("the capture must succeed");
-
-    assert_ne!(served.restore(&present), served.restore(&absent));
+    assert_eq!(
+        restoration.effects.last().map(|effect| effect.address()),
+        Some(store.as_path())
+    );
 }
 
 #[test]
@@ -236,20 +244,29 @@ fn guard_merge_poses_through_its_grammar_and_its_trace_returns_the_document() {
     let posed = served
         .pose(subject, &fragment(GrammarName::Jsonc))
         .expect("the merge must succeed");
-    assert!(posed.contents.contains("statusLine"));
+    let written = match posed.effects.as_slice() {
+        [Effect::Write { contents, .. }] => contents.clone(),
+        other => panic!("a merge writes one document and only one: {other:?}"),
+    };
+    assert!(written.contains("statusLine"));
 
     let undone = served
         .undo(
             Subject {
                 address: &address(),
-                observed: Some(&posed.contents),
+                observed: Some(&written),
             },
             &posed.trace,
+            Referents::Last,
         )
         .expect("the trace must run backwards");
 
     assert_eq!(
-        undone.contents, DOCUMENT,
+        match undone.effects.as_slice() {
+            [Effect::Write { contents, .. }] => contents.clone(),
+            other => panic!("a removal writes one document and only one: {other:?}"),
+        },
+        DOCUMENT,
         "replaying the trace must return the document from before, byte for byte"
     );
 }

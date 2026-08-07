@@ -33,9 +33,14 @@ fn registry_with(dir: &std::path::Path, document: &str) -> Registry {
     Registry::at(path)
 }
 
-/// One entry line, as the format writes it.
+/// One entry line, as the format writes it: the seven fixed fields, then the
+/// trace of the behaviour that posed — here a link, whose trace is a store
+/// entry and a placement.
 fn entry_line(id: &str, behaviour: &str, posed_by: &str, address: &str) -> String {
-    format!("entry\t{id}\t{behaviour}\t{posed_by}\t{address}")
+    format!(
+        "entry\t{id}\tacme\t{behaviour}\t{posed_by}\t/home/someone\t{address}\t0123456789abcdef\t\
+         /store/{id}\tlink"
+    )
 }
 
 #[test]
@@ -156,7 +161,7 @@ fn a1_one_unreadable_entry_out_of_twelve_is_unjudgeable_and_the_other_eleven_are
         ));
         document.push('\n');
     }
-    document.push_str("entry\tacme/skill-11\tmerge\n");
+    document.push_str("entry\tacme/skill-11\tacme\tlink\n");
     let registry = registry_with(&dir, &document);
 
     // WHEN a read runs.
@@ -194,7 +199,7 @@ fn a1_one_unreadable_entry_out_of_twelve_is_unjudgeable_and_the_other_eleven_are
 fn guard_an_unreadable_entry_is_written_back_unchanged() {
     use rigger_apply::SystemLiveness;
     use rigger_registry::{
-        transact, Address, Consent, Decision, Entry, Mutation, Outcome, Proposal,
+        transact, Address, Consent, Decision, Entry, Mutation, Outcome, Posting, Proposal,
     };
 
     struct Granting;
@@ -205,7 +210,7 @@ fn guard_an_unreadable_entry_is_written_back_unchanged() {
     }
 
     let dir = directory("keep-unreadable");
-    const UNREADABLE: &str = "entry\tacme/older\tmerge";
+    const UNREADABLE: &str = "entry\tacme/older\tacme\tlink";
     let document = format!(
         "rigger-registry 1\n{}\n{UNREADABLE}\n",
         entry_line("acme/skill", "merge", "1.4", "/home/someone/settings.json")
@@ -214,12 +219,16 @@ fn guard_an_unreadable_entry_is_written_back_unchanged() {
 
     let outcome = transact(
         &registry,
-        &[Mutation::Upsert(Entry::new(
-            "acme/other",
-            "merge",
-            "1.5",
-            Address::new("/home/someone/other.json").expect("a UTF-8 address"),
-        ))],
+        &[Mutation::Upsert(Entry::posted(Posting {
+            id: "acme/other".to_string(),
+            provenance: "acme".to_string(),
+            behaviour: "link".to_string(),
+            posed_by: "1.5".to_string(),
+            root: Address::new("/home/someone").expect("a UTF-8 address"),
+            address: Address::new("other.json").expect("a UTF-8 address"),
+            fingerprint: "0123456789abcdef".to_string(),
+            trace: vec!["/store/acme-other".to_string(), "link".to_string()],
+        }))],
         &Granting,
         &SystemLiveness,
     )
@@ -273,8 +282,8 @@ fn guard_a_second_line_under_one_identifier_is_unjudgeable_and_is_written_back()
     // naming the identifier and the line that already carried it.
     assert_eq!(ledger.entries().len(), 1);
     assert_eq!(
-        ledger.entries()[0].address(),
-        std::path::Path::new("/home/someone/first.json")
+        ledger.entries()[0].at(),
+        std::path::PathBuf::from("/home/someone/first.json")
     );
     assert_eq!(
         ledger.unjudgeable().len(),
@@ -321,7 +330,7 @@ fn guard_a_second_line_under_one_identifier_is_unjudgeable_and_is_written_back()
 /// in, at the moment the caller still holds the real path.
 ///
 /// It happens at construction rather than at the write, which is what makes it
-/// unskippable: `Entry::new` takes an `Address` and nothing else, so recording
+/// unskippable: `Posting` takes an `Address` and nothing else, so recording
 /// the path itself is not something anybody can write down. The doctests of
 /// `Address` carry that half.
 #[cfg(unix)]

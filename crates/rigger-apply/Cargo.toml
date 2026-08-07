@@ -11,5 +11,10 @@ publish = false
 # No third-party dependency: what this crate does — read, write alongside,
 # rename — is standard library, and one more dependency on this path would be a
 # dependency on the path that touches the user's documents.
+# `rigger-plan` was added by the link slice: this crate carries out the steps
+# that crate decides. The direction is the one the file plan draws — the pure
+# core says what has to happen, the input and output crate makes it happen — and
+# it is the only one that keeps `rigger-plan` free of a disk.
 [dependencies]
 rigger-grammar = { path = "../rigger-grammar" }
+rigger-plan = { path = "../rigger-plan" }

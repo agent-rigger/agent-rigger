@@ -9,10 +9,19 @@
 //! the capture read, which is the only defence against the one concurrent writer
 //! the product can neither exclude nor foresee.
 
+//! [`pose`] is the third thing, and it is the one the other two exist for: a
+//! behaviour's steps carried out under a transaction that seizes what it is
+//! about to change and gives it back if a step fails. The rollback replays that
+//! seized state rather than a compensation written per kind of operation, which
+//! is what makes it cover the removal of a shared store entry — an operation no
+//! such table ever had a line for.
+
 pub mod lock;
+pub mod pose;
 pub mod txn;
 
 pub use lock::{Expired, Held, Liveness, LivenessProbe, Lock, LockError, Observed, SystemLiveness};
+pub use pose::{carry, pose, withdraw, OnDisk, PoseError, Posted, StepError, Steps};
 pub use txn::{
     capture, merge_into_file, stage, ApplyError, Capture, Fingerprint, Staged, TxnError,
 };
