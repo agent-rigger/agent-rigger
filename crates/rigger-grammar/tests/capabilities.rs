@@ -135,7 +135,7 @@ impl Grammar for LyingGrammar {
 fn c1_a_grammar_that_does_not_preserve_aborts() {
     // GIVEN an owned document, on disk, in a grammar whose implementation does
     // not return the bytes outside the trace.
-    let before = include_bytes!("corpus-limites/config-crlf.toml");
+    let before = include_bytes!("corpus-limits/config-crlf.toml");
     let witness = temporary_copy("c1", before);
 
     // WHEN a write goes through it.

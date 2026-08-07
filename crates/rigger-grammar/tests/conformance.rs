@@ -28,7 +28,7 @@
 //! has just done.
 //!
 //! `tests/corpus/` carries the documents whose trivia the grammar preserves;
-//! `tests/corpus-limites/` carries those whose trivia it does not, and the
+//! `tests/corpus-limits/` carries those whose trivia it does not, and the
 //! second is wired here to what the capability table says about it — a document
 //! exercised by no property would stay tested for one single property, forever.
 //!
@@ -168,7 +168,7 @@ fn corpus_dir() -> PathBuf {
 }
 
 fn limits_corpus_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/corpus-limites")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/corpus-limits")
 }
 
 fn documents_in(dir: &Path) -> Vec<PathBuf> {
@@ -229,7 +229,7 @@ fn c1_a_round_trip_without_edit_is_byte_identical() {
 
 /// Second common property: a document the grammar cannot read produces a
 /// refusal that **names it**. It bears on both directories, which is the only
-/// wiring by which `corpus-limites/` is exercised by a conformance property and
+/// wiring by which `corpus-limits/` is exercised by a conformance property and
 /// not by its characterization test alone.
 #[test]
 fn guard_a_malformed_document_is_refused_by_a_grammar_that_names_itself() {
@@ -384,7 +384,7 @@ fn difference(before: &str, after: &str) -> (String, String) {
     )
 }
 
-/// The wiring itself: a document lives in `corpus-limites/` because its grammar
+/// The wiring itself: a document lives in `corpus-limits/` because its grammar
 /// does not return its bytes, and that is what the capability table must say of
 /// that grammar. Without this test, the table could admit to `merge` a grammar
 /// whose counter-proof the repository carries.

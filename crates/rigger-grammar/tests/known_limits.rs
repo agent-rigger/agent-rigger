@@ -28,7 +28,7 @@ use toml_edit::DocumentMut;
 /// Deliberately outside `tests/corpus/`: the conformance property must not see
 /// it, and its guard on the size of the corpus (three documents) must stay
 /// correct.
-const CONFIG_CRLF: &[u8] = include_bytes!("corpus-limites/config-crlf.toml");
+const CONFIG_CRLF: &[u8] = include_bytes!("corpus-limits/config-crlf.toml");
 
 #[test]
 fn b1_toml_edit_normalises_crlf_to_lf() {

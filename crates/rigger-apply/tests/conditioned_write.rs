@@ -262,7 +262,7 @@ fn c1_a_grammar_that_does_not_preserve_aborts_before_replacing_the_document() {
     // the bytes outside the trace.
     let dir = directory("non-preserving");
     let hard_case = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../rigger-grammar/tests/corpus-limites/config-crlf.toml");
+        .join("../rigger-grammar/tests/corpus-limits/config-crlf.toml");
     let before = fs::read(&hard_case).expect("read the document of the hard case");
     let target = dir.join("config.toml");
     fs::write(&target, &before).expect("write the owned document");
