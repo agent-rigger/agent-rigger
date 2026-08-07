@@ -30,10 +30,22 @@
 //! indeterminacy and its reason**, and the lock is left alone.
 //!
 //! Breaking a lock is an **exchange conditioned on the identity of what was
-//! observed** — [`Lock::observe`] then [`Lock::break_if_unchanged`] — and never
-//! a bare removal. A bare removal leaves a window in which a third party creates
-//! its own lock and has it destroyed, which reopens the two concurrent writers
-//! the lock exists to close.
+//! observed** — [`Lock::observe`], [`Observed::past_validity`], then
+//! [`Lock::break_if_unchanged`] — and never a bare removal. A bare removal
+//! leaves a window in which a third party creates its own lock and has it
+//! destroyed, which reopens the two concurrent writers the lock exists to close.
+//!
+//! **A break needs two conditions, and they are conjoined by a type.** The
+//! validity must have run out *and* the holder must be observed dead. Split over
+//! two public gestures, that conjunction is kept by whoever calls them: a caller
+//! following the protocol to the letter — observe, then break — checks the
+//! second and skips the first, and no sequential test of the assembled path goes
+//! red, because the assembled path is correct. It is the same shape as the
+//! window this crate already holds by types elsewhere. So [`Expired`] is the
+//! only value [`Lock::break_if_unchanged`] accepts, and
+//! [`Observed::past_validity`] is the only thing that makes one. Breaking a lock
+//! that is still inside its validity is not a mistake to avoid; it is not
+//! something anybody can write down.
 //!
 //! **What no test here establishes, and what holds it instead.** The exchange
 //! shows that the break *is* conditioned; it does not show that it is atomic.
@@ -320,25 +332,13 @@ impl Lock {
             });
         };
 
-        let holder = observed.holder()?;
-        if !observed.is_expired(holder) {
-            return Err(LockError::Held {
-                path: self.path.clone(),
-                pid: holder.pid,
-            });
-        }
-        match probe.liveness(holder.pid) {
-            Liveness::Alive => Err(LockError::Held {
-                path: self.path.clone(),
-                pid: holder.pid,
-            }),
-            Liveness::Undetermined { reason } => Err(LockError::UndeterminedHolder {
-                path: self.path.clone(),
-                pid: holder.pid,
-                reason,
-            }),
-            Liveness::Dead => self.break_if_unchanged(observed, probe),
-        }
+        // The two conditions, in the only order they can be written: the second
+        // gesture consumes what the first produces, so neither this function nor
+        // any other caller can reach the break without having run the expiry
+        // check. The liveness half lives inside the break, at the moment of
+        // acting.
+        let expired = observed.past_validity()?;
+        self.break_if_unchanged(expired, probe)
     }
 
     /// **Public surface, and declared as such**: the first of the two gestures a
@@ -378,12 +378,35 @@ impl Lock {
     /// The liveness of the recorded holder is checked again here, at the moment
     /// of acting: a verdict taken earlier describes a process that has had time
     /// to change state.
+    ///
+    /// **It takes an [`Expired`] and not an [`Observed`]**, which is what makes
+    /// the other half of the condition unskippable. The wiring below is the one
+    /// a caller reading "observe, then break" would write, and it is refused by
+    /// the compiler rather than by a reviewer:
+    ///
+    /// ```compile_fail
+    /// use rigger_apply::{Lock, SystemLiveness};
+    /// let lock = Lock::beside(std::path::Path::new("/nowhere/registry"));
+    /// let observed = lock.observe().unwrap().unwrap();
+    /// let _ = lock.break_if_unchanged(observed, &SystemLiveness);
+    /// ```
+    ///
+    /// Its twin, which differs by the one gesture and compiles — without it the
+    /// refusal above would be indistinguishable from a typo:
+    ///
+    /// ```no_run
+    /// use rigger_apply::{Lock, SystemLiveness};
+    /// let lock = Lock::beside(std::path::Path::new("/nowhere/registry"));
+    /// let observed = lock.observe().unwrap().unwrap();
+    /// let expired = observed.past_validity().unwrap();
+    /// let _ = lock.break_if_unchanged(expired, &SystemLiveness);
+    /// ```
     pub fn break_if_unchanged(
         &self,
-        observed: Observed,
+        expired: Expired,
         probe: &dyn LivenessProbe,
     ) -> Result<Held, LockError> {
-        let holder = observed.holder()?;
+        let Expired { observed, holder } = expired;
         match probe.liveness(holder.pid) {
             Liveness::Alive => {
                 return Err(LockError::Held {
@@ -450,9 +473,31 @@ impl Lock {
         })
     }
 
-    /// Creates the lock file, and fails if it is already there. The kernel
-    /// settles the race between two runs creating it at once; nothing in user
-    /// space could.
+    /// Creates the lock file, and fails if it is already there.
+    ///
+    /// **The lock appears at its path already carrying its content, or it does
+    /// not appear at all**, and that is not tidiness. Creating the file empty
+    /// and writing into it afterwards leaves a window — a run killed between the
+    /// two, a full disk, an input-output error, a power cut before the bytes
+    /// reach the disk — in which the path holds a file of zero bytes. Such a
+    /// file records no holder and no moment of acquisition, so **neither**
+    /// condition of a break can be judged: it is named and left in place, for
+    /// ever, and the registry it guards is never writable again. The product
+    /// would have manufactured, by its own hand, a machine that can no longer
+    /// record what it poses.
+    ///
+    /// So the content is written to a file beside it, forced to the disk, and
+    /// only then linked into place under the lock's name. Linking fails if the
+    /// name is taken, which is what settles the race between two runs creating
+    /// it at once; nothing in user space could.
+    ///
+    /// **What no test here establishes, and what holds it instead.** That the
+    /// publication is indivisible is a property of `link(2)` — a name that
+    /// either exists with its content or does not exist — and not of an
+    /// assertion: staging a failure between two system calls would need a seam
+    /// through the very path that writes a user's files. What the tests do
+    /// measure is the residue: a publication that fails leaves nothing beside
+    /// the lock.
     fn create(&self) -> io::Result<Held> {
         use std::io::Write;
 
@@ -464,11 +509,34 @@ impl Lock {
             std::process::id(),
             now_seconds()
         );
-        let mut file = fs::OpenOptions::new()
+        // Beside the lock, so the link below stays within one filesystem, and
+        // named after the run, so two runs never write each other's.
+        let pending = self
+            .path
+            .with_extension(format!("pending-{}", std::process::id()));
+        let written = fs::OpenOptions::new()
             .write(true)
-            .create_new(true)
-            .open(&self.path)?;
-        file.write_all(identity.as_bytes())?;
+            .create(true)
+            .truncate(true)
+            .open(&pending)
+            .and_then(|mut file| {
+                file.write_all(identity.as_bytes())?;
+                // Forced out before the name exists: a power cut may lose this
+                // file, which is nothing, but it must never be able to publish
+                // the name with nothing behind it.
+                file.sync_all()
+            });
+        if let Err(detail) = written {
+            let _ = fs::remove_file(&pending);
+            return Err(detail);
+        }
+
+        let published = fs::hard_link(&pending, &self.path);
+        // It has served either way. Left behind, every refused acquisition
+        // would drop one more file into the directory the registry lives in.
+        let _ = fs::remove_file(&pending);
+        published?;
+
         Ok(Held {
             path: self.path.clone(),
             identity,
@@ -538,16 +606,61 @@ impl Observed {
         Ok(Holder { pid, taken_at })
     }
 
-    /// Whether the validity of the lock has run out.
+    /// The lock **past its validity**, or a refusal naming the run that still
+    /// holds it.
     ///
-    /// Measured against the moment the lock **records**, and not against the
-    /// modification time of its file: a file's timestamps are rewritten by
-    /// things that have nothing to do with the run holding it.
-    ///
-    /// A lock taken in the future — a clock that moved — is not expired. It is
+    /// The measurement is against the moment the lock **records**, and not
+    /// against the modification time of its file: a file's timestamps are
+    /// rewritten by things that have nothing to do with the run holding it. A
+    /// lock taken in the future — a clock that moved — is not expired, which is
     /// the arm that refuses.
-    fn is_expired(&self, holder: Holder) -> bool {
-        self.observed_at.saturating_sub(holder.taken_at) > VALIDITY.as_secs()
+    ///
+    /// It consumes the observation, so the identity a break is conditioned on
+    /// travels into [`Expired`] rather than being read a second time. An
+    /// identity re-derived at the moment of comparison compares the lock with
+    /// itself, always matches, and leaves an unconditional break looking
+    /// conditioned.
+    pub fn past_validity(self) -> Result<Expired, LockError> {
+        let holder = self.holder()?;
+        if self.observed_at.saturating_sub(holder.taken_at) <= VALIDITY.as_secs() {
+            return Err(LockError::Held {
+                path: self.path.clone(),
+                pid: holder.pid,
+            });
+        }
+        Ok(Expired {
+            observed: self,
+            holder,
+        })
+    }
+}
+
+/// **The proof that a lock's validity has run out** — the first of the two
+/// conditions a break needs, and the only value [`Lock::break_if_unchanged`]
+/// accepts.
+///
+/// [`Observed::past_validity`] makes one and nothing else does. That is the
+/// whole of it: a conjunction spread over two public gestures is kept by
+/// whoever calls them, and a caller who checks only the second is following the
+/// documented protocol. Written this way, the lock of a run that crashed one
+/// second ago — dead holder, validity untouched — cannot be broken through any
+/// path, and a recycled process identifier cannot take a live run's registry
+/// away from it.
+#[derive(Debug)]
+pub struct Expired {
+    observed: Observed,
+    holder: Holder,
+}
+
+impl Expired {
+    /// The lock file.
+    pub fn path(&self) -> &Path {
+        &self.observed.path
+    }
+
+    /// The process it records as holding it.
+    pub fn pid(&self) -> u32 {
+        self.holder.pid
     }
 }
 

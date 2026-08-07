@@ -12,7 +12,7 @@
 pub mod lock;
 pub mod txn;
 
-pub use lock::{Held, Liveness, LivenessProbe, Lock, LockError, Observed, SystemLiveness};
+pub use lock::{Expired, Held, Liveness, LivenessProbe, Lock, LockError, Observed, SystemLiveness};
 pub use txn::{
     capture, merge_into_file, stage, ApplyError, Capture, Fingerprint, Staged, TxnError,
 };

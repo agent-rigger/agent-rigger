@@ -152,22 +152,63 @@ fn a3_a_lock_within_its_validity_is_not_broken_even_when_its_holder_is_dead() {
 }
 
 #[test]
+fn a3_a_lock_within_its_validity_is_not_broken_through_the_break_path_either() {
+    // The twin of the test above, taken through the two public gestures a break
+    // is made of rather than through the acquisition that assembles them.
+    //
+    // It exists because the conjunction — validity run out AND holder dead —
+    // used to be assembled by `acquire` alone. A caller following the documented
+    // protocol to the letter, observe then break, checked the death and skipped
+    // the expiry, and took a lock one second old away from the run holding it.
+    // No test of the assembled path could go red on that, because the assembled
+    // path was correct.
+    let dir = directory("fresh-through-break");
+    let lock = lock_in(&dir);
+    let identity = lock_taken_ago(&lock, 4242, Duration::from_secs(0));
+
+    // WHEN the first gesture of a break runs on it.
+    let observed = lock
+        .observe()
+        .expect("the observation must succeed")
+        .expect("there must be a lock to observe");
+    let failure = observed
+        .past_validity()
+        .expect_err("a lock well inside its validity was handed over as breakable");
+
+    // THEN it names the run that holds it, and there is no value with which the
+    // second gesture could have been called: `break_if_unchanged` takes what
+    // this refuses to produce, so the wrong wiring does not compile. The doc of
+    // `Lock::break_if_unchanged` carries that pair as doctests.
+    assert!(
+        matches!(&failure, LockError::Held { pid, .. } if *pid == 4242),
+        "the refusal does not name the run that holds it: {failure}"
+    );
+    assert_eq!(
+        fs::read_to_string(lock.path()).expect("read the lock back"),
+        identity
+    );
+    fs::remove_dir_all(&dir).expect("clean up");
+}
+
+#[test]
 fn a3_a_lock_recreated_between_the_observation_and_the_break_is_not_overwritten() {
     // GIVEN an expired lock, observed.
     let dir = directory("conditioned-break");
     let lock = lock_in(&dir);
     lock_taken_ago(&lock, 4242, VALIDITY + Duration::from_secs(60));
-    let observed = lock
+    let expired = lock
         .observe()
         .expect("the observation must succeed")
-        .expect("there must be a lock to observe");
+        .expect("there must be a lock to observe")
+        .past_validity()
+        .expect("the lock is past its validity");
 
     // AND a third party that takes that path for itself in between.
     let by_a_third_party = lock_taken_ago(&lock, 5353, Duration::from_secs(0));
 
     // WHEN the break runs.
     let failure = lock
-        .break_if_unchanged(observed, &Answers(Liveness::Dead))
+        .break_if_unchanged(expired, &Answers(Liveness::Dead))
         .expect_err(
             "the break was unconditional and destroyed a lock somebody else had just taken",
         );
@@ -199,13 +240,15 @@ fn a3_a_lock_nothing_has_touched_since_it_was_observed_is_broken_and_taken() {
     let dir = directory("unchanged-break");
     let lock = lock_in(&dir);
     lock_taken_ago(&lock, 4242, VALIDITY + Duration::from_secs(60));
-    let observed = lock
+    let expired = lock
         .observe()
         .expect("the observation must succeed")
-        .expect("there must be a lock to observe");
+        .expect("there must be a lock to observe")
+        .past_validity()
+        .expect("the lock is past its validity");
 
     let held = lock
-        .break_if_unchanged(observed, &Answers(Liveness::Dead))
+        .break_if_unchanged(expired, &Answers(Liveness::Dead))
         .expect("a lock nothing had touched was refused");
     assert_eq!(held.path(), lock.path());
     assert_eq!(
@@ -224,13 +267,15 @@ fn a3_a_living_holder_is_refused_at_the_moment_of_acting() {
     let dir = directory("alive-at-acting");
     let lock = lock_in(&dir);
     let identity = lock_taken_ago(&lock, 4242, VALIDITY + Duration::from_secs(60));
-    let observed = lock
+    let expired = lock
         .observe()
         .expect("the observation must succeed")
-        .expect("there must be a lock to observe");
+        .expect("there must be a lock to observe")
+        .past_validity()
+        .expect("the lock is past its validity");
 
     let failure = lock
-        .break_if_unchanged(observed, &Answers(Liveness::Alive))
+        .break_if_unchanged(expired, &Answers(Liveness::Alive))
         .expect_err("the lock of a living run was broken");
 
     assert!(matches!(&failure, LockError::Held { pid, .. } if *pid == 4242));
@@ -264,6 +309,87 @@ fn guard_a_lock_that_does_not_read_is_named_and_left_in_place() {
         fs::read_to_string(lock.path()).expect("read it back"),
         NOT_A_LOCK
     );
+    fs::remove_dir_all(&dir).expect("clean up");
+}
+
+/// Guard, not scenario: a file of zero bytes at the lock's path, and the reason
+/// it is refused rather than broken — which is worth writing down, because
+/// refusing it means the registry it guards stays unwritable until somebody
+/// removes the file by hand.
+///
+/// It records no holder and no moment of acquisition, so **neither** condition
+/// of a break can be judged; breaking it would be deciding about a file nothing
+/// is known of. The tempting fallback — judging its age by the file's own
+/// modification time — is worse than the state it repairs. `Unreadable` is also
+/// what a lock written by a **newer** build looks like to this one, so that
+/// fallback would let an old build destroy the live lock of a new one, on a
+/// timestamp anything on the machine rewrites. That is the fold this module
+/// refuses everywhere else, restated on the age instead of on the liveness.
+///
+/// What is closed instead is the **manufacture** of the state: the lock's name
+/// is published by linking a file already written and forced to the disk, so no
+/// interruption of this product leaves zero bytes at that path. The test below
+/// measures that half.
+#[test]
+fn guard_an_empty_file_at_the_lock_path_is_named_and_left_in_place() {
+    let dir = directory("empty-lock");
+    let lock = lock_in(&dir);
+    fs::write(lock.path(), b"").expect("write the empty file");
+
+    let failure = lock
+        .acquire(&Answers(Liveness::Dead))
+        .expect_err("a file nothing could be judged about was treated as a breakable lock");
+
+    match &failure {
+        LockError::Unreadable { path, reason } => {
+            assert_eq!(path, lock.path());
+            assert_eq!(reason, "it is empty");
+        }
+        other => panic!("the refusal does not name what could not be read: {other}"),
+    }
+    assert_eq!(
+        fs::read(lock.path()).expect("read it back"),
+        Vec::<u8>::new()
+    );
+    fs::remove_dir_all(&dir).expect("clean up");
+}
+
+/// Guard, not scenario: what this build itself leaves at the lock's path.
+///
+/// Two things, and the first is the one that used to fail. **A lock this build
+/// published reads back as a lock**: created empty and written into afterwards,
+/// the path holds zero bytes for a window, and a run killed inside it — or a
+/// full disk, or a power cut — leaves the file the guard above refuses to
+/// break, for ever, by the product's own hand. So the second acquisition below
+/// must be refused as `Held` and never as `Unreadable`.
+///
+/// **And a refused acquisition leaves nothing beside it.** The content is
+/// written to a file next to the lock before being linked into place; forgotten
+/// there, every refused acquisition would drop one more file into the directory
+/// the registry lives in.
+#[test]
+fn guard_a_published_lock_reads_back_as_one_and_a_refused_one_leaves_no_residue() {
+    let dir = directory("published-whole");
+    let lock = lock_in(&dir);
+    let held = lock
+        .acquire(&SystemLiveness)
+        .expect("the first acquisition must succeed");
+
+    let failure = lock
+        .acquire(&SystemLiveness)
+        .expect_err("two runs held the same registry at once");
+    assert!(
+        matches!(&failure, LockError::Held { pid, .. } if *pid == std::process::id()),
+        "the lock this build wrote does not read back as one: {failure}"
+    );
+    assert_eq!(
+        files(&dir),
+        vec!["registry.lock".to_string()],
+        "the acquisition left something beside the lock"
+    );
+
+    drop(held);
+    assert_eq!(files(&dir), Vec::<String>::new());
     fs::remove_dir_all(&dir).expect("clean up");
 }
 

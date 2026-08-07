@@ -23,6 +23,19 @@
 //! granularity of an entry — the description of something posed, gone, and what
 //! it describes unremovable.
 //!
+//! **A line repeating an identifier already read is unjudgeable too**, and for
+//! that same reason rather than out of strictness. Two records under one
+//! identifier are not a state this build writes, so nothing here knows which of
+//! them describes what was posed; folding them together at the read would drop
+//! one, and the next write would take its line out of the file. A perfectly
+//! readable line would then be treated worse than an illegible one — the
+//! description of something posed gone, and what it describes unremovable, with
+//! no error and nothing counted.
+//!
+//! **And no address is recorded in a spelling other than its own.** The
+//! registry is a UTF-8 document; a path is not. [`Address`] is where the two
+//! meet, and it refuses rather than converts — see its own account of why.
+//!
 //! # An absent registry is empty; a malformed one is not
 //!
 //! Nothing has been posed on a machine where the file does not exist, and
@@ -32,7 +45,7 @@
 
 use std::fmt;
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use rigger_apply::LockError;
 
@@ -44,6 +57,129 @@ pub(crate) const FORMAT_VERSION: u32 = 1;
 
 /// The word that opens an entry's line.
 const ENTRY: &str = "entry";
+
+/// Where a thing was posed, in the one spelling the registry is able to hold.
+///
+/// **A path is an arbitrary byte string, and the registry is a UTF-8 document.**
+/// On the systems this product is released for, a file name may hold bytes no
+/// UTF-8 decoder accepts, and people's home directories do. Rendering such a
+/// path into the registry through a lossy conversion writes replacement bytes
+/// where the original ones were: the registry then describes an address that
+/// does not exist, a later removal replays the trace against that address and
+/// finds nothing, and what was actually posed can never be found again. That is
+/// the one damage this crate exists against, and it would be manufactured by
+/// the product's own write path — silently, with nothing reported unjudgeable.
+///
+/// [`RegistryError::NotUtf8`] already refuses a whole registry rather than read
+/// it "with replacement bytes that would destroy what they replace". This is
+/// the same refusal on the way in, and it happens **at construction**, while
+/// the caller still holds the real path and can say what it wanted — rather
+/// than after a document has been rewritten around a spelling that names
+/// nowhere.
+///
+/// [`Entry::new`] takes one of these and nothing else. Recording a path the
+/// registry cannot spell is therefore not something anybody can write down; the
+/// check is not one a caller is trusted to remember, because a caller who
+/// forgets it compiles exactly as well as one who does not.
+///
+/// A path the registry can spell goes in:
+///
+/// ```
+/// use rigger_registry::Address;
+/// let address = Address::new("/home/someone/settings.json").expect("a UTF-8 path");
+/// assert_eq!(address.as_str(), "/home/someone/settings.json");
+/// ```
+///
+/// And there is no second door for one it cannot. The lossy conversion is two
+/// short words away from any path, so leaving a `String` constructor open would
+/// leave the whole refusal open with it:
+///
+/// ```compile_fail
+/// use rigger_registry::Address;
+/// let spelled: String = std::path::Path::new("/home/someone")
+///     .to_string_lossy()
+///     .into_owned();
+/// let _: Address = spelled.into();
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Address(String);
+
+impl Address {
+    /// The address of `path`, or a refusal naming the path that was offered.
+    pub fn new(path: impl AsRef<Path>) -> Result<Self, AddressNotUtf8> {
+        let path = path.as_ref();
+        match path.to_str() {
+            Some(spelled) => Ok(Self(spelled.to_string())),
+            None => Err(AddressNotUtf8 {
+                path: path.to_path_buf(),
+            }),
+        }
+    }
+
+    /// The address as the registry writes it. Infallible, which is the whole
+    /// point of the type: there is no place left where a conversion could go
+    /// lossy.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    /// The address as a path.
+    pub fn as_path(&self) -> &Path {
+        Path::new(&self.0)
+    }
+
+    /// The address of a line already read out of a registry.
+    ///
+    /// **Private on purpose, and [`Address::new`] is the only door from
+    /// outside.** A public `From<String>` would be a second door, and it is the
+    /// one a caller holding a path would reach for — `to_string_lossy` gives a
+    /// `String`, so the conversion this type exists to refuse would be spelled
+    /// in two short words and compile. What comes through here has already been
+    /// read out of a UTF-8 document, so there is nothing left to check and
+    /// nothing left to lose.
+    fn from_document(spelled: String) -> Self {
+        Self(spelled)
+    }
+}
+
+impl fmt::Display for Address {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+/// The path offered as an address is not UTF-8, so the registry cannot record
+/// it. Nothing was written.
+///
+/// Like every refusal here it advises no remedy, and it names the path as the
+/// system spells it — lossily, because a message is read by a person and a
+/// record is replayed by a machine. Which of the two may lose a byte is the
+/// whole distinction this type exists to keep.
+#[derive(Debug)]
+pub struct AddressNotUtf8 {
+    path: PathBuf,
+}
+
+impl AddressNotUtf8 {
+    /// The path that was offered.
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl fmt::Display for AddressNotUtf8 {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{}: this path is not UTF-8, and the registry is a UTF-8 document — it is not recorded \
+             under another spelling, because a record naming an address that does not exist can \
+             never be undone",
+            self.path.display()
+        )
+    }
+}
+
+impl std::error::Error for AddressNotUtf8 {}
 
 /// One thing the product posed.
 ///
@@ -61,23 +197,42 @@ pub struct Entry {
     id: String,
     behaviour: String,
     posed_by: String,
-    address: PathBuf,
+    address: Address,
 }
 
 impl Entry {
     /// Records `id` as posed at `address` by the behaviour named `behaviour`,
     /// by the version `posed_by` of the product.
+    ///
+    /// The address is an [`Address`] and not a path, so a path the registry
+    /// cannot spell is refused where it is offered rather than recorded as a
+    /// different one:
+    ///
+    /// ```
+    /// use rigger_registry::{Address, Entry};
+    /// let address = Address::new("/home/someone/settings.json").expect("a UTF-8 path");
+    /// let entry = Entry::new("acme/skill", "merge/jsonc", "1.5", address);
+    /// assert_eq!(entry.address(), std::path::Path::new("/home/someone/settings.json"));
+    /// ```
+    ///
+    /// Handing it the path itself does not compile, which is what keeps the
+    /// check from being one a caller has to remember:
+    ///
+    /// ```compile_fail
+    /// use rigger_registry::Entry;
+    /// let _ = Entry::new("acme/skill", "merge/jsonc", "1.5", "/home/someone/settings.json");
+    /// ```
     pub fn new(
         id: impl Into<String>,
         behaviour: impl Into<String>,
         posed_by: impl Into<String>,
-        address: impl Into<PathBuf>,
+        address: Address,
     ) -> Self {
         Self {
             id: id.into(),
             behaviour: behaviour.into(),
             posed_by: posed_by.into(),
-            address: address.into(),
+            address,
         }
     }
 
@@ -99,8 +254,8 @@ impl Entry {
     }
 
     /// Where it was posed.
-    pub fn address(&self) -> &std::path::Path {
-        &self.address
+    pub fn address(&self) -> &Path {
+        self.address.as_path()
     }
 
     fn render(&self) -> String {
@@ -109,7 +264,9 @@ impl Entry {
             escape(&self.id),
             escape(&self.behaviour),
             escape(&self.posed_by),
-            escape(&self.address.to_string_lossy()),
+            // Not a lossy conversion, and there is nowhere left to put one: the
+            // address was checked when it was built.
+            escape(self.address.as_str()),
         )
     }
 }
@@ -202,7 +359,20 @@ impl Ledger {
     ///
     /// The envelope decides whether there is anything to read at all; each line
     /// after it is decoded on its own, so one that fails costs one entry.
-    pub(crate) fn parse(path: &std::path::Path, document: &str) -> Result<Self, RegistryError> {
+    ///
+    /// **Decoding is not [`Ledger::upsert`], and the difference is a whole
+    /// class of loss.** Replacing on a repeated identifier is what a *mutation*
+    /// means — the run says this thing is now posed there. It is not what a
+    /// *line* means: two lines under one identifier are a registry this build
+    /// did not write, and nothing here can tell which of them describes what
+    /// was posed. Folded together, the first is dropped at the read and its
+    /// line disappears from the file at the next write — a readable line
+    /// treated worse than an illegible one, which is kept byte for byte
+    /// precisely so that what it describes stays removable. So the second and
+    /// any further line under an identifier already read are unjudgeable, with
+    /// a reason naming the identifier and the line that already carried it, and
+    /// they come back out unchanged.
+    pub(crate) fn parse(path: &Path, document: &str) -> Result<Self, RegistryError> {
         let mut lines = document.lines();
         let envelope = lines.next().ok_or_else(|| RegistryError::EnvelopeMissing {
             path: path.to_path_buf(),
@@ -228,15 +398,41 @@ impl Ledger {
         }
 
         let mut ledger = Self::empty();
+        // Which line first carried each identifier, so a repeat can name it.
+        let mut carried: Vec<(String, usize)> = Vec::new();
         for (index, line) in lines.enumerate() {
+            // The envelope is line one, and `lines` started after it.
+            let number = index + 2;
             if line.trim().is_empty() {
                 continue;
             }
-            match decode_entry(line) {
-                Ok(entry) => ledger.upsert(entry),
-                Err(reason) => ledger.unjudgeable.push(Unjudgeable {
-                    // The envelope is line one, and `lines` started after it.
-                    line: index + 2,
+            let (reason, entry) = match decode_entry(line) {
+                Ok(entry) => {
+                    let already = carried
+                        .iter()
+                        .find(|(id, _)| id == entry.id())
+                        .map(|(_, first)| *first);
+                    match already {
+                        Some(first) => (
+                            format!(
+                                "`{}` is already recorded on line {first}, and nothing here can \
+                                 tell which of the two describes what was posed",
+                                entry.id()
+                            ),
+                            None,
+                        ),
+                        None => (String::new(), Some(entry)),
+                    }
+                }
+                Err(reason) => (reason, None),
+            };
+            match entry {
+                Some(entry) => {
+                    carried.push((entry.id().to_string(), number));
+                    ledger.entries.push(entry);
+                }
+                None => ledger.unjudgeable.push(Unjudgeable {
+                    line: number,
                     reason,
                     raw: line.to_string(),
                 }),
@@ -277,7 +473,15 @@ fn decode_entry(line: &str) -> Result<Entry, String> {
     if id.is_empty() {
         return Err("the identifier is empty".to_string());
     }
-    Ok(Entry::new(id, behaviour, posed_by, address))
+    // The address came out of a UTF-8 document, so it is one: no check is
+    // possible here, and the one that matters happened where the path was
+    // offered.
+    Ok(Entry::new(
+        id,
+        behaviour,
+        posed_by,
+        Address::from_document(address),
+    ))
 }
 
 /// Renders a field so that no value can produce a separator or a line break.

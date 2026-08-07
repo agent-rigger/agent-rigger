@@ -193,7 +193,9 @@ fn a1_one_unreadable_entry_out_of_twelve_is_unjudgeable_and_the_other_eleven_are
 #[test]
 fn guard_an_unreadable_entry_is_written_back_unchanged() {
     use rigger_apply::SystemLiveness;
-    use rigger_registry::{transact, Consent, Decision, Entry, Mutation, Outcome, Proposal};
+    use rigger_registry::{
+        transact, Address, Consent, Decision, Entry, Mutation, Outcome, Proposal,
+    };
 
     struct Granting;
     impl Consent for Granting {
@@ -216,7 +218,7 @@ fn guard_an_unreadable_entry_is_written_back_unchanged() {
             "acme/other",
             "merge",
             "1.5",
-            "/home/someone/other.json",
+            Address::new("/home/someone/other.json").expect("a UTF-8 address"),
         ))],
         &Granting,
         &SystemLiveness,
@@ -233,6 +235,133 @@ fn guard_an_unreadable_entry_is_written_back_unchanged() {
     assert_eq!(reread.entries().len(), 2);
     assert_eq!(reread.unjudgeable().len(), 1);
     fs::remove_dir_all(&dir).expect("clean up");
+}
+
+/// Guard, not scenario: two readable lines carrying one identifier. A1 grants
+/// its tolerance at the level of one entry, and says nothing about a registry
+/// this build did not write; the answer decides whether a **readable** line is
+/// treated worse than an illegible one.
+///
+/// Folded together at the read — which is what `upsert` does, and it is right
+/// for a mutation — the first is dropped, and the next write takes its line out
+/// of the file. That is the envelope's damage at the size of one entry, applied
+/// to a line nothing was wrong with: whatever was posed at the address it named
+/// becomes permanently unremovable, with no error and nothing counted. Nothing
+/// here can tell which of the two describes what was posed, so neither is
+/// chosen: the second is unjudgeable, and it comes back out unchanged.
+#[test]
+fn guard_a_second_line_under_one_identifier_is_unjudgeable_and_is_written_back() {
+    use rigger_apply::SystemLiveness;
+    use rigger_registry::{transact, Consent, Decision, Mutation, Outcome, Proposal};
+
+    struct Granting;
+    impl Consent for Granting {
+        fn decide(&self, _: &Proposal<'_>) -> Decision {
+            Decision::Granted
+        }
+    }
+
+    let dir = directory("repeated-identifier");
+    let first = entry_line("acme/skill", "merge", "1.4", "/home/someone/first.json");
+    let second = entry_line("acme/skill", "merge", "1.4", "/home/someone/second.json");
+    let registry = registry_with(&dir, &format!("rigger-registry 1\n{first}\n{second}\n"));
+
+    // WHEN the registry is read.
+    let ledger = registry.read().expect("the read must succeed");
+
+    // THEN one line is an entry and the other is unjudgeable, with a reason
+    // naming the identifier and the line that already carried it.
+    assert_eq!(ledger.entries().len(), 1);
+    assert_eq!(
+        ledger.entries()[0].address(),
+        std::path::Path::new("/home/someone/first.json")
+    );
+    assert_eq!(
+        ledger.unjudgeable().len(),
+        1,
+        "a readable line disappeared at the read, and nothing counted it"
+    );
+    let repeated = &ledger.unjudgeable()[0];
+    assert_eq!(repeated.line(), 3);
+    assert!(
+        repeated.reason().contains("acme/skill") && repeated.reason().contains('2'),
+        "the reason does not name the identifier and the line that already carried it: {}",
+        repeated.reason()
+    );
+
+    // AND a write that has nothing to do with it puts the line back, byte for
+    // byte. Dropped there instead, whatever was posed at the address it names
+    // could never be found again to be removed.
+    let outcome = transact(
+        &registry,
+        &[Mutation::Remove {
+            id: "acme/absent".to_string(),
+        }],
+        &Granting,
+        &SystemLiveness,
+    )
+    .expect("the transaction must succeed");
+    assert!(matches!(outcome, Outcome::Committed { .. }));
+    let written = fs::read_to_string(registry.path()).expect("read the registry back");
+    assert_eq!(written, format!("rigger-registry 1\n{first}\n{second}\n"));
+    fs::remove_dir_all(&dir).expect("clean up");
+}
+
+/// Guard, not scenario: an address the registry cannot spell. No scenario of A1
+/// names it, and the answer decides whether the trace describes the machine or
+/// something adjacent to it.
+///
+/// A path is an arbitrary byte string and the registry is a UTF-8 document. Sent
+/// through a lossy conversion, an address holding bytes no decoder accepts is
+/// recorded with replacement characters in their place: the registry then names
+/// an address that does not exist, and the removal that replays the trace finds
+/// nothing there. The refusal on the way out already says as much — a registry
+/// that is not UTF-8 is left alone "rather than read with replacement bytes that
+/// would destroy what they replace" — and this is the same refusal on the way
+/// in, at the moment the caller still holds the real path.
+///
+/// It happens at construction rather than at the write, which is what makes it
+/// unskippable: `Entry::new` takes an `Address` and nothing else, so recording
+/// the path itself is not something anybody can write down. The doctests of
+/// `Address` carry that half.
+#[cfg(unix)]
+#[test]
+fn guard_an_address_this_document_cannot_spell_is_refused_where_it_is_offered() {
+    use rigger_registry::Address;
+    use std::ffi::OsString;
+    use std::os::unix::ffi::OsStringExt;
+
+    // GIVEN a path holding a byte no UTF-8 decoder accepts — an ordinary home
+    // directory on a system this product is released for.
+    let offered = PathBuf::from(OsString::from_vec(
+        b"/home/someone/caf\xE9/settings.json".to_vec(),
+    ));
+
+    // WHEN it is offered as an address.
+    let failure =
+        Address::new(&offered).expect_err("an address the registry cannot spell was accepted");
+
+    // THEN it is refused, naming the path that was offered, and nothing is
+    // recorded under another spelling.
+    assert_eq!(failure.path(), offered.as_path());
+    assert_eq!(
+        failure.to_string(),
+        format!(
+            "{}: this path is not UTF-8, and the registry is a UTF-8 document — it is not recorded \
+             under another spelling, because a record naming an address that does not exist can \
+             never be undone",
+            offered.display()
+        )
+    );
+
+    // AND an address the document can spell goes through untouched: without
+    // this, a constructor that refused everything would pass the assertion
+    // above and record nothing at all.
+    let ordinary = Address::new("/home/someone/settings.json").expect("a UTF-8 address");
+    assert_eq!(
+        ordinary.as_path(),
+        std::path::Path::new("/home/someone/settings.json")
+    );
 }
 
 #[test]

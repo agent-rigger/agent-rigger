@@ -26,7 +26,8 @@ use std::path::{Path, PathBuf};
 
 use rigger_apply::{LockError, SystemLiveness};
 use rigger_registry::{
-    transact, Consent, Decision, Entry, Mutation, Outcome, Proposal, Registry, RegistryError,
+    transact, Address, Consent, Decision, Entry, Mutation, Outcome, Proposal, Registry,
+    RegistryError,
 };
 
 /// An empty working directory, private to this test.
@@ -60,7 +61,7 @@ fn posing(id: &str) -> Mutation {
         id,
         "merge",
         "1.5",
-        format!("/home/someone/{id}.json"),
+        Address::new(format!("/home/someone/{id}.json")).expect("a UTF-8 address"),
     ))
 }
 
