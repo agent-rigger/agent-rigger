@@ -33,8 +33,8 @@ pub mod merge;
 pub mod toml;
 
 pub use capability::{
-    mutations, table, Capabilities, GrammarRole, MergeAdmission, MergeRefusal, RefusalReason,
-    Resolution, TriviaDivergence, SHARED_CORPUS,
+    mutations, table, Capabilities, GrammarRole, MergeAdmission, MergeForm, MergeRefusal,
+    RefusalReason, Resolution, TriviaDivergence, SHARED_CORPUS,
 };
 pub use edit::{values_lost, Applied, Edit, ElementUndo, Inverse, SemanticValue, Value};
 pub use jsonc::Jsonc;

@@ -54,9 +54,26 @@
 //! itself to write, not a measurement. Both are declared by each grammar with
 //! its dated source, and the admission decision reads them in this table —
 //! never in a list of host names.
+//!
+//! **`merge` has two forms, and they are admitted separately.** "These keys at
+//! this path" is refused where the position of a key decides what a reader
+//! honours; "this block between these bounds" is refused where the document has
+//! no way of carrying a delimiter. Neither refusal implies the other, and a
+//! refusal that published only one of them would tell its reader that the other
+//! road is open — which is the whole point of the fourth case, the one where
+//! both difficulties meet and neither road is. No grammar served today reunites
+//! them, so nothing but a rule derived from the two properties would refuse the
+//! day one does.
+//!
+//! The second capacity is **measured** like the rest, by [`carries_delimiters`]:
+//! the delimiters a pose writes are written into the grammar's probe and read
+//! back. Writing a bounded block goes through no [`Grammar`] — see
+//! [`crate::marker`] — but being able to carry one is a property of the
+//! document's format, and admission must read one table rather than two.
 
 use std::fmt;
 
+use crate::marker::{self, Classification, Marker, Wrapping};
 use crate::{Grammar, Jsonc, Toml};
 
 /// The documents of the repository, embedded in the crate: the second witness
@@ -225,6 +242,12 @@ pub enum RefusalReason {
     TriviaNotPreserved(TriviaDivergence),
     /// The resolution of the document depends on order of appearance.
     ResolutionDependsOnOrder,
+    /// The document has no way of carrying a delimiter: of the wrappings a pose
+    /// writes, not one is at once recognised in a document of this grammar and
+    /// leaves it readable. A block posed there would have no bounds, so the
+    /// form "this block between these bounds" is unavailable — and it is the
+    /// road a grammar refused for its order would otherwise have been left.
+    NoDelimiterTheDocumentCanCarry,
     /// Reading the probe itself failed: a grammar that cannot read back its own
     /// document can promise nothing about what it would write into one.
     ProbeUnreadable(crate::GrammarError),
@@ -295,6 +318,12 @@ impl fmt::Display for RefusalReason {
                 "the resolution of the document depends on order of appearance — writing by keys \
                  there would be ineffective with no error and no trace"
             ),
+            Self::NoDelimiterTheDocumentCanCarry => write!(
+                f,
+                "this document cannot carry a delimiter — of the wrappings a pose writes, none is \
+                 at once found again in a document of this grammar and leaves it readable, so a \
+                 block posed here would have no bounds"
+            ),
             Self::ProbeUnreadable(err) => {
                 write!(f, "the probe of the grammar cannot be read back: {err}")
             }
@@ -348,12 +377,39 @@ impl fmt::Display for RefusalReason {
     }
 }
 
-/// The refusal itself: it names the grammar, the behaviour, and every reason.
-/// Each reason is carried separately, because a refusal giving only one of them
-/// suggests that lifting that one would be enough.
+/// The shape a `merge` takes in a document, of which there are two.
+///
+/// They are admitted **separately**, and that separation is the substance of
+/// C7: a grammar whose reader is decided by position refuses the first and may
+/// still take the second, and a document with nowhere to put a delimiter
+/// refuses the second while the first stays open. Naming the form in a refusal
+/// is what keeps two refusals of the same grammar from reading as one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MergeForm {
+    /// "These keys at this path." What decides where the write lands is the
+    /// path, so a document whose reader is decided by position decides it too.
+    Keys,
+    /// "This block between these bounds." What decides is a pair of delimiters
+    /// the document has to be able to carry.
+    BoundedBlock,
+}
+
+impl fmt::Display for MergeForm {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Keys => write!(f, "these keys at this path"),
+            Self::BoundedBlock => write!(f, "this block between these bounds"),
+        }
+    }
+}
+
+/// The refusal itself: it names the grammar, the form of the behaviour, and
+/// every reason. Each reason is carried separately, because a refusal giving
+/// only one of them suggests that lifting that one would be enough.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MergeRefusal {
     grammar: &'static str,
+    form: MergeForm,
     reasons: Vec<RefusalReason>,
 }
 
@@ -361,6 +417,12 @@ impl MergeRefusal {
     /// The refused grammar.
     pub fn grammar(&self) -> &'static str {
         self.grammar
+    }
+
+    /// The form of the behaviour this refusal bears on. The other form has its
+    /// own refusal, with its own reasons.
+    pub fn form(&self) -> MergeForm {
+        self.form
     }
 
     /// The reasons for the refusal, in the order they were observed.
@@ -373,8 +435,8 @@ impl fmt::Display for MergeRefusal {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "the `merge` behaviour is refused on grammar `{}`",
-            self.grammar
+            "the `merge` behaviour in the form \"{}\" is refused on grammar `{}`",
+            self.form, self.grammar
         )?;
         for reason in &self.reasons {
             write!(f, " ; {reason}")?;
@@ -406,7 +468,9 @@ pub struct Capabilities {
     designates_list_element: bool,
     applies_edits: bool,
     resolution: Resolution,
-    merge: MergeAdmission,
+    carries_delimiters: bool,
+    merge_by_keys: MergeAdmission,
+    merge_bounded_block: MergeAdmission,
 }
 
 impl Capabilities {
@@ -446,23 +510,32 @@ impl Capabilities {
         };
         let applies_edits = G::ROLE == GrammarRole::ReadWrite && write.is_empty();
 
-        let mut reasons = Vec::new();
+        let mut by_keys = Vec::new();
         if G::ROLE == GrammarRole::ReadOnly {
-            reasons.push(RefusalReason::ReadOnlyGrammar);
+            by_keys.push(RefusalReason::ReadOnlyGrammar);
         }
-        reasons.extend(trivia.iter().cloned());
-        reasons.extend(write);
+        by_keys.extend(trivia.iter().cloned());
+        by_keys.extend(write);
         if G::RESOLUTION == Resolution::DependsOnOrder {
-            reasons.push(RefusalReason::ResolutionDependsOnOrder);
+            by_keys.push(RefusalReason::ResolutionDependsOnOrder);
         }
-        let merge = if reasons.is_empty() {
-            MergeAdmission::Admitted
-        } else {
-            MergeAdmission::Refused(MergeRefusal {
-                grammar: G::NAME,
-                reasons,
-            })
-        };
+
+        // The second form answers to its own reasons, and the difference is not
+        // an omission. Order departs the keys and not the bounds: a block is
+        // designated by its delimiters, and no position arbitrates it. The
+        // write path of the grammar departs neither: a block is written on the
+        // lines of the document and never rendered by a parser, which is why
+        // `marker` goes through no `Grammar`. What is left is the decision not
+        // to write these documents at all — categorical, and it holds for any
+        // form — and whether the document can carry the delimiters.
+        let carries_delimiters = carries_delimiters::<G>();
+        let mut bounded_block = Vec::new();
+        if G::ROLE == GrammarRole::ReadOnly {
+            bounded_block.push(RefusalReason::ReadOnlyGrammar);
+        }
+        if !carries_delimiters {
+            bounded_block.push(RefusalReason::NoDelimiterTheDocumentCanCarry);
+        }
 
         Self {
             grammar: G::NAME,
@@ -472,7 +545,9 @@ impl Capabilities {
             designates_list_element,
             applies_edits,
             resolution: G::RESOLUTION,
-            merge,
+            carries_delimiters,
+            merge_by_keys: admission::<G>(MergeForm::Keys, by_keys),
+            merge_bounded_block: admission::<G>(MergeForm::BoundedBlock, bounded_block),
         }
     }
 
@@ -517,11 +592,87 @@ impl Capabilities {
         self.resolution
     }
 
-    /// Admission to the `merge` behaviour, and its named refusal where
-    /// applicable.
-    pub fn merge(&self) -> &MergeAdmission {
-        &self.merge
+    /// Whether a document of this grammar can carry the delimiters a bounded
+    /// block needs. Measured by writing them into its probe and reading them
+    /// back — see [`carries_delimiters`].
+    pub fn carries_delimiters(&self) -> bool {
+        self.carries_delimiters
     }
+
+    /// Admission to `merge` in the form "these keys at this path", and its
+    /// named refusal where applicable.
+    pub fn merge_by_keys(&self) -> &MergeAdmission {
+        &self.merge_by_keys
+    }
+
+    /// Admission to `merge` in the form "this block between these bounds", and
+    /// its named refusal where applicable.
+    ///
+    /// It is asked **separately** from [`Capabilities::merge_by_keys`] and
+    /// answers to its own reasons: a caller reading only one of the two would
+    /// take a road that is open for a road that is not, or the reverse.
+    pub fn merge_bounded_block(&self) -> &MergeAdmission {
+        &self.merge_bounded_block
+    }
+}
+
+/// Turns the reasons gathered for one form into its admission. Written once:
+/// two forms building their verdict each in their own way would sooner or later
+/// disagree about what an empty list of reasons means.
+fn admission<G: Grammar>(form: MergeForm, reasons: Vec<RefusalReason>) -> MergeAdmission {
+    if reasons.is_empty() {
+        MergeAdmission::Admitted
+    } else {
+        MergeAdmission::Refused(MergeRefusal {
+            grammar: G::NAME,
+            form,
+            reasons,
+        })
+    }
+}
+
+/// Measures whether a document of `G` is able to **carry** the delimiters of a
+/// bounded block: they are written into its probe, and what comes out must be
+/// at once a block the recogniser finds and a document the grammar still reads.
+///
+/// **Every wrapping, at both ends of the document.** A pose writes four
+/// wrappings, and the one that suits the documents served today would be a rule
+/// by name in another alphabet: it would go on answering "yes" the day a
+/// document changes format, with nothing going red. The trial therefore asks
+/// each of the four, at the head and at the tail, and concludes "cannot carry"
+/// only when every one of them fails.
+///
+/// **Both conditions, because neither alone is the capacity.** A delimiter pair
+/// the recogniser does not find again delimits nothing: the block is invisible,
+/// hence unremovable, and every further pose appends another copy. A delimiter
+/// pair that breaks the document has destroyed what it was posed into. Only a
+/// wrapping that survives both is one this document can carry.
+///
+/// **What it does not establish**, and it is the same limit the rest of this
+/// module lives with: the probe belongs to the grammar being judged. A document
+/// admitting a comment at its head and nowhere else passes here, and where a
+/// block may be posed inside a given document is decided by the pose, which
+/// reads its own rendering back and refuses when the recogniser cannot find
+/// what it just wrote.
+fn carries_delimiters<G: Grammar>() -> bool {
+    let source = G::PROBE.source;
+    // The identity names the trial, and nothing of a catalogue: what is
+    // measured here is the document's ability to carry a delimiter, which does
+    // not depend on whose delimiter it is.
+    let marker = Marker::new("capability-derivation", "delimiter-trial");
+
+    Wrapping::ALL.iter().any(|&wrapping| {
+        let block = marker::delimiters(source, &marker, wrapping);
+        [format!("{block}{source}"), format!("{source}{block}")]
+            .into_iter()
+            .any(|document| {
+                marker::read(&document, "the probe", &marker)
+                    .recognition
+                    .classification()
+                    == Classification::Unique
+                    && G::round_trip(&document).is_ok()
+            })
+    })
 }
 
 /// What the trivia measurement reports: the reasons to refuse, all of them, and

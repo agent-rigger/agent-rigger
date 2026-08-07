@@ -10,6 +10,18 @@
 //! the text ones — instruction files — whose structure is their lines. So the
 //! analysis here is on text, and it owes the same guarantees as a grammar owes.
 //!
+//! **Not going through a grammar is not the same as answering to nothing.**
+//! Writing a block never renders through a parser, but whether a document is
+//! *able to carry* the delimiters is a property of its format, and a format is
+//! what a grammar embodies. That question is therefore answered in
+//! [`crate::capability`], with the rest of what a grammar can express, and it
+//! is answered by **running** [`delimiters`] and [`read`] on a document of that
+//! grammar. Two reasons for putting it there rather than here. An admission
+//! decision must read **one** table: a capacity answered somewhere else would
+//! be a second table of the same thing, and two of those drift apart. And C7
+//! turns on the two forms of `merge` being refused for **different** reasons —
+//! a comparison only the place that holds both can make.
+//!
 //! **One single recogniser, and it is structural, not a promise.** Everything
 //! this module knows about a document comes out of [`scan`], called from
 //! [`read_with`], which is the only public analysis. `place` and `remove` both
@@ -209,6 +221,22 @@ impl Wrapping {
             Self::Bare => token.to_string(),
         }
     }
+}
+
+/// The two delimiters of `marker`, with nothing between them, written the way
+/// `source` writes its lines.
+///
+/// **Why this is public.** Whether a document is able to *carry* a bounded
+/// block is a question the capability table answers, and it answers it by
+/// measurement: it writes the delimiters into a document of the grammar and
+/// asks whether what comes out is still one. That measurement must write the
+/// **same** bytes a pose writes. A second renderer built for the trial would
+/// drift from this one, and the drift would credit a document with carrying
+/// something no pose would ever put in it — the capacity would then be
+/// announced rather than executed, which is the one thing the table exists to
+/// prevent.
+pub fn delimiters(source: &str, marker: &Marker, wrapping: Wrapping) -> String {
+    render_block(marker, wrapping, &[], line_ending(source))
 }
 
 /// A branch of the recogniser. Switching one off is what the mutation trial of

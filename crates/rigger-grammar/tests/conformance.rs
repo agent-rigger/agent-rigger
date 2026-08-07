@@ -303,7 +303,7 @@ fn c1_apply_then_invert_returns_the_preimage_byte_for_byte() {
         let Ok(grammar) = CorpusGrammar::of(path) else {
             continue;
         };
-        if grammar.capabilities().merge() != &MergeAdmission::Admitted {
+        if grammar.capabilities().merge_by_keys() != &MergeAdmission::Admitted {
             continue;
         }
         let Ok((input, text)) = read_utf8(path) else {
@@ -416,7 +416,7 @@ fn guard_the_limits_corpus_agrees_with_the_capability_table() {
                 capabilities.grammar()
             ));
         }
-        if capabilities.merge() == &MergeAdmission::Admitted {
+        if capabilities.merge_by_keys() == &MergeAdmission::Admitted {
             failures.push(format!(
                 "{}: the table admits `{}` to the `merge` behaviour",
                 path.display(),

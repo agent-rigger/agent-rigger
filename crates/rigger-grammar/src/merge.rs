@@ -1,6 +1,11 @@
-//! The `merge` behaviour, in its **pure** part: the admission gate, the edit,
-//! and the post-condition on the output. No input or output here — the
-//! conditional write of the document belongs to the crate that carries it.
+//! The `merge` behaviour in the form "these keys at this path", in its **pure**
+//! part: the admission gate, the edit, and the post-condition on the output. No
+//! input or output here — the conditional write of the document belongs to the
+//! crate that carries it.
+//!
+//! The other form, "this block between these bounds", is written by
+//! [`crate::marker`] and admitted by its own gate: the two are refused for
+//! different reasons, and neither refusal says anything about the other.
 //!
 //! **Three steps, in this order, and the order is the substance.**
 //!
@@ -132,7 +137,7 @@ pub fn merge<G: Grammar>(source: &str, edit: &Edit) -> Result<Merged, MergeError
     // and the moment it is used. The day it weighs, the remedy is a cache —
     // hence an invalidation to write, and a reason not to do it before having
     // measured.
-    match Capabilities::of::<G>().merge() {
+    match Capabilities::of::<G>().merge_by_keys() {
         MergeAdmission::Admitted => {}
         MergeAdmission::Refused(refusal) => return Err(MergeError::NotAdmitted(refusal.clone())),
     }

@@ -20,7 +20,7 @@ use std::path::{Path, PathBuf};
 
 use rigger_grammar::{
     Applied, Capabilities, Edit, Grammar, GrammarError, GrammarRole, Inverse, Jsonc,
-    MergeAdmission, Probe, RefusalReason, Resolution, SemanticValue, Toml,
+    MergeAdmission, MergeForm, Probe, RefusalReason, Resolution, SemanticValue, Toml,
 };
 
 /// Copies content into a named temporary file and returns its path. Used to
@@ -140,7 +140,7 @@ fn c1_a_grammar_that_does_not_preserve_aborts() {
 
     // WHEN a write goes through it.
     let capabilities = Capabilities::of::<Toml>();
-    let admission = capabilities.merge();
+    let admission = capabilities.merge_by_keys();
 
     // THEN the transaction aborts — here, before any write path.
     let refusal = match admission {
@@ -186,7 +186,7 @@ fn c7_merge_is_refused_on_an_order_sensitive_grammar() {
 
     // WHEN a descriptor declares a `merge` by keys on it.
     // THEN the refusal names the grammar and the behaviour.
-    let refusal = match capabilities.merge() {
+    let refusal = match capabilities.merge_by_keys() {
         MergeAdmission::Refused(refusal) => refusal,
         MergeAdmission::Admitted => panic!("`merge` admitted on an order-sensitive grammar"),
     };
@@ -265,10 +265,197 @@ fn c7_the_grammar_of_the_served_host_is_admitted() {
     // WHEN a descriptor declares a `merge` by keys on it.
     // THEN it is accepted.
     assert_eq!(
-        capabilities.merge(),
+        capabilities.merge_by_keys(),
         &MergeAdmission::Admitted,
         "`merge` must stay open on the grammar of the only host that is served"
     );
+}
+
+#[test]
+fn c7_an_order_sensitive_grammar_keeps_the_bounded_block() {
+    // GIVEN a grammar whose resolution depends on order, and whose documents
+    // carry a comment — hence a delimiter.
+    let capabilities = Capabilities::of::<OrderSensitiveProbe>();
+    assert_eq!(capabilities.resolution(), Resolution::DependsOnOrder);
+    assert!(
+        capabilities.carries_delimiters(),
+        "the documents of this grammar carry a comment, so a delimiter must be measured as \
+         carriable — failing which the refusal below would prove nothing about order"
+    );
+
+    // WHEN a descriptor declares a `merge` on it in the form "this block
+    // between these bounds".
+    // THEN it is accepted: what order arbitrates is a position, and a block is
+    // designated by its delimiters.
+    assert_eq!(
+        capabilities.merge_bounded_block(),
+        &MergeAdmission::Admitted,
+        "the road C7 leaves open on an order-sensitive grammar was closed"
+    );
+
+    // AND the other form is still refused, on the same grammar: the two verdicts
+    // are read separately and do not follow from one another.
+    assert!(
+        matches!(capabilities.merge_by_keys(), MergeAdmission::Refused(_)),
+        "the form the order of the document arbitrates was admitted"
+    );
+}
+
+#[test]
+fn c7_neither_form_is_available_when_the_document_carries_no_delimiter() {
+    // GIVEN a grammar whose resolution depends on order **and** whose documents
+    // cannot carry a comment. No grammar served today reunites the two
+    // difficulties; this one exists so that the rule refuses of itself the day
+    // one does, rather than the day somebody re-reads a note.
+    //
+    // It preserves what can be preserved, writes, undoes, and reads a document
+    // of the repository: everything measurable is green except the two
+    // properties under trial.
+    struct StrictAndOrderSensitive;
+
+    impl Grammar for StrictAndOrderSensitive {
+        const NAME: &'static str = "strict-and-order-sensitive";
+        const ROLE: GrammarRole = GrammarRole::ReadWrite;
+        const RESOLUTION: Resolution = Resolution::DependsOnOrder;
+        // No comment anywhere in it, because its language has none. That is
+        // the second difficulty, and it is not declared: it is what makes the
+        // trials below fail.
+        const PROBE: Probe = Probe {
+            source: "{\r\n\t\"allow\": [\"read\"]\r\n}\r\n",
+            comment: "",
+            list_path: &["allow"],
+            value_present: "read",
+            value_absent: "network",
+        };
+
+        fn round_trip(source: &str) -> Result<String, GrammarError> {
+            strict(source)?;
+            Jsonc::round_trip(source)
+        }
+
+        fn find_string_in_list(
+            source: &str,
+            path: &[&str],
+            value: &str,
+        ) -> Result<bool, GrammarError> {
+            strict(source)?;
+            Jsonc::find_string_in_list(source, path, value)
+        }
+
+        fn apply(source: &str, edit: &Edit) -> Result<Applied, GrammarError> {
+            strict(source)?;
+            Jsonc::apply(source, edit)
+        }
+
+        fn invert(source: &str, inverse: &Inverse) -> Result<String, GrammarError> {
+            strict(source)?;
+            Jsonc::invert(source, inverse)
+        }
+
+        fn values(source: &str) -> Result<Vec<SemanticValue>, GrammarError> {
+            strict(source)?;
+            Jsonc::values(source)
+        }
+    }
+
+    /// The one thing this grammar does not share with JSONC: a slash is not a
+    /// comment here, it is a syntax error. The bare token is no better — it is
+    /// not a value of the language either, and JSONC rejects it on its own.
+    fn strict(source: &str) -> Result<(), GrammarError> {
+        if source.contains("//") || source.contains("/*") {
+            return Err(GrammarError::malformed(
+                StrictAndOrderSensitive::NAME,
+                "this language has no comment",
+            ));
+        }
+        Ok(())
+    }
+
+    let capabilities = Capabilities::of::<StrictAndOrderSensitive>();
+    assert_eq!(capabilities.resolution(), Resolution::DependsOnOrder);
+    assert!(
+        !capabilities.carries_delimiters(),
+        "a document that admits no comment and no bare line was credited with carrying a \
+         delimiter"
+    );
+    // The write path is green: what refuses below is neither the absence of an
+    // implementation nor a lost byte.
+    assert!(capabilities.applies_edits());
+
+    // WHEN a descriptor declares a `merge` on it, in one form or the other.
+    // THEN both are refused, each naming the grammar and its own reason.
+    let by_keys = match capabilities.merge_by_keys() {
+        MergeAdmission::Refused(refusal) => refusal,
+        MergeAdmission::Admitted => {
+            panic!("`merge` by keys admitted on an order-sensitive grammar")
+        }
+    };
+    let bounded_block = match capabilities.merge_bounded_block() {
+        MergeAdmission::Refused(refusal) => refusal,
+        MergeAdmission::Admitted => {
+            panic!("a bounded block admitted in a document that cannot carry a delimiter")
+        }
+    };
+
+    assert_eq!(by_keys.grammar(), StrictAndOrderSensitive::NAME);
+    assert_eq!(bounded_block.grammar(), StrictAndOrderSensitive::NAME);
+    assert_eq!(by_keys.form(), MergeForm::Keys);
+    assert_eq!(bounded_block.form(), MergeForm::BoundedBlock);
+
+    // The reason of each is its own, and neither is the reason of the other.
+    // That is the whole of this scenario: a refusal that gave one reason for
+    // both would tell its reader that the road it does not name is open.
+    assert!(
+        by_keys
+            .reasons()
+            .contains(&RefusalReason::ResolutionDependsOnOrder),
+        "the refusal of the keys does not name what arbitrates them: {:?}",
+        by_keys.reasons()
+    );
+    assert!(
+        !by_keys
+            .reasons()
+            .contains(&RefusalReason::NoDelimiterTheDocumentCanCarry),
+        "the refusal of the keys borrows the reason of the block"
+    );
+    assert_eq!(
+        bounded_block.reasons(),
+        [RefusalReason::NoDelimiterTheDocumentCanCarry],
+        "the refusal of the block must carry the one reason that motivates it, and above all not \
+         the order — order arbitrates a position, and a block is designated by its delimiters"
+    );
+
+    // The keys carry a second reason, and it is not noise: a document with no
+    // comment has none in its probe either, so preservation cannot be measured
+    // on that dimension. The two difficulties compound, and the refusal says so
+    // rather than hide it behind the one everybody expected.
+    assert_eq!(
+        by_keys.reasons(),
+        [
+            RefusalReason::ProbeWithoutHostileTrivia {
+                dimension: "comment"
+            },
+            RefusalReason::ResolutionDependsOnOrder,
+        ]
+    );
+
+    // AND each message names the grammar, its form, and its reason — a reader
+    // holding the two must be able to tell them apart.
+    for (refusal, expected) in [
+        (by_keys, ["these keys at this path", "order"]),
+        (
+            bounded_block,
+            ["this block between these bounds", "delimiter"],
+        ),
+    ] {
+        let message = refusal.to_string();
+        for expected in expected.iter().chain(["strict-and-order-sensitive"].iter()) {
+            assert!(
+                message.contains(expected),
+                "the refusal does not name \"{expected}\": {message}"
+            );
+        }
+    }
 }
 
 /// A guard, not a scenario: this is what makes a capability announced without
@@ -289,7 +476,7 @@ fn guard_a_capability_announced_without_an_implementation_does_not_hold() {
          designating a list element"
     );
     assert!(
-        matches!(capabilities.merge(), MergeAdmission::Refused(_)),
+        matches!(capabilities.merge_by_keys(), MergeAdmission::Refused(_)),
         "a grammar that preserves nothing was admitted to `merge`"
     );
 }
@@ -311,7 +498,7 @@ fn guard_no_published_grammar_escapes_the_measurement() {
     let escaped: Vec<String> = rigger_grammar::table()
         .iter()
         .filter_map(|capabilities| {
-            let MergeAdmission::Refused(refusal) = capabilities.merge() else {
+            let MergeAdmission::Refused(refusal) = capabilities.merge_by_keys() else {
                 return None;
             };
             let instrument: Vec<String> = refusal
@@ -391,7 +578,7 @@ fn guard_a_probe_without_hostile_trivia_credits_nothing() {
         "a grammar measured on a probe without trivia was credited with preserving it"
     );
     assert!(
-        matches!(capabilities.merge(), MergeAdmission::Refused(_)),
+        matches!(capabilities.merge_by_keys(), MergeAdmission::Refused(_)),
         "a grammar whose preservation could not be measured was admitted to `merge`"
     );
 }
@@ -409,7 +596,7 @@ fn guard_a_probe_without_hostile_trivia_credits_nothing() {
 #[test]
 fn guard_a_read_only_refusal_names_the_decision_and_not_the_library() {
     let capabilities = Capabilities::of::<Toml>();
-    let refusal = match capabilities.merge() {
+    let refusal = match capabilities.merge_by_keys() {
         MergeAdmission::Refused(refusal) => refusal,
         MergeAdmission::Admitted => panic!("`merge` admitted on a read-only grammar"),
     };
@@ -484,7 +671,7 @@ fn guard_a_fixed_library_does_not_reopen_a_read_only_grammar() {
     );
     assert!(capabilities.designates_list_element());
 
-    let refusal = match capabilities.merge() {
+    let refusal = match capabilities.merge_by_keys() {
         MergeAdmission::Refused(refusal) => refusal,
         MergeAdmission::Admitted => panic!(
             "admission reopened on a read-only grammar because everything that is measured turned \
@@ -547,7 +734,7 @@ fn guard_a_round_trip_without_a_parser_credits_nothing() {
          the measurement does not tell a grammar apart from an identity"
     );
     assert!(
-        matches!(capabilities.merge(), MergeAdmission::Refused(_)),
+        matches!(capabilities.merge_by_keys(), MergeAdmission::Refused(_)),
         "an implementation with no parser was admitted to `merge`"
     );
 }
@@ -608,7 +795,7 @@ fn guard_a_probe_silent_on_one_dimension_credits_nothing() {
          carried none"
     );
     assert!(
-        matches!(capabilities.merge(), MergeAdmission::Refused(_)),
+        matches!(capabilities.merge_by_keys(), MergeAdmission::Refused(_)),
         "a grammar that destroys comments was admitted to `merge`"
     );
 }
@@ -668,7 +855,7 @@ fn guard_destroying_trivia_absent_from_the_probe_credits_nothing() {
          own probe carried none"
     );
     assert!(
-        matches!(capabilities.merge(), MergeAdmission::Refused(_)),
+        matches!(capabilities.merge_by_keys(), MergeAdmission::Refused(_)),
         "a grammar that destroys block comments was admitted to `merge`"
     );
 }
@@ -763,7 +950,7 @@ fn guard_a_sham_refusal_does_not_credit_a_parser() {
          because it refuses a line it did not need to read"
     );
     assert!(
-        matches!(capabilities.merge(), MergeAdmission::Refused(_)),
+        matches!(capabilities.merge_by_keys(), MergeAdmission::Refused(_)),
         "an implementation with no parser was admitted to `merge`"
     );
 }
@@ -870,7 +1057,7 @@ fn guard_a_write_role_without_a_write_path_does_not_hold() {
         "a grammar with no write path was credited with writing"
     );
 
-    let refusal = match capabilities.merge() {
+    let refusal = match capabilities.merge_by_keys() {
         MergeAdmission::Refused(refusal) => refusal,
         MergeAdmission::Admitted => {
             panic!(
@@ -934,7 +1121,7 @@ fn guard_an_inverse_that_does_not_return_the_preimage_credits_nothing() {
         "a grammar whose inverse reformats was credited with writing"
     );
 
-    let refusal = match capabilities.merge() {
+    let refusal = match capabilities.merge_by_keys() {
         MergeAdmission::Refused(refusal) => refusal,
         MergeAdmission::Admitted => {
             panic!("`merge` admitted on a grammar whose removal reformats the document")
@@ -966,44 +1153,68 @@ fn guard_an_inverse_that_does_not_return_the_preimage_credits_nothing() {
 #[test]
 fn c6_the_table_publishes_each_derived_capability_per_grammar() {
     let table = rigger_grammar::table();
-    let published: Vec<(&str, GrammarRole, bool, bool, bool, Resolution, bool)> = table
+    let published: Vec<Row> = table
         .iter()
-        .map(|capabilities| {
-            (
-                capabilities.grammar(),
-                capabilities.role(),
-                capabilities.preserves_trivia(),
-                capabilities.designates_list_element(),
-                capabilities.applies_edits(),
-                capabilities.resolution(),
-                capabilities.merge() == &MergeAdmission::Admitted,
-            )
+        .map(|capabilities| Row {
+            grammar: capabilities.grammar(),
+            role: capabilities.role(),
+            preserves_trivia: capabilities.preserves_trivia(),
+            designates_list_element: capabilities.designates_list_element(),
+            applies_edits: capabilities.applies_edits(),
+            resolution: capabilities.resolution(),
+            carries_delimiters: capabilities.carries_delimiters(),
+            merge_by_keys: capabilities.merge_by_keys() == &MergeAdmission::Admitted,
+            merge_bounded_block: capabilities.merge_bounded_block() == &MergeAdmission::Admitted,
         })
         .collect();
 
     assert_eq!(
         published,
         vec![
-            (
-                Jsonc::NAME,
-                GrammarRole::ReadWrite,
-                true,
-                true,
-                true,
-                Resolution::IndependentOfOrder,
-                true
-            ),
-            (
-                Toml::NAME,
-                GrammarRole::ReadOnly,
-                false,
-                false,
-                false,
-                Resolution::IndependentOfOrder,
-                false
-            ),
+            Row {
+                grammar: Jsonc::NAME,
+                role: GrammarRole::ReadWrite,
+                preserves_trivia: true,
+                designates_list_element: true,
+                applies_edits: true,
+                resolution: Resolution::IndependentOfOrder,
+                carries_delimiters: true,
+                merge_by_keys: true,
+                merge_bounded_block: true,
+            },
+            // Read-only by product decision, so no form of `merge` is open on
+            // it — and its documents carry none of the delimiters a pose
+            // writes: the wrappings are all C-style or bare, and neither is a
+            // line this grammar reads.
+            Row {
+                grammar: Toml::NAME,
+                role: GrammarRole::ReadOnly,
+                preserves_trivia: false,
+                designates_list_element: false,
+                applies_edits: false,
+                resolution: Resolution::IndependentOfOrder,
+                carries_delimiters: false,
+                merge_by_keys: false,
+                merge_bounded_block: false,
+            },
         ]
     );
+}
+
+/// One line of the published table. A struct rather than a tuple: the columns
+/// are named at the place they are compared, so a value landing in the wrong
+/// one is a compile error instead of a puzzle in an assertion message.
+#[derive(Debug, PartialEq, Eq)]
+struct Row {
+    grammar: &'static str,
+    role: GrammarRole,
+    preserves_trivia: bool,
+    designates_list_element: bool,
+    applies_edits: bool,
+    resolution: Resolution,
+    carries_delimiters: bool,
+    merge_by_keys: bool,
+    merge_bounded_block: bool,
 }
 
 /// A guard of the guard: the reading of the sources must descend into
