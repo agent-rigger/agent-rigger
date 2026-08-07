@@ -24,8 +24,8 @@ pub mod ledger;
 pub mod transaction;
 
 pub use ledger::{
-    exit_code, Address, AddressNotUtf8, Entry, Ledger, Posting, RegistryError, Unjudgeable,
-    IMPOSSIBLE_REQUEST, POSED_BY, RUNTIME_FAILURE,
+    exit_code, Address, AddressNotUtf8, Entry, Identity, Ledger, Posting, RegistryError,
+    Unjudgeable, IMPOSSIBLE_REQUEST, POSED_BY, RUNTIME_FAILURE,
 };
 pub use transaction::{
     replay, transact, Consent, Decision, Fresh, Mutation, Outcome, Proposal, Registry,

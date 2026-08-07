@@ -493,6 +493,200 @@ fn guard_a_removal_leaves_alone_what_the_trace_does_not_describe() {
 }
 
 #[test]
+fn guard_a_pose_by_copy_and_its_removal_leave_the_machine_as_it_was() {
+    // The other placement, on a real disk. Both take the store entry away at the
+    // last referent and both condition that on the bytes materialised there, so
+    // a condition written for one of them has to be exercised through the other
+    // as well — the copy path has no test of its own anywhere else.
+    let machine = machine("by-copy");
+    let address = machine.join("root/review.md");
+    let store = machine.join("store/acme-review-1.0");
+    let before = snapshot(&machine);
+
+    let posted = pose(
+        BehaviourName::Link,
+        &address,
+        &artefact(&store, Placement::Copy),
+        &OnDisk,
+    )
+    .expect("the pose must succeed");
+
+    assert!(
+        !fs::symlink_metadata(&address)
+            .expect("the address exists")
+            .file_type()
+            .is_symlink(),
+        "a pose declared as a copy must leave a copy"
+    );
+    assert_eq!(
+        fs::read_to_string(&address).expect("read the copy"),
+        ARTEFACT
+    );
+
+    withdraw(
+        BehaviourName::Link,
+        &address,
+        &posted.trace,
+        Referents::Last,
+        &OnDisk,
+    )
+    .expect("the removal must succeed");
+
+    assert_eq!(snapshot(&machine), before);
+}
+
+#[test]
+fn guard_a_removal_leaves_alone_a_store_entry_carrying_bytes_that_are_not_the_ones_posed() {
+    // A pose by link makes the address a door into the shared store: what its
+    // owner writes at the address travels through the link and lands in the
+    // store entry itself. Taking that entry away because nothing designates it
+    // any more would destroy those bytes, silently, and report success.
+    //
+    // The same gesture posed by copy already refuses — the removal compares what
+    // is at the address against the materialisation before taking it away. The
+    // two placements must answer the owner's gesture the same way.
+    let machine = machine("store-rewritten");
+    let address = machine.join("root/review.md");
+    let store = machine.join("store/acme-review-1.0");
+    let posted = pose(
+        BehaviourName::Link,
+        &address,
+        &artefact(&store, Placement::Link),
+        &OnDisk,
+    )
+    .expect("the pose must succeed");
+
+    // WHEN its owner writes through the address the pose gave them.
+    fs::write(&address, "notes its owner wrote\n").expect("write through the link");
+    let before = snapshot(&machine);
+
+    let failure = withdraw(
+        BehaviourName::Link,
+        &address,
+        &posted.trace,
+        Referents::Last,
+        &OnDisk,
+    )
+    .expect_err("a removal took away bytes the product had not written");
+
+    assert!(
+        failure.to_string().contains("acme-review-1.0"),
+        "the refusal must name the store entry it left alone: {failure}"
+    );
+    assert_eq!(
+        snapshot(&machine),
+        before,
+        "the product takes back what it posed and nothing else, in the store as at the address"
+    );
+}
+
+#[test]
+fn a4_a_rollback_leaves_alone_an_address_whose_seized_state_is_still_there() {
+    // GIVEN one artefact already materialised and designated, and a second pose
+    // of the same artefact — which materialises nothing, the store entry being
+    // there with those very bytes, and only designates it from a second address.
+    //
+    // The store entry is in the capture all the same, because a step of this
+    // transaction names it. Giving it back by taking it away and writing it
+    // again would, for an instant, remove a materialisation the first pose still
+    // designates — and destroy it outright if the second half failed, which is
+    // likely, the run having already failed once.
+    let machine = machine("untouched-address");
+    let store = machine.join("store/acme-review-1.0");
+    let first = machine.join("root/review.md");
+    pose(
+        BehaviourName::Link,
+        &first,
+        &artefact(&store, Placement::Link),
+        &OnDisk,
+    )
+    .expect("the first pose must succeed");
+
+    // A second name for the very same file. Writing through it later is what
+    // tells a store entry left alone from one taken away and written again with
+    // the same bytes — the two are indistinguishable by their contents, and this
+    // is the difference the failure would destroy.
+    let witness = machine.join("witness");
+    fs::hard_link(&store, &witness).expect("name the store entry a second time");
+    let posed = snapshot(&machine);
+
+    // WHEN the second pose is interrupted after its link has landed.
+    let failure = pose(
+        BehaviourName::Link,
+        &machine.join("root/review-too.md"),
+        &artefact(&store, Placement::Link),
+        &FailsAfter::step(1),
+    )
+    .expect_err("an interrupted pose reported success");
+
+    match &failure {
+        PoseError::RolledBack { step, .. } => assert_eq!(*step, 1),
+        other => panic!("expected a rolled back transaction, got {other}"),
+    }
+    assert_eq!(snapshot(&machine), posed);
+
+    // THEN the store entry is the file the first pose materialised, and not one
+    // written in its place.
+    fs::write(&witness, "written through the other name\n").expect("write through the witness");
+    assert_eq!(
+        fs::read_to_string(&store).expect("read the store entry"),
+        "written through the other name\n",
+        "the rollback took away and rewrote a store entry no step of it had changed, leaving the \
+         pose that had completed designating a different file"
+    );
+}
+
+#[test]
+fn a4_a_rollback_gives_back_the_document_a_write_replaced_through_a_link() {
+    // GIVEN an address that is a symbolic link into a document its owner keeps
+    // elsewhere — a settings file linked into a versioned configuration
+    // repository, which is what that kind of repository is for.
+    //
+    // A conditional write renames onto the **document**, never onto the link:
+    // renaming onto the link would replace it with an ordinary file and the real
+    // document would never receive the pose. So the state a rollback has to give
+    // back is the document's, and seizing the link alone gives back something no
+    // step ever changed while the owner's document keeps what was merged into it.
+    let machine = machine("write-through-a-link");
+    let document = machine.join("store/settings.json");
+    let address = machine.join("root/settings.json");
+    const OWNED: &str = "{\n\t\"model\": \"opus\"\n}\n";
+    const MERGED: &str = "{\n\t\"model\": \"opus\",\n\t\"statusLine\": \"rigger\"\n}\n";
+    fs::write(&document, OWNED).expect("write the owner's document");
+    OnDisk
+        .carry_out(&Effect::Link {
+            address: address.clone(),
+            to: document.clone(),
+        })
+        .expect("make the link");
+    let before = snapshot(&machine);
+
+    // WHEN a write through that address lands and the run fails there.
+    let failure = carry(
+        behaviour(BehaviourName::Merge),
+        &[Effect::Write {
+            address: address.clone(),
+            contents: MERGED.to_string(),
+            expected: OWNED.to_string(),
+        }],
+        &FailsAfter::step(0),
+    )
+    .expect_err("an interrupted write reported success");
+
+    match &failure {
+        PoseError::RolledBack { step, .. } => assert_eq!(*step, 0),
+        other => panic!("expected a rolled back transaction, got {other}"),
+    }
+    assert_eq!(
+        fs::read_to_string(&document).expect("read the owner's document"),
+        OWNED,
+        "the rollback gave back the link, which nothing had changed, and left the document its \
+         owner keeps carrying what the interrupted run had merged into it"
+    );
+    assert_eq!(snapshot(&machine), before);
+}
+
+#[test]
 fn guard_a_pose_into_a_directory_that_is_not_there_refuses_by_naming_it() {
     // The product makes no directory: one it created would be a change the
     // capture would have to seize and the restoration give back, and this

@@ -255,6 +255,28 @@ impl Digest {
         }
         Self(state)
     }
+
+    /// The fingerprint `written` spells, or nothing when it is not one this
+    /// build writes.
+    ///
+    /// **Sixteen lowercase hexadecimal digits and nothing else**, which is
+    /// exactly what [`Digest`]'s rendering produces. A field read loosely — a
+    /// sign accepted, a shorter run of digits padded — would read back as a
+    /// fingerprint that was never written, and a removal conditioned on it would
+    /// then take away bytes nobody proved were the ones posed.
+    pub fn read(written: &str) -> Option<Self> {
+        let spelled = written.as_bytes();
+        if spelled.len() != 16 {
+            return None;
+        }
+        if !spelled
+            .iter()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(byte))
+        {
+            return None;
+        }
+        u64::from_str_radix(written, 16).ok().map(Self)
+    }
 }
 
 impl fmt::Display for Digest {
@@ -403,15 +425,22 @@ pub enum Effect {
         /// The store entry the copy was made from.
         same_as: PathBuf,
     },
-    /// Leave nothing at this address. Already nothing there is success, not a
+    /// Take the shared store entry away, **only if it still carries the bytes
+    /// that were materialised there**. Already nothing there is success, not a
     /// failure: absence is what this step is for, and it is reached.
     ///
-    /// **It is used on the product's own store, never on a document somebody
-    /// owns** — there is nothing of an owner's to protect inside the store, and
-    /// the store entry's bytes are the product's own materialisation.
+    /// **The condition is not tidiness inside the product's own store.** A pose
+    /// by link makes the address a door into the store: what an owner writes at
+    /// the address travels through the link and lands in the store entry itself.
+    /// Taking it away unconditionally would destroy those bytes, silently, and
+    /// report success — while the same removal posed by copy refuses, comparing
+    /// what is at the address against the materialisation. The two placements
+    /// answer the same gesture the same way.
     Remove {
-        /// The address.
+        /// The store entry.
         address: PathBuf,
+        /// The fingerprint of the bytes the pose materialised there.
+        posed: Digest,
     },
     /// Give an address back the state a capture seized, whatever is there now.
     /// This is the one step a rollback is made of.
@@ -435,7 +464,7 @@ impl Effect {
             | Self::Link { address, .. }
             | Self::Unlink { address, .. }
             | Self::Discard { address, .. }
-            | Self::Remove { address } => address,
+            | Self::Remove { address, .. } => address,
             Self::Restore { seized } => seized.address(),
         }
     }
@@ -598,6 +627,15 @@ pub enum Trace {
         store: PathBuf,
         /// What the pose put at the address.
         placement: Placement,
+        /// The fingerprint of the bytes materialised in the store entry.
+        ///
+        /// **It is here because the removal of the store entry is conditioned
+        /// on it**, and a removal reads its conditions out of the trace and out
+        /// of nothing else. Left to be looked up in the entry beside the trace,
+        /// the condition would depend on a field whose meaning differs from one
+        /// behaviour to the next; recomputed from what is on the disk, it would
+        /// compare the store entry with itself and condition nothing at all.
+        posed: Digest,
     },
 }
 
@@ -626,14 +664,22 @@ impl Trace {
 /// version that posed it and the file would never happen.
 pub fn record(trace: &Trace) -> Result<Vec<String>, BehaviourError> {
     match trace {
-        Trace::Link { store, placement } => {
+        Trace::Link {
+            store,
+            placement,
+            posed,
+        } => {
             let spelled = store
                 .to_str()
                 .ok_or_else(|| BehaviourError::AddressNotSpellable {
                     behaviour: BehaviourName::Link,
                     address: store.clone(),
                 })?;
-            Ok(vec![spelled.to_string(), placement.as_str().to_string()])
+            Ok(vec![
+                spelled.to_string(),
+                placement.as_str().to_string(),
+                posed.to_string(),
+            ])
         }
         Trace::Grammar { .. } => Err(BehaviourError::NotRecordable {
             behaviour: BehaviourName::Merge,
@@ -651,7 +697,7 @@ pub fn record(trace: &Trace) -> Result<Vec<String>, BehaviourError> {
 pub fn replay(name: BehaviourName, fields: &[String]) -> Result<Trace, BehaviourError> {
     match name {
         BehaviourName::Link => match fields {
-            [store, placement] => {
+            [store, placement, posed] => {
                 let placement =
                     Placement::read(placement).ok_or_else(|| BehaviourError::TraceUnreadable {
                         behaviour: name,
@@ -660,16 +706,25 @@ pub fn replay(name: BehaviourName, fields: &[String]) -> Result<Trace, Behaviour
                              are `link` and `copy`"
                         ),
                     })?;
+                let posed = Digest::read(posed).ok_or_else(|| BehaviourError::TraceUnreadable {
+                    behaviour: name,
+                    reason: format!(
+                        "`{posed}` is not a fingerprint this build wrote — sixteen lowercase \
+                         hexadecimal digits are, and the removal of the store entry is conditioned \
+                         on it"
+                    ),
+                })?;
                 Ok(Trace::Link {
                     store: PathBuf::from(store),
                     placement,
+                    posed,
                 })
             }
             other => Err(BehaviourError::TraceUnreadable {
                 behaviour: name,
                 reason: format!(
-                    "the trace carries {} fields, and a link trace is a store entry and a \
-                     placement",
+                    "the trace carries {} fields, and a link trace is a store entry, a placement \
+                     and the fingerprint of what was materialised",
                     other.len()
                 ),
             }),
@@ -908,7 +963,10 @@ impl std::error::Error for BehaviourError {}
 ///     }
 /// }
 ///
-/// let effects = vec![Effect::Remove { address: PathBuf::from("settings.json") }];
+/// let effects = vec![Effect::Create {
+///     address: PathBuf::from("settings.json"),
+///     contents: "{}\n".to_string(),
+/// }];
 /// assert_eq!(
 ///     Outsider.capture(&effects).unwrap(),
 ///     vec![PathBuf::from("settings.json")]
@@ -943,7 +1001,10 @@ impl std::error::Error for BehaviourError {}
 ///     }
 /// }
 ///
-/// let effects = vec![Effect::Remove { address: PathBuf::from("settings.json") }];
+/// let effects = vec![Effect::Create {
+///     address: PathBuf::from("settings.json"),
+///     contents: "{}\n".to_string(),
+/// }];
 /// assert_eq!(
 ///     Outsider.capture(&effects).unwrap(),
 ///     vec![PathBuf::from("settings.json")]
@@ -978,7 +1039,10 @@ impl std::error::Error for BehaviourError {}
 ///     }
 /// }
 ///
-/// let effects = vec![Effect::Remove { address: PathBuf::from("settings.json") }];
+/// let effects = vec![Effect::Create {
+///     address: PathBuf::from("settings.json"),
+///     contents: "{}\n".to_string(),
+/// }];
 /// assert_eq!(
 ///     Outsider.capture(&effects).unwrap(),
 ///     vec![PathBuf::from("settings.json")]
@@ -1104,6 +1168,7 @@ impl Behaviour for Link {
                 contents: contents.clone(),
             },
         };
+        let fingerprint = Digest::of(contents.as_bytes());
         Ok(Posed {
             effects: vec![
                 Effect::Materialise {
@@ -1115,8 +1180,9 @@ impl Behaviour for Link {
             trace: Trace::Link {
                 store: store.clone(),
                 placement: *placement,
+                posed: fingerprint,
             },
-            fingerprint: Digest::of(contents.as_bytes()),
+            fingerprint,
         })
     }
 
@@ -1135,7 +1201,12 @@ impl Behaviour for Link {
         trace: &Trace,
         referents: Referents,
     ) -> Result<Undone, BehaviourError> {
-        let Trace::Link { store, placement } = trace else {
+        let Trace::Link {
+            store,
+            placement,
+            posed,
+        } = trace
+        else {
             return Err(BehaviourError::WrongShape {
                 behaviour: BehaviourName::Link,
                 serves: "an artefact materialised in the shared store",
@@ -1154,6 +1225,7 @@ impl Behaviour for Link {
         if referents == Referents::Last {
             effects.push(Effect::Remove {
                 address: store.clone(),
+                posed: *posed,
             });
         }
         Ok(Undone { effects })

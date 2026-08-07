@@ -23,14 +23,22 @@
 //! granularity of an entry — the description of something posed, gone, and what
 //! it describes unremovable.
 //!
-//! **A line repeating an identifier already read is unjudgeable too**, and for
+//! **A line repeating an [`Identity`] already read is unjudgeable too**, and for
 //! that same reason rather than out of strictness. Two records under one
-//! identifier are not a state this build writes, so nothing here knows which of
+//! identity are not a state this build writes, so nothing here knows which of
 //! them describes what was posed; folding them together at the read would drop
 //! one, and the next write would take its line out of the file. A perfectly
 //! readable line would then be treated worse than an illegible one — the
 //! description of something posed gone, and what it describes unremovable, with
 //! no error and nothing counted.
+//!
+//! **The identity, and never the name alone.** Two catalogues may legitimately
+//! carry an entry of the same name, and everything here that looks a record up
+//! — the read, the upsert, the removal, the count of referents — is keyed on the
+//! pair. Keyed on the name, recording one catalogue's entry takes the other's
+//! line out of the file and leaves its files on the machine with nothing able to
+//! reach them: the loss this crate exists against, produced by the write path
+//! itself.
 //!
 //! **And no address is recorded in a spelling other than its own.** The
 //! registry is a UTF-8 document; a path is not. [`Address`] is where the two
@@ -101,29 +109,45 @@ pub const POSED_BY: &str = env!("CARGO_PKG_VERSION");
 /// A path the registry can spell goes in:
 ///
 /// ```
+/// use std::path::Path;
 /// use rigger_registry::Address;
-/// let address = Address::new("/home/someone/settings.json").expect("a UTF-8 path");
+/// let address = Address::new(Path::new("/home/someone/settings.json")).expect("a UTF-8 path");
 /// assert_eq!(address.as_str(), "/home/someone/settings.json");
 /// ```
 ///
-/// And there is no second door for one it cannot. The lossy conversion is two
-/// short words away from any path, so leaving a `String` constructor open would
-/// leave the whole refusal open with it:
+/// And there is no second door for one it cannot. **The way in takes a path and
+/// nothing else**, which is what makes this refusal a type rather than a rule
+/// somebody remembers: the lossy conversion answers a `String`, so a constructor
+/// that took one — directly, or through anything a `String` satisfies — would be
+/// the door the loss walks through, and it would compile in two short words:
 ///
 /// ```compile_fail
 /// use rigger_registry::Address;
 /// let spelled: String = std::path::Path::new("/home/someone")
 ///     .to_string_lossy()
 ///     .into_owned();
-/// let _: Address = spelled.into();
+/// let _ = Address::new(spelled);
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Address(String);
 
 impl Address {
     /// The address of `path`, or a refusal naming the path that was offered.
-    pub fn new(path: impl AsRef<Path>) -> Result<Self, AddressNotUtf8> {
-        let path = path.as_ref();
+    ///
+    /// **It takes a `&Path` and not something a `String` also satisfies.** A
+    /// caller holding a path that does not spell has `to_string_lossy` right
+    /// there, and the result of it would have gone through a laxer signature
+    /// carrying the replacement bytes this type exists to refuse — with the
+    /// refusal below never reached, because by then there is nothing left to
+    /// refuse.
+    ///
+    /// **What that leaves open, said rather than implied.** A caller can still
+    /// wrap a lossy spelling back into a path and hand that in. Nothing can stop
+    /// it, here or anywhere: at that point the bytes are already gone and no
+    /// signature can tell such a path from one somebody typed. What this
+    /// signature does close is the *short* way — the one a caller reaches for
+    /// without deciding anything, and the one that used to compile.
+    pub fn new(path: &Path) -> Result<Self, AddressNotUtf8> {
         match path.to_str() {
             Some(spelled) => Ok(Self(spelled.to_string())),
             None => Err(AddressNotUtf8 {
@@ -197,6 +221,34 @@ impl fmt::Display for AddressNotUtf8 {
 
 impl std::error::Error for AddressNotUtf8 {}
 
+/// What names one record: the catalogue a thing came from, and what that
+/// catalogue called it.
+///
+/// **Two fields and not one, everywhere the registry looks a record up.** Two
+/// catalogues may legitimately carry an entry of the same name — `context/agents`
+/// is a name two independent authors will both choose. Keyed on the name alone,
+/// the registry holds one record for the two: recording the second replaces the
+/// first, whose line then leaves the file at the next write, whose files stay on
+/// the machine, and which nothing can ever reach again — with no error and
+/// nothing counted. Taking one out has the same defect the other way round.
+///
+/// It is a type rather than two string parameters for the reason [`Posting`] is
+/// a struct: two neighbouring strings can be handed over the wrong way round and
+/// nothing goes red.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Identity {
+    /// Which catalogue it came from.
+    pub provenance: String,
+    /// What that catalogue called it.
+    pub id: String,
+}
+
+impl fmt::Display for Identity {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "`{}` from `{}`", self.id, self.provenance)
+    }
+}
+
 /// One thing the product posed.
 ///
 /// **The behaviour is a name and not a resolved member of the closed set**, and
@@ -210,8 +262,7 @@ impl std::error::Error for AddressNotUtf8 {}
 /// resolution belongs where the removal is decided.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Entry {
-    id: String,
-    provenance: String,
+    identity: Identity,
     behaviour: String,
     posed_by: String,
     root: Address,
@@ -256,16 +307,21 @@ impl Entry {
     /// recorded as a different one:
     ///
     /// ```
+    /// use std::path::Path;
     /// use rigger_registry::{Address, Entry, Posting};
     /// let entry = Entry::posted(Posting {
     ///     id: "acme/skill".to_string(),
     ///     provenance: "acme".to_string(),
     ///     behaviour: "link".to_string(),
     ///     posed_by: "1.5".to_string(),
-    ///     root: Address::new("/home/someone/.claude").expect("a UTF-8 path"),
-    ///     address: Address::new("skills/review.md").expect("a UTF-8 path"),
+    ///     root: Address::new(Path::new("/home/someone/.claude")).expect("a UTF-8 path"),
+    ///     address: Address::new(Path::new("skills/review.md")).expect("a UTF-8 path"),
     ///     fingerprint: "0123456789abcdef".to_string(),
-    ///     trace: vec!["/home/someone/.rigger/store/acme-skill".to_string(), "link".to_string()],
+    ///     trace: vec![
+    ///         "/home/someone/.rigger/store/acme-skill".to_string(),
+    ///         "link".to_string(),
+    ///         "0123456789abcdef".to_string(),
+    ///     ],
     /// });
     /// assert_eq!(
     ///     entry.at(),
@@ -291,8 +347,10 @@ impl Entry {
     /// ```
     pub fn posted(posting: Posting) -> Self {
         Self {
-            id: posting.id,
-            provenance: posting.provenance,
+            identity: Identity {
+                provenance: posting.provenance,
+                id: posting.id,
+            },
             behaviour: posting.behaviour,
             posed_by: posting.posed_by,
             root: posting.root,
@@ -302,14 +360,22 @@ impl Entry {
         }
     }
 
-    /// What the catalogue called this thing.
+    /// What names this record: the catalogue it came from **and** what that
+    /// catalogue called it. It is what the registry looks a record up by, and
+    /// the reason is written on [`Identity`].
+    pub fn identity(&self) -> &Identity {
+        &self.identity
+    }
+
+    /// What the catalogue called this thing. On its own it names no record: two
+    /// catalogues may carry this same name.
     pub fn id(&self) -> &str {
-        &self.id
+        &self.identity.id
     }
 
     /// Which catalogue it came from.
     pub fn provenance(&self) -> &str {
-        &self.provenance
+        &self.identity.provenance
     }
 
     /// The **name** of the behaviour that posed it, unresolved.
@@ -362,8 +428,8 @@ impl Entry {
     fn render(&self) -> String {
         let mut line = format!(
             "{ENTRY}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
-            escape(&self.id),
-            escape(&self.provenance),
+            escape(&self.identity.id),
+            escape(&self.identity.provenance),
             escape(&self.behaviour),
             escape(&self.posed_by),
             // Not a lossy conversion, and there is nowhere left to put one: the
@@ -430,20 +496,27 @@ impl Ledger {
         &self.unjudgeable
     }
 
-    /// Puts `entry` in, replacing whatever carried the same identifier.
+    /// Puts `entry` in, replacing whatever was recorded under the same
+    /// [`Identity`] — the catalogue **and** the name, never the name alone.
     ///
     /// Pure, and that is what lets the mutations of a run be replayed onto a
     /// registry re-read under the lock rather than written over it.
     pub fn upsert(&mut self, entry: Entry) {
-        match self.entries.iter_mut().find(|held| held.id == entry.id) {
+        match self
+            .entries
+            .iter_mut()
+            .find(|held| held.identity == entry.identity)
+        {
             Some(held) => *held = entry,
             None => self.entries.push(entry),
         }
     }
 
-    /// Takes out the entry with this identifier, if there is one.
-    pub fn remove(&mut self, id: &str) {
-        self.entries.retain(|entry| entry.id != id);
+    /// Takes out the entry recorded under this [`Identity`], if there is one.
+    /// The record of another catalogue's entry of the same name stays: it
+    /// describes other files, and nothing else describes them.
+    pub fn remove(&mut self, identity: &Identity) {
+        self.entries.retain(|entry| &entry.identity != identity);
     }
 
     /// Whether anything else the registry records still designates the shared
@@ -462,11 +535,18 @@ impl Ledger {
     /// the thing they pointed at is gone. So an unreadable trace is treated as
     /// possibly designating it, and that is written here rather than left to
     /// the shape of an `unwrap_or`.
-    pub fn referents(&self, store: &Path, besides: &str) -> Referents {
+    ///
+    /// **A line this build could not read at all counts as one too**, and for
+    /// that same reason rather than out of caution. Such a line is kept in the
+    /// file precisely because it describes something posed, and nothing here
+    /// can say what: counting only the lines that read would take a
+    /// materialisation away while an illegible line still designated it, which
+    /// is the identical damage one step further out.
+    pub fn referents(&self, store: &Path, besides: &Identity) -> Referents {
         let still = self
             .entries
             .iter()
-            .filter(|entry| entry.id() != besides)
+            .filter(|entry| entry.identity() != besides)
             .any(|entry| {
                 match BehaviourName::parse(entry.behaviour())
                     .and_then(|name| replay(name, entry.trace()))
@@ -475,7 +555,7 @@ impl Ledger {
                     Err(_) => true,
                 }
             });
-        if still {
+        if still || !self.unjudgeable.is_empty() {
             Referents::Remaining
         } else {
             Referents::Last
@@ -543,8 +623,11 @@ impl Ledger {
         }
 
         let mut ledger = Self::empty();
-        // Which line first carried each identifier, so a repeat can name it.
-        let mut carried: Vec<(String, usize)> = Vec::new();
+        // Which line first carried each identity, so a repeat can name it. It is
+        // the identity and not the name alone: two catalogues carrying an entry
+        // of the same name are two records, and reporting the second unjudgeable
+        // would make a legitimate registry unreadable by half.
+        let mut carried: Vec<(Identity, usize)> = Vec::new();
         for (index, line) in lines.enumerate() {
             // The envelope is line one, and `lines` started after it.
             let number = index + 2;
@@ -555,14 +638,14 @@ impl Ledger {
                 Ok(entry) => {
                     let already = carried
                         .iter()
-                        .find(|(id, _)| id == entry.id())
+                        .find(|(identity, _)| identity == entry.identity())
                         .map(|(_, first)| *first);
                     match already {
                         Some(first) => (
                             format!(
-                                "`{}` is already recorded on line {first}, and nothing here can \
-                                 tell which of the two describes what was posed",
-                                entry.id()
+                                "{} is already recorded on line {first}, and nothing here can tell \
+                                 which of the two describes what was posed",
+                                entry.identity()
                             ),
                             None,
                         ),
@@ -573,7 +656,7 @@ impl Ledger {
             };
             match entry {
                 Some(entry) => {
-                    carried.push((entry.id().to_string(), number));
+                    carried.push((entry.identity().clone(), number));
                     ledger.entries.push(entry);
                 }
                 None => ledger.unjudgeable.push(Unjudgeable {

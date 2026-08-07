@@ -35,11 +35,11 @@ fn registry_with(dir: &std::path::Path, document: &str) -> Registry {
 
 /// One entry line, as the format writes it: the seven fixed fields, then the
 /// trace of the behaviour that posed — here a link, whose trace is a store
-/// entry and a placement.
+/// entry, a placement and the fingerprint of what was materialised.
 fn entry_line(id: &str, behaviour: &str, posed_by: &str, address: &str) -> String {
     format!(
         "entry\t{id}\tacme\t{behaviour}\t{posed_by}\t/home/someone\t{address}\t0123456789abcdef\t\
-         /store/{id}\tlink"
+         /store/{id}\tlink\t0123456789abcdef"
     )
 }
 
@@ -224,10 +224,14 @@ fn guard_an_unreadable_entry_is_written_back_unchanged() {
             provenance: "acme".to_string(),
             behaviour: "link".to_string(),
             posed_by: "1.5".to_string(),
-            root: Address::new("/home/someone").expect("a UTF-8 address"),
-            address: Address::new("other.json").expect("a UTF-8 address"),
+            root: Address::new(std::path::Path::new("/home/someone")).expect("a UTF-8 address"),
+            address: Address::new(std::path::Path::new("other.json")).expect("a UTF-8 address"),
             fingerprint: "0123456789abcdef".to_string(),
-            trace: vec!["/store/acme-other".to_string(), "link".to_string()],
+            trace: vec![
+                "/store/acme-other".to_string(),
+                "link".to_string(),
+                "0123456789abcdef".to_string(),
+            ],
         }))],
         &Granting,
         &SystemLiveness,
@@ -261,7 +265,7 @@ fn guard_an_unreadable_entry_is_written_back_unchanged() {
 #[test]
 fn guard_a_second_line_under_one_identifier_is_unjudgeable_and_is_written_back() {
     use rigger_apply::SystemLiveness;
-    use rigger_registry::{transact, Consent, Decision, Mutation, Outcome, Proposal};
+    use rigger_registry::{transact, Consent, Decision, Identity, Mutation, Outcome, Proposal};
 
     struct Granting;
     impl Consent for Granting {
@@ -304,7 +308,10 @@ fn guard_a_second_line_under_one_identifier_is_unjudgeable_and_is_written_back()
     let outcome = transact(
         &registry,
         &[Mutation::Remove {
-            id: "acme/absent".to_string(),
+            identity: Identity {
+                provenance: "acme".to_string(),
+                id: "acme/absent".to_string(),
+            },
         }],
         &Granting,
         &SystemLiveness,
@@ -313,6 +320,81 @@ fn guard_a_second_line_under_one_identifier_is_unjudgeable_and_is_written_back()
     assert!(matches!(outcome, Outcome::Committed { .. }));
     let written = fs::read_to_string(registry.path()).expect("read the registry back");
     assert_eq!(written, format!("rigger-registry 1\n{first}\n{second}\n"));
+    fs::remove_dir_all(&dir).expect("clean up");
+}
+
+/// Guard, not scenario: two catalogues carrying an entry of the same name. No
+/// scenario of A1 names it, and the answer decides whether one record can wipe
+/// another out.
+///
+/// `Posting::provenance` says two catalogues may legitimately carry an entry of
+/// the same name — `context/agents` is a name two independent authors will both
+/// choose — and that without it the two records are one. Keyed on the name
+/// alone, recording the second takes the first's line out of the file: its files
+/// stay on the machine, nothing describes them any more, and no error is
+/// reported. It is the loss the whole crate is shaped against, produced by the
+/// product's own write path.
+#[test]
+fn guard_two_catalogues_carrying_one_name_keep_two_records() {
+    use rigger_registry::{Address, Entry, Identity, Ledger, Posting};
+
+    fn posted(provenance: &str) -> Entry {
+        Entry::posted(Posting {
+            id: "context/agents".to_string(),
+            provenance: provenance.to_string(),
+            behaviour: "link".to_string(),
+            posed_by: "1.5".to_string(),
+            root: Address::new(std::path::Path::new("/home/someone")).expect("a UTF-8 address"),
+            address: Address::new(std::path::Path::new(&format!("{provenance}.md")))
+                .expect("a UTF-8 address"),
+            fingerprint: "0123456789abcdef".to_string(),
+            trace: vec![
+                format!("/store/{provenance}-agents"),
+                "link".to_string(),
+                "0123456789abcdef".to_string(),
+            ],
+        })
+    }
+
+    let mut ledger = Ledger::empty();
+    ledger.upsert(posted("acme"));
+    ledger.upsert(posted("globex"));
+
+    assert_eq!(
+        ledger.entries().len(),
+        2,
+        "recording the second took the first out, and what it described stays on the machine with \
+         nothing able to reach it"
+    );
+    assert_eq!(
+        ledger.entries()[0].address(),
+        std::path::Path::new("acme.md")
+    );
+
+    // AND taking one out leaves the other. The same defect the other way round:
+    // removing by name alone takes the record of a catalogue nobody asked about.
+    ledger.remove(&Identity {
+        provenance: "acme".to_string(),
+        id: "context/agents".to_string(),
+    });
+    assert_eq!(ledger.entries().len(), 1);
+    assert_eq!(ledger.entries()[0].provenance(), "globex");
+
+    // AND a registry carrying both lines reads back as two entries. Reported
+    // unjudgeable instead, one of the two would be a description nothing could
+    // act on — the state a repeated identity is kept in, applied to a registry
+    // this build writes itself.
+    let dir = directory("two-catalogues");
+    let registry = registry_with(
+        &dir,
+        "rigger-registry 1\n\
+         entry\tcontext/agents\tacme\tlink\t1.5\t/home/someone\tacme.md\tabc\t/store/a\tlink\tdef\n\
+         entry\tcontext/agents\tglobex\tlink\t1.5\t/home/someone\tglobex.md\tabc\t/store/g\tlink\t\
+         def\n",
+    );
+    let read = registry.read().expect("the read must succeed");
+    assert_eq!(read.entries().len(), 2);
+    assert!(read.unjudgeable().is_empty());
     fs::remove_dir_all(&dir).expect("clean up");
 }
 
@@ -366,7 +448,8 @@ fn guard_an_address_this_document_cannot_spell_is_refused_where_it_is_offered() 
     // AND an address the document can spell goes through untouched: without
     // this, a constructor that refused everything would pass the assertion
     // above and record nothing at all.
-    let ordinary = Address::new("/home/someone/settings.json").expect("a UTF-8 address");
+    let ordinary =
+        Address::new(std::path::Path::new("/home/someone/settings.json")).expect("a UTF-8 address");
     assert_eq!(
         ordinary.as_path(),
         std::path::Path::new("/home/someone/settings.json")

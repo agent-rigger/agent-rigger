@@ -21,12 +21,20 @@ use std::path::{Path, PathBuf};
 use rigger_apply::{pose, withdraw, OnDisk, SystemLiveness};
 use rigger_plan::{replay, BehaviourName, Digest, Fragment, Placement, Referents};
 use rigger_registry::{
-    transact, Address, Consent, Decision, Entry, Ledger, Mutation, Outcome, Posting, Proposal,
-    Registry, POSED_BY,
+    transact, Address, Consent, Decision, Entry, Identity, Ledger, Mutation, Outcome, Posting,
+    Proposal, Registry, RegistryError, POSED_BY,
 };
 
 /// The bytes of the artefact the scenarios pose.
 const ARTEFACT: &str = "# Review\n\nRead the diff before the description.\n";
+
+/// What names a record of the one catalogue these scenarios pose from.
+fn acme(id: &str) -> Identity {
+    Identity {
+        provenance: "acme".to_string(),
+        id: id.to_string(),
+    }
+}
 
 /// Consent that says yes. The question is asked before the exclusion is taken,
 /// and this crate never reads a terminal.
@@ -107,12 +115,21 @@ impl Machine {
 
 /// Poses one artefact by link under `root`, and records it.
 ///
-/// **The order is the substance.** The pose refuses before it changes anything
-/// if the registry could not hold its trace, and the record is written after
-/// the machine has been changed — so a run interrupted between the two leaves a
-/// machine the transaction has already given back, and a registry that never
-/// heard of it.
-fn install(machine: &Machine, id: &str, root: &Path, address: &str, key: &str) -> Entry {
+/// **The order is the substance, and so is what happens between the two.** The
+/// pose refuses before it changes anything if the registry could not hold its
+/// trace. It then changes the machine, and only afterwards is the record
+/// written — and between those two the artefact is on the machine while nothing
+/// describes it. The transaction of the pose has **already given the machine
+/// back**; it succeeded. So a failure to record is compensated here, by
+/// replaying the very trace that was about to be recorded, and the run reports
+/// the failure rather than leaving behind something no removal could ever reach.
+fn install(
+    machine: &Machine,
+    id: &str,
+    root: &Path,
+    address: &str,
+    key: &str,
+) -> Result<Entry, RegistryError> {
     let store = machine.store(key);
     let posted = pose(
         BehaviourName::Link,
@@ -135,19 +152,45 @@ fn install(machine: &Machine, id: &str, root: &Path, address: &str, key: &str) -
         // under it. Recording the address alone would leave a later removal to
         // resolve it against whatever the environment names then.
         root: Address::new(root).expect("a UTF-8 root"),
-        address: Address::new(address).expect("a UTF-8 address"),
+        address: Address::new(Path::new(address)).expect("a UTF-8 address"),
         fingerprint: posted.fingerprint.to_string(),
         trace: posted.record,
     });
-    let outcome = transact(
+    let outcome = match transact(
         &machine.registry(),
         &[Mutation::Upsert(entry.clone())],
         &Granting,
         &SystemLiveness,
-    )
-    .expect("the record must be written");
+    ) {
+        Ok(outcome) => outcome,
+        Err(err) => {
+            take_back_unrecorded(machine, &entry);
+            return Err(err);
+        }
+    };
     assert!(matches!(outcome, Outcome::Committed { .. }));
-    entry
+    Ok(entry)
+}
+
+/// Takes back off what was posed and never recorded, by replaying the trace that
+/// was about to be written.
+///
+/// **Its referents are asked of the registry as it can still be read**, and a
+/// registry that cannot be read at all answers `Remaining`. The asymmetry is the
+/// one the count itself is built on: keeping a materialisation nobody designates
+/// wastes a file its owner can delete, and taking away one that is still
+/// designated leaves links pointing at nothing and the thing they pointed at
+/// gone.
+fn take_back_unrecorded(machine: &Machine, entry: &Entry) {
+    let name = BehaviourName::parse(entry.behaviour()).expect("the behaviour must resolve");
+    let trace = replay(name, entry.trace()).expect("the trace must read back");
+    let referents = match (trace.store(), machine.registry().read()) {
+        (Some(store), Ok(ledger)) => ledger.referents(store, entry.identity()),
+        (Some(_), Err(_)) => Referents::Remaining,
+        (None, _) => Referents::Last,
+    };
+    withdraw(name, &entry.at(), &trace, referents, &OnDisk)
+        .expect("what a run posed and could not record must be taken back off");
 }
 
 /// Takes one thing back off by replaying its recorded trace, and takes its
@@ -169,14 +212,16 @@ fn uninstall(machine: &Machine, id: &str) {
     let name = BehaviourName::parse(entry.behaviour()).expect("the behaviour must resolve");
     let trace = replay(name, entry.trace()).expect("the trace must read back");
     let referents = match trace.store() {
-        Some(store) => ledger.referents(store, entry.id()),
+        Some(store) => ledger.referents(store, entry.identity()),
         None => Referents::Last,
     };
 
     withdraw(name, &entry.at(), &trace, referents, &OnDisk).expect("the removal must succeed");
     let outcome = transact(
         &registry,
-        &[Mutation::Remove { id: id.to_string() }],
+        &[Mutation::Remove {
+            identity: entry.identity().clone(),
+        }],
         &Granting,
         &SystemLiveness,
     )
@@ -196,7 +241,8 @@ fn a4_a_pose_by_link_and_its_replayed_removal_leave_the_machine_as_it_was() {
         &machine.root(),
         "review.md",
         "acme-review-1.0",
-    );
+    )
+    .expect("the pose and its record must succeed");
 
     // THEN the address designates the shared store, and the store holds the
     // artefact once.
@@ -246,7 +292,8 @@ fn a5_the_record_carries_the_behaviour_the_version_and_the_fingerprint_of_what_w
         &machine.root(),
         "review.md",
         "acme-review-1.0",
-    );
+    )
+    .expect("the pose and its record must succeed");
 
     let ledger = machine.registry().read().expect("read the registry");
     let entry = &ledger.entries()[0];
@@ -296,7 +343,8 @@ fn a4_a_removal_replays_the_root_the_pose_recorded_and_not_the_one_in_force_now(
         &posed_under,
         "review.md",
         "acme-review-1.0",
-    );
+    )
+    .expect("the pose and its record must succeed");
     assert!(posed_under.join("review.md").exists());
 
     // WHEN the removal runs, with the other root in force.
@@ -328,14 +376,16 @@ fn a4_one_materialisation_serves_two_things_and_goes_with_the_last_of_them() {
         &machine.root(),
         "review.md",
         "acme-review-1.0",
-    );
+    )
+    .expect("the pose and its record must succeed");
     install(
         &machine,
         "acme/review-too",
         &machine.root(),
         "review-too.md",
         "acme-review-1.0",
-    );
+    )
+    .expect("the pose and its record must succeed");
     assert_eq!(
         fs::read_dir(machine.path.join("disk/store"))
             .expect("read the store")
@@ -383,7 +433,8 @@ fn guard_an_entry_whose_trace_cannot_be_read_counts_as_a_referent() {
         &machine.root(),
         "review.md",
         "acme-review-1.0",
-    );
+    )
+    .expect("the pose and its record must succeed");
 
     let registry = machine.registry();
     let document = fs::read_to_string(registry.path()).expect("read the registry");
@@ -395,9 +446,109 @@ fn guard_an_entry_whose_trace_cannot_be_read_counts_as_a_referent() {
     let ledger = registry.read().expect("read the registry");
 
     assert_eq!(
-        ledger.referents(&store, "acme/review"),
+        ledger.referents(&store, &acme("acme/review")),
         Referents::Remaining,
         "an entry whose trace does not read back must not be counted as designating nothing"
+    );
+}
+
+#[test]
+fn a4_a_pose_whose_record_could_not_be_written_leaves_nothing_on_the_machine() {
+    // GIVEN a machine whose registry cannot be written — here its exclusion is
+    // occupied by a directory, and a full disk, a permission or a lock held
+    // elsewhere put the run in the same place.
+    //
+    // This is the window A4 names literally: the pose has landed and the record
+    // has not. The transaction of the pose gave nothing back, because it did not
+    // fail — it succeeded, and what it posed is on the machine described by
+    // nothing. Left there, it is unremovable for good: the removal replays a
+    // trace, and no trace was ever recorded.
+    let machine = Machine::new("registry-unwritable");
+    let before = machine.snapshot();
+    fs::create_dir_all(machine.path.join("state/registry.lock"))
+        .expect("occupy the exclusion of the registry");
+
+    // WHEN the run poses and then fails to record.
+    let failure = install(
+        &machine,
+        "acme/review",
+        &machine.root(),
+        "review.md",
+        "acme-review-1.0",
+    )
+    .expect_err("a run that could not record reported a pose");
+
+    // THEN the failure names the registry, and the machine carries nothing the
+    // registry does not describe.
+    assert!(
+        failure.to_string().contains("registry"),
+        "the failure must name what could not be written: {failure}"
+    );
+    assert_eq!(
+        machine.snapshot(),
+        before,
+        "the artefact stayed on the machine with nothing describing it — no removal replaying a \
+         trace can ever reach it again"
+    );
+}
+
+#[test]
+fn a4_a_store_entry_a_line_this_build_cannot_read_may_designate_is_not_taken_away() {
+    // GIVEN two things posed out of one materialisation, and a registry one of
+    // whose lines has stopped reading — the state A1 grants its tolerance for,
+    // and which is kept in the file **because** it describes something posed.
+    //
+    // A count taken over the lines that read answers "nothing else designates
+    // it" and takes the materialisation away. What the illegible line described
+    // then designates nothing, its bytes have left the machine, and no error was
+    // reported.
+    let machine = Machine::new("illegible-referent");
+    let store = machine.store("acme-review-1.0");
+    install(
+        &machine,
+        "acme/review",
+        &machine.root(),
+        "review.md",
+        "acme-review-1.0",
+    )
+    .expect("the pose and its record must succeed");
+    install(
+        &machine,
+        "acme/review-too",
+        &machine.root(),
+        "review-too.md",
+        "acme-review-1.0",
+    )
+    .expect("the pose and its record must succeed");
+
+    let registry = machine.registry();
+    let document = fs::read_to_string(registry.path()).expect("read the registry");
+    fs::write(
+        registry.path(),
+        document.replace("acme/review-too", "acme/review\\qtoo"),
+    )
+    .expect("write a line carrying an escape this build does not know");
+    let ledger = registry.read().expect("read the registry");
+    assert_eq!(ledger.entries().len(), 1);
+    assert_eq!(
+        ledger.unjudgeable().len(),
+        1,
+        "the fixture must be a line kept and not read, which is what the count has to reckon with"
+    );
+
+    // WHEN the one thing this build can still read is taken back off.
+    uninstall(&machine, "acme/review");
+
+    // THEN the materialisation is still there, and what the illegible line
+    // describes still resolves.
+    assert!(
+        store.exists(),
+        "the materialisation was taken away while a line this build cannot read may still \
+         designate it"
+    );
+    assert_eq!(
+        fs::read_to_string(machine.root().join("review-too.md")).expect("the other link resolves"),
+        ARTEFACT
     );
 }
 
@@ -414,9 +565,13 @@ fn guard_a_store_entry_nothing_else_designates_is_the_last_referent() {
         &machine.root(),
         "review.md",
         "acme-review-1.0",
-    );
+    )
+    .expect("the pose and its record must succeed");
 
     let ledger = machine.registry().read().expect("read the registry");
 
-    assert_eq!(ledger.referents(&store, "acme/review"), Referents::Last);
+    assert_eq!(
+        ledger.referents(&store, &acme("acme/review")),
+        Referents::Last
+    );
 }

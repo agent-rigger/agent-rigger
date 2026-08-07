@@ -5,7 +5,17 @@
 //!
 //! Before a single step runs, the transaction **seizes** the state of every
 //! address the steps are about to change. If a step fails, it gives every one
-//! of those states back, in the reverse order they were changed.
+//! of those states back, in the reverse order they were changed — and gives
+//! nothing back at an address that still carries what was seized, since taking
+//! such an address away in order to write it again is a destruction of
+//! somebody else's completed pose rather than a restoration of this one.
+//!
+//! **Every address, including the one a step reaches through a link.** A
+//! conditional write renames onto the document a link designates and never onto
+//! the link, so the state such a step changes is the document's; seizing the
+//! link alone would give back a link nothing had changed while the owner's
+//! document kept what a failed run wrote into it, under a failure saying the
+//! machine had been given back.
 //!
 //! That is not a compensation written per kind of operation, and the difference
 //! is the failure it covers. A compensation table knows how to undo "a write to
@@ -46,7 +56,7 @@ use rigger_plan::{
     Fragment, Referents, Seized, Subject, Trace,
 };
 
-use crate::txn::{stage, Fingerprint, TxnError};
+use crate::txn::{designated_document, stage, Fingerprint, TxnError};
 
 /// Why one step did not happen. None of these leaves a step half applied.
 #[derive(Debug)]
@@ -171,7 +181,7 @@ impl Steps for OnDisk {
         match effect {
             Effect::Create { address, contents } => {
                 refuse_if_present(address)?;
-                write_new(address, contents)
+                put(address, contents)
             }
             Effect::Write {
                 address,
@@ -184,7 +194,7 @@ impl Steps for OnDisk {
                     .map_err(StepError::Txn)
             }
             Effect::Materialise { address, contents } => match present(address)? {
-                None => write_new(address, contents),
+                None => put(address, contents),
                 Some(Seized::Document { contents: held, .. }) if held == *contents => Ok(()),
                 Some(_) => Err(StepError::StoreConflict {
                     address: address.clone(),
@@ -225,23 +235,74 @@ impl Steps for OnDisk {
                     }),
                 }
             }
-            Effect::Remove { address } => take_away(address),
-            Effect::Restore { seized } => match seized {
-                Seized::Absent { address } => take_away(address),
-                Seized::Document { address, contents } => {
-                    take_away(address)?;
-                    write_new(address, contents)
+            Effect::Remove { address, posed } => match present(address)? {
+                None => Ok(()),
+                Some(Seized::Document { contents, .. })
+                    if Digest::of(contents.as_bytes()) == *posed =>
+                {
+                    take_away(address)
                 }
-                Seized::Link { address, to } => {
-                    take_away(address)?;
-                    require_directory(address)?;
-                    make_link(to, address).map_err(|detail| StepError::Io {
-                        address: address.clone(),
-                        detail,
-                    })
-                }
+                Some(_) => Err(StepError::NotAsRecorded {
+                    address: address.clone(),
+                    recorded: format!("the artefact materialised under fingerprint {posed}"),
+                }),
             },
+            Effect::Restore { seized } => restore(seized),
         }
+    }
+}
+
+/// Gives an address back the state a capture seized — and does nothing at all
+/// when that state is what is there already.
+///
+/// **The "does nothing" is the substance, not an economy.** A capture seizes
+/// every address the steps are about to change, and some of them turn out
+/// unchanged: a pose of an artefact already materialised leaves the store entry
+/// exactly as it was, and that entry is in the capture because a step names it.
+/// Giving such an address back by taking it away and writing it again removes,
+/// for an instant, a materialisation that a pose completed long ago still
+/// designates — and destroys it outright if the writing then fails, which is the
+/// likely case, the run having already failed once. What the failure would name
+/// is the addresses of the run that failed, never the one it destroyed.
+fn restore(seized: &Seized) -> Result<(), StepError> {
+    if still_as_seized(seized) {
+        return Ok(());
+    }
+    match seized {
+        Seized::Absent { address } => take_away(address),
+        // **Through the rename alone.** Taking the address away first and
+        // writing it again opens an instant in which nothing is there, and
+        // leaves nothing at all if the writing then fails — the failure of a
+        // restoration being, by definition, the likely case here.
+        //
+        // No test in this repository goes red on that second form: with one run
+        // at a time it produces the same file, and the difference is a window.
+        // The property is held by the choice of primitive, as the exchange of
+        // the lock is, and not by an assertion.
+        Seized::Document { address, contents } => put(address, contents),
+        Seized::Link { address, to } => {
+            take_away(address)?;
+            require_directory(address)?;
+            make_link(to, address).map_err(|detail| StepError::Io {
+                address: address.clone(),
+                detail,
+            })
+        }
+    }
+}
+
+/// Whether what is at the seized address is still the state that was seized.
+///
+/// **An address this cannot read is not "still as seized".** A state that no
+/// longer decodes is a state that has changed as far as anything here can tell,
+/// so the restoration is carried out rather than skipped: the error of giving
+/// back what was already there is a rewrite, and the error of skipping is a
+/// machine left as the failed run made it.
+fn still_as_seized(seized: &Seized) -> bool {
+    match present(seized.address()) {
+        Ok(None) => matches!(seized, Seized::Absent { .. }),
+        Ok(Some(now)) => now == *seized,
+        Err(_) => false,
     }
 }
 
@@ -250,6 +311,10 @@ impl Steps for OnDisk {
 /// **The link itself, never what it designates.** Following it would report the
 /// state of the store entry as the state of the address, and a rollback would
 /// then give back the wrong thing at both.
+///
+/// What a step writing *through* a link changes is seized as well, and as a
+/// second address rather than instead of this one — see [`designated`], and the
+/// account at the head of this module.
 fn present(address: &Path) -> Result<Option<Seized>, StepError> {
     let metadata = match fs::symlink_metadata(address) {
         Ok(metadata) => metadata,
@@ -312,9 +377,14 @@ fn require_directory(address: &Path) -> Result<(), StepError> {
     })
 }
 
-/// Writes `contents` at an address nothing is at, through a temporary in the
-/// same directory and a rename — so no reader ever sees half of it.
-fn write_new(address: &Path, contents: &str) -> Result<(), StepError> {
+/// Puts `contents` at `address`, through a temporary in the same directory and a
+/// rename — so no reader ever sees half of it, and there is no instant in which
+/// nothing is there.
+///
+/// The rename replaces whatever the address carries. Callers that must not
+/// replace anything say so themselves, before calling: [`Effect::Create`] refuses
+/// on an occupied address, and it is a different promise from this one.
+fn put(address: &Path, contents: &str) -> Result<(), StepError> {
     require_directory(address)?;
     let directory = address.parent().unwrap_or_else(|| Path::new("."));
     let name = address
@@ -566,8 +636,26 @@ pub fn carry(
         }
     }
 
-    let mut seized = Vec::with_capacity(named.len());
-    for address in &named {
+    // **What a step reaches through a link is seized too.** A conditional write
+    // renames onto the document a link designates and never onto the link, which
+    // is what keeps a settings file linked into a versioned configuration
+    // repository from being replaced by an ordinary file. So the state such a
+    // step changes is the document's: seizing the link alone would give back a
+    // link nothing had changed and leave the owner's document carrying what the
+    // failed run wrote into it, under a failure claiming the machine was given
+    // back.
+    let mut seizing = named.clone();
+    for effect in effects {
+        if let Effect::Write { address, .. } = effect {
+            let document = designated(address).map_err(|detail| PoseError::NotSeized { detail })?;
+            if !seizing.contains(&document) {
+                seizing.push(document);
+            }
+        }
+    }
+
+    let mut seized = Vec::with_capacity(seizing.len());
+    for address in &seizing {
         let state = present(address)
             .map_err(|detail| PoseError::NotSeized { detail })?
             .unwrap_or_else(|| Seized::Absent {
@@ -595,6 +683,25 @@ pub fn carry(
         return Err(PoseError::RolledBack { step, failure });
     }
     Ok(())
+}
+
+/// The document a write at `address` actually replaces: the address itself, or
+/// what it designates when it is a symbolic link.
+///
+/// It is the same walk the staging does, and deliberately the same one: two
+/// answers to "which file does this write land in" would drift, and the day they
+/// did, the capture would seize one file and the write replace another.
+///
+/// An address nothing is at designates itself. There is nothing there to seize,
+/// and a refusal here would make a pose onto an empty address impossible.
+fn designated(address: &Path) -> Result<PathBuf, StepError> {
+    match designated_document(address) {
+        Ok(document) => Ok(document),
+        Err(TxnError::Read { detail, .. }) if detail.kind() == io::ErrorKind::NotFound => {
+            Ok(address.to_path_buf())
+        }
+        Err(err) => Err(StepError::Txn(err)),
+    }
 }
 
 /// The document at `address`, or `None` when there is nothing there.

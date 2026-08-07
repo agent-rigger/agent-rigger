@@ -50,7 +50,7 @@ use std::path::{Path, PathBuf};
 
 use rigger_apply::{Held, LivenessProbe, Lock};
 
-use crate::ledger::{Entry, Ledger, RegistryError};
+use crate::ledger::{Entry, Identity, Ledger, RegistryError};
 
 /// A change one run makes to the registry.
 ///
@@ -60,12 +60,15 @@ use crate::ledger::{Entry, Ledger, RegistryError};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Mutation {
     /// Record this thing as posed, replacing any record under the same
-    /// identifier.
+    /// [`Identity`].
     Upsert(Entry),
     /// Take the record of this thing out.
     Remove {
-        /// The identifier of the thing.
-        id: String,
+        /// What names it: the catalogue it came from **and** what that catalogue
+        /// called it. Taking one out by name alone would take another
+        /// catalogue's entry of that name with it, and nothing else describes
+        /// what that one posed.
+        identity: Identity,
     },
 }
 
@@ -78,7 +81,7 @@ pub fn replay(mutations: &[Mutation], mut ledger: Ledger) -> Ledger {
     for mutation in mutations {
         match mutation {
             Mutation::Upsert(entry) => ledger.upsert(entry.clone()),
-            Mutation::Remove { id } => ledger.remove(id),
+            Mutation::Remove { identity } => ledger.remove(identity),
         }
     }
     ledger

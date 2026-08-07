@@ -302,7 +302,7 @@ const MAX_LINKS: usize = 40;
 /// directory that happened to be a link changes nothing about the document
 /// designated, and resolving it would make refusals name a path the owner of the
 /// document never wrote.
-fn designated_document(target: &Path) -> Result<PathBuf, TxnError> {
+pub(crate) fn designated_document(target: &Path) -> Result<PathBuf, TxnError> {
     let mut path = target.to_path_buf();
     for _ in 0..MAX_LINKS {
         let metadata = fs::symlink_metadata(&path).map_err(|detail| TxnError::Read {

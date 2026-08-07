@@ -35,6 +35,12 @@ fn store() -> PathBuf {
     PathBuf::from("/home/someone/.rigger/store/acme-review-1.0")
 }
 
+/// The fingerprint of the bytes the scenarios materialise — what the removal of
+/// the store entry is conditioned on.
+fn materialised() -> Digest {
+    Digest::of(ARTEFACT.as_bytes())
+}
+
 fn artefact(placement: Placement) -> Fragment {
     Fragment::Artefact {
         store: store(),
@@ -81,6 +87,7 @@ fn guard_a_pose_materialises_the_artefact_once_and_then_designates_it() {
         Trace::Link {
             store: store(),
             placement: Placement::Link,
+            posed: materialised(),
         }
     );
 }
@@ -112,6 +119,7 @@ fn guard_a_pose_by_copy_records_that_it_was_a_copy_and_still_materialises_the_st
         Trace::Link {
             store: store(),
             placement: Placement::Copy,
+            posed: materialised(),
         },
         "the trace must say which of the two was done — without it a removal facing an ordinary \
          file cannot tell a copy this product posed from a document somebody wrote, and the only \
@@ -130,6 +138,7 @@ fn guard_the_two_placements_are_undone_by_two_different_conditions() {
             &Trace::Link {
                 store: store(),
                 placement: Placement::Link,
+                posed: materialised(),
             },
             Referents::Remaining,
         )
@@ -140,6 +149,7 @@ fn guard_the_two_placements_are_undone_by_two_different_conditions() {
             &Trace::Link {
                 store: store(),
                 placement: Placement::Copy,
+                posed: materialised(),
             },
             Referents::Remaining,
         )
@@ -167,6 +177,7 @@ fn a4_the_store_entry_is_taken_away_at_the_last_referent_and_never_before() {
     let trace = Trace::Link {
         store: store(),
         placement: Placement::Link,
+        posed: materialised(),
     };
 
     let while_shared = link()
@@ -194,7 +205,10 @@ fn a4_the_store_entry_is_taken_away_at_the_last_referent_and_never_before() {
             // deleting as soon as a count reached zero would leave a rollback
             // with nothing to give back, and no test added afterwards recovers
             // that.
-            Effect::Remove { address: store() },
+            Effect::Remove {
+                address: store(),
+                posed: materialised(),
+            },
         ],
         "the address must be taken back before the store entry it designated"
     );
@@ -215,6 +229,7 @@ fn guard_a_removal_is_computed_from_the_trace_and_from_nothing_that_is_on_the_ma
             &Trace::Link {
                 store: store(),
                 placement: Placement::Copy,
+                posed: materialised(),
             },
             Referents::Last,
         )
@@ -241,7 +256,11 @@ fn a5_a_recorded_trace_reads_back_as_the_one_that_was_written() {
     assert_eq!(read_back, posed.trace);
     assert_eq!(
         fields,
-        vec![store().display().to_string(), "copy".to_string()]
+        vec![
+            store().display().to_string(),
+            "copy".to_string(),
+            materialised().to_string(),
+        ]
     );
 }
 
@@ -249,7 +268,11 @@ fn a5_a_recorded_trace_reads_back_as_the_one_that_was_written() {
 fn a5_a_placement_this_build_did_not_write_is_refused_rather_than_guessed() {
     let refusal = replay(
         BehaviourName::Link,
-        &[store().display().to_string(), "hardlink".to_string()],
+        &[
+            store().display().to_string(),
+            "hardlink".to_string(),
+            materialised().to_string(),
+        ],
     )
     .expect_err("a placement outside the two was read as one of them");
 
@@ -267,13 +290,70 @@ fn a5_a_placement_this_build_did_not_write_is_refused_rather_than_guessed() {
 
 #[test]
 fn a5_a_trace_of_the_wrong_arity_is_refused_rather_than_padded() {
-    let refusal = replay(BehaviourName::Link, &[store().display().to_string()])
-        .expect_err("a trace missing its placement was read all the same");
+    let refusal = replay(
+        BehaviourName::Link,
+        &[store().display().to_string(), "link".to_string()],
+    )
+    .expect_err("a trace missing its fingerprint was read all the same");
 
     assert!(
         matches!(refusal, BehaviourError::TraceUnreadable { .. }),
         "a missing field must be a refusal and never a default: a guessed placement undoes \
          something other than what was posed"
+    );
+}
+
+#[test]
+fn a5_a_fingerprint_this_build_did_not_write_is_refused_rather_than_guessed() {
+    // The removal of the store entry is conditioned on this field. Read
+    // loosely — padded, or taken for a default — it would condition the removal
+    // on nothing, and the bytes an owner wrote through the link would be taken
+    // away as if they were the ones the product materialised.
+    let refusal = replay(
+        BehaviourName::Link,
+        &[
+            store().display().to_string(),
+            "link".to_string(),
+            "not a fingerprint".to_string(),
+        ],
+    )
+    .expect_err("a field that is not a fingerprint was read as one");
+
+    match &refusal {
+        BehaviourError::TraceUnreadable { behaviour, reason } => {
+            assert_eq!(*behaviour, BehaviourName::Link);
+            assert!(
+                reason.contains("not a fingerprint"),
+                "the refusal must name what it could not read: {reason}"
+            );
+        }
+        other => panic!("expected an unreadable trace, got {other}"),
+    }
+}
+
+#[test]
+fn guard_the_removal_of_the_store_entry_carries_the_fingerprint_the_pose_recorded() {
+    // The pair the two refusals above need: a `replay` that refused every
+    // fingerprint would pass them both, and no removal would ever compute the
+    // step that takes a store entry away.
+    let posed_now = link()
+        .pose(subject(&address()), &artefact(Placement::Link))
+        .expect("the pose must succeed");
+    let fields = record(&posed_now.trace).expect("a link trace must be recordable");
+    let read_back = replay(BehaviourName::Link, &fields).expect("it must read back");
+
+    let undone = link()
+        .undo(subject(&address()), &read_back, Referents::Last)
+        .expect("the removal must be computable");
+
+    assert_eq!(
+        undone.effects.last(),
+        Some(&Effect::Remove {
+            address: store(),
+            posed: posed_now.fingerprint,
+        }),
+        "the step that takes the materialisation away must carry the fingerprint of what was \
+         materialised, so that bytes somebody else wrote through the link are left alone"
     );
 }
 

@@ -39,10 +39,12 @@ fn directory(name: &str) -> PathBuf {
 }
 
 /// One entry line, as the format writes it: the seven fixed fields, then the
-/// trace of the behaviour that posed.
+/// trace of the behaviour that posed — a store entry, a placement and the
+/// fingerprint of what was materialised.
 fn entry_line(id: &str) -> String {
     format!(
-        "entry\t{id}\tacme\tlink\t1.4\t/home/someone\t{id}.json\t0123456789abcdef\t/store/{id}\tlink"
+        "entry\t{id}\tacme\tlink\t1.4\t/home/someone\t{id}.json\t0123456789abcdef\t\
+         /store/{id}\tlink\t0123456789abcdef"
     )
 }
 
@@ -65,10 +67,14 @@ fn posing(id: &str) -> Mutation {
         provenance: "acme".to_string(),
         behaviour: "link".to_string(),
         posed_by: "1.5".to_string(),
-        root: Address::new("/home/someone").expect("a UTF-8 address"),
-        address: Address::new(format!("{id}.json")).expect("a UTF-8 address"),
+        root: Address::new(Path::new("/home/someone")).expect("a UTF-8 address"),
+        address: Address::new(Path::new(&format!("{id}.json"))).expect("a UTF-8 address"),
         fingerprint: "0123456789abcdef".to_string(),
-        trace: vec![format!("/store/{id}"), "link".to_string()],
+        trace: vec![
+            format!("/store/{id}"),
+            "link".to_string(),
+            "0123456789abcdef".to_string(),
+        ],
     }))
 }
 
