@@ -238,6 +238,28 @@ fn c3_a_removal_that_destroys_a_value_outside_the_trace_fails_on_the_output() {
     );
 }
 
+/// A write that does not touch the source at all destroys no value and
+/// disturbs no neighbour, so neither of those two post-conditions can catch
+/// it — the only property left that tells this apart from a real removal is
+/// reading the passage back and finding it still there.
+#[test]
+fn c3_a_removal_whose_write_left_the_passage_recognised_is_reported_still_present() {
+    let source = document(Wrapping::LineComment);
+
+    let error = remove_by(&source, &trace(), |source, _bounds| source.to_string())
+        .expect_err("a write that leaves the passage recognised must not be reported as removed");
+
+    match &error {
+        RemoveError::StillPresent { marker: found, .. } => assert_eq!(*found, marker()),
+        other => panic!("the refusal must report the passage as still present, got {other:?}"),
+    }
+    let message = error.to_string();
+    assert!(
+        message.contains(ADDRESS),
+        "the refusal must name the document: {message}"
+    );
+}
+
 #[test]
 fn c3_the_removal_failure_is_not_deduced_from_the_input_checks() {
     let source = document(Wrapping::LineComment);
@@ -631,6 +653,62 @@ fn c4_a_removal_does_not_take_the_delimiter_of_another_catalogue() {
     );
 }
 
+/// `marker.rs:57` promises that **both** writes compare the delimiters of the
+/// other markers, before and after — this is the `place` half of that promise,
+/// symmetric to `c4_a_removal_does_not_take_the_delimiter_of_another_catalogue`
+/// just above. An update rewrites its own bounds exactly like a removal
+/// excises them, so the same interleaving that takes a neighbour's opening
+/// delimiter with it on removal takes it with it here too.
+#[test]
+fn c4_a_pose_does_not_take_the_delimiter_of_another_catalogue() {
+    let (first, second) = (marker(), homonym());
+    let traced = [first.clone(), second.clone()];
+
+    // The same interleaving as the removal counterpart: the second catalogue's
+    // opening delimiter sits inside the bounds an update to the first would
+    // rewrite.
+    let mut source = String::from("docs/a.md\n");
+    source.push_str(&wrap(Wrapping::LineComment, &first.open()));
+    source.push_str("acme.md\n");
+    source.push_str(&wrap(Wrapping::LineComment, &second.open()));
+    source.push_str(&wrap(Wrapping::LineComment, &first.close()));
+    source.push_str("zenith.md\n");
+    source.push_str(&wrap(Wrapping::LineComment, &second.close()));
+
+    assert_eq!(
+        read(&source, ADDRESS, &second).recognition.classification(),
+        Classification::Unique,
+        "the second block must be whole before the pose, or this measures nothing"
+    );
+
+    // An update to the first block, rewriting its interior to the same value
+    // it already carries — so that no value post-condition fires first, and
+    // the neighbour check is the one measured here.
+    let error = place(
+        &source,
+        &Pose {
+            marker: &first,
+            address: ADDRESS,
+            roots: &["/home/u/.config/rig"],
+            traced: &traced,
+            posed: Some(&trace_of(first.clone(), "acme.md")),
+            body: &["acme.md"],
+            wrapping: Wrapping::LineComment,
+        },
+    )
+    .expect_err("the bounds straddle the opening delimiter of the second catalogue");
+
+    match &error {
+        PlaceError::NeighbourBroken { neighbour, .. } => assert_eq!(*neighbour, second),
+        other => panic!("the refusal must name the neighbour it would have broken, got {other:?}"),
+    }
+    let message = error.to_string();
+    assert!(
+        message.contains(HOMONYM_PROVENANCE),
+        "the refusal must name the block it would have broken: {message}"
+    );
+}
+
 /// The two paths must judge the same line the same way. Removal calls a line
 /// the owner added inside the bounds a value of the user and refuses; the
 /// update path of a pose was overwriting it without looking.
@@ -685,6 +763,27 @@ fn c4_an_update_does_not_destroy_what_the_owner_wrote_inside_the_bounds() {
     )
     .expect("rewriting the interior the product wrote is what an update is");
     assert!(placed.rendered.contains("docs/added.md"));
+}
+
+/// No fixture in this file writes a closing delimiter before its opening one
+/// — every document above is built by [`document`], which always emits the
+/// pair in order. This is the fixture that exercises the branch of `classify`
+/// which refuses that inversion.
+#[test]
+fn c3_a_document_whose_closing_delimiter_precedes_its_opening_is_unbalanced() {
+    let marker = marker();
+    let mut source = String::from("docs/a.md\n");
+    source.push_str(&wrap(Wrapping::LineComment, &marker.close()));
+    source.push_str("docs/posed.md\n");
+    source.push_str(&wrap(Wrapping::LineComment, &marker.open()));
+    source.push_str("docs/b.md\n");
+
+    let reading = read(&source, ADDRESS, &marker);
+    assert_eq!(
+        reading.recognition.classification(),
+        Classification::Unbalanced,
+        "a closing delimiter that precedes the opening one must not be read as a bounded passage"
+    );
 }
 
 #[test]
