@@ -17,6 +17,22 @@
 //! that what the edit changes is a **contiguous** fragment, that is, that the
 //! document was not re-emitted whole.
 //!
+//! **The inverse still applies after its owner reindents the document**: the
+//! same edit is written, the **owner** then reindents what came out, and
+//! undoing must give his document back as he reindented it. This is the
+//! property that separates a trace addressed by the structure of the grammar
+//! from one addressed by position, and the one above cannot separate them: it
+//! hands `invert` the very bytes `apply` produced, so a recorded offset, line
+//! number or span passes it intact.
+//!
+//! **Every property accounts for every document it is given.** A property that
+//! cannot bear on a document files it as out of scope **with its reason** — see
+//! [`OutOfScope`] and [`Scope`] — and a run that files a document under
+//! neither goes red. What that buys is the difference between "looked at it and
+//! found nothing" and "never looked at it", which this crate treats as an
+//! inverted meaning rather than an imprecision of display: it is the same
+//! inversion as a removal reporting success on a thing it never found.
+//!
 //! **What that property does not exercise, and where it is held.** The edit
 //! used writes a key that no document of the corpus carries, so it only takes
 //! the **add** branch; the **replace** branch is not exercised here, and cannot
@@ -47,11 +63,13 @@
 //! recorded as a characterization test in `tests/known_limits.rs`, which bears
 //! on the **library**, where this file bears on the crate.
 
+use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use rigger_grammar::{
-    Applied, Capabilities, Edit, Grammar, GrammarError, Inverse, Jsonc, MergeAdmission, Toml, Value,
+    Applied, Capabilities, Edit, Grammar, GrammarError, Inverse, Jsonc, MergeAdmission,
+    MergeRefusal, Toml, Value,
 };
 
 /// The prefix that makes a document unreadable in both grammars. It comes from
@@ -164,6 +182,194 @@ fn check_round_trip(path: &Path) -> Result<(), String> {
     compare_byte_identical(path, &input, output.as_bytes())
 }
 
+/// Why a conformance property has **no object** on a corpus document.
+///
+/// A property that cannot bear on a document has to produce a named finding.
+/// The alternative is a bare `continue`, whose report cannot be told apart from
+/// a check that ran and found nothing — the same inversion of meaning as a
+/// removal reporting success on a thing it never found.
+///
+/// Neither variant can be written by hand where a document is passed over: one
+/// is built from the corpus directory the document was put into, the other from
+/// the refusal the capability table publishes. A sentence typed next to a
+/// `continue` keeps reading true long after the reason it names has changed; a
+/// reason carried out of the place the decision is taken cannot.
+#[derive(Debug)]
+enum OutOfScope {
+    /// The grammar does not return the bytes of this document, which is the
+    /// single reason a document is kept in the limits corpus. A property
+    /// demanding byte identity has nothing to establish on it; the opposite
+    /// direction is what `guard_the_limits_corpus_agrees_with_the_capability_table`
+    /// establishes, against the capability table rather than a hand-kept list.
+    GrammarDoesNotReturnItsBytes {
+        /// The grammar that reads the document, named — a report saying only
+        /// "out of scope" sends its reader looking.
+        grammar: &'static str,
+    },
+    /// The capability table refuses this grammar the `merge` behaviour. A
+    /// grammar the product has decided not to write has no `apply` at all, so a
+    /// property bearing on what `apply` produces has literally no object on any
+    /// of its documents: passing them over is right, keeping quiet about it is
+    /// not. The refusal is carried whole — it names the grammar, the form of the
+    /// behaviour, and every reason, the categorical one included.
+    MergeRefused(MergeRefusal),
+}
+
+impl fmt::Display for OutOfScope {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::GrammarDoesNotReturnItsBytes { grammar } => write!(
+                f,
+                "grammar `{grammar}` does not return the bytes of this document — that is why it \
+                 is kept out of the preserved corpus, and byte identity is not what is asked of it"
+            ),
+            Self::MergeRefused(refusal) => write!(f, "{refusal}"),
+        }
+    }
+}
+
+/// A corpus document a property bears on, read once and carried whole so that
+/// the property does not read it a second time under another name.
+struct Document {
+    path: PathBuf,
+    grammar: CorpusGrammar,
+    bytes: Vec<u8>,
+    text: String,
+}
+
+/// The accounting of one conformance property over the documents it was given:
+/// what it bore on, what it had no object on and why, and what failed.
+///
+/// [`Scope::conclude`] is what makes that accounting mechanical instead of a
+/// matter of care — it refuses to end unless every document handed to the
+/// property was filed as one or the other. A `continue` added later that files
+/// nothing turns the property red rather than shrinking it in silence, which is
+/// the failure this file was carrying: a corpus document wired to one property
+/// out of four, and nothing anywhere saying so.
+struct Scope {
+    property: &'static str,
+    borne: Vec<PathBuf>,
+    out_of_scope: Vec<(PathBuf, OutOfScope)>,
+    failures: Vec<String>,
+}
+
+impl Scope {
+    fn new(property: &'static str) -> Self {
+        Self {
+            property,
+            borne: Vec::new(),
+            out_of_scope: Vec::new(),
+            failures: Vec::new(),
+        }
+    }
+
+    /// The property bore on this document — whatever it then concluded.
+    fn borne(&mut self, path: &Path) {
+        self.borne.push(path.to_path_buf());
+    }
+
+    /// The property has no object on this document, for this reason.
+    fn out_of_scope(&mut self, path: &Path, reason: OutOfScope) {
+        self.out_of_scope.push((path.to_path_buf(), reason));
+    }
+
+    fn fail(&mut self, message: String) {
+        self.failures.push(message);
+    }
+
+    /// What was passed over, one line per document, reasons included. It is
+    /// printed with every failure of the property: a reader looking at a red run
+    /// has to be able to see what was **not** measured, which is exactly the
+    /// information a bare `continue` withholds.
+    fn out_of_scope_report(&self) -> String {
+        if self.out_of_scope.is_empty() {
+            return "  (none)".to_string();
+        }
+        self.out_of_scope
+            .iter()
+            .map(|(path, reason)| format!("  {} — {reason}", path.display()))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// Ends the property: every document accounted for, at least one borne, no
+    /// failure.
+    fn conclude(self, documents: &[PathBuf]) {
+        assert!(
+            self.failures.is_empty(),
+            "{}: {} failure(s):\n\n{}\n\ndocuments this property had no object on:\n{}",
+            self.property,
+            self.failures.len(),
+            self.failures.join("\n\n"),
+            self.out_of_scope_report()
+        );
+
+        let unaccounted: Vec<String> = documents
+            .iter()
+            .filter(|path| {
+                !self.borne.contains(path)
+                    && !self.out_of_scope.iter().any(|(filed, _)| filed == *path)
+            })
+            .map(|path| format!("  {}", path.display()))
+            .collect();
+        assert!(
+            unaccounted.is_empty(),
+            "{}: {} document(s) neither borne nor named out of scope — they were passed over in \
+             silence, which reads from the report exactly like a check that found nothing:\n{}",
+            self.property,
+            unaccounted.len(),
+            unaccounted.join("\n")
+        );
+
+        assert!(
+            !self.borne.is_empty(),
+            "{}: the property bore on no document at all — it would establish nothing while \
+             reporting green. Documents it had no object on:\n{}",
+            self.property,
+            self.out_of_scope_report()
+        );
+    }
+}
+
+/// The documents a property about **writing** can bear on, filed as it goes.
+///
+/// A document whose grammar the capability table refuses the `merge` behaviour
+/// is put out of scope carrying that refusal — never dropped, and never with a
+/// reason invented here. A document that cannot be routed or cannot be read is a
+/// **failure** and not a skip: the property is silent about it in neither
+/// direction.
+fn documents_admitted_to_merge(documents: &[PathBuf], scope: &mut Scope) -> Vec<Document> {
+    let mut admitted = Vec::new();
+    for path in documents {
+        let grammar = match CorpusGrammar::of(path) {
+            Ok(grammar) => grammar,
+            Err(message) => {
+                scope.borne(path);
+                scope.fail(message);
+                continue;
+            }
+        };
+        match grammar.capabilities().merge_by_keys() {
+            MergeAdmission::Refused(refusal) => {
+                scope.out_of_scope(path, OutOfScope::MergeRefused(refusal.clone()));
+            }
+            MergeAdmission::Admitted => {
+                scope.borne(path);
+                match read_utf8(path) {
+                    Err(message) => scope.fail(message),
+                    Ok((bytes, text)) => admitted.push(Document {
+                        path: path.clone(),
+                        grammar,
+                        bytes,
+                        text,
+                    }),
+                }
+            }
+        }
+    }
+    admitted
+}
+
 fn corpus_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/corpus")
 }
@@ -211,21 +417,39 @@ fn c1_a_round_trip_without_edit_is_byte_identical() {
         corpus_dir().display()
     );
 
+    // The property is offered **every** document of the repository, the limits
+    // corpus included, and names the ones it has no object on instead of
+    // iterating a list that quietly excludes them. Byte identity is not what is
+    // asked of a document kept there — that is the definition of the place — but
+    // "not asked" has to be said, or the report reads as though the whole
+    // repository had been returned to the byte.
+    //
     // Every document is checked even if an earlier one failed: one failure must
     // not hide the following ones in the run report.
-    let failures: Vec<String> = entries
-        .iter()
-        .filter_map(|path| check_round_trip(path).err())
-        .collect();
-
-    if !failures.is_empty() {
-        panic!(
-            "{} document(s) out of {} not byte-identical after a round trip with no edit:\n\n{}",
-            failures.len(),
-            entries.len(),
-            failures.join("\n\n")
-        );
+    let documents = all_documents();
+    let mut scope = Scope::new("a round trip with no edit returns the bytes");
+    for path in &documents {
+        if path.starts_with(corpus_dir()) {
+            scope.borne(path);
+            if let Err(message) = check_round_trip(path) {
+                scope.fail(message);
+            }
+            continue;
+        }
+        match CorpusGrammar::of(path) {
+            Ok(grammar) => scope.out_of_scope(
+                path,
+                OutOfScope::GrammarDoesNotReturnItsBytes {
+                    grammar: grammar.capabilities().grammar(),
+                },
+            ),
+            Err(message) => {
+                scope.borne(path);
+                scope.fail(message);
+            }
+        }
     }
+    scope.conclude(&documents);
 }
 
 /// Second common property: a document the grammar cannot read produces a
@@ -291,39 +515,37 @@ fn guard_a_malformed_document_is_refused_by_a_grammar_that_names_itself() {
 /// The edit used is the same for all of them — a key at the root, under a name
 /// no document carries — because an edit chosen document by document would hand
 /// the author of a grammar control over what they are judged on.
+///
+/// **A grammar the table refuses is passed over, and said so.** It has no
+/// `apply`, so this property has literally no object on its documents; that is
+/// why they are filed by [`documents_admitted_to_merge`] with the refusal
+/// itself, and why a run that dropped one instead would go red.
 #[test]
 fn c1_apply_then_invert_returns_the_preimage_byte_for_byte() {
-    const KEY: &str = "rigger-conformance-absent-key";
-    let edit = Edit::keys(&[], [(KEY, Value::text("conformance value"))]);
+    let edit = Edit::keys(&[], [(CONFORMANCE_KEY, Value::text("conformance value"))]);
 
     let documents = all_documents();
-    let mut exercised = 0;
-    let mut failures = Vec::new();
+    let mut scope = Scope::new("`apply` then `invert` returns the pre-image byte for byte");
 
-    for path in &documents {
-        let Ok(grammar) = CorpusGrammar::of(path) else {
-            continue;
-        };
-        if grammar.capabilities().merge_by_keys() != &MergeAdmission::Admitted {
+    for document in documents_admitted_to_merge(&documents, &mut scope) {
+        let Document {
+            path,
+            grammar,
+            bytes,
+            text,
+        } = document;
+        if let Err(message) = refuse_a_document_already_carrying_the_key(&path, &text) {
+            scope.fail(message);
             continue;
         }
-        let Ok((input, text)) = read_utf8(path) else {
-            continue;
-        };
-        assert!(
-            !text.contains(KEY),
-            "{}: the corpus already carries the conformance key",
-            path.display()
-        );
 
         let applied = match grammar.apply(&text, &edit) {
             Ok(applied) => applied,
             Err(err) => {
-                failures.push(format!("{}: `apply` refused — {err}", path.display()));
+                scope.fail(format!("{}: `apply` refused — {err}", path.display()));
                 continue;
             }
         };
-        exercised += 1;
 
         // What the edit changes is a contiguous fragment: the document is not
         // re-emitted whole. Measured by subtracting the longest common prefix
@@ -331,39 +553,152 @@ fn c1_apply_then_invert_returns_the_preimage_byte_for_byte() {
         // document out, a local edit a short fragment.
         let (removed, added) = difference(&text, &applied.rendered);
         if !removed.is_empty() {
-            failures.push(format!(
+            scope.fail(format!(
                 "{}: {} byte(s) outside the trace disappeared on write — {removed:?}",
                 path.display(),
                 removed.len()
             ));
         }
-        if !added.contains(KEY) {
-            failures.push(format!(
+        if !added.contains(CONFORMANCE_KEY) {
+            scope.fail(format!(
                 "{}: what appeared is not the key that was written — {added:?}",
                 path.display()
             ));
         }
 
         match grammar.invert(&applied.rendered, &applied.inverse) {
-            Err(err) => failures.push(format!("{}: `invert` refused — {err}", path.display())),
+            Err(err) => scope.fail(format!("{}: `invert` refused — {err}", path.display())),
             Ok(undone) => {
-                if let Err(message) = compare_byte_identical(path, &input, undone.as_bytes()) {
-                    failures.push(format!("after `apply` then `invert` — {message}"));
+                if let Err(message) = compare_byte_identical(&path, &bytes, undone.as_bytes()) {
+                    scope.fail(format!("after `apply` then `invert` — {message}"));
                 }
             }
         }
     }
 
-    assert!(
-        exercised > 0,
-        "no document of the corpus was edited — the property would bear on nothing"
-    );
-    assert!(
-        failures.is_empty(),
-        "{} document(s) whose write does not undo exactly:\n\n{}",
-        failures.len(),
-        failures.join("\n\n")
-    );
+    scope.conclude(&documents);
+}
+
+/// The key the two write properties pose. It carries no meaning for any host
+/// and no document of the repository holds it — which is what makes the edit
+/// take the **add** branch on every one of them, and what would otherwise let a
+/// corpus document quietly turn the measurement into a replacement.
+const CONFORMANCE_KEY: &str = "rigger-conformance-absent-key";
+
+fn refuse_a_document_already_carrying_the_key(path: &Path, text: &str) -> Result<(), String> {
+    if text.contains(CONFORMANCE_KEY) {
+        return Err(format!(
+            "{}: the corpus already carries `{CONFORMANCE_KEY}` — the edit would replace a value \
+             instead of adding one, and the property would no longer be the one it names",
+            path.display()
+        ));
+    }
+    Ok(())
+}
+
+/// The document as its owner leaves it after reindenting: the leading run of
+/// spaces and tabs of every line is written twice, and not one other byte moves
+/// — line endings included, so a CRLF document stays in CRLF and a document
+/// indented with tabs is not converted to spaces.
+///
+/// Doubling rather than converting is what keeps the transformation total over
+/// a corpus whose documents do not share a convention: each one is moved in its
+/// own, none is rewritten into another's, and a line with no indentation stays
+/// where it is. What the property needs is only that the bytes move while the
+/// structure does not.
+fn reindent(source: &str) -> String {
+    let mut reindented = String::with_capacity(source.len() * 2);
+    for line in source.split_inclusive('\n') {
+        let indent = line.len() - line.trim_start_matches([' ', '\t']).len();
+        reindented.push_str(&line[..indent]);
+        reindented.push_str(line);
+    }
+    reindented
+}
+
+/// Fourth common property: the inverse of an edit still applies after the
+/// **owner of the document has reindented it**, and undoing gives his document
+/// back as he reindented it — his new indentation included, byte for byte.
+///
+/// **What it establishes that the property above cannot.** `apply` then
+/// `invert` hands the inverse the very bytes `apply` produced. An
+/// implementation that recorded *where* it wrote — a byte offset, a line
+/// number, a span — passes that unharmed while having addressed nothing by the
+/// grammar. It is the owner's first reformat, or the host's, that then makes it
+/// take the wrong bytes out, and it takes them out at **removal** time, which is
+/// where nobody is looking and where the damage cannot be undone. C1 requires
+/// that outside the trace the document come back unchanged, and C2 requires the
+/// write to address the structure of the grammar and never lines: this property
+/// is where those two meet, because a positional trace can satisfy the first
+/// on a document nobody touched and violate it on every other.
+///
+/// The comparison is against the **reindented pre-image**, not the original: a
+/// byte of the owner's new indentation the inverse fails to give back shows up
+/// as a divergence, and so does any byte it takes beyond what the edit added.
+///
+/// The reindented document must also still be **readable** — an owner who
+/// reindents does not leave the grammar behind — which is why `invert` refusing
+/// is a failure here and not an expected outcome.
+#[test]
+fn c1_the_inverse_still_applies_after_the_owner_has_reindented_the_document() {
+    let edit = Edit::keys(&[], [(CONFORMANCE_KEY, Value::text("conformance value"))]);
+
+    let documents = all_documents();
+    let mut scope = Scope::new("the inverse survives a reindentation by the owner");
+
+    for document in documents_admitted_to_merge(&documents, &mut scope) {
+        let Document {
+            path,
+            grammar,
+            bytes: _,
+            text,
+        } = document;
+        if let Err(message) = refuse_a_document_already_carrying_the_key(&path, &text) {
+            scope.fail(message);
+            continue;
+        }
+
+        let reindented_preimage = reindent(&text);
+        if reindented_preimage == text {
+            // The trial would then be the property above under another name.
+            // Saying so is the point: a corpus document with no indentation at
+            // all would make this one report green while measuring nothing.
+            scope.fail(format!(
+                "{}: reindenting this document changes no byte — it carries no indentation, so \
+                 the trial would not move the bytes the inverse has to survive",
+                path.display()
+            ));
+            continue;
+        }
+
+        let applied = match grammar.apply(&text, &edit) {
+            Ok(applied) => applied,
+            Err(err) => {
+                scope.fail(format!("{}: `apply` refused — {err}", path.display()));
+                continue;
+            }
+        };
+
+        match grammar.invert(&reindent(&applied.rendered), &applied.inverse) {
+            Err(err) => scope.fail(format!(
+                "{}: `invert` refused on the reindented document — a trace addressed by the \
+                 structure of the grammar does not stop applying because its owner moved the \
+                 indentation: {err}",
+                path.display()
+            )),
+            Ok(undone) => {
+                if let Err(message) =
+                    compare_byte_identical(&path, reindented_preimage.as_bytes(), undone.as_bytes())
+                {
+                    scope.fail(format!(
+                        "after `apply`, a reindentation by the owner, then `invert` — {message}"
+                    ));
+                }
+            }
+        }
+    }
+
+    scope.conclude(&documents);
 }
 
 /// What disappeared and what appeared between two renderings, the longest
@@ -444,6 +779,85 @@ fn guard_the_limits_corpus_agrees_with_the_capability_table() {
         failures.len(),
         failures.join("\n\n")
     );
+}
+
+/// A wiring guard across properties: the two write properties bear on the
+/// documents of **every** grammar the capability table admits to `merge`, and
+/// name the refusal on the documents of every grammar it refuses.
+///
+/// **Why neither property can establish this on its own.** Each of them decides
+/// one document at a time, and a document nobody wrote is a document nobody
+/// passes over: a grammar with no corpus document falls out of both properties
+/// without either of them having anything to file. That is exactly how a
+/// grammar can end up published, refused, and invisible — its line of the table
+/// resting on its own probe, and the conformance run reading like coverage. The
+/// state this file was in was one step milder and read the same way: a document
+/// wired to a single property out of four.
+///
+/// A grammar refused the behaviour tomorrow falls out of the two write
+/// properties legitimately — `apply` is what they exercise, and it does not
+/// exist. What this guard forbids is that it fall out of them **quietly**.
+#[test]
+fn guard_the_write_properties_bear_on_every_admitted_grammar_and_name_every_refused_one() {
+    let documents = all_documents();
+
+    for grammar in CorpusGrammar::ALL {
+        let name = grammar.capabilities().grammar();
+        let of_this_grammar: Vec<PathBuf> = documents
+            .iter()
+            .filter(|path| {
+                matches!(CorpusGrammar::of(path), Ok(routed) if routed.capabilities().grammar() == name)
+            })
+            .cloned()
+            .collect();
+        assert!(
+            !of_this_grammar.is_empty(),
+            "no document of the repository routes to grammar `{name}` — the write properties would \
+             neither bear on it nor name it, and nothing would distinguish that from coverage"
+        );
+
+        let mut scope = Scope::new("the write properties account for every published grammar");
+        let admitted = documents_admitted_to_merge(&of_this_grammar, &mut scope);
+
+        match grammar.capabilities().merge_by_keys() {
+            MergeAdmission::Admitted => assert_eq!(
+                admitted.len(),
+                of_this_grammar.len(),
+                "grammar `{name}` is admitted to `merge` and only {} of its {} corpus document(s) \
+                 reach the write properties — an admission nothing exercises is an admission \
+                 nobody measured. Passed over:\n{}",
+                admitted.len(),
+                of_this_grammar.len(),
+                scope.out_of_scope_report()
+            ),
+            MergeAdmission::Refused(refusal) => {
+                assert!(
+                    admitted.is_empty(),
+                    "grammar `{name}` is refused `merge` and {} of its corpus document(s) reach \
+                     the write properties anyway — they would exercise a write path the table \
+                     says does not exist",
+                    admitted.len()
+                );
+                let unnamed: Vec<String> = of_this_grammar
+                    .iter()
+                    .filter(|path| {
+                        !scope.out_of_scope.iter().any(|(filed, reason)| {
+                            filed == *path
+                                && matches!(reason, OutOfScope::MergeRefused(named) if named.grammar() == name)
+                        })
+                    })
+                    .map(|path| format!("  {}", path.display()))
+                    .collect();
+                assert!(
+                    unnamed.is_empty(),
+                    "grammar `{name}` is refused `merge` — «{refusal}» — and {} of its corpus \
+                     document(s) are passed over without that refusal being carried:\n{}",
+                    unnamed.len(),
+                    unnamed.join("\n")
+                );
+            }
+        }
+    }
 }
 
 /// A wiring guard, not a grammar property: the capability table and the routing
