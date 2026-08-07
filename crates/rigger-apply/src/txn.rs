@@ -336,6 +336,13 @@ impl From<TxnError> for ApplyError {
 /// The full sequence, and there is no other: capture, merge — admission gate,
 /// edit, post-condition —, temporary, re-check, rename. Every step fails leaving
 /// the document as it was.
+///
+/// **The re-check compares against the fingerprint the capture returned, and the
+/// document is never read again to obtain it.** That is the whole guard, and it
+/// is this line that carries it: taking the expected fingerprint from a fresh
+/// read here would compare the document with itself, always match, and let a
+/// rewrite landing between the capture and the rename go through unseen — the
+/// pose would replace it, and report success.
 pub fn merge_into_file<G: Grammar>(path: &Path, edit: &Edit) -> Result<Inverse, ApplyError> {
     let captured = capture(path)?;
     let merged = merge::<G>(captured.content(), edit)?;

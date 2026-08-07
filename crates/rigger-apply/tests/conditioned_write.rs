@@ -8,10 +8,11 @@
 //! Each test works in its own directory: the temporary of a write lives next to
 //! its target, so two tests sharing a directory would see each other.
 
+use std::cell::RefCell;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use rigger_apply::{capture, merge_into_file, stage, ApplyError, Fingerprint, TxnError};
+use rigger_apply::{capture, merge_into_file, stage, ApplyError, TxnError};
 use rigger_grammar::{
     Applied, Edit, Grammar, GrammarError, GrammarRole, Inverse, Jsonc, MergeError, Probe,
     Resolution, SemanticValue, Toml, Value,
@@ -228,31 +229,90 @@ fn c8_the_temporary_lives_in_the_same_directory() {
     fs::remove_dir_all(&dir).expect("clean up");
 }
 
+/// A grammar that rewrites the document on disk **during the computation** —
+/// after the capture read it, before the rename replaces it. It stands in for
+/// the only concurrent writer the product can neither exclude nor foresee: the
+/// host rewriting its own settings file, against which an inter-process lock
+/// can do nothing.
+///
+/// Everything else is JSONC's, so the merge itself succeeds: a refusal coming
+/// from the merge would say nothing about what the write is conditioned on.
+struct HostRewritesDuringTheComputation;
+
+thread_local! {
+    /// The document the grammar above rewrites, and what the host writes there.
+    /// Taken on the first call, so that the several applications one merge
+    /// performs — the admission gate applies the grammar to its probe before
+    /// the edit runs — rewrite the document exactly once.
+    static PENDING_REWRITE: RefCell<Option<(PathBuf, &'static str)>> = const { RefCell::new(None) };
+}
+
+impl Grammar for HostRewritesDuringTheComputation {
+    const NAME: &'static str = "host-rewrites";
+    const ROLE: GrammarRole = GrammarRole::ReadWrite;
+    const RESOLUTION: Resolution = Resolution::IndependentOfOrder;
+    const PROBE: Probe = Jsonc::PROBE;
+
+    fn round_trip(source: &str) -> Result<String, GrammarError> {
+        Jsonc::round_trip(source)
+    }
+
+    fn find_string_in_list(source: &str, path: &[&str], value: &str) -> Result<bool, GrammarError> {
+        Jsonc::find_string_in_list(source, path, value)
+    }
+
+    fn apply(source: &str, edit: &Edit) -> Result<Applied, GrammarError> {
+        if let Some((path, by_the_host)) = PENDING_REWRITE.with(|slot| slot.borrow_mut().take()) {
+            fs::write(&path, by_the_host).expect("the host rewrites its own settings file");
+        }
+        Jsonc::apply(source, edit)
+    }
+
+    fn invert(source: &str, inverse: &Inverse) -> Result<String, GrammarError> {
+        Jsonc::invert(source, inverse)
+    }
+
+    fn values(source: &str) -> Result<Vec<SemanticValue>, GrammarError> {
+        Jsonc::values(source)
+    }
+}
+
 #[test]
-fn c8_the_fingerprint_derives_from_the_capture() {
-    // GIVEN a behaviour whose capture read the state of the document.
+fn c8_the_write_is_conditioned_on_the_capture_and_never_on_a_later_read() {
+    // GIVEN a document the host rewrites between the capture and the write —
+    // the one instant the guard exists for, and the only one at which "derived
+    // from the capture" and "read a second time" give different answers.
     let dir = directory("fingerprint");
     let target = document(&dir, SETTINGS);
-    let capture = capture(&target).expect("the capture must succeed");
+    const BY_THE_HOST: &str = "{\n\t\"model\": \"acme/model-large\"\n}\n";
+    PENDING_REWRITE.with(|slot| *slot.borrow_mut() = Some((target.clone(), BY_THE_HOST)));
 
-    // WHEN the write conditions itself.
-    // THEN it conditions itself on what the capture read, and the document is
-    // not read a second time for that: the fingerprint is computed on the
-    // content the capture returns.
+    // WHEN the pose runs, through the whole chain rather than through a capture
+    // the test itself holds: what is measured here is what the write conditions
+    // itself on, and that wiring lives in the chain.
+    let failure = merge_into_file::<HostRewritesDuringTheComputation>(&target, &fragment())
+        .expect_err("the write landed on a document that had changed under it");
+
+    // THEN it fails while naming the file, because the fingerprint it compares
+    // against is the one the capture read. A fingerprint taken from a second
+    // read would carry what the host has just written, would match, and the
+    // pose would land on top of it — success reported, the host's write gone,
+    // and no trace of either.
+    assert!(
+        matches!(&failure, ApplyError::Txn(TxnError::Changed { path }) if path == &target),
+        "the write did not condition itself on what the capture read: {failure}"
+    );
+    assert!(failure.to_string().contains("settings.json"));
+
+    // AND the document carries what the host wrote, intact.
     assert_eq!(
-        capture.fingerprint(),
-        &Fingerprint::of(capture.content().as_bytes()),
-        "the fingerprint does not derive from what the capture read"
+        fs::read_to_string(&target).expect("read back"),
+        BY_THE_HOST,
+        "the pose was applied on top of what the host wrote"
     );
 
-    // And it does not move when the document moves: a second read would reopen
-    // the window this is meant to close.
-    fs::write(&target, "{}\n").expect("rewrite");
-    assert_eq!(
-        capture.fingerprint(),
-        &Fingerprint::of(SETTINGS.as_bytes()),
-        "the fingerprint followed the document instead of following the capture"
-    );
+    // AND nothing was left alongside it.
+    assert_eq!(files(&dir), vec!["settings.json".to_string()]);
     fs::remove_dir_all(&dir).expect("clean up");
 }
 
