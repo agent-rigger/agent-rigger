@@ -896,6 +896,173 @@ fn c1_an_update_of_a_block_posed_without_a_final_terminator_still_gives_the_byte
     );
 }
 
+/// A terminator the pose wrote at the end of a document stops being the last
+/// byte of that document the moment a **second** block is posed after it: it is
+/// then what separates the owner's last line from the opening delimiter of a
+/// block belonging to somebody else.
+///
+/// Taking it back with the first block glues that line to that delimiter. What
+/// makes it the worst shape of failure this module has is that the loss is then
+/// seen — the post-condition of removal names the owner's line and refuses — so
+/// the first block becomes **permanently** unremovable: every later attempt
+/// reads the same document and refuses again, and no write can get it out.
+///
+/// So the terminator goes back only while the block still ends the document.
+/// Otherwise it stays, which is inert: one line ending in a file, where the
+/// alternative is a block nobody can ever remove.
+#[test]
+fn c1_a_terminator_is_given_back_only_while_the_block_it_precedes_still_ends_the_document() {
+    let source = "docs/a.md\ndocs/b.md";
+    let mine = marker();
+    let other = homonym();
+    let pose = Pose {
+        marker: &mine,
+        address: ADDRESS,
+        roots: &["/home/u/.config/rig"],
+        traced: &[],
+        posed: None,
+        body: &["docs/mine.md"],
+        wrapping: Wrapping::LineComment,
+    };
+    let first = place(source, &pose).expect("nothing stands in the way of this pose");
+    let second = place(
+        &first.rendered,
+        &Pose {
+            marker: &other,
+            traced: std::slice::from_ref(&mine),
+            body: &["docs/other.md"],
+            ..pose
+        },
+    )
+    .expect("a second catalogue may pose its own block in the same document");
+
+    // The bytes the second pose added, whatever they are: it appended to a
+    // document that already ended with a terminator, so it added nothing else.
+    let other_block = second
+        .rendered
+        .strip_prefix(&first.rendered)
+        .expect("the second pose appends and leaves what it found in place");
+
+    let removed = remove(&second.rendered, &first.trace)
+        .expect("a block posed first must stay removable once another is posed after it");
+    assert_eq!(
+        removed.rendered,
+        format!("{source}\n{other_block}"),
+        "removing the first block must take its own bytes and leave the terminator the block of \
+         the other catalogue now stands on"
+    );
+
+    // And the other block is still one passage, and still removable — the
+    // property the refusal above was protecting.
+    let last = remove(&removed.rendered, &second.trace)
+        .expect("the block of the other catalogue is removable in its turn")
+        .rendered;
+    // One line ending the owner did not write is left behind, and it is stated
+    // here rather than hidden: it is the byte the first pose added and the
+    // second pose then built on. Taking it back at either removal would have
+    // glued two lines together; leaving it changes no value.
+    assert_eq!(
+        last,
+        format!("{source}\n"),
+        "what stays behind must be exactly one line ending, and nothing of the owner's"
+    );
+}
+
+/// The trace records the terminator the pose wrote **and the offset the
+/// document ended at** when it wrote it, because the byte alone does not
+/// identify itself: a line ending the owner typed and one the product added are
+/// the same byte.
+///
+/// Here the owner deletes their own last line, and an editor deletes a line
+/// together with the terminator that follows it — which is the product's. What
+/// is left in front of the block is then the owner's *own* line ending. Taking
+/// it back destroys a byte of theirs while every check that compares values
+/// stays silent, because a bare line terminator is no value.
+#[test]
+fn c1_a_terminator_is_not_given_back_once_the_owner_has_deleted_the_line_it_followed() {
+    let source = "docs/a.md\ndocs/b.md";
+    let Placed { rendered, trace } = place(
+        source,
+        &Pose {
+            marker: &marker(),
+            address: ADDRESS,
+            roots: &["/home/u/.config/rig"],
+            traced: &[],
+            posed: None,
+            body: &["docs/posed.md"],
+            wrapping: Wrapping::LineComment,
+        },
+    )
+    .expect("nothing stands in the way of this pose");
+
+    // The owner deletes their second line, and the terminator that went with
+    // it happens to be the one the pose wrote.
+    let edited = rendered.replace("docs/b.md\n", "");
+    assert!(
+        edited.starts_with("docs/a.md\n"),
+        "the fixture must leave the owner's first line and its own terminator: {edited:?}"
+    );
+
+    assert_eq!(
+        remove(&edited, &trace)
+            .expect("what was posed is removable")
+            .rendered,
+        "docs/a.md\n",
+        "removal must give back what the owner's document held outside the block, terminator \
+         included"
+    );
+}
+
+/// The residual the offset leaves: an edit that keeps the head exactly as long
+/// as it was still lands the recorded offset on a line terminator — but that
+/// terminator may now be the second byte of a CRLF the owner wrote.
+///
+/// The document was posed in LF, so the trace records a bare LF. Its owner has
+/// converted their lines to CRLF since, and their content now ends with one.
+/// Taking back the LF alone would leave a dangling CR: a byte-level corruption
+/// that **no comparison of values can see**, since a line reads the same with
+/// or without its carriage return. So the byte stays, and staying is inert.
+#[test]
+fn c1_a_recorded_lf_sitting_at_the_end_of_a_crlf_is_not_given_back() {
+    let source = "aaaa\nbbbb";
+    let Placed { rendered, trace } = place(
+        source,
+        &Pose {
+            marker: &marker(),
+            address: ADDRESS,
+            roots: &["/home/u/.config/rig"],
+            traced: &[],
+            posed: None,
+            body: &["docs/posed.md"],
+            wrapping: Wrapping::LineComment,
+        },
+    )
+    .expect("nothing stands in the way of this pose");
+
+    // The owner's content, in CRLF and ending with one. It is the same number
+    // of bytes as what the pose found plus the terminator it wrote, which is
+    // what makes this case reachable at all.
+    let owned = "aaa\r\nbbb\r\n";
+    let block = rendered
+        .strip_prefix("aaaa\nbbbb\n")
+        .expect("the pose appends its block behind the terminator it wrote");
+    assert_eq!(
+        owned.len(),
+        "aaaa\nbbbb\n".len(),
+        "the fixture only measures anything while the head keeps its length"
+    );
+    let edited = format!("{owned}{block}");
+
+    assert_eq!(
+        remove(&edited, &trace)
+            .expect("what was posed is removable")
+            .rendered,
+        owned,
+        "the LF at the recorded offset closes a CRLF the owner wrote: taking it back would leave \
+         a lone carriage return"
+    );
+}
+
 /// The post-condition of C1 in its general form: outside the bytes any trace
 /// accounts for, the rendering must be the source byte for byte.
 ///
@@ -928,7 +1095,7 @@ fn c1_a_write_that_adds_a_byte_outside_the_trace_makes_the_pose_abort() {
         assert!(bounds.is_none(), "this document carries no block yet");
         Written {
             document: format!("{source}{block}\n"),
-            added_terminator: String::new(),
+            added_terminator: None,
         }
     })
     .expect_err("a byte written outside every trace must make the pose abort");
