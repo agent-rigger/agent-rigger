@@ -1,3 +1,3 @@
 [workspace]
 resolver = "2"
-members = ["crates/rigger-apply", "crates/rigger-grammar"]
+members = ["crates/rigger-apply", "crates/rigger-grammar", "crates/rigger-plan"]

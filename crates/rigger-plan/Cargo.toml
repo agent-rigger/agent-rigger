@@ -1,0 +1,16 @@
+[package]
+name = "rigger-plan"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+# The crate that carries the **closed set of behaviours**. It is **pure**: it
+# reads no file and writes none. What it is handed is what somebody else read,
+# and what it returns is what somebody else writes — the input and output live
+# in `rigger-apply`, which is what lets a capture and a restoration be exercised
+# on values, with no disk and no ordering.
+# No third-party dependency: naming a behaviour, computing its inverse and
+# seizing the state it changes are decisions, and a decision that has to be
+# taken by a library is a decision nobody in this repository can account for.
+[dependencies]
+rigger-grammar = { path = "../rigger-grammar" }

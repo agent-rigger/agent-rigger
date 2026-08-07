@@ -70,6 +70,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "rigger-plan"
+version = "0.0.0"
+dependencies = [
+ "rigger-grammar",
+]
+
+[[package]]
 name = "serde_core"
 version = "1.0.229"
 source = "registry+https://github.com/rust-lang/crates.io-index"
