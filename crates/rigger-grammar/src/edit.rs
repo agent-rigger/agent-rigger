@@ -6,21 +6,32 @@
 //! there exists here no type able to say "at this line", so no implementation
 //! can fabricate one without adding the missing type, under a reviewer's eyes.
 //!
-//! **Two shapes of edit, and the third is elsewhere.** The plan gives three:
-//! "these keys at this path", "these values in this array at this path", and
-//! "this block between these bounds". The first two live here; the third lives
-//! in [`crate::marker`], and the separation is measured rather than stylistic.
-//! A bounded block needs delimiters the document knows how to carry, and the
-//! settings document that is served is strict JSON. So its trace is not a
-//! variant of these two: it addresses a text document, which no grammar of this
-//! crate parses, and it carries an identity — provenance and entry — that these
-//! two have no place for.
+//! **Three shapes of edit, and a fourth is elsewhere.** The plan gives "these
+//! keys at this path", "these values in this array at this path", and "this
+//! block between these bounds". The last one lives in [`crate::marker`], and
+//! the separation is measured rather than stylistic. A bounded block needs
+//! delimiters the document knows how to carry, and the settings document that
+//! is served is strict JSON. So its trace is not a variant of the others: it
+//! addresses a text document, which no grammar of this crate parses.
 //!
-//! **An array value is designated by value equality.** An index survives a
-//! reordering no better than a line number survives a reformat — that is the
-//! original motive for banning positional addressing, applied to one more axis.
+//! The third shape here, [`Edit::Element`], is the counterpart of
+//! [`Edit::Values`] for a list whose elements are **objects**, and the two do
+//! not merge into one. A string carries nowhere to lodge an identity, so the
+//! only implementation possible there is recognition by value — a declared
+//! limit. An object carries one, so the element is found by an identity that
+//! does not depend on its value, which is what makes an update after the
+//! catalogue changed its mind possible at all.
+//!
+//! **An array value is designated by value equality; an object element by its
+//! identity. Neither is designated by rank.** An index survives a reordering no
+//! better than a line number survives a reformat — that is the original motive
+//! for banning positional addressing, applied to one more axis. The host
+//! reorders: measured on 2026-08-06 on the host that is served
+//! (`docs/specs/socle-neuf/reconnaissance-hotes.md`).
 
 use std::fmt;
+
+use crate::marker::Marker;
 
 /// A value as a document carries it: what the product writes, and what it
 /// finds again in order to restore it.
@@ -108,6 +119,28 @@ pub enum Edit {
         /// The values to find there or to put there.
         values: Vec<String>,
     },
+    /// "This element, carrying this identity, in this array at this path". The
+    /// element is an **object**, and the identity is written inside it.
+    ///
+    /// **The edit is the same whether the element is there or not**, and that
+    /// is what makes it an update rather than a second pose: the element is
+    /// looked for by its identity, and only appended when no element carries
+    /// it. An edit that appended without looking would leave two elements where
+    /// the catalogue declares one, and no later read could say which is which.
+    ///
+    /// The fields declared here are written; the ones the element already
+    /// carries and this edit does not name are **left alone**. The product
+    /// removes only what it added, and a field it stops declaring is not a
+    /// field it is entitled to destroy.
+    Element {
+        /// The path of the array, last segment included.
+        path: Vec<String>,
+        /// The identity lodged inside the element, and the only thing the
+        /// element is found by.
+        identity: Marker,
+        /// The fields the product writes inside the element, in order.
+        fields: Vec<(String, Value)>,
+    },
 }
 
 impl Edit {
@@ -133,10 +166,28 @@ impl Edit {
         }
     }
 
+    /// "This element, carrying this identity, in this array at this path".
+    pub fn element(
+        path: &[&str],
+        identity: Marker,
+        fields: impl IntoIterator<Item = (impl Into<String>, Value)>,
+    ) -> Self {
+        Self::Element {
+            path: owned_path(path),
+            identity,
+            fields: fields
+                .into_iter()
+                .map(|(name, value)| (name.into(), value))
+                .collect(),
+        }
+    }
+
     /// The targeted path, as a refusal names it.
     pub fn path(&self) -> &[String] {
         match self {
-            Self::Keys { path, .. } | Self::Values { path, .. } => path,
+            Self::Keys { path, .. } | Self::Values { path, .. } | Self::Element { path, .. } => {
+                path
+            }
         }
     }
 }
@@ -161,18 +212,53 @@ pub enum Inverse {
         /// The values the edit added.
         added: Vec<String>,
     },
+    /// Undo what the edit wrote into the element carrying this identity, found
+    /// by that identity and never by its rank.
+    Element {
+        /// The path of the array.
+        path: Vec<String>,
+        /// The identity the element carries inside it.
+        identity: Marker,
+        /// What undoing amounts to, which is not the same thing when the edit
+        /// created the element as when it wrote into one already there.
+        undo: ElementUndo,
+    },
+}
+
+/// What undoing an edit on a list element amounts to. Two cases that do not
+/// overlap, written as two variants so that no combination of flags can
+/// describe a third one that means nothing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ElementUndo {
+    /// The edit created the element: undoing it takes the whole element away,
+    /// identity included. Nothing of the document from before disappeared, so
+    /// the trace records no value.
+    Remove,
+    /// The edit wrote into an element that was already there — an update. Only
+    /// what it wrote is undone, and the element stays.
+    Restore {
+        /// The fields the edit created inside the element, to be removed.
+        added: Vec<String>,
+        /// The fields whose value the edit replaced, and that value.
+        replaced: Vec<(String, Value)>,
+    },
 }
 
 impl Inverse {
     /// Nothing to undo: the edit wrote nothing. This is the case of a value
     /// that already existed, which the product therefore did not add and will
     /// never remove.
+    ///
+    /// An edit on an element is never empty, even when it rewrites the fields
+    /// it already held with the same values: the element carries the identity
+    /// of the product, so the trace has something to undo — the element itself.
     pub fn is_empty(&self) -> bool {
         match self {
             Self::Keys {
                 added, replaced, ..
             } => added.is_empty() && replaced.is_empty(),
             Self::Values { added, .. } => added.is_empty(),
+            Self::Element { .. } => false,
         }
     }
 
@@ -188,14 +274,39 @@ impl Inverse {
     /// and that is the one the post-condition must catch.
     pub fn recorded_values(&self) -> Vec<SemanticValue> {
         let mut values = Vec::new();
-        if let Self::Keys { path, replaced, .. } = self {
-            for (name, value) in replaced {
-                let mut child_path = path.clone();
-                child_path.push(name.clone());
-                flatten(value, &child_path.join("."), &mut values);
-            }
+        match self {
+            Self::Keys { path, replaced, .. } => record_fields(path, replaced, &mut values),
+            // An element the edit created carries nothing the document held
+            // before, so undoing takes nothing of its owner's away. An update
+            // records what it replaced, exactly as a key does.
+            Self::Element {
+                path,
+                undo: ElementUndo::Restore { replaced, .. },
+                ..
+            } => record_fields(path, replaced, &mut values),
+            Self::Values { .. }
+            | Self::Element {
+                undo: ElementUndo::Remove,
+                ..
+            } => {}
         }
         values
+    }
+}
+
+/// Gathers the values of `fields`, each under the path of the field inside
+/// `path`. This is the shape a grammar enumerates them in: the elements of an
+/// array share the path of the array, so a field of an object element lives at
+/// `<path of the array>.<field>`.
+pub(crate) fn record_fields(
+    path: &[String],
+    fields: &[(String, Value)],
+    values: &mut Vec<SemanticValue>,
+) {
+    for (name, value) in fields {
+        let mut child_path = path.to_vec();
+        child_path.push(name.clone());
+        flatten(value, &child_path.join("."), values);
     }
 }
 

@@ -10,9 +10,11 @@
 use jsonc_parser::cst::{CstArray, CstInputValue, CstNode, CstObject, CstRootNode};
 use jsonc_parser::ParseOptions;
 
+use crate::element::IDENTITY_KEY;
+use crate::marker::Marker;
 use crate::{
-    Applied, Edit, Grammar, GrammarError, GrammarRole, Inverse, Probe, Resolution, SemanticValue,
-    Value,
+    Applied, Edit, ElementUndo, Grammar, GrammarError, GrammarRole, Inverse, Probe, Resolution,
+    SemanticValue, Value,
 };
 
 /// The JSONC grammar.
@@ -114,6 +116,19 @@ impl Grammar for Jsonc {
             }))
     }
 
+    fn find_element_by_identity(
+        source: &str,
+        path: &[String],
+        identity: &Marker,
+    ) -> Result<Option<Vec<(String, Value)>>, GrammarError> {
+        let root = parse(source)?;
+        let array = array_at(&root, path)?;
+        let Some(element) = identified_element(&array, path, identity)? else {
+            return Ok(None);
+        };
+        Ok(Some(read_fields(&element)?))
+    }
+
     fn apply(source: &str, edit: &Edit) -> Result<Applied, GrammarError> {
         let root = parse(source)?;
         let inverse = match edit {
@@ -170,6 +185,74 @@ impl Grammar for Jsonc {
                     added,
                 }
             }
+            Edit::Element {
+                path,
+                identity,
+                fields,
+            } => {
+                // A fragment able to write the identity field could forge an
+                // identity, or overwrite the one that tells another
+                // catalogue's element apart from its own. The refusal derives
+                // from a property of the edit — it declares the field the
+                // product reserves — and not from anything about the document.
+                if fields.iter().any(|(name, _)| name == IDENTITY_KEY) {
+                    return Err(GrammarError::ReservedField {
+                        grammar: Jsonc::NAME,
+                        field: IDENTITY_KEY,
+                    });
+                }
+                let array = array_at(&root, path)?;
+                let undo = match identified_element(&array, path, identity)? {
+                    // The element is already there: this is an update, and it
+                    // writes field by field, exactly as a key does. Replacing
+                    // the whole element would destroy the trivia its owner put
+                    // inside it, which `merge` would then refuse — rightly, and
+                    // for the whole update.
+                    Some(element) => {
+                        let mut added = Vec::new();
+                        let mut replaced = Vec::new();
+                        for (name, value) in fields {
+                            refuse_if_defined_twice(&element, name)?;
+                            match element.get(name) {
+                                Some(property) => {
+                                    let node = property.value().ok_or_else(|| {
+                                        GrammarError::path_not_found(Jsonc::NAME, path)
+                                    })?;
+                                    replaced.push((name.clone(), read_value(&node)?));
+                                    property.set_value(input_value(value));
+                                }
+                                None => {
+                                    element.append(name, input_value(value));
+                                    added.push(name.clone());
+                                }
+                            }
+                        }
+                        ElementUndo::Restore { added, replaced }
+                    }
+                    // No element carries the identity: one is appended, and it
+                    // carries the identity **first**, because the marker lives
+                    // in a file its owner opens and the first thing they should
+                    // read of an element the product wrote is whose it is.
+                    None => {
+                        let mut entries = vec![(
+                            IDENTITY_KEY.to_string(),
+                            CstInputValue::String(identity.to_string()),
+                        )];
+                        entries.extend(
+                            fields
+                                .iter()
+                                .map(|(name, value)| (name.clone(), input_value(value))),
+                        );
+                        array.append(CstInputValue::Object(entries));
+                        ElementUndo::Remove
+                    }
+                };
+                Inverse::Element {
+                    path: path.clone(),
+                    identity: identity.clone(),
+                    undo,
+                }
+            }
         };
         Ok(Applied {
             rendered: root.to_string(),
@@ -210,6 +293,39 @@ impl Grammar for Jsonc {
                     // value would take away the one the user had written before.
                     if let Some(element) = find_string_element(&array, value)? {
                         element.remove();
+                    }
+                }
+            }
+            Inverse::Element {
+                path,
+                identity,
+                undo,
+            } => {
+                let array = array_at(&root, path)?;
+                // The element is found by its identity. An element that does
+                // not carry it is not the product's, whatever it looks like,
+                // and is never touched here.
+                let Some(element) = identified_element(&array, path, identity)? else {
+                    return Ok(root.to_string());
+                };
+                match undo {
+                    ElementUndo::Remove => element.remove(),
+                    ElementUndo::Restore { added, replaced } => {
+                        for name in added {
+                            refuse_if_defined_twice(&element, name)?;
+                            if let Some(property) = element.get(name) {
+                                property.remove();
+                            }
+                        }
+                        for (name, value) in replaced {
+                            refuse_if_defined_twice(&element, name)?;
+                            match element.get(name) {
+                                Some(property) => property.set_value(input_value(value)),
+                                None => {
+                                    element.append(name, input_value(value));
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -275,6 +391,81 @@ fn find_string_element(array: &CstArray, value: &str) -> Result<Option<CstNode>,
         }
     }
     Ok(None)
+}
+
+/// The element of the array carrying `identity` inside it, and the only way an
+/// object element of a list is ever designated here.
+///
+/// **The whole array is traversed, on purpose.** Stopping at the first match
+/// would let a second element carrying the same identity go unseen, and the
+/// removal would then take one of two elements nothing tells apart. The refusal
+/// costs one traversal and buys the only thing that matters on a list somebody
+/// else owns: the product removes the element it wrote, or it removes none.
+fn identified_element(
+    array: &CstArray,
+    path: &[String],
+    identity: &Marker,
+) -> Result<Option<CstObject>, GrammarError> {
+    let wanted = identity.to_string();
+    let mut found: Option<CstObject> = None;
+    let mut occurrences = 0;
+    for element in array.elements() {
+        let Some(object) = element.as_object() else {
+            continue;
+        };
+        refuse_if_defined_twice(&object, IDENTITY_KEY)?;
+        let Some(property) = object.get(IDENTITY_KEY) else {
+            continue;
+        };
+        let Some(node) = property.value() else {
+            continue;
+        };
+        // The identity is a string and nothing else. An element carrying
+        // anything else under that name was not written by this product, so it
+        // is not claimed — reading it as an identity would be claiming bytes
+        // somebody else wrote.
+        let Some(literal) = node.as_string_lit() else {
+            continue;
+        };
+        let decoded = literal
+            .decoded_value()
+            .map_err(|err| GrammarError::malformed(Jsonc::NAME, format!("{err:?}")))?;
+        if decoded != wanted {
+            continue;
+        }
+        occurrences += 1;
+        if found.is_none() {
+            found = Some(object);
+        }
+    }
+    if occurrences > 1 {
+        return Err(GrammarError::duplicated_identity(
+            Jsonc::NAME,
+            path,
+            identity,
+            occurrences,
+        ));
+    }
+    Ok(found)
+}
+
+/// The fields of an element, identity excluded: what the product wrote there,
+/// as the document carries it now.
+fn read_fields(element: &CstObject) -> Result<Vec<(String, Value)>, GrammarError> {
+    let mut fields = Vec::new();
+    for property in element.properties() {
+        let name = property_name(&property)?;
+        if name == IDENTITY_KEY {
+            continue;
+        }
+        // A field defined twice inside one element leaves undefined which one a
+        // reader honours, exactly as at any other path. Comparing against the
+        // first would report a divergence, or fail to report one, according to
+        // an order nothing guarantees.
+        refuse_if_defined_twice(element, &name)?;
+        fields.push((name, read_property_value(&property)?));
+    }
+    Ok(fields)
 }
 
 /// Reads the value carried by a node, so that the inverse knows how to restore
