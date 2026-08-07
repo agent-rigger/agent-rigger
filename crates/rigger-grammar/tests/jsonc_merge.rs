@@ -336,8 +336,89 @@ fn c2_an_end_of_line_comment_glued_to_the_array_keeps_its_place() {
     );
 }
 
+/// C6's own fixture: a `deny` rule the product poses among rules the user
+/// wrote by hand. A string carries no place to log an identity, so the rule
+/// the pose adds must be found again by the text it carries, never by where
+/// it landed.
+const DENY_RULES: &str = concat!(
+    "{\n",
+    "  \"permissions\": {\n",
+    "    \"deny\": [\"Bash(curl *)\", \"Read(./secrets/**)\"]\n",
+    "  }\n",
+    "}\n",
+);
+
 #[test]
-fn c2_a_value_already_present_does_not_enter_the_trace() {
+fn c6_removal_finds_the_posed_value_by_equality_and_leaves_the_users_values_intact() {
+    // GIVEN a `deny` rule posed among two rules the user wrote themselves.
+    let merged = merge::<Jsonc>(
+        DENY_RULES,
+        &Edit::values(&["permissions", "deny"], ["Bash(rm -rf *)"]),
+    )
+    .expect("the pose must succeed");
+    assert!(
+        values(&merged.rendered).contains(&"permissions.deny = \"Bash(rm -rf *)\"".to_string()),
+        "the posed rule is absent from the rendering: {:?}",
+        values(&merged.rendered)
+    );
+
+    // WHEN the removal runs, by replaying the trace the pose recorded.
+    let removed =
+        Jsonc::invert(&merged.rendered, &merged.inverse).expect("the removal must succeed");
+
+    // THEN the posed rule is gone, and the two rules the user wrote are intact.
+    let after = values(&removed);
+    assert!(
+        !after.contains(&"permissions.deny = \"Bash(rm -rf *)\"".to_string()),
+        "the posed rule survived the removal: {after:?}"
+    );
+    assert!(after.contains(&"permissions.deny = \"Bash(curl *)\"".to_string()));
+    assert!(after.contains(&"permissions.deny = \"Read(./secrets/**)\"".to_string()));
+}
+
+#[test]
+fn c6_removal_survives_the_user_reordering_the_array() {
+    // GIVEN the same pose, on the same document.
+    let merged = merge::<Jsonc>(
+        DENY_RULES,
+        &Edit::values(&["permissions", "deny"], ["Bash(rm -rf *)"]),
+    )
+    .expect("the pose must succeed");
+
+    // AND the user has since reordered the array by hand: the posed rule
+    // moves from last to first. An index does not survive this any better
+    // than a line number survives a reformat — the same motive C6 states for
+    // banning positional addressing, applied to this one axis.
+    const REORDERED: &str = concat!(
+        "{\n",
+        "  \"permissions\": {\n",
+        "    \"deny\": [\"Bash(rm -rf *)\", \"Read(./secrets/**)\", \"Bash(curl *)\"]\n",
+        "  }\n",
+        "}\n",
+    );
+    assert_ne!(
+        merged.rendered, REORDERED,
+        "the reordered fixture must differ from what the pose rendered, or reordering measures \
+         nothing"
+    );
+
+    // WHEN the removal runs on the reordered document, with the trace the
+    // original pose recorded.
+    let removed = Jsonc::invert(REORDERED, &merged.inverse).expect("the removal must succeed");
+
+    // THEN the posed rule is still found and removed, and the user's rules are
+    // intact wherever they now sit.
+    let after = values(&removed);
+    assert!(
+        !after.contains(&"permissions.deny = \"Bash(rm -rf *)\"".to_string()),
+        "the posed rule survived the removal: {after:?}"
+    );
+    assert!(after.contains(&"permissions.deny = \"Bash(curl *)\"".to_string()));
+    assert!(after.contains(&"permissions.deny = \"Read(./secrets/**)\"".to_string()));
+}
+
+#[test]
+fn c6_a_value_already_present_does_not_enter_the_trace() {
     // GIVEN an entry whose fragment declares that it poses `AGENTS.md`, which is
     // already the first value of the array.
     let (_, before) = LAYOUTS[0];
