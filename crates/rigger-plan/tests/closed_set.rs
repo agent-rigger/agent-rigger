@@ -327,3 +327,92 @@ fn guard_the_document_the_scenarios_run_on_carries_the_trivia_they_claim() {
         "the document must be one the grammar returns unchanged"
     );
 }
+
+/// Guard, not scenario: **A4 · 4 requires that a behaviour added to the closed
+/// set without declaring its capture and its restoration make the build fail**,
+/// and this checks that the three examples which realise it are still there.
+///
+/// The clause is realised by the compiler and not by an assertion, so it is
+/// realised by doctests on the contract of a behaviour — a positive twin that
+/// compiles, and two refusals, one omitting `capture` and one omitting
+/// `restore`. **A doctest has no name.** Nothing in this repository could then be
+/// grepped for the identifier, and the clause would go missing the day somebody
+/// rewrote the prose that mentions it, with the whole suite green. This test is
+/// where that identifier lives.
+///
+/// **The three, and not the two refusals.** A `compile_fail` goes green on any
+/// compilation error at all, a typo included; it has teeth only beside the twin
+/// that compiles. A guard anchoring the refusals alone would let the twin be
+/// deleted without going red, and A4 · 4 would stay ticked while measuring
+/// nothing.
+///
+/// **What it cannot see.** That each block still defines a behaviour omitting
+/// the method it is named for; that a `compile_fail` fails for that omission
+/// rather than for a typo somebody left in it; that the twin still exercises the
+/// same shape as the two refusals. Those are properties of what is inside the
+/// fences, and only reading the examples tells them. What is anchored here is
+/// that the fences are on the **contract's own doc block**, in the expected
+/// kinds and order — a count over the whole file would go green on fences moved
+/// onto any other item in it.
+#[test]
+fn guard_a4_the_behaviour_contract_still_carries_the_three_examples_that_realise_it() {
+    let source = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("src/lib.rs"))
+        .expect("read the crate's own source");
+
+    assert_eq!(
+        fenced_examples(&contract_doc(&source)),
+        vec![
+            "".to_string(),
+            "compile_fail".to_string(),
+            "compile_fail".to_string()
+        ],
+        "the contract of a behaviour no longer carries the twin that compiles and the two \
+         refusals that do not — the clause requiring a behaviour without its capture and its \
+         restoration to fail the build is realised by those three and by nothing else"
+    );
+}
+
+/// The doc block of the contract: the run of `///` lines immediately above the
+/// declaration of the trait.
+///
+/// Anchored on the declaration and not on the file, so that fences moved onto
+/// another item stop counting — which is the way a count over a whole file goes
+/// green while the thing it was watching is gone.
+fn contract_doc(source: &str) -> String {
+    let declaration = source
+        .find("\npub trait Behaviour {")
+        .expect("the closed set's contract must still be a trait named `Behaviour`");
+    let mut block: Vec<&str> = source[..declaration]
+        .lines()
+        .rev()
+        .take_while(|line| line.trim_start().starts_with("///"))
+        .collect();
+    block.reverse();
+    block.join("\n")
+}
+
+/// The info string of every fenced example in a doc block, in order — empty for
+/// a block that is run, `compile_fail` for one that must not build.
+///
+/// Opening and closing fences are told apart by alternation, which is what the
+/// format itself does: a closing fence carries no info string and would
+/// otherwise be counted as one more example that runs.
+fn fenced_examples(doc: &str) -> Vec<String> {
+    let mut found = Vec::new();
+    let mut inside = false;
+    for line in doc.lines() {
+        let Some(content) = line.trim_start().strip_prefix("///") else {
+            continue;
+        };
+        let Some(info) = content.trim().strip_prefix("```") else {
+            continue;
+        };
+        if inside {
+            inside = false;
+        } else {
+            inside = true;
+            found.push(info.trim().to_string());
+        }
+    }
+    found
+}

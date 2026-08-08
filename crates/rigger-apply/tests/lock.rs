@@ -415,6 +415,59 @@ fn guard_a_second_acquisition_is_refused_and_never_waits() {
     fs::remove_dir_all(&dir).expect("clean up");
 }
 
+/// Guard, not scenario: releasing a lock is conditioned on the lock still being
+/// ours. No scenario of A3 names it, and the answer decides whether two runs can
+/// come to believe they hold the exclusion at once.
+///
+/// It is the same discipline as the break, at the other end of the hold.
+/// Releasing by path alone deletes whatever is at that path — including the lock
+/// of the run that broke ours and took it, which is precisely the state a run
+/// that overran its validity is in. That run keeps writing, believing it holds
+/// the exclusion, while its lock file is gone and a third run takes the path.
+///
+/// **Only the negative case is written here.** The positive twin — the content
+/// is still ours and the file does go away — is already held three times over:
+/// `a3_a_lock_past_its_validity_whose_holder_is_dead_is_broken_and_taken`,
+/// `guard_a_published_lock_reads_back_as_one_and_a_refused_one_leaves_no_residue`
+/// and `guard_a_second_acquisition_is_refused_and_never_waits` all go red on a
+/// release that stops removing. A fourth would raise the count without raising
+/// the measurement.
+///
+/// **What it establishes, and what it does not.** It shows the condition is
+/// there; it does not show it is atomic, and the release has no primitive to
+/// make it so. That asymmetry with the break is written where a reader of the
+/// lock would look for it, on the module itself.
+#[test]
+fn guard_a_lock_that_is_no_longer_ours_survives_our_release() {
+    // GIVEN a lock this run holds.
+    let dir = directory("conditioned-release");
+    let lock = lock_in(&dir);
+    let held = lock
+        .acquire(&Answers(Liveness::Dead))
+        .expect("the acquisition must succeed");
+
+    // AND a third party that has taken that path for itself since — which is
+    // what a run whose lock was broken while it was still working comes back to.
+    let by_a_third_party = lock_taken_ago(&lock, 5353, Duration::from_secs(0));
+
+    // WHEN this run releases.
+    drop(held);
+
+    // THEN the third party's lock is still there, byte for byte. Removed by path
+    // alone, it would be gone while the third party went on believing it held
+    // the exclusion, and the next run would take the path from under it.
+    assert_eq!(
+        fs::read_to_string(lock.path()).expect("the lock of another run was deleted on release"),
+        by_a_third_party
+    );
+    assert_eq!(
+        files(&dir),
+        vec!["registry.lock".to_string()],
+        "the release left something beside the lock"
+    );
+    fs::remove_dir_all(&dir).expect("clean up");
+}
+
 /// A characterization of the machine, not of a decision — and it is kept apart
 /// for that reason. What the product decides on an indeterminate holder is
 /// measured above, through a provided verdict; whether the system probe really

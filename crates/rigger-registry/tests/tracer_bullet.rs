@@ -510,7 +510,7 @@ fn a5_a_behaviour_this_build_lost_is_not_replaced_by_one_it_still_carries() {
         "acme-review-1.0",
     )
     .expect("the pose and its record must succeed");
-    rename_the_behaviour(&machine, &posted);
+    record_again(&machine, &posted, GONE, POSED_BEFORE);
     let before = machine.snapshot();
 
     // WHEN the removal is asked for.
@@ -536,21 +536,27 @@ fn a5_a_behaviour_this_build_lost_is_not_replaced_by_one_it_still_carries() {
     );
 }
 
-/// Records the same pose under a behaviour name outside the closed set, keeping
-/// the trace the pose wrote.
+/// Records the same pose again under another behaviour name and another posing
+/// version, keeping everything else — the trace the pose wrote included.
+///
+/// **It is the only way to get a record `install` cannot write.** `install`
+/// writes the running build's own version and a behaviour of the closed set, so
+/// a record laid down by the harness always carries both; a scenario about a
+/// version that is not this one, or a behaviour that is not in the set, has no
+/// fixture without this.
 ///
 /// It goes through the product's own write path rather than editing the file, so
-/// the record that comes back is one the product itself can produce — and the
-/// trace stays exactly what `link` recorded, which is what makes a fallback on
-/// `link` able to act.
-fn rename_the_behaviour(machine: &Machine, posted: &Entry) {
+/// what comes back is a record the product itself can produce — and the trace
+/// stays exactly what `link` recorded, which is what lets a removal that
+/// resolved the name actually act.
+fn record_again(machine: &Machine, posted: &Entry, behaviour: &str, posed_by: &str) {
     let outcome = transact(
         &machine.registry(),
         &[Mutation::Upsert(Entry::posted(Posting {
             id: posted.id().to_string(),
             provenance: posted.provenance().to_string(),
-            behaviour: GONE.to_string(),
-            posed_by: POSED_BEFORE.to_string(),
+            behaviour: behaviour.to_string(),
+            posed_by: posed_by.to_string(),
             root: Address::new(posted.root()).expect("a UTF-8 root"),
             address: Address::new(posted.address()).expect("a UTF-8 address"),
             fingerprint: posted.fingerprint().to_string(),
@@ -561,6 +567,83 @@ fn rename_the_behaviour(machine: &Machine, posted: &Entry) {
     )
     .expect("the record must be rewritten");
     assert!(matches!(outcome, Outcome::Committed { .. }));
+}
+
+/// A5 · 4 — **a record posed by another version of the product, in a behaviour
+/// the closed set still carries, is removed exactly as any other**, and the
+/// difference in version produces no warning and no extra work.
+///
+/// **Two departures from the letter of the scenario, both forced.** The scenario
+/// names a behaviour `merge/jsonc`: the closed set carries bare names, and a
+/// merge trace is not recordable by this build in the first place — `link` is
+/// the only member whose trace replays, so it is the member here. And the
+/// scenario has the running binary at version `2.0`: the version of this build
+/// is what its own package declares, so what can be asserted is the
+/// **inequality** with the recorded version, never a target number.
+///
+/// **Why there is no assertion that nothing warned.** The value a successful
+/// resolution answers has nowhere to put a warning, so a build that wanted to
+/// remark on the version would have to change that type first. The account of
+/// that choice lives on `resolve_behaviour`, where the type is, and is not
+/// repeated here: two copies of one argument drift apart, and the one nobody
+/// updates is the one somebody reads.
+///
+/// **"No slowdown" is two halves, and only one of them is measurable.** That no
+/// extra work is undertaken because the versions differ is a property of the
+/// path taken, and it is exactly what a mutation comparing the recorded version
+/// with the running one takes away — this test is what goes red then. The
+/// elapsed time is **not measured, and deliberately**: the clause carries no
+/// threshold, no instrument and no reference, so any assertion on a duration
+/// would measure the machine — red on a loaded build agent, green on code that
+/// had doubled its work.
+#[test]
+fn a5_a_record_posed_by_another_version_is_removed_exactly_as_any_other() {
+    // GIVEN something posed and recorded, and the record laid down again under a
+    // version that is not this build's, in a behaviour the set still carries.
+    let machine = Machine::new("another-version");
+    let before = machine.snapshot();
+    let posted = install(
+        &machine,
+        "acme/review",
+        &machine.root(),
+        "review.md",
+        "acme-review-1.0",
+    )
+    .expect("the pose and its record must succeed");
+    record_again(
+        &machine,
+        &posted,
+        BehaviourName::Link.as_str(),
+        POSED_BEFORE,
+    );
+
+    // AND the record really carries a version other than this build's —
+    // otherwise the scenario has no object, and a removal that refused on a
+    // version difference would pass this test.
+    let ledger = machine.registry().read().expect("read the registry");
+    assert_eq!(ledger.entries()[0].posed_by(), POSED_BEFORE);
+    assert_ne!(
+        ledger.entries()[0].posed_by(),
+        POSED_BY,
+        "the fixture records the version this build writes, so it measures nothing"
+    );
+    assert_eq!(
+        ledger.entries()[0].behaviour(),
+        BehaviourName::Link.as_str()
+    );
+
+    // WHEN the removal is asked for.
+    uninstall(&machine, "acme/review").expect("the removal must succeed");
+
+    // THEN it runs as any other: the machine is what it was, byte for byte, the
+    // shared store included, and the registry no longer describes it.
+    assert_eq!(machine.snapshot(), before);
+    assert!(machine
+        .registry()
+        .read()
+        .expect("read the registry")
+        .entries()
+        .is_empty());
 }
 
 #[test]

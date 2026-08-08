@@ -55,6 +55,23 @@
 //! third-order race between the rename away and the rename back is assumed:
 //! it is narrower than the lost update it replaces, and closing it would need a
 //! lock primitive with verified identity that the filesystem does not offer.
+//!
+//! **Releasing carries the same condition and not the same primitive**, and the
+//! asymmetry is stated here rather than discovered. [`Held::drop`] removes the
+//! lock file only if its content is still the identity this run wrote — the same
+//! discipline as the break, and for the same reason: removing by path alone
+//! would delete the lock of the run that broke ours and took it, leaving two
+//! runs believing they hold the exclusion. But where the break gets its
+//! condition from a primitive the kernel settles, the release is a bare
+//! check-then-act: read, compare, remove, with nothing holding the two lines
+//! together. A third party that takes the path in that interval has its lock
+//! removed by us.
+//!
+//! That window is left open on purpose. It is entered only by a run whose own
+//! lock has already been broken — one that overran its validity and was declared
+//! dead — and closing it would need the same verified-identity primitive the
+//! filesystem does not offer. What is measured is that the condition is there at
+//! all, which is the part a mutation could take away without anything noticing.
 
 use std::fmt;
 use std::fs;
