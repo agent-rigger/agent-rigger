@@ -64,15 +64,102 @@ use crate::backup::Backup;
 pub(crate) const MARKER: &str = "rigger-registry";
 
 /// The envelope version this build writes and reads.
-pub(crate) const FORMAT_VERSION: u32 = 1;
+///
+/// **Version `2` is where an entry stopped being positional.** In version `1` a
+/// line was seven fixed fields and then a tail of trace fields, so every field
+/// ever added would have had to go in before that tail — reinterpreting the
+/// first trace field of every line already written. That is not "this field
+/// costs a format bump"; it is *any* field, for ever. A named field is added by
+/// writing it, and a build that does not know it reads the entry all the same.
+///
+/// Version `1` is **refused and not migrated**. No registry in that format
+/// exists outside the working directories of this suite: the product has no
+/// command surface, no binary and no release, so a migration would be written
+/// for a document that does not exist.
+pub(crate) const FORMAT_VERSION: u32 = 2;
 
 /// The word that opens an entry's line.
 const ENTRY: &str = "entry";
 
-/// How many fields an entry carries before its trace: the identifier, the
-/// provenance, the behaviour, the posing version, the effective root, the
-/// address and the fingerprint.
-const FIXED_FIELDS: usize = 7;
+/// The names of the fields this build writes and reads.
+///
+/// They are declared once and used by both the rendering and the reading: a name
+/// written on one side and matched on the other, as two literals, is how a field
+/// comes to be written under a name nothing reads back.
+mod field {
+    /// What the catalogue called the thing.
+    pub(super) const ID: &str = "id";
+    /// Which catalogue it came from.
+    pub(super) const PROVENANCE: &str = "provenance";
+    /// The name of the behaviour that posed it.
+    pub(super) const BEHAVIOUR: &str = "behaviour";
+    /// The version of the product that posed it.
+    pub(super) const POSED_BY: &str = "posed_by";
+    /// The effective root at the moment of the pose.
+    pub(super) const ROOT: &str = "root";
+    /// The address, under that root.
+    pub(super) const ADDRESS: &str = "address";
+    /// The fingerprint of the bytes that were posed.
+    pub(super) const FINGERPRINT: &str = "fingerprint";
+    /// The inverse, in the fields the behaviour that posed it wrote.
+    pub(super) const TRACE: &str = "trace";
+
+    /// Every name above, for telling a field this build knows from one it does
+    /// not.
+    pub(super) const KNOWN: [&str; 8] = [
+        ID,
+        PROVENANCE,
+        BEHAVIOUR,
+        POSED_BY,
+        ROOT,
+        ADDRESS,
+        FINGERPRINT,
+        TRACE,
+    ];
+}
+
+/// What marks a field name as **deciding how the entry is written**, as opposed
+/// to merely annotating it.
+///
+/// # Why the format needs two regimes and not one
+///
+/// A name this build does not know comes in two kinds, and treating them alike
+/// is destructive in one direction.
+///
+/// An **annotation** — a label, a note, a piece of provenance — decides no
+/// write. Ignoring it and carrying it through untouched is the founding rule of
+/// this crate applied to its own format: an older build reading a registry
+/// written by a newer one destroys nothing it does not understand.
+///
+/// A field that **decides a write** is the opposite. Ignoring one is writing
+/// something other than what the record declares while believing the
+/// declaration is being honoured. The concrete shape of that is not
+/// hypothetical: a later version of this format will distinguish a thing the
+/// product *posed* from a thing it merely *observed*, and a build that ignored
+/// that distinction would take away bytes their owner wrote and the product
+/// never put there. So a marked name this build does not carry makes the entry
+/// unjudgeable, naming the field.
+///
+/// # Why the mark is a prefix, and this character
+///
+/// **A prefix makes the classification total.** The first character of a name
+/// decides, always: no annotation can pass for a decision, and no decision for
+/// an annotation, which is the one confusion that would make either regime
+/// worthless.
+///
+/// `!` is not one of the four characters the escaping of a value produces or
+/// consumes, so a name carrying it survives being written and read back
+/// unchanged — and field names are not escaped at all, because a name is
+/// already constrained: never empty, never carrying `=`, and unable to carry a
+/// tabulation or a line break, since the document is split on those before a
+/// name is ever looked at.
+///
+/// **No name this build knows is marked today**, and that is not an oversight:
+/// nothing in this version decides a write from the registry. The day one does,
+/// it is added to the names above and stops falling here — and a build released
+/// before that day refuses the entry by itself, which is the behaviour wanted,
+/// with no format bump to arrange it.
+const DECIDES: char = '!';
 
 /// The version of the product, as this build was compiled.
 ///
@@ -271,6 +358,44 @@ pub struct Entry {
     address: Address,
     fingerprint: String,
     trace: Vec<String>,
+    unknown: Vec<UnknownField>,
+}
+
+/// A field of an entry this build does not know, kept as it was read.
+///
+/// **It is carried rather than dropped**, and that is the founding rule of this
+/// crate turned on its own format: a registry written by a newer build is read
+/// by an older one without the older one destroying what it cannot read. Dropped
+/// at the read, the field would disappear from the file at the next write — the
+/// description of something posed, gone, and what it describes unremovable, with
+/// no error and nobody noticing.
+///
+/// **It is also handed to the caller**, and not only carried through, so that a
+/// later reader can name what it found rather than discover it by diffing files.
+///
+/// **What that does not do, said plainly rather than dressed up.** Nothing tells
+/// the person running the command that a field was ignored. The compatibility
+/// contract this format serves asks for an ignored unknown key to be **named in
+/// a warning**, and this crate has no channel to say anything at all — no
+/// diagnostic, no report, no stream it writes to. That is a residual, not a
+/// property: it is not "the shape a warning takes here". Where the channel
+/// should live is an open question, and this type does not close it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnknownField {
+    name: String,
+    value: String,
+}
+
+impl UnknownField {
+    /// The name, as the record spells it.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// The value, read back out of the document.
+    pub fn value(&self) -> &str {
+        &self.value
+    }
 }
 
 /// Everything one pose has to record, named field by field.
@@ -359,6 +484,10 @@ impl Entry {
             address: posting.address,
             fingerprint: posting.fingerprint,
             trace: posting.trace,
+            // A pose writes what this build knows and nothing else. Fields it
+            // does not know arrive only by reading a document somebody else
+            // wrote.
+            unknown: Vec::new(),
         }
     }
 
@@ -427,6 +556,13 @@ impl Entry {
         &self.trace
     }
 
+    /// The fields of this record that this build does not know, in the order the
+    /// document carried them. See [`UnknownField`] for what is and is not
+    /// promised about them.
+    pub fn unknown_fields(&self) -> &[UnknownField] {
+        &self.unknown
+    }
+
     /// The refusal this entry is owed when its behaviour is not one this build
     /// carries — built here, where every field it names is at hand.
     fn behaviour_gone(&self) -> RegistryError {
@@ -438,22 +574,43 @@ impl Entry {
         }
     }
 
+    /// The line this record is written as.
+    ///
+    /// **The order is fixed**: the names this build knows, always in this order,
+    /// then the fields it does not, in the order the document carried them.
+    /// Tests compare registry files byte for byte, and a rendering whose order
+    /// came from a map would differ from one run to the next.
     fn render(&self) -> String {
         let mut line = format!(
-            "{ENTRY}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+            "{ENTRY}\t{}={}\t{}={}\t{}={}\t{}={}\t{}={}\t{}={}\t{}={}",
+            field::ID,
             escape(&self.identity.id),
+            field::PROVENANCE,
             escape(&self.identity.provenance),
+            field::BEHAVIOUR,
             escape(&self.behaviour),
+            field::POSED_BY,
             escape(&self.posed_by),
+            field::ROOT,
             // Not a lossy conversion, and there is nowhere left to put one: the
             // root and the address were checked when they were built.
             escape(self.root.as_str()),
+            field::ADDRESS,
             escape(self.address.as_str()),
+            field::FINGERPRINT,
             escape(&self.fingerprint),
         );
-        for field in &self.trace {
+        if !self.trace.is_empty() {
             line.push('\t');
-            line.push_str(&escape(field));
+            line.push_str(field::TRACE);
+            line.push('=');
+            line.push_str(&escape(&join_trace(&self.trace)));
+        }
+        for unknown in &self.unknown {
+            line.push('\t');
+            line.push_str(&unknown.name);
+            line.push('=');
+            line.push_str(&escape(&unknown.value));
         }
         line
     }
@@ -743,6 +900,28 @@ impl Ledger {
 
 /// One entry, or why this line is not one. The reason travels; it is what the
 /// unjudgeable state has to name.
+///
+/// **Reading does not depend on the order of the fields**, and that is the half
+/// that makes the format extensible rather than merely renamed. A build reads
+/// the names it knows wherever they are, so a newer build may write them in any
+/// order, and inserting a field is not a change to what any other field means.
+///
+/// **Three malformations make the line unjudgeable rather than being tidied
+/// up**, and each of them keeps the bytes: an unjudgeable line is written back
+/// exactly as it was read.
+///
+/// A field carrying no `=` is not a field of this format. Ignoring it would take
+/// it out of the file at the next write, which is the loss this whole format
+/// exists against, on the likeliest case there is — a line written in some other
+/// format altogether.
+///
+/// A name written twice is refused because nothing here can say which of the two
+/// describes what was posed. Taking the last, or the first, would be choosing at
+/// random between two descriptions of a thing on somebody's machine.
+///
+/// A required name that is absent is refused **by naming it**, and never
+/// completed from a default: a default is a value nobody wrote, and a removal
+/// computed from one acts somewhere nobody consented to.
 fn decode_entry(line: &str) -> Result<Entry, String> {
     let mut fields = line.split('\t');
     match fields.next() {
@@ -754,51 +933,150 @@ fn decode_entry(line: &str) -> Result<Entry, String> {
         }
         None => return Err("the line is empty".to_string()),
     }
-    let mut read = |what: &str| -> Result<String, String> {
-        let field = fields
-            .next()
-            .ok_or_else(|| format!("the line carries no {what}"))?;
-        unescape(field).map_err(|reason| format!("the {what} cannot be read — {reason}"))
-    };
-    let id = read("identifier")?;
-    let provenance = read("provenance")?;
-    let behaviour = read("behaviour name")?;
-    let posed_by = read("posing version")?;
-    let root = read("effective root")?;
-    let address = read("address")?;
-    let fingerprint = read("fingerprint")?;
-    // **Everything after the fixed fields is the trace, however many fields it
-    // is.** Its arity belongs to the behaviour that posed, not to the registry:
-    // reading it here would mean resolving the behaviour while decoding, and an
-    // entry naming a behaviour this build no longer carries would become a
-    // corrupt line reported unjudgeable with the wrong reason — while the
-    // refusal that has to name the behaviour, its version and the file never
-    // happened.
-    let mut trace = Vec::new();
-    for (index, field) in fields.enumerate() {
-        trace.push(unescape(field).map_err(|reason| {
-            format!(
-                "field {} of the trace cannot be read — {reason}",
-                FIXED_FIELDS + index + 1
-            )
-        })?);
+
+    // The names as the document spells them, with their values still escaped,
+    // in the order they were read — which is the order the unknown ones are
+    // written back in.
+    let mut written: Vec<(&str, &str)> = Vec::new();
+    for field in fields {
+        // **At the first `=` and never the last.** A value carries them: a root
+        // may legitimately be a directory called `env=prod`, and every path this
+        // registry accepts is a path. Cutting at the last one reads back a
+        // different address, and a removal then looks where nothing was posed.
+        let Some((name, value)) = field.split_once('=') else {
+            return Err(format!(
+                "the field `{field}` carries no `=`, and every field of an entry is a name and a \
+                 value"
+            ));
+        };
+        if name.is_empty() {
+            return Err(format!(
+                "the field `{field}` opens with `=`, and the name of a field is never empty"
+            ));
+        }
+        if written.iter().any(|(already, _)| *already == name) {
+            return Err(format!(
+                "the field `{name}` is written twice, and nothing here can tell which of the two \
+                 describes what was posed"
+            ));
+        }
+        written.push((name, value));
     }
+
+    let value = |name: &str| -> Option<&str> {
+        written
+            .iter()
+            .find(|(written, _)| *written == name)
+            .map(|(_, value)| *value)
+    };
+    let read = |name: &str, what: &str| -> Result<String, String> {
+        let raw = value(name).ok_or_else(|| format!("the line carries no {what}"))?;
+        unescape(raw).map_err(|reason| format!("the {what} cannot be read — {reason}"))
+    };
+
+    let mut unknown = Vec::new();
+    for (name, raw) in &written {
+        if field::KNOWN.contains(name) {
+            continue;
+        }
+        if name.starts_with(DECIDES) {
+            return Err(format!(
+                "the field `{name}` decides how this record is to be written, and this build does \
+                 not carry it — a field of that kind is not one to ignore, because ignoring it \
+                 means writing something other than what the record declares"
+            ));
+        }
+        unknown.push(UnknownField {
+            name: (*name).to_string(),
+            value: unescape(raw)
+                .map_err(|reason| format!("the field `{name}` cannot be read — {reason}"))?,
+        });
+    }
+
+    let id = read(field::ID, "identifier")?;
+    let provenance = read(field::PROVENANCE, "provenance")?;
+    let behaviour = read(field::BEHAVIOUR, "behaviour name")?;
+    let posed_by = read(field::POSED_BY, "posing version")?;
+    let root = read(field::ROOT, "effective root")?;
+    let address = read(field::ADDRESS, "address")?;
+    let fingerprint = read(field::FINGERPRINT, "fingerprint")?;
+    // **The trace is not required, and its absence is an empty trace.** A record
+    // of something posed through a behaviour that writes no inverse is a
+    // legitimate record, and treating the field as required would turn every one
+    // of them into an unreadable line.
+    //
+    // **Its elements are not resolved here**, however many there are. The arity
+    // belongs to the behaviour that posed, not to the registry: reading it here
+    // would mean resolving the behaviour while decoding, and an entry naming a
+    // behaviour this build no longer carries would become a corrupt line
+    // reported unjudgeable with the wrong reason — while the refusal that has to
+    // name the behaviour, its version and the file never happened.
+    let trace = match value(field::TRACE) {
+        None => Vec::new(),
+        Some(raw) => split_trace(
+            &unescape(raw).map_err(|reason| format!("the trace cannot be read — {reason}"))?,
+        )?,
+    };
+
     if id.is_empty() {
         return Err("the identifier is empty".to_string());
     }
     // The root and the address came out of a UTF-8 document, so they are ones:
     // no check is possible here, and the one that matters happened where the
     // paths were offered.
-    Ok(Entry::posted(Posting {
-        id,
-        provenance,
+    Ok(Entry {
+        identity: Identity { provenance, id },
         behaviour,
         posed_by,
         root: Address::from_document(root),
         address: Address::from_document(address),
         fingerprint,
         trace,
-    }))
+        unknown,
+    })
+}
+
+/// The elements of a trace, written into one field.
+///
+/// **One field and not one field per element**, because a name written twice
+/// makes a line unjudgeable — so `trace=` repeated, the shape a list of variable
+/// length asks for, is not available. The other form left was a name per index,
+/// `trace.0`, `trace.1`, and it was not taken: it needs rules for a gap, for an
+/// index out of order and for one repeated, each of which is a way for two
+/// readers to disagree about the same file.
+///
+/// **The nesting is what makes it unambiguous.** Each element is escaped, the
+/// escaped forms are joined with a tabulation, and the whole is escaped again as
+/// the value of the field. An escaped element carries no tabulation of its own —
+/// that is what the escaping is for — so the tabulations that survive to the
+/// join are exactly the ones the join put there. An element that itself holds a
+/// tabulation comes back holding it.
+fn join_trace(trace: &[String]) -> String {
+    trace
+        .iter()
+        .map(|element| escape(element))
+        .collect::<Vec<_>>()
+        .join("\t")
+}
+
+/// The elements a trace field carries, read back.
+///
+/// A field that is there with an empty value is **one empty element**, and a
+/// field that is not there at all is no elements. The two are different records,
+/// and rendering keeps them apart: an empty trace writes no field.
+fn split_trace(joined: &str) -> Result<Vec<String>, String> {
+    joined
+        .split('\t')
+        .enumerate()
+        .map(|(index, element)| {
+            unescape(element).map_err(|reason| {
+                format!(
+                    "element {} of the trace cannot be read — {reason}",
+                    index + 1
+                )
+            })
+        })
+        .collect()
 }
 
 /// Renders a field so that no value can produce a separator or a line break.

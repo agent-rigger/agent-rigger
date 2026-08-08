@@ -43,14 +43,15 @@ fn directory(name: &str) -> PathBuf {
 /// fingerprint of what was materialised.
 fn entry_line(id: &str) -> String {
     format!(
-        "entry\t{id}\tacme\tlink\t1.4\t/home/someone\t{id}.json\t0123456789abcdef\t\
-         /store/{id}\tlink\t0123456789abcdef"
+        "entry\tid={id}\tprovenance=acme\tbehaviour=link\tposed_by=1.4\troot=/home/someone\t\
+         address={id}.json\tfingerprint=0123456789abcdef\t\
+         trace=/store/{id}\\tlink\\t0123456789abcdef"
     )
 }
 
 /// A registry carrying these identifiers, written by the test.
 fn registry_with(dir: &Path, name: &str, ids: &[&str]) -> Registry {
-    let mut document = String::from("rigger-registry 1\n");
+    let mut document = String::from("rigger-registry 2\n");
     for id in ids {
         document.push_str(&entry_line(id));
         document.push('\n');

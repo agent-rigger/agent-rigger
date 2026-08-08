@@ -33,7 +33,7 @@ pub mod transaction;
 pub use backup::{Backup, WholeCopy};
 pub use ledger::{
     exit_code, resolve_behaviour, Address, AddressNotUtf8, Entry, Identity, Ledger, Posting,
-    RegistryError, Unjudgeable, IMPOSSIBLE_REQUEST, POSED_BY, RUNTIME_FAILURE,
+    RegistryError, Unjudgeable, UnknownField, IMPOSSIBLE_REQUEST, POSED_BY, RUNTIME_FAILURE,
 };
 pub use transaction::{
     replay, transact, Consent, Decision, Fresh, Mutation, Outcome, Proposal, Registry,

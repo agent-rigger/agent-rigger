@@ -326,7 +326,7 @@ const POSED_BEFORE: &str = "1.4";
 /// is not in the set is one this build has no way to record.
 fn registry_holding(machine: &Machine, lines: &[String]) -> Registry {
     let registry = machine.registry();
-    let mut document = String::from("rigger-registry 1\n");
+    let mut document = String::from("rigger-registry 2\n");
     for line in lines {
         document.push_str(line);
         document.push('\n');
@@ -336,15 +336,16 @@ fn registry_holding(machine: &Machine, lines: &[String]) -> Registry {
 }
 
 /// One entry line naming a behaviour outside the closed set, as an older build
-/// would have left it: the seven fixed fields, then the trace that build wrote.
+/// would have left it: the named fields, then the trace that build wrote.
 fn line_posed_by_a_gone_behaviour(root: &Path, address: &str, trace: &[&str]) -> String {
     let mut line = format!(
-        "entry\tacme/review\tacme\t{GONE}\t{POSED_BEFORE}\t{}\t{address}\t0123456789abcdef",
+        "entry\tid=acme/review\tprovenance=acme\tbehaviour={GONE}\tposed_by={POSED_BEFORE}\t\
+         root={}\taddress={address}\tfingerprint=0123456789abcdef",
         root.display()
     );
-    for field in trace {
-        line.push('\t');
-        line.push_str(field);
+    if !trace.is_empty() {
+        line.push_str("\ttrace=");
+        line.push_str(&trace.join("\\t"));
     }
     line
 }
@@ -804,10 +805,22 @@ fn guard_an_entry_whose_trace_cannot_be_read_counts_as_a_referent() {
     let document = fs::read_to_string(registry.path()).expect("read the registry");
     fs::write(
         registry.path(),
-        format!("{document}entry\tacme/other\tacme\tlink\t1.4\t/home/someone\tother.md\tabc\n"),
+        format!(
+            "{document}entry\tid=acme/other\tprovenance=acme\tbehaviour=link\tposed_by=1.4\t\
+             root=/home/someone\taddress=other.md\tfingerprint=abc\n"
+        ),
     )
-    .expect("write a line whose link trace has no placement");
+    .expect("write a line that records no trace at all");
     let ledger = registry.read().expect("read the registry");
+
+    // The added line is a readable entry carrying an empty trace, and not an
+    // illegible line. Were the trace a required field, this line would be
+    // unjudgeable — and the count below would answer `Remaining` because of the
+    // illegible line rather than because of the trace, leaving this guard green
+    // while measuring nothing.
+    assert_eq!(ledger.entries().len(), 2);
+    assert!(ledger.unjudgeable().is_empty());
+    assert!(ledger.entries()[1].trace().is_empty());
 
     assert_eq!(
         ledger.referents(&store, &acme("acme/review")),
@@ -850,8 +863,9 @@ fn guard_an_entry_naming_a_behaviour_outside_the_set_counts_as_a_referent() {
     fs::write(
         registry.path(),
         format!(
-            "{document}entry\tacme/other\tacme\t{GONE}\t{POSED_BEFORE}\t/home/someone\tother.md\t\
-             abc\t/store/another\tlink\t0123456789abcdef\n"
+            "{document}entry\tid=acme/other\tprovenance=acme\tbehaviour={GONE}\t\
+             posed_by={POSED_BEFORE}\troot=/home/someone\taddress=other.md\tfingerprint=abc\t\
+             trace=/store/another\\tlink\\t0123456789abcdef\n"
         ),
     )
     .expect("write a line naming a behaviour outside the closed set");

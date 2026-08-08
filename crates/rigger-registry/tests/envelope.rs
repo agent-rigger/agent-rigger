@@ -33,13 +33,15 @@ fn registry_with(dir: &std::path::Path, document: &str) -> Registry {
     Registry::at(path)
 }
 
-/// One entry line, as the format writes it: the seven fixed fields, then the
-/// trace of the behaviour that posed — here a link, whose trace is a store
-/// entry, a placement and the fingerprint of what was materialised.
+/// One entry line, as the format writes it: the named fields, then the trace of
+/// the behaviour that posed — here a link, whose trace is a store entry, a
+/// placement and the fingerprint of what was materialised, carried in one field
+/// and separated by the escape the format writes.
 fn entry_line(id: &str, behaviour: &str, posed_by: &str, address: &str) -> String {
     format!(
-        "entry\t{id}\tacme\t{behaviour}\t{posed_by}\t/home/someone\t{address}\t0123456789abcdef\t\
-         /store/{id}\tlink\t0123456789abcdef"
+        "entry\tid={id}\tprovenance=acme\tbehaviour={behaviour}\tposed_by={posed_by}\t\
+         root=/home/someone\taddress={address}\tfingerprint=0123456789abcdef\t\
+         trace=/store/{id}\\tlink\\t0123456789abcdef"
     )
 }
 
@@ -49,7 +51,7 @@ fn a1_a_registry_written_by_a_version_this_build_does_not_read_is_refused_and_le
     // not know.
     let dir = directory("newer-envelope");
     let document = format!(
-        "rigger-registry 2\n{}\n",
+        "rigger-registry 3\n{}\n",
         entry_line("acme/skill", "merge", "1.4", "/home/someone/settings.json")
     );
     let registry = registry_with(&dir, &document);
@@ -70,14 +72,14 @@ fn a1_a_registry_written_by_a_version_this_build_does_not_read_is_refused_and_le
             expected,
         } => {
             assert_eq!(path, registry.path());
-            assert_eq!(found, "2");
-            assert_eq!(*expected, 1);
+            assert_eq!(found, "3");
+            assert_eq!(*expected, 2);
         }
         other => panic!("the refusal does not name the envelope: {other}"),
     }
     let message = failure.to_string();
+    assert!(message.contains('3'), "{message}");
     assert!(message.contains('2'), "{message}");
-    assert!(message.contains('1'), "{message}");
 
     // AND the registry file is identical, byte for byte, to what it was — never
     // coerced into an empty registry, which would destroy the only description
@@ -151,7 +153,7 @@ fn a1_one_unreadable_entry_out_of_twelve_is_unjudgeable_and_the_other_eleven_are
     // GIVEN a registry whose envelope is valid and one of whose twelve entries
     // is unreadable.
     let dir = directory("one-corrupt-entry");
-    let mut document = String::from("rigger-registry 1\n");
+    let mut document = String::from("rigger-registry 2\n");
     for index in 0..11 {
         document.push_str(&entry_line(
             &format!("acme/skill-{index}"),
@@ -161,7 +163,14 @@ fn a1_one_unreadable_entry_out_of_twelve_is_unjudgeable_and_the_other_eleven_are
         ));
         document.push('\n');
     }
-    document.push_str("entry\tacme/skill-11\tacme\tlink\n");
+    // A line that is well formed but for the one field it does not carry. Under
+    // a positional format the same fixture was a short line, and the reason it
+    // produced came from the fourth position being read as the posing version;
+    // with named fields, a missing name is what a missing field is.
+    document.push_str(
+        "entry\tid=acme/skill-11\tprovenance=acme\tbehaviour=link\troot=/home/someone\t\
+         address=settings-11.json\tfingerprint=0123456789abcdef\n",
+    );
     let registry = registry_with(&dir, &document);
 
     // WHEN a read runs.
@@ -179,10 +188,10 @@ fn a1_one_unreadable_entry_out_of_twelve_is_unjudgeable_and_the_other_eleven_are
     assert_eq!(ledger.unjudgeable().len(), 1);
     let unreadable = &ledger.unjudgeable()[0];
     assert_eq!(unreadable.line(), 13);
-    assert!(
-        unreadable.reason().contains("posing version"),
-        "the unjudgeable entry does not carry the reason it is one: {}",
-        unreadable.reason()
+    assert_eq!(
+        unreadable.reason(),
+        "the line carries no posing version",
+        "the unjudgeable entry does not carry the reason it is one"
     );
     fs::remove_dir_all(&dir).expect("clean up");
 }
@@ -212,7 +221,7 @@ fn guard_an_unreadable_entry_is_written_back_unchanged() {
     let dir = directory("keep-unreadable");
     const UNREADABLE: &str = "entry\tacme/older\tacme\tlink";
     let document = format!(
-        "rigger-registry 1\n{}\n{UNREADABLE}\n",
+        "rigger-registry 2\n{}\n{UNREADABLE}\n",
         entry_line("acme/skill", "merge", "1.4", "/home/someone/settings.json")
     );
     let registry = registry_with(&dir, &document);
@@ -277,7 +286,7 @@ fn guard_a_second_line_under_one_identifier_is_unjudgeable_and_is_written_back()
     let dir = directory("repeated-identifier");
     let first = entry_line("acme/skill", "merge", "1.4", "/home/someone/first.json");
     let second = entry_line("acme/skill", "merge", "1.4", "/home/someone/second.json");
-    let registry = registry_with(&dir, &format!("rigger-registry 1\n{first}\n{second}\n"));
+    let registry = registry_with(&dir, &format!("rigger-registry 2\n{first}\n{second}\n"));
 
     // WHEN the registry is read.
     let ledger = registry.read().expect("the read must succeed");
@@ -319,7 +328,7 @@ fn guard_a_second_line_under_one_identifier_is_unjudgeable_and_is_written_back()
     .expect("the transaction must succeed");
     assert!(matches!(outcome, Outcome::Committed { .. }));
     let written = fs::read_to_string(registry.path()).expect("read the registry back");
-    assert_eq!(written, format!("rigger-registry 1\n{first}\n{second}\n"));
+    assert_eq!(written, format!("rigger-registry 2\n{first}\n{second}\n"));
     fs::remove_dir_all(&dir).expect("clean up");
 }
 
@@ -387,10 +396,11 @@ fn guard_two_catalogues_carrying_one_name_keep_two_records() {
     let dir = directory("two-catalogues");
     let registry = registry_with(
         &dir,
-        "rigger-registry 1\n\
-         entry\tcontext/agents\tacme\tlink\t1.5\t/home/someone\tacme.md\tabc\t/store/a\tlink\tdef\n\
-         entry\tcontext/agents\tglobex\tlink\t1.5\t/home/someone\tglobex.md\tabc\t/store/g\tlink\t\
-         def\n",
+        "rigger-registry 2\n\
+         entry\tid=context/agents\tprovenance=acme\tbehaviour=link\tposed_by=1.5\t\
+         root=/home/someone\taddress=acme.md\tfingerprint=abc\ttrace=/store/a\\tlink\\tdef\n\
+         entry\tid=context/agents\tprovenance=globex\tbehaviour=link\tposed_by=1.5\t\
+         root=/home/someone\taddress=globex.md\tfingerprint=abc\ttrace=/store/g\\tlink\\tdef\n",
     );
     let read = registry.read().expect("the read must succeed");
     assert_eq!(read.entries().len(), 2);
@@ -475,7 +485,7 @@ fn a1_the_refusal_names_the_fact_and_the_expected_version_and_advises_no_remedy(
     assert_eq!(
         failure.to_string(),
         format!(
-            "{}: the registry declares format version 7, and this build reads version 1 — it is \
+            "{}: the registry declares format version 7, and this build reads version 2 — it is \
              left exactly as it is, because it is the only description of what has been posed on \
              this machine",
             registry.path().display()

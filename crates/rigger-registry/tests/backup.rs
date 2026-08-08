@@ -60,15 +60,16 @@ fn copy_of_registry(dir: &std::path::Path) -> PathBuf {
 /// trace of the behaviour that posed.
 fn entry_line(id: &str, address: &str) -> String {
     format!(
-        "entry\t{id}\tacme\tlink\t1.4\t/home/someone\t{address}\t0123456789abcdef\t\
-         /store/{id}\tlink\t0123456789abcdef"
+        "entry\tid={id}\tprovenance=acme\tbehaviour=link\tposed_by=1.4\troot=/home/someone\t\
+         address={address}\tfingerprint=0123456789abcdef\t\
+         trace=/store/{id}\\tlink\\t0123456789abcdef"
     )
 }
 
 /// A registry document holding one entry.
 fn one_entry() -> String {
     format!(
-        "rigger-registry 1\n{}\n",
+        "rigger-registry 2\n{}\n",
         entry_line("acme/skill", "/home/someone/settings.json")
     )
 }
@@ -205,7 +206,7 @@ fn guard_a_witness_is_terminated_and_accounts_for_where_it_opens() {
 
     // A copy whose own content ends on a line shaped like the witness, and whose
     // declared length accounts for nothing.
-    fs::write(&path, "rigger-registry 1\nrigger-registry-backup 4\n").expect("write the copy");
+    fs::write(&path, "rigger-registry 2\nrigger-registry-backup 4\n").expect("write the copy");
     assert!(
         matches!(Backup::beside(registry.path()), Backup::Truncated { .. }),
         "a line shaped like the witness was taken for one"
@@ -277,7 +278,7 @@ fn a2_an_unreadable_registry_is_left_on_the_disk_and_the_refusal_advises_no_reme
     assert_eq!(
         failure.to_string(),
         format!(
-            "{}: the registry declares format version 7, and this build reads version 1 — it is \
+            "{}: the registry declares format version 7, and this build reads version 2 — it is \
              left exactly as it is, because it is the only description of what has been posed on \
              this machine; no copy of the registry is beside it",
             registry.path().display()
@@ -341,7 +342,7 @@ fn a2_the_refusal_of_an_unreadable_registry_names_it_and_the_copy_beside_it() {
     assert_eq!(
         failure.to_string(),
         format!(
-            "{}: the registry declares format version 7, and this build reads version 1 — it is \
+            "{}: the registry declares format version 7, and this build reads version 2 — it is \
              left exactly as it is, because it is the only description of what has been posed on \
              this machine; {}: a whole copy of the registry, {} bytes — the registry as it stood \
              when the copy was taken",
@@ -387,7 +388,7 @@ fn guard_no_rendering_of_a_refusal_advises_a_remedy() {
     assert_eq!(
         failure.to_string(),
         format!(
-            "{}: the registry declares format version 7, and this build reads version 1 — it is \
+            "{}: the registry declares format version 7, and this build reads version 2 — it is \
              left exactly as it is, because it is the only description of what has been posed on \
              this machine; {}: a copy of the registry whose own write was interrupted — it does \
              not carry the witness written last, so it is truncated, nothing here can tell how \
@@ -415,7 +416,7 @@ fn guard_no_rendering_of_a_refusal_advises_a_remedy() {
     assert_eq!(
         failure.to_string(),
         format!(
-            "{}: the registry declares format version 7, and this build reads version 1 — it is \
+            "{}: the registry declares format version 7, and this build reads version 2 — it is \
              left exactly as it is, because it is the only description of what has been posed on \
              this machine; {}: a copy of the registry that cannot be read — {detail} — so it is \
              not offered as a state to resume from",
