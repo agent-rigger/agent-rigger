@@ -353,17 +353,23 @@ fn a2_the_refusal_of_an_unreadable_registry_names_it_and_the_copy_beside_it() {
     fs::remove_dir_all(&dir).expect("clean up");
 }
 
-/// Guard, not scenario: the two renderings of the refusal that the scenarios
-/// above do not reach.
+/// Guard, not scenario: the renderings of a refusal that no scenario reaches.
 ///
 /// A2 requires that no message suggest deleting the registry or moving it aside,
 /// and the tests that realise it pin one rendering each — the refusal with no
 /// copy beside it, and the refusal with a whole one. A refusal is rendered from
 /// the copy it carries, so there are two more, and a tail added to either of them
-/// advises a remedy in exactly the same way while every test stays green. Neither
-/// of these two realises a scenario; both of them protect one.
+/// advises a remedy in exactly the same way while every test stays green.
+///
+/// **The same hole is not particular to this refusal, so this guard is not
+/// either.** A refusal whose rendering varies with what it carries has as many
+/// renderings as it has shapes, and a scenario reaches the shape it needs and no
+/// other. The last one added is below: the record that names a behaviour this
+/// build no longer carries hands back the fields the record holds, and a
+/// scenario always has some — so the rendering of one that has none is reached
+/// by nothing else. Nothing here realises a scenario; all of it protects one.
 #[test]
-fn guard_no_rendering_of_the_refusal_advises_a_remedy() {
+fn guard_no_rendering_of_a_refusal_advises_a_remedy() {
     // A copy whose own write stopped partway, beside a registry that does not
     // read.
     let dir = directory("no-remedy-truncated");
@@ -418,6 +424,25 @@ fn guard_no_rendering_of_the_refusal_advises_a_remedy() {
         )
     );
     fs::remove_dir_all(&dir).expect("clean up");
+
+    // A record naming a behaviour this build no longer carries, holding no
+    // recorded fields at all. The scenario that realises this refusal pins the
+    // rendering with fields; this is the other one, and it is the shape in which
+    // "here is what to undo by hand" is at its emptiest — which is where advice
+    // to delete the record and be done with it would be most tempting to add.
+    let failure = RegistryError::BehaviourGone {
+        behaviour: "merge/toml".to_string(),
+        posed_by: "1.4".to_string(),
+        address: PathBuf::from("/home/someone/settings.toml"),
+        trace: Vec::new(),
+    };
+    assert_eq!(
+        failure.to_string(),
+        "/home/someone/settings.toml: posed through behaviour `merge/toml` by version 1.4 of the \
+         product, and this build carries no behaviour of that name — nothing was undone, the \
+         record is left exactly as it is, and no neighbouring behaviour was tried in its place; \
+         what the record holds, to be undone by hand, is []"
+    );
 }
 
 /// Lays out a registry whose content cannot be rendered, puts a whole copy of a

@@ -8,6 +8,17 @@
 //! posed, which is what lets a later build refuse by naming them rather than go
 //! silent.
 //!
+//! **A5's refusal is here too, and it is here rather than in a file of its own
+//! because it needs this machine.** What A5 requires is that the set of
+//! behaviours never shrink in silence: when a trace names a behaviour the
+//! running version no longer carries, the product refuses by naming the
+//! behaviour, the version that posed it, the file and what has to be undone by
+//! hand — and it never recognises the shape of what was posed in order to undo
+//! it anyway. Measuring "it did not undo it anyway" means having something on a
+//! machine and comparing that machine before and after, which is what
+//! [`Machine::snapshot`] is. A second harness beside this one would be a second
+//! definition of the same sequence, and two definitions drift.
+//!
 //! **What the sequence below is, and where it will live.** Reading the
 //! registry, posing, recording, then replaying and unrecording is the order a
 //! command carries out. The command surface is not built in this slice, so the
@@ -21,8 +32,9 @@ use std::path::{Path, PathBuf};
 use rigger_apply::{pose, withdraw, OnDisk, SystemLiveness};
 use rigger_plan::{replay, BehaviourName, Digest, Fragment, Placement, Referents};
 use rigger_registry::{
-    transact, Address, Consent, Decision, Entry, Identity, Ledger, Mutation, Outcome, Posting,
-    Proposal, Registry, RegistryError, POSED_BY,
+    exit_code, resolve_behaviour, transact, Address, Consent, Decision, Entry, Identity, Ledger,
+    Mutation, Outcome, Posting, Proposal, Registry, RegistryError, IMPOSSIBLE_REQUEST, POSED_BY,
+    RUNTIME_FAILURE,
 };
 
 /// The bytes of the artefact the scenarios pose.
@@ -182,7 +194,11 @@ fn install(
 /// designated leaves links pointing at nothing and the thing they pointed at
 /// gone.
 fn take_back_unrecorded(machine: &Machine, entry: &Entry) {
-    let name = BehaviourName::parse(entry.behaviour()).expect("the behaviour must resolve");
+    // Through the product's own resolution, and not through a second one written
+    // here: two definitions of where the closed set closes would drift, and the
+    // one in the tests is the one nobody ships. This entry was built by this run,
+    // so its behaviour is one this build carries.
+    let name = resolve_behaviour(entry).expect("a behaviour this run itself posed through");
     let trace = replay(name, entry.trace()).expect("the trace must read back");
     let referents = match (trace.store(), machine.registry().read()) {
         (Some(store), Ok(ledger)) => ledger.referents(store, entry.identity()),
@@ -200,7 +216,15 @@ fn take_back_unrecorded(machine: &Machine, entry: &Entry) {
 /// is resolved from the **name** the entry carries, the trace is read back out
 /// of the fields the entry carries, and the address is the recorded root joined
 /// with the recorded address.
-fn uninstall(machine: &Machine, id: &str) {
+///
+/// **The resolution is the product's, and its refusal comes back out of here.**
+/// A name the closed set no longer contains is where this stops: nothing is
+/// undone, nothing is taken out of the registry, and the caller is handed the
+/// refusal that names the behaviour, the version that posed it, the file and
+/// what the record holds. Resolved here with a second `parse` of its own, that
+/// refusal would exist in the product and be unreachable through the one
+/// sequence a command carries out.
+fn uninstall(machine: &Machine, id: &str) -> Result<(), RegistryError> {
     let registry = machine.registry();
     let ledger: Ledger = registry.read().expect("read the registry");
     let entry = ledger
@@ -209,7 +233,7 @@ fn uninstall(machine: &Machine, id: &str) {
         .find(|entry| entry.id() == id)
         .expect("the registry must carry the entry");
 
-    let name = BehaviourName::parse(entry.behaviour()).expect("the behaviour must resolve");
+    let name = resolve_behaviour(entry)?;
     let trace = replay(name, entry.trace()).expect("the trace must read back");
     let referents = match trace.store() {
         Some(store) => ledger.referents(store, entry.identity()),
@@ -227,6 +251,7 @@ fn uninstall(machine: &Machine, id: &str) {
     )
     .expect("the record must be taken out");
     assert!(matches!(outcome, Outcome::Committed { .. }));
+    Ok(())
 }
 
 #[test]
@@ -269,7 +294,7 @@ fn a4_a_pose_by_link_and_its_replayed_removal_leave_the_machine_as_it_was() {
     assert_eq!(ledger.entries()[0].at(), address);
 
     // WHEN it is taken back off by replaying that record.
-    uninstall(&machine, "acme/review");
+    uninstall(&machine, "acme/review").expect("the removal must succeed");
 
     // THEN the machine is what it was, byte for byte, the shared store
     // included, and the registry no longer describes it.
@@ -280,6 +305,256 @@ fn a4_a_pose_by_link_and_its_replayed_removal_leave_the_machine_as_it_was() {
         .expect("read the registry")
         .entries()
         .is_empty());
+}
+
+/// A name no version of this product ever carried in its closed set. The set is
+/// `link`, `merge`, `delegate` and `probe`; `merge/toml` is the grammar written
+/// after the member, which a catalogue may write and which the set never
+/// contains — so it stands for what an entry looks like once the set has shrunk
+/// out from under it.
+const GONE: &str = "merge/toml";
+
+/// The version that posed the entries below. Not this build's: the whole point
+/// is a record written by a product that still carried what this one does not.
+const POSED_BEFORE: &str = "1.4";
+
+/// Writes a registry holding these entry lines, in the format on disk rather
+/// than through the product's own renderer.
+///
+/// A fixture built by the code under test would agree with it whatever either of
+/// them did — and here it could not be built at all: a trace of a behaviour that
+/// is not in the set is one this build has no way to record.
+fn registry_holding(machine: &Machine, lines: &[String]) -> Registry {
+    let registry = machine.registry();
+    let mut document = String::from("rigger-registry 1\n");
+    for line in lines {
+        document.push_str(line);
+        document.push('\n');
+    }
+    fs::write(registry.path(), document).expect("write the registry");
+    registry
+}
+
+/// One entry line naming a behaviour outside the closed set, as an older build
+/// would have left it: the seven fixed fields, then the trace that build wrote.
+fn line_posed_by_a_gone_behaviour(root: &Path, address: &str, trace: &[&str]) -> String {
+    let mut line = format!(
+        "entry\tacme/review\tacme\t{GONE}\t{POSED_BEFORE}\t{}\t{address}\t0123456789abcdef",
+        root.display()
+    );
+    for field in trace {
+        line.push('\t');
+        line.push_str(field);
+    }
+    line
+}
+
+/// Guard, not scenario: what the **read** of the registry does with an entry
+/// naming a behaviour outside the closed set. No scenario of A5 names it, and
+/// the answer decides whether A5's refusal ever happens at all.
+///
+/// The decoder holds the behaviour as a name among seven fixed fields and takes
+/// everything after them as the trace without knowing its arity, so it never
+/// resolves the name. Resolve it there instead and the entry stops being a
+/// readable entry with an unresolved behaviour: it becomes an unreadable line,
+/// A1's tolerance reports it unjudgeable with the wrong reason, and the refusal
+/// that has to name the behaviour, the version, the file and what to undo by
+/// hand never happens. The property holds by the shape of the decoder and by no
+/// test — which is what this one is for.
+///
+/// **Bounded to the read, and deliberately.** A5 also requires that a
+/// **diagnostic** report such an entry as unjudgeable, with its reason. No
+/// diagnostic exists yet. What is locked here is that the *read* of the registry
+/// hands the entry back among the entries; nothing here says what a report of
+/// the machine's state should do with it.
+#[test]
+fn guard_an_entry_naming_a_behaviour_outside_the_set_is_read_back_as_an_entry() {
+    let machine = Machine::new("unresolved-behaviour-reads");
+    let registry = registry_holding(
+        &machine,
+        &[line_posed_by_a_gone_behaviour(
+            &machine.root(),
+            "settings.toml",
+            &["jsonc", "an inverse this build cannot read"],
+        )],
+    );
+
+    let ledger = registry.read().expect("read the registry");
+
+    assert_eq!(
+        ledger.entries().len(),
+        1,
+        "an entry naming a behaviour outside the set was not read back as an entry, so the \
+         refusal that has to name it can never happen"
+    );
+    assert!(
+        ledger.unjudgeable().is_empty(),
+        "the read judged the behaviour name, and the entry became an unreadable line"
+    );
+    assert_eq!(ledger.entries()[0].behaviour(), GONE);
+    assert_eq!(ledger.entries()[0].posed_by(), POSED_BEFORE);
+}
+
+#[test]
+fn a5_a_removal_through_a_behaviour_this_build_lost_refuses_by_naming_four_things() {
+    // GIVEN a record of something posed through a behaviour whose name the
+    // closed set of this build does not contain, by a version that still
+    // carried it.
+    let machine = Machine::new("behaviour-gone");
+    let registry = registry_holding(
+        &machine,
+        &[line_posed_by_a_gone_behaviour(
+            &machine.root(),
+            "settings.toml",
+            &["jsonc", "an inverse this build cannot read"],
+        )],
+    );
+    let before = fs::read(registry.path()).expect("read the registry file");
+
+    // WHEN the removal of that entry is asked for.
+    let failure =
+        uninstall(&machine, "acme/review").expect_err("a behaviour this build lost was resolved");
+
+    // THEN the refusal names four things, in typed fields: the behaviour as the
+    // record spells it, the version that posed it, the file, and what the record
+    // holds to be undone by hand. In its text alone they would have to be parsed
+    // back out of a sentence, and a caller that cannot name them cannot act.
+    match &failure {
+        RegistryError::BehaviourGone {
+            behaviour,
+            posed_by,
+            address,
+            trace,
+        } => {
+            assert_eq!(behaviour, GONE);
+            assert_eq!(posed_by, POSED_BEFORE);
+            assert_eq!(address, &machine.root().join("settings.toml"));
+            assert_eq!(
+                trace,
+                &vec![
+                    "jsonc".to_string(),
+                    "an inverse this build cannot read".to_string()
+                ],
+                "the refusal hands back the fields as recorded — this build cannot read them, and \
+                 guessing what they mean is the recognition of shapes it refuses to do"
+            );
+        }
+        other => panic!("the refusal does not name what was posed: {other}"),
+    }
+
+    // AND the whole message is this, and nothing else. It is pinned entire
+    // rather than searched for the four, because a message may name them and go
+    // on to advise a remedy the product cannot carry out.
+    assert_eq!(
+        failure.to_string(),
+        format!(
+            "{}: posed through behaviour `{GONE}` by version {POSED_BEFORE} of the product, and \
+             this build carries no behaviour of that name — nothing was undone, the record is \
+             left exactly as it is, and no neighbouring behaviour was tried in its place; what \
+             the record holds, to be undone by hand, is [`jsonc`, `an inverse this build cannot \
+             read`]",
+            machine.root().join("settings.toml").display()
+        )
+    );
+
+    // AND the entry stays in the registry. It is the only description of
+    // something that is still on the machine: taken out, what it describes could
+    // never be found again to be removed.
+    let ledger = registry.read().expect("read the registry");
+    assert_eq!(ledger.entries().len(), 1);
+    assert_eq!(ledger.entries()[0].id(), "acme/review");
+
+    // AND it is neither purged nor reported as removed. The file is identical
+    // byte for byte to what it was, and the run answered a refusal rather than a
+    // removal — without both, "it stays" is true by nobody having looked.
+    assert_eq!(fs::read(registry.path()).expect("read back"), before);
+
+    // AND the exit code tells this refusal apart from a usage error: a script
+    // that cannot distinguish "this build no longer carries that behaviour" from
+    // "you mistyped a flag" retries the second for ever.
+    assert_eq!(exit_code(&failure), RUNTIME_FAILURE);
+    assert_ne!(exit_code(&failure), IMPOSSIBLE_REQUEST);
+}
+
+/// A5 · 3 — no fallback inference.
+///
+/// **The fixture departs from the letter of the scenario, and the departure is
+/// what makes the test measure anything.** The scenario has the product fall
+/// back on a *merge* behaviour and demands that nothing be written to the
+/// document. In this product no fallback on a member of the closed set can touch
+/// anything: a merge trace is not recordable, and two members have no body at
+/// all. A test whose mutant dies before it acts is green whatever the code does.
+///
+/// So the record here carries a trace of **link** shape — a store entry, a
+/// placement, a fingerprint — under a behaviour name the set does not contain.
+/// A fallback on `link` then really acts: it takes the address back and, at the
+/// last referent, the shared store entry with it. What is measured is the
+/// invariant the scenario is about: **an unresolved name is never replaced by a
+/// resolvable one, and nothing on the machine changes.**
+#[test]
+fn a5_a_behaviour_this_build_lost_is_not_replaced_by_one_it_still_carries() {
+    // GIVEN something really posed by link, and a record of it that names a
+    // behaviour outside the closed set while keeping the trace of the pose.
+    let machine = Machine::new("no-fallback");
+    let posted = install(
+        &machine,
+        "acme/review",
+        &machine.root(),
+        "review.md",
+        "acme-review-1.0",
+    )
+    .expect("the pose and its record must succeed");
+    rename_the_behaviour(&machine, &posted);
+    let before = machine.snapshot();
+
+    // WHEN the removal is asked for.
+    let outcome = uninstall(&machine, "acme/review");
+
+    // THEN nothing on the machine moved — the link is still there, the shared
+    // store entry is still there, and its bytes are what they were. A neighbour
+    // tried in place of the name would have unlinked the address and taken the
+    // store entry away with it at the last referent, so this comparison is asked
+    // **before** anything about the answer: a refusal that arrives after the
+    // machine has already been changed is not the property A5 is about.
+    assert_eq!(
+        machine.snapshot(),
+        before,
+        "a behaviour was tried in place of the one the record names, and it acted"
+    );
+
+    // AND what came back is the refusal, naming the behaviour the record spells.
+    let failure = outcome.expect_err("a behaviour this build lost was resolved");
+    assert!(
+        matches!(&failure, RegistryError::BehaviourGone { behaviour, .. } if behaviour == GONE),
+        "the refusal does not name the behaviour the record spells: {failure}"
+    );
+}
+
+/// Records the same pose under a behaviour name outside the closed set, keeping
+/// the trace the pose wrote.
+///
+/// It goes through the product's own write path rather than editing the file, so
+/// the record that comes back is one the product itself can produce — and the
+/// trace stays exactly what `link` recorded, which is what makes a fallback on
+/// `link` able to act.
+fn rename_the_behaviour(machine: &Machine, posted: &Entry) {
+    let outcome = transact(
+        &machine.registry(),
+        &[Mutation::Upsert(Entry::posted(Posting {
+            id: posted.id().to_string(),
+            provenance: posted.provenance().to_string(),
+            behaviour: GONE.to_string(),
+            posed_by: POSED_BEFORE.to_string(),
+            root: Address::new(posted.root()).expect("a UTF-8 root"),
+            address: Address::new(posted.address()).expect("a UTF-8 address"),
+            fingerprint: posted.fingerprint().to_string(),
+            trace: posted.trace().to_vec(),
+        }))],
+        &Granting,
+        &SystemLiveness,
+    )
+    .expect("the record must be rewritten");
+    assert!(matches!(outcome, Outcome::Committed { .. }));
 }
 
 #[test]
@@ -348,7 +623,7 @@ fn a4_a_removal_replays_the_root_the_pose_recorded_and_not_the_one_in_force_now(
     assert!(posed_under.join("review.md").exists());
 
     // WHEN the removal runs, with the other root in force.
-    uninstall(&machine, "acme/review");
+    uninstall(&machine, "acme/review").expect("the removal must succeed");
 
     // THEN what was posed is gone, and what lives under the root in force now
     // was never touched.
@@ -395,7 +670,7 @@ fn a4_one_materialisation_serves_two_things_and_goes_with_the_last_of_them() {
     );
 
     // WHEN the first is taken off.
-    uninstall(&machine, "acme/review");
+    uninstall(&machine, "acme/review").expect("the removal must succeed");
 
     // THEN the materialisation stays, because something else still designates
     // it — and that something else still resolves.
@@ -410,7 +685,7 @@ fn a4_one_materialisation_serves_two_things_and_goes_with_the_last_of_them() {
     );
 
     // WHEN the last one is taken off.
-    uninstall(&machine, "acme/review-too");
+    uninstall(&machine, "acme/review-too").expect("the removal must succeed");
 
     // THEN the machine is what it was, byte for byte, the shared store
     // included.
@@ -537,7 +812,7 @@ fn a4_a_store_entry_a_line_this_build_cannot_read_may_designate_is_not_taken_awa
     );
 
     // WHEN the one thing this build can still read is taken back off.
-    uninstall(&machine, "acme/review");
+    uninstall(&machine, "acme/review").expect("the removal must succeed");
 
     // THEN the materialisation is still there, and what the illegible line
     // describes still resolves.

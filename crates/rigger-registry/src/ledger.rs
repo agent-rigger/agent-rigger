@@ -427,6 +427,17 @@ impl Entry {
         &self.trace
     }
 
+    /// The refusal this entry is owed when its behaviour is not one this build
+    /// carries — built here, where every field it names is at hand.
+    fn behaviour_gone(&self) -> RegistryError {
+        RegistryError::BehaviourGone {
+            behaviour: self.behaviour.clone(),
+            posed_by: self.posed_by.clone(),
+            address: self.at(),
+            trace: self.trace.clone(),
+        }
+    }
+
     fn render(&self) -> String {
         let mut line = format!(
             "{ENTRY}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
@@ -446,6 +457,53 @@ impl Entry {
         }
         line
     }
+}
+
+/// The behaviour this entry was posed through, or a refusal that names what
+/// cannot be done about it.
+///
+/// # What this is for
+///
+/// The closed set of behaviours may **shrink** between two versions of the
+/// product, and it must never shrink in silence. When a record names a behaviour
+/// the running version no longer carries, the product refuses by naming four
+/// things — the behaviour as the record spells it, the version that posed it,
+/// the file, and what the record holds to be undone by hand — and it never
+/// recognises the shape of what is on the disk in order to undo it anyway.
+///
+/// **No fallback, no neighbour, no default.** Trying a behaviour that resembles
+/// the one recorded is the recognition cascade this product removed: it ended in
+/// an undefined return, which is a thing posed that nothing could remove. A name
+/// that does not resolve is where the removal stops, not where a guess starts.
+///
+/// **What "to be undone by hand" can honestly be.** An unresolved behaviour does
+/// not read its own trace back, so what is handed over is what the entry holds —
+/// the file, and the recorded fields as they were written. Naming the keys a
+/// merge put into a document would mean reading a trace this build has no reader
+/// for, which is the same recognition of shapes under another name.
+///
+/// # Why the success value is a bare member
+///
+/// It is [`BehaviourName`] and nothing beside it, and that is the decision
+/// rather than a shortcut. A record posed by a version older than this one, in a
+/// behaviour this one still carries, resolves — there is nowhere in this return
+/// value to put a remark about the version, so a build that wanted to warn about
+/// one would have to change the type first. The product has no warning channel
+/// at all, and this is the shape that keeps it from growing one here by
+/// accident.
+///
+/// # Why it lives in this crate
+///
+/// It needs [`Entry`] and [`BehaviourName`] in the same place, and this crate is
+/// the only one that sees both: the crate that carries the removal does not know
+/// what an entry is, and the crate that declares the closed set is below it. The
+/// resolution is pure and would sit happily there on that count alone — what
+/// forbids it is that [`Entry`] would have to travel down against an existing
+/// arrow.
+pub fn resolve_behaviour(entry: &Entry) -> Result<BehaviourName, RegistryError> {
+    // The only refusal `parse` makes is that the name is outside the set, and it
+    // carries nothing this refusal does not already have from the entry itself.
+    BehaviourName::parse(entry.behaviour()).map_err(|_| entry.behaviour_gone())
 }
 
 /// A line of the registry that could not be read as an entry.
@@ -544,6 +602,17 @@ impl Ledger {
     /// can say what: counting only the lines that read would take a
     /// materialisation away while an illegible line still designated it, which
     /// is the identical damage one step further out.
+    ///
+    /// **So a behaviour outside the closed set is swallowed here and refused by
+    /// [`resolve_behaviour`], and the two answers are meant to differ.** The
+    /// question this asks is whether a shared store entry may be taken away, and
+    /// the safe answer to "I cannot tell" is "somebody may still need it". The
+    /// question the refusal answers is whether *this* record may be undone, and
+    /// the safe answer to the same doubt is to stop and name it. Made to agree,
+    /// one of the two would have to become unsafe: either an unreadable line
+    /// stops counting and a materialisation is destroyed under it, or counting
+    /// referents starts failing and a removal that has nothing to do with the
+    /// bad line cannot proceed.
     pub fn referents(&self, store: &Path, besides: &Identity) -> Referents {
         let still = self
             .entries
@@ -847,6 +916,33 @@ pub enum RegistryError {
         /// The copy beside it, and what reading it is worth.
         backup: Backup,
     },
+    /// A record names a behaviour this version of the product no longer carries.
+    ///
+    /// **The set of behaviours may shrink, and it must never shrink in
+    /// silence.** The alternative to this refusal is not a smaller product, it
+    /// is a removal that guesses: a behaviour resembling the one recorded is
+    /// tried, it undoes something other than what was posed, and it reports
+    /// success. So nothing is undone, nothing is taken out of the registry, and
+    /// the four things somebody needs in order to act are handed over instead.
+    ///
+    /// **The recorded fields travel as they were written.** This build has no
+    /// reader for them — that is what the refusal is about — so it does not say
+    /// what they mean. Naming the keys a merge put into a document would be the
+    /// recognition of shapes this product removed, arriving inside the message
+    /// that exists to refuse it.
+    BehaviourGone {
+        /// The behaviour, as the record spells it.
+        behaviour: String,
+        /// The version of the product that posed it, and which carried that
+        /// behaviour. Without it, the refusal names a dead end; with it, it
+        /// names the build that can still undo this.
+        posed_by: String,
+        /// The file it was posed at: the root the record holds, joined with the
+        /// address it holds. Never the root the environment names now.
+        address: PathBuf,
+        /// The inverse, in the fields the behaviour that posed it wrote.
+        trace: Vec<String>,
+    },
     /// The exclusion the write window holds under was not obtained.
     Locked(LockError),
     /// The lock offered as proof guards another registry.
@@ -900,6 +996,20 @@ impl fmt::Display for RegistryError {
             // what this adds is what is beside it. Neither half has a free-text
             // tail, so neither can grow into advice to delete the file.
             Self::Unreadable { cause, backup, .. } => write!(f, "{cause}; {backup}"),
+            Self::BehaviourGone {
+                behaviour,
+                posed_by,
+                address,
+                trace,
+            } => write!(
+                f,
+                "{}: posed through behaviour `{behaviour}` by version {posed_by} of the product, \
+                 and this build carries no behaviour of that name — nothing was undone, the \
+                 record is left exactly as it is, and no neighbouring behaviour was tried in its \
+                 place; what the record holds, to be undone by hand, is [{}]",
+                address.display(),
+                as_recorded(trace)
+            ),
             Self::Locked(err) => write!(f, "{err}"),
             Self::LockElsewhere {
                 registry,
@@ -915,6 +1025,19 @@ impl fmt::Display for RegistryError {
             ),
         }
     }
+}
+
+/// The recorded fields, each quoted, in the order they were written.
+///
+/// **One rendering and not two.** A branch for "no fields at all" would be a
+/// second output nothing pins, and the guard that pins these one by one would
+/// not know to look for it; an empty list renders as an empty list.
+fn as_recorded(trace: &[String]) -> String {
+    trace
+        .iter()
+        .map(|field| format!("`{field}`"))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 impl std::error::Error for RegistryError {}
@@ -965,6 +1088,12 @@ pub fn exit_code(err: &RegistryError) -> u8 {
         // `IMPOSSIBLE_REQUEST` would tell a script it had mistyped something and
         // send it round the same loop for ever.
         RegistryError::Unreadable { .. } => RUNTIME_FAILURE,
+        // The record is what an older build wrote, and no wording of the request
+        // makes this build carry a behaviour it does not. Answering
+        // `IMPOSSIBLE_REQUEST` would tell a script it had asked for the wrong
+        // thing, and send it round the same loop for ever with the entry still
+        // in place.
+        RegistryError::BehaviourGone { .. } => RUNTIME_FAILURE,
         RegistryError::Locked(_) => RUNTIME_FAILURE,
         RegistryError::LockElsewhere { .. } => RUNTIME_FAILURE,
     }
