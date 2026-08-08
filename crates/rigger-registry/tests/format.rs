@@ -28,7 +28,10 @@ use std::fs;
 use std::path::PathBuf;
 
 use rigger_apply::SystemLiveness;
-use rigger_registry::{transact, Consent, Decision, Proposal, Registry, RegistryError};
+use rigger_registry::{
+    transact, Address, Consent, Decision, Entry, Mutation, Posting, Proposal, Registry,
+    RegistryError,
+};
 
 /// An empty working directory, private to this test.
 fn directory(name: &str) -> PathBuf {
@@ -420,4 +423,122 @@ fn guard_the_format_this_build_replaced_is_refused_and_not_migrated() {
     // would destroy all of it in one gesture.
     assert_eq!(fs::read(registry.path()).expect("read back"), before);
     fs::remove_dir_all(&dir).expect("clean up");
+}
+
+/// The record a fresh pose writes for an identity: what this build knows, and
+/// nothing else — a pose has no way to state a field this build does not carry,
+/// and that is the whole difficulty below.
+fn posted(id: &str, fingerprint: &str) -> Entry {
+    Entry::posted(Posting {
+        id: id.to_string(),
+        provenance: "acme".to_string(),
+        behaviour: "link".to_string(),
+        posed_by: "1.4".to_string(),
+        root: Address::new(std::path::Path::new("/home/someone")).expect("a UTF-8 root"),
+        address: Address::new(std::path::Path::new(&format!("{id}.json")))
+            .expect("a UTF-8 address"),
+        fingerprint: fingerprint.to_string(),
+        trace: vec![
+            format!("/store/{id}"),
+            "link".to_string(),
+            "0123456789abcdef".to_string(),
+        ],
+    })
+}
+
+/// Guard: a field this build does not know survives the record being written
+/// again.
+///
+/// **This is where the additive regime is either true or decorative.** Keeping
+/// the field at the read is worth nothing if the ordinary write throws it away,
+/// and re-posing an identity is the ordinary write — it goes through a
+/// replacement of the whole record. A build that dropped it there would take an
+/// annotation a newer build had written off the machine, silently, and no caller
+/// could stop it: a pose has no way to state such a field, and the type that
+/// carries them cannot be built from outside.
+///
+/// What is not claimed is that the field still describes what has just been
+/// posed. Nothing here reads it, so nothing here can say — the account of that
+/// trade is where the carrying is decided.
+#[test]
+fn guard_a_field_this_build_does_not_know_survives_the_record_being_written_again() {
+    // GIVEN a registry whose one record carries a field this build knows nothing
+    // of.
+    let dir = directory("unknown-field-rewritten");
+    let registry = registry_with(
+        &dir,
+        &document(&[format!(
+            "{}\tlabel=reviewed by hand",
+            entry_line("acme/one")
+        )]),
+    );
+
+    // WHEN the same identity is recorded again, by a run that states only what
+    // this build knows.
+    transact(
+        &registry,
+        &[Mutation::Upsert(posted("acme/one", "fedcba9876543210"))],
+        &Granting,
+        &SystemLiveness,
+    )
+    .expect("the transaction must succeed");
+
+    // THEN the record really was replaced — otherwise nothing below measures
+    // anything — and the field is still on it.
+    let ledger = registry.read().expect("the read must succeed");
+    assert_eq!(ledger.entries().len(), 1);
+    assert_eq!(ledger.entries()[0].fingerprint(), "fedcba9876543210");
+    let unknown = ledger.entries()[0].unknown_fields();
+    assert_eq!(
+        unknown.len(),
+        1,
+        "the write dropped a field it does not know, and nothing could have stopped it"
+    );
+    assert_eq!(unknown[0].name(), "label");
+    assert_eq!(unknown[0].value(), "reviewed by hand");
+    fs::remove_dir_all(&dir).expect("clean up");
+}
+
+/// Guard: when both records carry the same unknown name, the incoming one keeps
+/// its own value.
+///
+/// There are two sources for that name then. The incoming value is what the run
+/// doing the writing states; taking the older one over it would be deciding what
+/// a field means — and not reading such a field is the whole of the rule that
+/// carries it.
+#[test]
+fn guard_a_field_the_incoming_record_carries_is_the_one_kept() {
+    let dir = directory("unknown-field-both");
+    let held = registry_with(
+        &dir,
+        &document(&[format!("{}\tlabel=held", entry_line("acme/one"))]),
+    )
+    .read()
+    .expect("the read must succeed");
+
+    let elsewhere = directory("unknown-field-incoming");
+    let incoming = registry_with(
+        &elsewhere,
+        &document(&[format!(
+            "{}\tlabel=incoming\tnote=only here",
+            entry_line("acme/one")
+        )]),
+    )
+    .read()
+    .expect("the read must succeed");
+
+    let mut ledger = held;
+    ledger.upsert(incoming.entries()[0].clone());
+
+    let unknown = ledger.entries()[0].unknown_fields();
+    assert_eq!(unknown.len(), 2);
+    assert_eq!(unknown[0].name(), "label");
+    assert_eq!(
+        unknown[0].value(),
+        "incoming",
+        "the record being replaced overwrote what the incoming one states"
+    );
+    assert_eq!(unknown[1].name(), "note");
+    fs::remove_dir_all(&dir).expect("clean up");
+    fs::remove_dir_all(&elsewhere).expect("clean up");
 }

@@ -365,10 +365,15 @@ pub struct Entry {
 ///
 /// **It is carried rather than dropped**, and that is the founding rule of this
 /// crate turned on its own format: a registry written by a newer build is read
-/// by an older one without the older one destroying what it cannot read. Dropped
-/// at the read, the field would disappear from the file at the next write — the
-/// description of something posed, gone, and what it describes unremovable, with
-/// no error and nobody noticing.
+/// by an older one without the older one destroying what it cannot read.
+///
+/// **On both paths, and the second is the ordinary one.** Dropped at the read,
+/// the field would disappear from the file at the next write. Dropped when a
+/// record is written again over the same identity, it disappears just as
+/// completely — and every re-pose goes that way, so that path is the one a
+/// machine actually travels. Both are closed: the reading keeps it, and
+/// [`Ledger::upsert`] carries it onto the record replacing the one that held it,
+/// where what that costs and what it buys are written out.
 ///
 /// **It is also handed to the caller**, and not only carried through, so that a
 /// later reader can name what it found rather than discover it by diffing files.
@@ -563,6 +568,20 @@ impl Entry {
         &self.unknown
     }
 
+    /// Takes on the fields `held` carries and this one does not.
+    ///
+    /// Nothing is overwritten: a name this record already carries is what this
+    /// run states about it, and the reason it wins is written where the carrying
+    /// is decided.
+    fn carry_unknown_from(&mut self, held: &Entry) {
+        for field in &held.unknown {
+            if self.unknown.iter().any(|mine| mine.name == field.name) {
+                continue;
+            }
+            self.unknown.push(field.clone());
+        }
+    }
+
     /// The refusal this entry is owed when its behaviour is not one this build
     /// carries — built here, where every field it names is at hand.
     fn behaviour_gone(&self) -> RegistryError {
@@ -718,13 +737,41 @@ impl Ledger {
     ///
     /// Pure, and that is what lets the mutations of a run be replayed onto a
     /// registry re-read under the lock rather than written over it.
-    pub fn upsert(&mut self, entry: Entry) {
+    ///
+    /// **The fields this build does not know travel from the record being
+    /// replaced onto the one replacing it**, and without that the promise the
+    /// additive regime makes at the read is undone at the very next write. A
+    /// build re-posing an identity would drop an annotation a newer build had
+    /// written, silently, with nothing reported — and no caller could prevent
+    /// it: [`Posting`] has no field to put one in, and [`UnknownField`] cannot
+    /// be built outside this module. The loss would be unavoidable by
+    /// construction, on the ordinary path, which is the worst place for it.
+    ///
+    /// **Preserving is not interpreting.** Nothing here reads such a field; this
+    /// refuses to destroy what this build did not write, which is the rule the
+    /// whole crate is shaped around, applied to its own format.
+    ///
+    /// **And the argument against is written here rather than left out.**
+    /// Carrying the field asserts, implicitly, that it still holds of the pose
+    /// just made — while nothing here knows what it says, and it may have
+    /// described the pose before. That uncertainty is preferred to a certain
+    /// destruction: the choice is between those two, and not between either of
+    /// them and being right.
+    ///
+    /// **A name the incoming record already carries is left as it is.** There
+    /// are two sources for it then, and the incoming one is what this run
+    /// states; replacing it with the older value would be deciding what the
+    /// field means, which is the one thing this rule refuses to do.
+    pub fn upsert(&mut self, mut entry: Entry) {
         match self
             .entries
             .iter_mut()
             .find(|held| held.identity == entry.identity)
         {
-            Some(held) => *held = entry,
+            Some(held) => {
+                entry.carry_unknown_from(held);
+                *held = entry;
+            }
             None => self.entries.push(entry),
         }
     }
