@@ -58,6 +58,8 @@ use std::path::{Path, PathBuf};
 use rigger_apply::LockError;
 use rigger_plan::{replay, BehaviourName, Referents};
 
+use crate::backup::Backup;
+
 /// The marker every registry document opens with.
 pub(crate) const MARKER: &str = "rigger-registry";
 
@@ -822,6 +824,29 @@ pub enum RegistryError {
         /// What the system reported.
         detail: io::Error,
     },
+    /// The registry is there, its content cannot be rendered, and a run that
+    /// would have replaced it handed back instead.
+    ///
+    /// **It preserves rather than reports.** The file is left exactly as it is,
+    /// nothing is written over it, and the caller is handed the path that names
+    /// it together with whatever copy of it is beside — the copy an earlier run
+    /// left when it was interrupted between taking one and writing.
+    ///
+    /// **The two paths are typed fields, and that is the point of them.** A
+    /// caller handed only a sentence has to parse the files back out of it to
+    /// name either one, and a caller that cannot name them cannot offer them:
+    /// the copy would be recognised, its content would be there, and nothing
+    /// would ever propose it. The classification travels with the path for the
+    /// same reason — a path alone says a file is there, not whether restoring it
+    /// would restore an amputated registry.
+    Unreadable {
+        /// The registry, still on the disk and unchanged.
+        registry: PathBuf,
+        /// Why its content could not be rendered.
+        cause: Box<RegistryError>,
+        /// The copy beside it, and what reading it is worth.
+        backup: Backup,
+    },
     /// The exclusion the write window holds under was not obtained.
     Locked(LockError),
     /// The lock offered as proof guards another registry.
@@ -871,6 +896,10 @@ impl fmt::Display for RegistryError {
             Self::Write { path, detail } => {
                 write!(f, "{}: cannot be written — {detail}", path.display())
             }
+            // The cause already names the registry and says it was left alone;
+            // what this adds is what is beside it. Neither half has a free-text
+            // tail, so neither can grow into advice to delete the file.
+            Self::Unreadable { cause, backup, .. } => write!(f, "{cause}; {backup}"),
             Self::Locked(err) => write!(f, "{err}"),
             Self::LockElsewhere {
                 registry,
@@ -931,6 +960,11 @@ pub fn exit_code(err: &RegistryError) -> u8 {
         RegistryError::Read { .. } => RUNTIME_FAILURE,
         RegistryError::NotUtf8 { .. } => RUNTIME_FAILURE,
         RegistryError::Write { .. } => RUNTIME_FAILURE,
+        // The registry is there and this build cannot read it. Nothing about
+        // that is a request the caller could restate, so answering
+        // `IMPOSSIBLE_REQUEST` would tell a script it had mistyped something and
+        // send it round the same loop for ever.
+        RegistryError::Unreadable { .. } => RUNTIME_FAILURE,
         RegistryError::Locked(_) => RUNTIME_FAILURE,
         RegistryError::LockElsewhere { .. } => RUNTIME_FAILURE,
     }

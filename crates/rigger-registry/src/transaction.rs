@@ -50,6 +50,7 @@ use std::path::{Path, PathBuf};
 
 use rigger_apply::{Held, LivenessProbe, Lock};
 
+use crate::backup::Backup;
 use crate::ledger::{Entry, Identity, Ledger, RegistryError};
 
 /// A change one run makes to the registry.
@@ -206,9 +207,30 @@ impl Fresh<'_> {
     /// an entry another run recorded between the two reads is in this one, and
     /// writing the earlier copy would take it away — the lost update this whole
     /// module is shaped against.
+    ///
+    /// **A whole copy of the registry exists beside it before it is replaced,
+    /// and it is a precondition of the write and not a courtesy beside it.** A
+    /// copy that is skipped when it cannot be taken is skipped on exactly the
+    /// machine that needed it. So a copy that fails to be taken fails the write,
+    /// and the registry stays what it was — the only description of everything
+    /// posed on the machine.
+    ///
+    /// **It is taken away once the replacement is on disk, and left behind when
+    /// it is not.** Left behind after a write that finished, it describes a
+    /// registry that has been superseded while carrying every sign of being
+    /// whole, and the next run would be offered it as a state to resume from.
+    /// The interval it exists for is the one between the two writes.
     pub fn commit(self, mutations: &[Mutation]) -> Result<Ledger, RegistryError> {
+        let taken = Backup::take(&self.path)?;
         let written = replay(mutations, self.ledger);
         write_atomically(&self.path, &written.render())?;
+        if let Some(copy) = taken.path() {
+            // The interval is closed. Failing to take the copy away is not
+            // turned into a failure of a write that has already happened: the
+            // caller would be told the registry was not written when it was,
+            // which is the more expensive of the two errors by far.
+            let _ = fs::remove_file(copy);
+        }
         Ok(written)
     }
 }
@@ -310,7 +332,9 @@ pub fn transact(
     consent: &dyn Consent,
     probe: &dyn LivenessProbe,
 ) -> Result<Outcome, RegistryError> {
-    let ledger = registry.read()?;
+    let ledger = registry
+        .read()
+        .map_err(|refusal| preserved(registry, refusal))?;
     let decision = consent.decide(&Proposal {
         registry: registry.path(),
         ledger: &ledger,
@@ -321,7 +345,38 @@ pub fn transact(
     }
 
     let held = registry.lock().acquire(probe)?;
-    let fresh = registry.reread(&held)?;
+    let fresh = registry
+        .reread(&held)
+        .map_err(|refusal| preserved(registry, refusal))?;
     let ledger = fresh.commit(mutations)?;
     Ok(Outcome::Committed { ledger })
+}
+
+/// Turns a refusal to render the registry's content into the one this path owes
+/// its caller: the file that was preserved, why, and the copy beside it.
+///
+/// **It happens here and not in [`Registry::read`], and the difference is the
+/// difference between the two paths.** A consultation was never going to write,
+/// so there is nothing for it to say about having preserved anything, and a copy
+/// left by an interrupted run is of no consequence to it. This path is the one
+/// that would have replaced the file. Here, "it is still there, this is where it
+/// is, and this is what is beside it" answers a question the caller actually
+/// has.
+///
+/// Only the refusals about the registry's **content** are wrapped. A lock held
+/// elsewhere, or a lock that could not be taken, says nothing about the file
+/// being readable and would be described wrongly by a message about preserving
+/// it.
+fn preserved(registry: &Registry, refusal: RegistryError) -> RegistryError {
+    match refusal {
+        cause @ (RegistryError::EnvelopeMissing { .. }
+        | RegistryError::EnvelopeUnknown { .. }
+        | RegistryError::NotUtf8 { .. }
+        | RegistryError::Read { .. }) => RegistryError::Unreadable {
+            registry: registry.path.clone(),
+            backup: Backup::beside(&registry.path),
+            cause: Box::new(cause),
+        },
+        other => other,
+    }
 }
