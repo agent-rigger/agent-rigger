@@ -33,20 +33,35 @@
 //! named. A checksum would do the same work at a higher price, and no scenario
 //! asks a copy to be told from a corrupted one — only from an unfinished one.
 //!
-//! # What the witness says, and why it is not just a marker
+//! # What the witness says, and what it does not close
 //!
 //! It says **how many bytes it certifies**. The file being copied is, by
 //! construction, one this build may not be able to read, so nothing may be
 //! assumed about what is in it — including that none of its own lines is shaped
-//! like a witness. A marker alone would then let a copy that stopped on such a
-//! line read as whole. The declared length ties the witness to the file it sits
-//! at the end of, and it costs one integer.
+//! like a witness. A marker alone would let any copy that stopped on such a line
+//! read as whole; the declared length costs one integer and takes that case
+//! away.
+//!
+//! **It does not take away the case where the line agrees with itself**, and
+//! claiming otherwise would be worse than the hole. The check compares the
+//! declared length against the offset where the last line opens, so a registry
+//! that itself holds a line break at byte `n` and, right after it, the line
+//! `rigger-registry-backup {n}`, yields a copy that reads as whole the moment it
+//! is cut at the end of that line — and its first `n` bytes are then offered as
+//! a state to resume from. Declaring the whole file's length instead closes
+//! nothing either, since the witness is counted inside that length; it only
+//! changes which number has to be written.
+//!
+//! What that case needs is a registry whose content somebody chose, cut at a
+//! byte somebody chose. Whoever can write that line into the registry can
+//! corrupt the registry outright, which is a shorter road to the same place.
 //!
 //! It is **not** a checksum, and it is not offered as one: it says the write
 //! reached the end, not that the bytes in between are the ones that were handed
-//! to it.
+//! to it. A checksum would close the case above; nothing requires one, and the
+//! shape of the witness was settled with that trade in view.
 //!
-//! # What no test here establishes, and what holds it instead
+//! # What is left open, said rather than implied
 //!
 //! That the witness reaches the disk after the content it certifies is a
 //! property of the order of two writes with a flush between them, not of an
@@ -54,6 +69,15 @@
 //! that copies a user's registry. What the tests measure is the residue — a file
 //! carrying its witness is whole, a file without one is not, and neither
 //! judgement is made from the file's mere existence.
+//!
+//! **A whole copy does not establish that the registry beside it is younger than
+//! the copy.** Taking the copy away happens after the registry has been
+//! replaced, and a failure to take it away is not turned into a failure of a
+//! write that has already happened. A copy can therefore outlive the write it
+//! covered, and it then describes a registry one write out of date: restored, it
+//! would take the last record back off. Nothing in the file tells that copy from
+//! one left by a run that died before writing — which is why nothing here claims
+//! to. A copy says what the registry held when the copy was taken, and no more.
 
 use std::fmt;
 use std::fs;
@@ -73,11 +97,17 @@ const SUFFIX: &str = ".rigger-backup";
 /// A copy of the registry, and what reading it is worth.
 ///
 /// **The variants carry what may be done with them, so that the wrong thing
-/// cannot be written down.** Only [`Backup::Complete`] holds a document, which
-/// is what makes "a truncated copy is not offered as a state to resume from" a
-/// property of the type rather than of a caller's care: there is nothing to
-/// offer. A boolean beside a document would let the two disagree, and the run
-/// that read it wrongly would restore an amputated registry.
+/// cannot be written down.** Only [`Backup::Complete`] carries a document, and
+/// it carries it inside a [`WholeCopy`] — whose fields are private and which
+/// nothing outside this module builds. Bytes offered as a state to resume from
+/// can therefore only have come from a copy that was read and found whole, or
+/// from one just written.
+///
+/// That is what makes "a truncated copy is not offered as a state to resume
+/// from" a property of the type rather than of a caller's care: there is nothing
+/// to offer, and nothing that can be made to look as though there were. A
+/// boolean beside a document would let the two disagree, and whoever read it
+/// wrongly would restore an amputated registry.
 #[derive(Debug)]
 pub enum Backup {
     /// No copy is beside the registry. Nothing was interrupted between a copy
@@ -85,13 +115,7 @@ pub enum Backup {
     Absent,
     /// A copy carrying its witness: it accounts for its own length, so the write
     /// that produced it reached the end.
-    Complete {
-        /// The copy's file.
-        path: PathBuf,
-        /// The registry as it stood when the copy was taken — the state a run
-        /// may resume from.
-        document: Vec<u8>,
-    },
+    Complete(WholeCopy),
     /// A copy that does not carry its witness: the write that produced it
     /// stopped partway.
     ///
@@ -114,6 +138,55 @@ pub enum Backup {
     },
 }
 
+/// A copy that was found whole, and the registry it holds.
+///
+/// **Its fields are private and it has no way in.** One of these exists because
+/// a copy was read and its witness accounted for it, or because this module just
+/// wrote one — and never because a caller wrote the two fields down. The bytes
+/// below are the ones a run would restore, and a value that could be assembled
+/// from anywhere would make "the copy was whole" a claim rather than a record of
+/// having looked.
+///
+/// It is named and matched on from outside:
+///
+/// ```
+/// use rigger_registry::{Backup, WholeCopy};
+/// fn resumable(backup: &Backup) -> Option<&WholeCopy> {
+///     match backup {
+///         Backup::Complete(copy) => Some(copy),
+///         _ => None,
+///     }
+/// }
+/// ```
+///
+/// And there is no second door for one nobody read:
+///
+/// ```compile_fail
+/// use rigger_registry::WholeCopy;
+/// let _ = WholeCopy {
+///     path: std::path::PathBuf::from("registry.rigger-backup"),
+///     document: b"whatever".to_vec(),
+/// };
+/// ```
+#[derive(Debug)]
+pub struct WholeCopy {
+    path: PathBuf,
+    document: Vec<u8>,
+}
+
+impl WholeCopy {
+    /// The copy's file.
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// The registry as it stood when the copy was taken — the state a run may
+    /// resume from.
+    pub fn document(&self) -> &[u8] {
+        &self.document
+    }
+}
+
 impl Backup {
     /// Reads whatever copy is beside this registry, and says what it is worth.
     ///
@@ -129,10 +202,10 @@ impl Backup {
             Err(detail) => return Self::Unreadable { path, detail },
         };
         match certified(&copy) {
-            Some(length) => Self::Complete {
+            Some(length) => Self::Complete(WholeCopy {
                 document: copy[..length].to_vec(),
                 path,
-            },
+            }),
             None => Self::Truncated { path },
         }
     }
@@ -149,6 +222,20 @@ impl Backup {
     /// crate parsed would write back what this build understood of it, and the
     /// point of the copy is the file as its owner has it, including whatever
     /// this build could not read.
+    ///
+    /// **This one writes, and [`Backup::beside`] argues that a gesture which
+    /// writes belongs under the registry's exclusion. This one is under it.** It
+    /// is reached from the write window — from a value that exists only because
+    /// the lock was taken — so the copy is made under the same exclusion as the
+    /// write it covers, and the argument is satisfied rather than waived.
+    ///
+    /// It is public all the same, and not because the exclusion is optional:
+    /// the tests of this workspace are integration tests, and there is no
+    /// in-crate seam to exercise a write through. What that leaves open is
+    /// worth naming rather than hiding. The file is opened with truncation, so
+    /// a caller taking a copy outside the window, while another run sits
+    /// between its own copy and its write, replaces that run's whole copy with
+    /// a partial one — in the very window the copy exists to cover.
     pub fn take(registry: &Path) -> Result<Self, RegistryError> {
         let document = match fs::read(registry) {
             Ok(document) => document,
@@ -165,16 +252,15 @@ impl Backup {
             path: path.clone(),
             detail,
         })?;
-        Ok(Self::Complete { path, document })
+        Ok(Self::Complete(WholeCopy { path, document }))
     }
 
     /// The copy's file, when there is one to name.
     pub fn path(&self) -> Option<&Path> {
         match self {
             Self::Absent => None,
-            Self::Complete { path, .. }
-            | Self::Truncated { path }
-            | Self::Unreadable { path, .. } => Some(path),
+            Self::Complete(copy) => Some(copy.path()),
+            Self::Truncated { path } | Self::Unreadable { path, .. } => Some(path),
         }
     }
 }
@@ -183,12 +269,17 @@ impl fmt::Display for Backup {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Absent => write!(f, "no copy of the registry is beside it"),
-            Self::Complete { path, document } => write!(
+            // What it says is what was looked at. Why the copy is there — a run
+            // that died before writing, or one whose write finished and whose
+            // copy outlived it — is not on the file, and a message that picked
+            // one of the two would send its reader to restore a registry one
+            // write out of date.
+            Self::Complete(copy) => write!(
                 f,
-                "{}: a whole copy of the registry, {} bytes, left by a run that was interrupted \
-                 before it wrote",
-                path.display(),
-                document.len()
+                "{}: a whole copy of the registry, {} bytes — the registry as it stood when the \
+                 copy was taken",
+                copy.path().display(),
+                copy.document().len()
             ),
             Self::Truncated { path } => write!(
                 f,
@@ -234,6 +325,13 @@ fn copy_of(registry: &Path) -> PathBuf {
 /// separator is written by this format and is not part of the document: a
 /// registry whose last byte is not a line break would otherwise have the witness
 /// glued to its final line, and no reader could find it again.
+///
+/// **What the length check does, exactly.** It compares the declared length with
+/// the offset the last line opens at, so a copy that stopped on a line of its
+/// own that merely looks like a witness does not read as whole. A line whose
+/// number agrees with where it opens does read as whole, whoever wrote it — the
+/// module's account of the witness says which shape does that, and why it is
+/// left open rather than closed here.
 fn certified(copy: &[u8]) -> Option<usize> {
     // The witness line is terminated. A copy cut inside it is not one, and this
     // is where that truncation — the one closest to a whole copy — is caught.
@@ -246,8 +344,7 @@ fn certified(copy: &[u8]) -> Option<usize> {
         .parse()
         .ok()?;
     // The separator sits at `declared`, and the witness line opens right after
-    // it. Without this, a copy that stopped on a line of its own shaped like a
-    // witness would read as whole.
+    // it.
     if declared.checked_add(1)? != opens {
         return None;
     }

@@ -30,7 +30,7 @@ pub mod backup;
 pub mod ledger;
 pub mod transaction;
 
-pub use backup::Backup;
+pub use backup::{Backup, WholeCopy};
 pub use ledger::{
     exit_code, Address, AddressNotUtf8, Entry, Identity, Ledger, Posting, RegistryError,
     Unjudgeable, IMPOSSIBLE_REQUEST, POSED_BY, RUNTIME_FAILURE,

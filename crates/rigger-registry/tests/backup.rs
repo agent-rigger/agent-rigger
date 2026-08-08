@@ -131,13 +131,10 @@ fn a2_a_whole_copy_beside_the_registry_is_recognised_and_its_content_is_offered(
     // handed back. Recognised and then not handed back, nothing could resume
     // from it: the file would be known good and still be of no use to anybody.
     match &backup {
-        Backup::Complete {
-            path,
-            document: offered,
-        } => {
-            assert_eq!(path, &copy_of_registry(&dir));
+        Backup::Complete(copy) => {
+            assert_eq!(copy.path(), copy_of_registry(&dir));
             assert_eq!(
-                offered.as_slice(),
+                copy.document(),
                 document.as_bytes(),
                 "the copy was recognised but its content was not the registry's"
             );
@@ -186,18 +183,23 @@ fn a2_a_copy_whose_write_stopped_partway_is_recognised_and_is_not_offered() {
 }
 
 /// Guard, not scenario: a file whose last line is shaped like the witness. No
-/// scenario of A2 names it, and the answer decides whether the witness means
-/// anything at all.
+/// scenario of A2 names it, and the answer decides how much the witness is
+/// worth.
 ///
 /// The file being copied is, by construction, one this build could not read, so
 /// nothing may be assumed about what is in it — including that none of its lines
 /// reads like a witness. That is why the witness says **how many bytes it
-/// certifies**: a copy that stops on a line shaped like one still does not
-/// account for the file it sits at the end of. And a copy cut inside the witness
-/// line itself is the truncation closest to a whole one; judged on the marker
-/// alone, it would pass.
+/// certifies**, and what is measured here is what that number takes away: a line
+/// whose number does not agree with where the line opens is not a witness, and a
+/// copy cut inside the witness line — the truncation closest to a whole one, and
+/// the one a marker alone would let through — is not whole.
+///
+/// **It does not measure that no forged line passes**, because one does: a line
+/// that agrees with where it opens is indistinguishable from a witness this
+/// module wrote. That case is accounted for where the format is described, and
+/// it is not asserted away here.
 #[test]
-fn guard_a_line_shaped_like_the_witness_does_not_make_a_copy_whole() {
+fn guard_a_witness_that_does_not_account_for_where_it_opens_is_not_one() {
     let dir = directory("witness-shaped");
     let registry = registry_with(&dir, &one_entry());
     let path = copy_of_registry(&dir);
@@ -308,16 +310,193 @@ fn a2_the_refusal_of_an_unreadable_registry_names_it_and_the_copy_beside_it() {
         } => {
             assert_eq!(named, registry.path());
             match backup {
-                Backup::Complete { path, document } => {
-                    assert_eq!(path, &copy_of_registry(&dir));
-                    assert_eq!(document.as_slice(), copied.as_bytes());
+                Backup::Complete(copy) => {
+                    assert_eq!(copy.path(), copy_of_registry(&dir));
+                    assert_eq!(copy.document(), copied.as_bytes());
                 }
                 other => panic!("the refusal does not carry the copy beside it: {other:?}"),
             }
         }
         other => panic!("the refusal does not name what was preserved: {other}"),
     }
+
+    // AND the whole rendering is this, and nothing else. The typed fields above
+    // say nothing about what is written out, and this is the rendering of the
+    // interesting case — a registry that does not read, with a whole copy of it
+    // right there. It is the one where advice to delete the registry and rename
+    // the copy over it is most tempting, and where taking that advice while the
+    // copy describes a superseded registry costs a record.
+    assert_eq!(
+        failure.to_string(),
+        format!(
+            "{}: the registry declares format version 7, and this build reads version 1 — it is \
+             left exactly as it is, because it is the only description of what has been posed on \
+             this machine; {}: a whole copy of the registry, {} bytes — the registry as it stood \
+             when the copy was taken",
+            registry.path().display(),
+            copy_of_registry(&dir).display(),
+            copied.len()
+        )
+    );
     fs::remove_dir_all(&dir).expect("clean up");
+}
+
+/// Guard, not scenario: the two renderings of the refusal that the scenarios
+/// above do not reach.
+///
+/// A2 requires that no message suggest deleting the registry or moving it aside,
+/// and the tests that realise it pin one rendering each — the refusal with no
+/// copy beside it, and the refusal with a whole one. A refusal is rendered from
+/// the copy it carries, so there are two more, and a tail added to either of them
+/// advises a remedy in exactly the same way while every test stays green. Neither
+/// of these two realises a scenario; both of them protect one.
+#[test]
+fn guard_no_rendering_of_the_refusal_advises_a_remedy() {
+    // A copy whose own write stopped partway, beside a registry that does not
+    // read.
+    let dir = directory("no-remedy-truncated");
+    let registry = registry_with(&dir, "rigger-registry 7\n");
+    let whole = whole_copy(&one_entry());
+    fs::write(copy_of_registry(&dir), &whole.as_bytes()[..whole.len() / 2])
+        .expect("write the truncated copy");
+    let failure = transact(
+        &registry,
+        &[posing("acme/other")],
+        &Granting,
+        &SystemLiveness,
+    )
+    .expect_err("a registry this build cannot read was written over");
+    assert_eq!(
+        failure.to_string(),
+        format!(
+            "{}: the registry declares format version 7, and this build reads version 1 — it is \
+             left exactly as it is, because it is the only description of what has been posed on \
+             this machine; {}: a copy of the registry whose own write was interrupted — it does \
+             not carry the witness written last, so it is truncated, nothing here can tell how \
+             much of it is missing, and it is not offered as a state to resume from",
+            registry.path().display(),
+            copy_of_registry(&dir).display()
+        )
+    );
+    fs::remove_dir_all(&dir).expect("clean up");
+
+    // A copy the system will not read at all — here, a directory standing where
+    // the copy would be. What the system reports is its own; the shape around it
+    // is what is pinned.
+    let dir = directory("no-remedy-unreadable");
+    let registry = registry_with(&dir, "rigger-registry 7\n");
+    fs::create_dir_all(copy_of_registry(&dir)).expect("occupy the place of the copy");
+    let detail = fs::read(copy_of_registry(&dir)).expect_err("the copy must not be readable");
+    let failure = transact(
+        &registry,
+        &[posing("acme/other")],
+        &Granting,
+        &SystemLiveness,
+    )
+    .expect_err("a registry this build cannot read was written over");
+    assert_eq!(
+        failure.to_string(),
+        format!(
+            "{}: the registry declares format version 7, and this build reads version 1 — it is \
+             left exactly as it is, because it is the only description of what has been posed on \
+             this machine; {}: a copy of the registry that cannot be read — {detail} — so it is \
+             not offered as a state to resume from",
+            registry.path().display(),
+            copy_of_registry(&dir).display()
+        )
+    );
+    fs::remove_dir_all(&dir).expect("clean up");
+}
+
+/// Lays out a registry whose content cannot be rendered, puts a whole copy of a
+/// registry beside it, and answers with what the product hands back when it is
+/// asked to write.
+fn refusal_over(name: &str, lay: impl FnOnce(&std::path::Path)) -> RegistryError {
+    let dir = directory(name);
+    let path = dir.join("registry");
+    lay(&path);
+    fs::write(copy_of_registry(&dir), whole_copy(&one_entry())).expect("write the copy");
+    let failure = transact(
+        &Registry::at(&path),
+        &[posing("acme/other")],
+        &Granting,
+        &SystemLiveness,
+    )
+    .expect_err("a registry whose content cannot be rendered was written over");
+    fs::remove_dir_all(&dir).expect("clean up");
+    failure
+}
+
+/// Guard, not scenario: every way the registry's content fails to render.
+///
+/// The scenarios of A2 need one such registry and reach for the nearest — an
+/// envelope of an unknown version. There are four, they arrive at the same place
+/// by four different roads, and a road that stops short of it hands back a bare
+/// refusal: the registry named, and no copy reachable from it. The copy is half
+/// of what A2 asks for, and the half that gets lost is the one that would have
+/// been offered as a state to resume from.
+///
+/// The road most worth walking is the registry that is not UTF-8. It is the one
+/// this crate refuses rather than reading "with replacement bytes that would
+/// destroy what they replace" — so it is the one where the file is most
+/// obviously worth copying, and it is reached by no scenario at all.
+/// One road to a registry whose content will not render: what it is, what the
+/// product handed back on it, and which refusal it should have come from.
+type Road = (&'static str, RegistryError, fn(&RegistryError) -> bool);
+
+#[test]
+fn guard_every_way_the_registry_fails_to_render_preserves_it_and_names_the_copy() {
+    let roads: [Road; 4] = [
+        (
+            "an envelope of a version this build does not read",
+            refusal_over("road-envelope-unknown", |path| {
+                fs::write(path, "rigger-registry 7\n").expect("write the registry");
+            }),
+            |cause| matches!(cause, RegistryError::EnvelopeUnknown { .. }),
+        ),
+        (
+            "no envelope at all",
+            refusal_over("road-envelope-missing", |path| {
+                fs::write(
+                    path,
+                    format!("{}\n", entry_line("acme/skill", "settings.json")),
+                )
+                .expect("write the registry");
+            }),
+            |cause| matches!(cause, RegistryError::EnvelopeMissing { .. }),
+        ),
+        (
+            "bytes no UTF-8 decoder accepts",
+            refusal_over("road-not-utf8", |path| {
+                fs::write(path, [0xffu8, 0xfe]).expect("write the registry");
+            }),
+            |cause| matches!(cause, RegistryError::NotUtf8 { .. }),
+        ),
+        (
+            "a registry the system will not read at all",
+            refusal_over("road-read", |path| {
+                fs::create_dir_all(path).expect("put something unreadable at the registry's path");
+            }),
+            |cause| matches!(cause, RegistryError::Read { .. }),
+        ),
+    ];
+
+    for (road, failure, is_the_cause) in &roads {
+        match failure {
+            RegistryError::Unreadable { cause, backup, .. } => {
+                assert!(
+                    is_the_cause(cause),
+                    "the refusal over {road} does not carry the cause it came from: {failure}"
+                );
+                assert!(
+                    matches!(backup, Backup::Complete(_)),
+                    "the refusal over {road} does not reach the copy beside the registry: \
+                     {failure}"
+                );
+            }
+            other => panic!("the refusal over {road} preserves nothing and names nothing: {other}"),
+        }
+    }
 }
 
 /// Guard, not scenario: the copy the product writes, read back by the product.
@@ -337,13 +516,10 @@ fn guard_the_copy_a_write_takes_reads_back_whole_and_holds_the_registry() {
     assert_eq!(taken.path(), Some(copy_of_registry(&dir).as_path()));
 
     match Backup::beside(registry.path()) {
-        Backup::Complete {
-            path,
-            document: read,
-        } => {
-            assert_eq!(path, copy_of_registry(&dir));
+        Backup::Complete(copy) => {
+            assert_eq!(copy.path(), copy_of_registry(&dir));
             assert_eq!(
-                read.as_slice(),
+                copy.document(),
                 document.as_bytes(),
                 "the copy the write takes does not hold the registry it copied"
             );
