@@ -43,14 +43,19 @@
 //! away.
 //!
 //! **It does not take away the case where the line agrees with itself**, and
-//! claiming otherwise would be worse than the hole. The check compares the
-//! declared length against the offset where the last line opens, so a registry
-//! that itself holds a line break at byte `n` and, right after it, the line
-//! `rigger-registry-backup {n}`, yields a copy that reads as whole the moment it
+//! claiming otherwise would be worse than the hole.
+//!
+//! The condition, and not one of its shapes: **a last line that carries the
+//! marker and a number equal to the offset that line opens at** is a witness,
+//! whoever wrote it. So a registry holding a line break at some byte `n` and,
+//! right after it, such a line, yields a copy that reads as whole the moment it
 //! is cut at the end of that line — and its first `n` bytes are then offered as
-//! a state to resume from. Declaring the whole file's length instead closes
-//! nothing either, since the witness is counted inside that length; it only
-//! changes which number has to be written.
+//! a state to resume from. The number is read by the standard parse of an
+//! unsigned integer, which also accepts a leading `+` and leading zeros: a
+//! reader looking for the one spelling this module writes would leave those two
+//! behind. Declaring the whole file's length instead closes nothing either,
+//! since the witness is counted inside that length; it only changes which number
+//! has to be written.
 //!
 //! What that case needs is a registry whose content somebody chose, cut at a
 //! byte somebody chose. Whoever can write that line into the registry can
@@ -83,6 +88,8 @@ use std::fmt;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+
+use rigger_apply::{Held, Lock};
 
 use crate::ledger::RegistryError;
 
@@ -193,7 +200,8 @@ impl Backup {
     /// **Takes nothing and writes nothing.** It is the gesture a run makes
     /// before it does anything else, and a gesture that wrote would put this
     /// path among the writers the registry's exclusion exists to order, without
-    /// it ever having taken that exclusion.
+    /// it ever having taken that exclusion. [`Backup::take`] is the one that
+    /// writes, and it asks for the proof this one does not need.
     pub fn beside(registry: &Path) -> Self {
         let path = copy_of(registry);
         let copy = match fs::read(&path) {
@@ -223,20 +231,35 @@ impl Backup {
     /// point of the copy is the file as its owner has it, including whatever
     /// this build could not read.
     ///
-    /// **This one writes, and [`Backup::beside`] argues that a gesture which
-    /// writes belongs under the registry's exclusion. This one is under it.** It
-    /// is reached from the write window — from a value that exists only because
-    /// the lock was taken — so the copy is made under the same exclusion as the
-    /// write it covers, and the argument is satisfied rather than waived.
+    /// **This one writes, so it asks for the proof [`Backup::beside`] argues
+    /// for.** A gesture that writes belongs under the exclusion that orders the
+    /// runs writing this registry; taking the proof of holding as a parameter is
+    /// what makes a copy taken outside that window something nobody can write
+    /// down, rather than something a doc comment discourages.
     ///
-    /// It is public all the same, and not because the exclusion is optional:
-    /// the tests of this workspace are integration tests, and there is no
-    /// in-crate seam to exercise a write through. What that leaves open is
-    /// worth naming rather than hiding. The file is opened with truncation, so
-    /// a caller taking a copy outside the window, while another run sits
-    /// between its own copy and its write, replaces that run's whole copy with
-    /// a partial one — in the very window the copy exists to cover.
-    pub fn take(registry: &Path) -> Result<Self, RegistryError> {
+    /// It is not a proof of holding *some* lock. The copy is the registry's, and
+    /// a proof made for another registry's exclusion would let a run copy over
+    /// this one while the run that actually holds it is mid-write — the
+    /// exclusion doing nothing at all while appearing to work. So the proof is
+    /// checked against the lock that guards this registry, and answers
+    /// [`RegistryError::LockElsewhere`] when it is another's.
+    ///
+    /// **What the proof does not decide is what gets copied.** The copy is the
+    /// registry as it now stands, and it replaces any copy already beside it. A
+    /// run that copies a registry it has not read successfully therefore
+    /// replaces a copy of the last readable state with a copy of the unreadable
+    /// one. Inside the write window that cannot happen — nothing reaches a write
+    /// over a registry whose content did not render — and outside it, taking the
+    /// exclusion first is now the price of trying.
+    pub fn take(registry: &Path, held: &Held) -> Result<Self, RegistryError> {
+        let expected = Lock::beside(registry);
+        if held.path() != expected.path() {
+            return Err(RegistryError::LockElsewhere {
+                registry: registry.to_path_buf(),
+                expected: expected.path().to_path_buf(),
+                held: held.path().to_path_buf(),
+            });
+        }
         let document = match fs::read(registry) {
             Ok(document) => document,
             Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(Self::Absent),
@@ -327,14 +350,18 @@ fn copy_of(registry: &Path) -> PathBuf {
 /// glued to its final line, and no reader could find it again.
 ///
 /// **What the length check does, exactly.** It compares the declared length with
-/// the offset the last line opens at, so a copy that stopped on a line of its
-/// own that merely looks like a witness does not read as whole. A line whose
-/// number agrees with where it opens does read as whole, whoever wrote it — the
-/// module's account of the witness says which shape does that, and why it is
-/// left open rather than closed here.
+/// the offset the last line opens at, and that is the check a copy cut short
+/// fails: a copy that stopped on a line of its own that merely looks like a
+/// witness, and a copy cut inside the witness line itself, both fail it. A line
+/// whose number agrees with where it opens passes it, whoever wrote it — the
+/// module's account of the witness gives that condition, and says why it is left
+/// open rather than closed here.
 fn certified(copy: &[u8]) -> Option<usize> {
-    // The witness line is terminated. A copy cut inside it is not one, and this
-    // is where that truncation — the one closest to a whole copy — is caught.
+    // A whole copy ends where the witness line ends, and that line is
+    // terminated. It is not what refuses the truncations measured in this crate
+    // — the offset check below refuses those on its own — but it does refuse the
+    // one they do not reach: a copy cut on the last digit of a line that would
+    // otherwise have agreed with where it opens.
     let lines = copy.strip_suffix(b"\n")?;
     let opens = lines.iter().rposition(|byte| *byte == b'\n')? + 1;
     let witness = std::str::from_utf8(&lines[opens..]).ok()?;

@@ -182,7 +182,8 @@ impl Registry {
 #[derive(Debug)]
 pub struct Fresh<'lock> {
     /// Held so the exclusion cannot be released while this value is alive. It
-    /// is read once, to name the lock in a refusal.
+    /// is read to name the lock in a refusal, and handed on as the proof the
+    /// copy a write takes asks for.
     held: &'lock Held,
     path: PathBuf,
     ledger: Ledger,
@@ -221,7 +222,7 @@ impl Fresh<'_> {
     /// whole, and the next run would be offered it as a state to resume from.
     /// The interval it exists for is the one between the two writes.
     pub fn commit(self, mutations: &[Mutation]) -> Result<Ledger, RegistryError> {
-        let taken = Backup::take(&self.path)?;
+        let taken = Backup::take(&self.path, self.held)?;
         let written = replay(mutations, self.ledger);
         write_atomically(&self.path, &written.render())?;
         if let Some(copy) = taken.path() {

@@ -188,18 +188,17 @@ fn a2_a_copy_whose_write_stopped_partway_is_recognised_and_is_not_offered() {
 ///
 /// The file being copied is, by construction, one this build could not read, so
 /// nothing may be assumed about what is in it — including that none of its lines
-/// reads like a witness. That is why the witness says **how many bytes it
-/// certifies**, and what is measured here is what that number takes away: a line
-/// whose number does not agree with where the line opens is not a witness, and a
-/// copy cut inside the witness line — the truncation closest to a whole one, and
-/// the one a marker alone would let through — is not whole.
+/// reads like a witness. Two things stop such a line from passing for one, and
+/// both are measured here: its number has to agree with the offset the line opens
+/// at, and the line has to be terminated, because the one this module writes is
+/// the last thing in the file and ends it.
 ///
 /// **It does not measure that no forged line passes**, because one does: a line
-/// that agrees with where it opens is indistinguishable from a witness this
-/// module wrote. That case is accounted for where the format is described, and
-/// it is not asserted away here.
+/// whose number agrees with where it opens is indistinguishable from a witness
+/// this module wrote, whoever wrote it. That case is accounted for where the
+/// format is described, and it is not asserted away here.
 #[test]
-fn guard_a_witness_that_does_not_account_for_where_it_opens_is_not_one() {
+fn guard_a_witness_is_terminated_and_accounts_for_where_it_opens() {
     let dir = directory("witness-shaped");
     let registry = registry_with(&dir, &one_entry());
     let path = copy_of_registry(&dir);
@@ -212,12 +211,25 @@ fn guard_a_witness_that_does_not_account_for_where_it_opens_is_not_one() {
         "a line shaped like the witness was taken for one"
     );
 
-    // A copy cut inside its own witness line.
+    // A copy cut inside its own witness line. What refuses it is the offset
+    // check above and not the line break below: the digits left behind still
+    // parse, and the number they make no longer accounts for where the line
+    // opens.
     let whole = whole_copy(&one_entry());
     fs::write(&path, &whole.as_bytes()[..whole.len() - 3]).expect("write the copy");
     assert!(
         matches!(Backup::beside(registry.path()), Backup::Truncated { .. }),
         "a copy cut inside its witness was taken for a whole one"
+    );
+
+    // A copy cut on the last byte of its witness line — the one truncation the
+    // offset check cannot see, because everything before the missing line break
+    // agrees with itself. The line break is what refuses it, and nothing else
+    // does.
+    fs::write(&path, &whole.as_bytes()[..whole.len() - 1]).expect("write the copy");
+    assert!(
+        matches!(Backup::beside(registry.path()), Backup::Truncated { .. }),
+        "a copy whose witness line never ended was taken for a whole one"
     );
     fs::remove_dir_all(&dir).expect("clean up");
 }
@@ -427,6 +439,10 @@ fn refusal_over(name: &str, lay: impl FnOnce(&std::path::Path)) -> RegistryError
     failure
 }
 
+/// One road to a registry whose content will not render: what it is, what the
+/// product handed back on it, and which refusal it should have come from.
+type Road = (&'static str, RegistryError, fn(&RegistryError) -> bool);
+
 /// Guard, not scenario: every way the registry's content fails to render.
 ///
 /// The scenarios of A2 need one such registry and reach for the nearest — an
@@ -440,10 +456,6 @@ fn refusal_over(name: &str, lay: impl FnOnce(&std::path::Path)) -> RegistryError
 /// this crate refuses rather than reading "with replacement bytes that would
 /// destroy what they replace" — so it is the one where the file is most
 /// obviously worth copying, and it is reached by no scenario at all.
-/// One road to a registry whose content will not render: what it is, what the
-/// product handed back on it, and which refusal it should have come from.
-type Road = (&'static str, RegistryError, fn(&RegistryError) -> bool);
-
 #[test]
 fn guard_every_way_the_registry_fails_to_render_preserves_it_and_names_the_copy() {
     let roads: [Road; 4] = [
@@ -512,8 +524,13 @@ fn guard_the_copy_a_write_takes_reads_back_whole_and_holds_the_registry() {
     let document = one_entry();
     let registry = registry_with(&dir, &document);
 
-    let taken = Backup::take(registry.path()).expect("take the copy");
+    let held = registry
+        .lock()
+        .acquire(&SystemLiveness)
+        .expect("take the exclusion the copy is made under");
+    let taken = Backup::take(registry.path(), &held).expect("take the copy");
     assert_eq!(taken.path(), Some(copy_of_registry(&dir).as_path()));
+    drop(held);
 
     match Backup::beside(registry.path()) {
         Backup::Complete(copy) => {
@@ -596,6 +613,47 @@ fn guard_a_copy_does_not_outlive_the_write_it_covered() {
     fs::remove_dir_all(&dir).expect("clean up");
 }
 
+/// Guard, not scenario: a proof of holding made for another registry. No
+/// scenario of A2 names it, and the answer decides whether the proof the copy
+/// asks for is about anything in particular.
+///
+/// A proof of holding is a proof about **one** exclusion. Taken as proof of any,
+/// a run holding registry A's could copy over registry B while the run that
+/// really holds B is between its own copy and its write — the exclusion doing
+/// nothing at all while appearing to work, which is the same defect the write
+/// itself is guarded against.
+#[test]
+fn guard_a_copy_refuses_a_proof_of_holding_another_registrys_exclusion() {
+    let dir = directory("copy-foreign-proof");
+    let registry = registry_with(&dir, &one_entry());
+    let elsewhere = Registry::at(dir.join("other-registry"));
+    let held = elsewhere
+        .lock()
+        .acquire(&SystemLiveness)
+        .expect("take another registry's exclusion");
+
+    let failure = Backup::take(registry.path(), &held)
+        .expect_err("a copy was taken under another registry's exclusion");
+
+    assert!(
+        matches!(
+            &failure,
+            RegistryError::LockElsewhere { registry: named, expected, held: shown }
+                if named == registry.path()
+                    && expected == registry.lock().path()
+                    && shown == elsewhere.lock().path()
+        ),
+        "the refusal does not name the exclusion held and the one that guards this registry: \
+         {failure}"
+    );
+    assert!(
+        matches!(Backup::beside(registry.path()), Backup::Absent),
+        "a copy was written under another registry's exclusion"
+    );
+    drop(held);
+    fs::remove_dir_all(&dir).expect("clean up");
+}
+
 /// Guard, not scenario: the permissions the copy carries. No scenario of A2
 /// names them, and the answer decides whether protecting a registry is what
 /// exposes it.
@@ -614,7 +672,12 @@ fn guard_a_copy_carries_the_permissions_of_the_registry() {
     fs::set_permissions(registry.path(), fs::Permissions::from_mode(0o600))
         .expect("restrict the registry");
 
-    Backup::take(registry.path()).expect("take the copy");
+    let held = registry
+        .lock()
+        .acquire(&SystemLiveness)
+        .expect("take the exclusion the copy is made under");
+    Backup::take(registry.path(), &held).expect("take the copy");
+    drop(held);
 
     let mode = fs::metadata(copy_of_registry(&dir))
         .expect("read the copy's metadata")
