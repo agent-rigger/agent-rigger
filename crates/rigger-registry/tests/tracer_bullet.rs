@@ -490,7 +490,13 @@ fn a5_a_removal_through_a_behaviour_this_build_lost_refuses_by_naming_four_thing
 /// A fallback on `link` then really acts: it takes the address back and, at the
 /// last referent, the shared store entry with it. What is measured is the
 /// invariant the scenario is about: **an unresolved name is never replaced by a
-/// resolvable one, and nothing on the machine changes.**
+/// resolvable one, and nothing a pose wrote changes.**
+///
+/// "What a pose wrote" and not "the machine", because that is the width of the
+/// observable: [`Machine::snapshot`] walks the root posed under and the shared
+/// store, and not the registry beside them. That the **record** stays is the
+/// other scenario's clause, and it is pinned there by reading the registry file
+/// back byte for byte.
 #[test]
 fn a5_a_behaviour_this_build_lost_is_not_replaced_by_one_it_still_carries() {
     // GIVEN something really posed by link, and a record of it that names a
@@ -724,6 +730,61 @@ fn guard_an_entry_whose_trace_cannot_be_read_counts_as_a_referent() {
         ledger.referents(&store, &acme("acme/review")),
         Referents::Remaining,
         "an entry whose trace does not read back must not be counted as designating nothing"
+    );
+}
+
+/// The same guard on the other half of the same branch.
+///
+/// Counting referents stops at the first refusal, and there are **two** ways to
+/// get one: the name is outside the closed set, or the trace does not read back.
+/// The guard above builds the second and leaves the first untouched, so a build
+/// that stopped counting an unresolved **name** as a referent would keep the
+/// whole suite green — and this is the half the removal path now argues about,
+/// where an unresolved name is refused rather than swallowed.
+///
+/// What it would cost is one step worse than the guard above, because the two
+/// answers meet on one machine: the shared store entry goes away under an entry
+/// whose refusal keeps naming a file that no longer exists, so what that record
+/// describes can never be found again. The entry below carries a link trace that
+/// reads back perfectly and designates **another** store — so if its name
+/// resolved, this would answer `Last`, and only the unresolved name makes it
+/// `Remaining`.
+#[test]
+fn guard_an_entry_naming_a_behaviour_outside_the_set_counts_as_a_referent() {
+    let machine = Machine::new("unresolved-referent");
+    let store = machine.store("acme-review-1.0");
+    install(
+        &machine,
+        "acme/review",
+        &machine.root(),
+        "review.md",
+        "acme-review-1.0",
+    )
+    .expect("the pose and its record must succeed");
+
+    let registry = machine.registry();
+    let document = fs::read_to_string(registry.path()).expect("read the registry");
+    fs::write(
+        registry.path(),
+        format!(
+            "{document}entry\tacme/other\tacme\t{GONE}\t{POSED_BEFORE}\t/home/someone\tother.md\t\
+             abc\t/store/another\tlink\t0123456789abcdef\n"
+        ),
+    )
+    .expect("write a line naming a behaviour outside the closed set");
+    let ledger = registry.read().expect("read the registry");
+
+    // The added line is a readable entry — otherwise the count would answer
+    // `Remaining` because of an illegible line, and this guard would pass
+    // without measuring the name at all.
+    assert_eq!(ledger.entries().len(), 2);
+    assert!(ledger.unjudgeable().is_empty());
+
+    assert_eq!(
+        ledger.referents(&store, &acme("acme/review")),
+        Referents::Remaining,
+        "an entry whose behaviour is outside the closed set must not be counted as designating \
+         nothing: its trace is not read, so nothing here can say what it designates"
     );
 }
 
