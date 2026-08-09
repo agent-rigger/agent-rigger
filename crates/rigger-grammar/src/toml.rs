@@ -9,10 +9,12 @@
 //! **What refuses `merge`, and in what order.** Read-only is the
 //! **categorical** reason: it comes from the decision above, it is carried by
 //! [`GrammarRole::ReadOnly`](crate::GrammarRole), and no measurement lifts it.
-//! It is the refusal the file plan asks for — "a `merge` declared on this
-//! grammar is refused by name, as on `frontmatter_read`" — and
-//! `frontmatter_read` is refused because it does not write, never because a
-//! library would lose bytes.
+//! It is the refusal the file plan asks for: a `merge` declared on this
+//! grammar is refused **by name**, and the name it publishes is the decision.
+//! Refused because this grammar does not write — never because a document
+//! resisted, never because a library lost bytes. A refusal naming a document,
+//! or a library, is one that a better document or a newer library could lift.
+//! This one cannot be lifted by either.
 //!
 //! **What that makes of the limit measured at T1.** `toml_edit 0.25.13`
 //! normalises every CRLF line ending to LF **on render** — a cause at the

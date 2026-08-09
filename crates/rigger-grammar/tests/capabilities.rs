@@ -864,8 +864,8 @@ fn guard_a_probe_without_hostile_trivia_credits_nothing() {
 /// The TOML grammar is read-only by the product decision of 2026-08-06 — its
 /// writing role was the configuration file of a host that is no longer served,
 /// and no document owned by the host that is served is in TOML. The file plan
-/// draws from it a categorical refusal, "as on `frontmatter_read`", which is
-/// refused because it does not write and not because a library loses bytes. A
+/// draws from it a **categorical** refusal: refused because the grammar does
+/// not write, and never because a document resisted or a library lost bytes. A
 /// refusal publishing only the loss of line endings tells its reader that
 /// fixing the library would reopen the gate, which is false.
 #[test]
