@@ -109,8 +109,9 @@ use crate::{Grammar, Jsonc, Toml};
 /// grammar the choice of what they are judged on.
 ///
 /// **The list is enumerated by `build.rs`, never copied by hand** — the script
-/// gives both reasons, one of which is that the name of one of these files is
-/// the name of a host, which scenario C7 forbids writing into this source.
+/// gives both reasons, one of which is scenario C7's ban on writing a host's
+/// name into this source: enumerating the directory keeps that true whatever
+/// name a document happens to carry, not only for the ones on disk today.
 pub const SHARED_CORPUS: &[(&str, &str)] = generated::SHARED_CORPUS;
 
 /// The list written by `build.rs` at compile time. It lives in its own module

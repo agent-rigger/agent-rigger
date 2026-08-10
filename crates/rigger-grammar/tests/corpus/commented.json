@@ -1,15 +1,15 @@
 {
   "model": "acme/model-large",
-  // perso — ne pas toucher
+  // personal — do not touch
   "theme": "dark",
-  "instructions": ["AGENTS.md", "docs/notes.md"], // garder
+  "instructions": ["AGENTS.md", "docs/notes.md"], // keep
   "permissions": {
     "bash": {
       "allow": [
         "git status",
         /*
-         * revu manuellement
-         * ne pas retirer
+         * reviewed by hand
+         * do not remove
          */
         "git diff"
       ],

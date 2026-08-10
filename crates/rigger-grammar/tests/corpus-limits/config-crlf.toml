@@ -1,8 +1,8 @@
-# configuration codex — profils de modèle
+# main configuration — model profiles
 server_pool = { primary = "https://api.example.internal", replicas = 2 }
 
 [model]
-name = "acme/model-large"  # verrouillé par l'équipe
+name = "acme/model-large"  # locked by the team
 
 [model.limits]
 max_tokens = 4096
@@ -14,7 +14,7 @@ url = "https://api.example.internal"
 [server.meta]
 region = "eu"
 
-# sécurité — ne pas relâcher sans revue
+# security — do not loosen without review
 [sandbox]
 allow = [
     "read",

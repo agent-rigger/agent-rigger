@@ -412,7 +412,7 @@ fn c1_a_round_trip_without_edit_is_byte_identical() {
     assert_eq!(
         entries.len(),
         3,
-        "the expected corpus holds three documents (opencode.json, settings.json, config.toml), {} found in {}",
+        "the expected corpus holds three documents (commented.json, settings.json, config.toml), {} found in {}",
         entries.len(),
         corpus_dir().display()
     );
@@ -964,7 +964,7 @@ fn guard_the_embedded_corpus_is_the_one_the_repository_carries() {
     );
 }
 
-/// A fixture guard, not a grammar property: an `opencode.json` run through a
+/// A fixture guard, not a grammar property: a `commented.json` run through a
 /// "format on save", or one whose comments had disappeared, would make the
 /// round trip trivially true and would make the test above lie without it ever
 /// going red. This guard checks that the traps are still there; it checks
@@ -972,14 +972,14 @@ fn guard_the_embedded_corpus_is_the_one_the_repository_carries() {
 ///
 /// Every needle anchors the trap it names, with enough context to be
 /// unambiguous — never a character class. A needle `b"//"` would stay true even
-/// if `// perso — ne pas toucher` (the GIVEN of MD-22) disappeared, as long as
-/// `// garder` (MD-24) remains in the file: it would prove an absent trap by
+/// if `// personal — do not touch` (the GIVEN of MD-22) disappeared, as long as
+/// `// keep` (MD-24) remains in the file: it would prove an absent trap by
 /// pointing at another. Every needle is checked even if an earlier one is
 /// missing, for the same reason as A3 just above: one lost trap must not hide
 /// the following ones in the report.
 #[test]
 fn guard_the_corpus_still_carries_its_traps() {
-    let opencode = fs::read(corpus_dir().join("opencode.json")).expect("read opencode.json");
+    let commented = fs::read(corpus_dir().join("commented.json")).expect("read commented.json");
     let settings = fs::read(corpus_dir().join("settings.json")).expect("read settings.json");
     let config = fs::read(corpus_dir().join("config.toml")).expect("read config.toml");
 
@@ -990,47 +990,47 @@ fn guard_the_corpus_still_carries_its_traps() {
     // could therefore never again be the missing trap — and the count catches,
     // as a bonus, a partial conversion, which no presence needle can see. Same
     // idiom as `known_limits.rs` for the 24 CRs of `config-crlf.toml`.
-    let cr_count = opencode.iter().filter(|&&b| b == b'\r').count();
+    let cr_count = commented.iter().filter(|&&b| b == b'\r').count();
     if cr_count != 22 {
         missing.push(format!(
-            "opencode.json: trap \"CRLF line ending\" weakened — {cr_count} \\r found, 22 expected"
+            "commented.json: trap \"CRLF line ending\" weakened — {cr_count} \\r found, 22 expected"
         ));
     }
 
     for (file, haystack, label, needle) in [
         (
-            "opencode.json",
-            &opencode,
-            "MD-22 comment attached to theme (\"// perso — ne pas toucher\")",
-            b"// perso \xe2\x80\x94 ne pas toucher\r\n  \"theme\"" as &[u8],
+            "commented.json",
+            &commented,
+            "MD-22 comment attached to theme (\"// personal — do not touch\")",
+            b"// personal \xe2\x80\x94 do not touch\r\n  \"theme\"" as &[u8],
         ),
         (
-            "opencode.json",
-            &opencode,
+            "commented.json",
+            &commented,
             "multi-line block comment, CRLF inside the token",
-            b"/*\r\n         * revu manuellement\r\n         * ne pas retirer\r\n         */",
+            b"/*\r\n         * reviewed by hand\r\n         * do not remove\r\n         */",
         ),
         (
-            "opencode.json",
-            &opencode,
+            "commented.json",
+            &commented,
             "trailing comma before the closing brace",
             b",\r\n}",
         ),
         (
-            "opencode.json",
-            &opencode,
+            "commented.json",
+            &commented,
             "first element of the instructions array shares its line (MD-24)",
             b"\"instructions\": [\"AGENTS.md\"",
         ),
         (
-            "opencode.json",
-            &opencode,
-            "end-of-line comment // garder, on the instructions array (MD-24 § AND)",
-            b"\"docs/notes.md\"], // garder",
+            "commented.json",
+            &commented,
+            "end-of-line comment // keep, on the instructions array (MD-24 § AND)",
+            b"\"docs/notes.md\"], // keep",
         ),
         (
-            "opencode.json",
-            &opencode,
+            "commented.json",
+            &commented,
             "2-space indentation after the object opens",
             b"{\r\n  \"",
         ),
@@ -1046,14 +1046,14 @@ fn guard_the_corpus_still_carries_its_traps() {
         (
             "config.toml",
             &config,
-            "section comment \"# sécurité\"",
-            b"\n# s\xc3\xa9curit\xc3\xa9",
+            "section comment \"# security\"",
+            b"\n# security",
         ),
         (
             "config.toml",
             &config,
             "end-of-line comment, anchored on the value of name",
-            b"\"  # verrouill\xc3\xa9",
+            b"\"  # locked",
         ),
         (
             "config.toml",
@@ -1085,15 +1085,15 @@ fn guard_the_corpus_still_carries_its_traps() {
     // not a single contiguous needle — a position comparison, just as
     // unambiguous.
     match (
-        find_bytes(&opencode, b"\"model\":"),
-        find_bytes(&opencode, b"\"theme\":"),
+        find_bytes(&commented, b"\"model\":"),
+        find_bytes(&commented, b"\"theme\":"),
     ) {
         (Some(model_at), Some(theme_at)) if model_at < theme_at => {}
         (Some(_), Some(_)) => missing.push(
-            "opencode.json: \"model\" is no longer before \"theme\" — the non-alphabetical order of the GIVEN of MD-22 is gone".to_string(),
+            "commented.json: \"model\" is no longer before \"theme\" — the non-alphabetical order of the GIVEN of MD-22 is gone".to_string(),
         ),
         _ => missing.push(
-            "opencode.json: \"model\" and/or \"theme\" not found — their order cannot be checked".to_string(),
+            "commented.json: \"model\" and/or \"theme\" not found — their order cannot be checked".to_string(),
         ),
     }
 

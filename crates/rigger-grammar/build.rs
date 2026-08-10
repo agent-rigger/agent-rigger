@@ -11,12 +11,15 @@
 //! already known. That is the mode the capability table exists to close,
 //! transposed to its own instrument.
 //!
-//! The second is that the name of one of these files is the name of a host.
-//! Scenario C7 demands that the admission condition derive from a property of
-//! the grammar and that **no host name appear in the source of the crate** — a
-//! guard checks this file by file. Enumerating the directory rather than
-//! copying it out is what makes that requirement tenable: the crate names no
-//! document, it takes them all.
+//! The second is that scenario C7 demands the admission condition derive from
+//! a property of the grammar, never from a list of host names — a guard
+//! checks the crate's source file by file for exactly that. Enumerating the
+//! directory rather than copying it out is what keeps the requirement true
+//! over time, not only at the instant it is written: the crate names no
+//! document, it takes them all, whatever name a document added tomorrow
+//! happens to carry. (Until 2026-08-10, one corpus file carried the name of a
+//! host the product no longer serves; nothing here needed to change when it
+//! was renamed, which is the point.)
 
 use std::env;
 use std::fmt::Write as _;
