@@ -167,6 +167,12 @@ impl std::error::Error for StepError {}
 /// What it costs: this indirection is itself code, and a seam the production
 /// path does not go through would be code nobody measures. [`OnDisk`] is the
 /// only implementation the product uses, and the nominal tests go through it.
+///
+/// **An implementation reads its own state when the step runs**, whatever that
+/// state is kept on — a disk, a store held in memory, nothing at all in a dry
+/// run. It is handed one effect and no reading from before, which is the whole
+/// of what it has to hold up. The clause that can actually be broken is in
+/// [`carry`], which is where a reading from before exists at all.
 pub trait Steps {
     /// Carries one step out.
     fn carry_out(&self, effect: &Effect) -> Result<(), StepError>;
@@ -621,6 +627,27 @@ pub fn withdraw(
 ///
 /// Public because a behaviour declared outside this workspace — which is how
 /// the under-declaration guard below is exercised at all — has no other way in.
+///
+/// **B8 — what is seized here is for giving back, and a step never decides on
+/// it.** This is the one place the rule can be broken, because this is the one
+/// place the seized state exists: `seized` is a local, a scope away from the
+/// loop that carries the steps out, and passing it down would spare every
+/// removal a read. It would also let [`Effect::Unlink`] take away a link the
+/// owner re-pointed after the capture read it, [`Effect::Discard`] a file they
+/// rewrote, and [`Effect::Remove`] a store entry that no longer holds what was
+/// posed — each of them destroying bytes it never looked at, and reporting
+/// success. A removal reads its address when its turn comes, and it acts on that
+/// reading.
+///
+/// What the `b8_` scenarios measure is **which reading a removal acts on**, in
+/// both directions an address can diverge from what was seized: absent when the
+/// capture ran and carrying something by the time its removal comes, and
+/// present at the capture and changed by its owner before the step reaches it.
+/// They do not measure that each pre-condition is asked *in full*, and the
+/// distinction is worth the sentence: an [`Effect::Unlink`] that still asked
+/// whether a link is there but no longer whether it designates what the trace
+/// recorded leaves both scenarios green — measured, not supposed. That half is
+/// somebody else's to hold.
 pub fn carry(
     served: &dyn Behaviour,
     effects: &[Effect],
