@@ -4,3 +4,6 @@
 # and this repository is public — an accidental commit here publishes machine
 # paths and session artifacts.
 /.claude/
+
+# graphify knowledge graph (generated; holds machine-specific abs paths, rebuild with `graphify update .`)
+graphify-out/

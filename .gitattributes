@@ -10,3 +10,4 @@
 # `unspecified` on a file of a subdirectory with `*` alone.
 crates/rigger-grammar/tests/corpus/** -text
 crates/rigger-grammar/tests/corpus-limits/** -text
+graphify-out/graph.json merge=graphify
