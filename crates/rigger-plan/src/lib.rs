@@ -544,6 +544,8 @@ impl Captured {
 /// What giving a captured state back amounts to. A value, because this crate
 /// writes nothing: the caller carries it out.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[must_use = "these steps give back the state a capture seized; dropping them leaves the machine \
+              half changed under a failure that says it was given back"]
 pub struct Restoration {
     /// The steps, in the order they must be carried out.
     pub effects: Vec<Effect>,
@@ -743,6 +745,7 @@ pub fn replay(name: BehaviourName, fields: &[String]) -> Result<Trace, Behaviour
 /// trace derived afterwards from what is on disk would describe a document
 /// nobody promised had stayed put.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[must_use = "a computed pose is carried out by somebody else; dropping it poses nothing"]
 pub struct Posed {
     /// The steps, in the order they must be carried out.
     pub effects: Vec<Effect>,
@@ -754,6 +757,7 @@ pub struct Posed {
 
 /// What replaying a trace backwards produces.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[must_use = "these are the steps that take the thing back off; dropping them removes nothing"]
 pub struct Undone {
     /// The steps, in the order they must be carried out.
     pub effects: Vec<Effect>,
@@ -1054,6 +1058,44 @@ pub trait Behaviour {
 
     /// **The grammar.** Computes the steps to carry out and the trace that
     /// undoes them, out of one and the same reading of the subject.
+    ///
+    /// **Nothing has been written when this returns** — this crate writes
+    /// nothing at all — so dropping what comes back is not a half-finished
+    /// state, it is a pose that was computed and never carried:
+    ///
+    /// ```compile_fail
+    /// #![deny(unused_must_use)]
+    /// use std::path::{Path, PathBuf};
+    /// use rigger_plan::{behaviour, Behaviour, BehaviourName, Fragment, Placement, Subject};
+    ///
+    /// let served = behaviour(BehaviourName::Link);
+    /// let fragment = Fragment::Artefact {
+    ///     store: PathBuf::from("/store/acme-review-1.0"),
+    ///     contents: "# Review\n".to_string(),
+    ///     placement: Placement::Link,
+    /// };
+    /// let subject = Subject { address: Path::new("review.md"), observed: None };
+    /// served.pose(subject, &fragment).unwrap();
+    /// ```
+    ///
+    /// Its twin, which differs by the one gesture and compiles — without it the
+    /// refusal above would be indistinguishable from a typo:
+    ///
+    /// ```no_run
+    /// use std::path::{Path, PathBuf};
+    /// use rigger_plan::{behaviour, Behaviour, BehaviourName, Fragment, Placement, Subject};
+    ///
+    /// let served = behaviour(BehaviourName::Link);
+    /// let fragment = Fragment::Artefact {
+    ///     store: PathBuf::from("/store/acme-review-1.0"),
+    ///     contents: "# Review\n".to_string(),
+    ///     placement: Placement::Link,
+    /// };
+    /// let subject = Subject { address: Path::new("review.md"), observed: None };
+    /// let posed = served.pose(subject, &fragment).unwrap();
+    /// carry_out(&posed.effects);
+    /// # fn carry_out(_: &[rigger_plan::Effect]) {}
+    /// ```
     fn pose(&self, subject: Subject<'_>, fragment: &Fragment) -> Result<Posed, BehaviourError>;
 
     /// **The inverse.** Replays a recorded trace backwards, and returns the
@@ -1062,6 +1104,48 @@ pub trait Behaviour {
     /// `referents` — the one thing the trace cannot know, because it is a
     /// question about the registry as it stands **now** — is handed in rather
     /// than counted off the disk.
+    ///
+    /// **Dropping what comes back removes nothing**, and leaves the thing posed
+    /// with its trace still recorded — a removal that was computed and never
+    /// carried:
+    ///
+    /// ```compile_fail
+    /// #![deny(unused_must_use)]
+    /// use std::path::{Path, PathBuf};
+    /// use rigger_plan::{
+    ///     behaviour, Behaviour, BehaviourName, Digest, Placement, Referents, Subject, Trace,
+    /// };
+    ///
+    /// let served = behaviour(BehaviourName::Link);
+    /// let trace = Trace::Link {
+    ///     store: PathBuf::from("/store/acme-review-1.0"),
+    ///     placement: Placement::Link,
+    ///     posed: Digest::of(b"# Review\n"),
+    /// };
+    /// let subject = Subject { address: Path::new("review.md"), observed: None };
+    /// served.undo(subject, &trace, Referents::Last).unwrap();
+    /// ```
+    ///
+    /// Its twin, which differs by the one gesture and compiles — without it the
+    /// refusal above would be indistinguishable from a typo:
+    ///
+    /// ```no_run
+    /// use std::path::{Path, PathBuf};
+    /// use rigger_plan::{
+    ///     behaviour, Behaviour, BehaviourName, Digest, Placement, Referents, Subject, Trace,
+    /// };
+    ///
+    /// let served = behaviour(BehaviourName::Link);
+    /// let trace = Trace::Link {
+    ///     store: PathBuf::from("/store/acme-review-1.0"),
+    ///     placement: Placement::Link,
+    ///     posed: Digest::of(b"# Review\n"),
+    /// };
+    /// let subject = Subject { address: Path::new("review.md"), observed: None };
+    /// let undone = served.undo(subject, &trace, Referents::Last).unwrap();
+    /// carry_out(&undone.effects);
+    /// # fn carry_out(_: &[rigger_plan::Effect]) {}
+    /// ```
     fn undo(
         &self,
         subject: Subject<'_>,
@@ -1092,6 +1176,37 @@ pub trait Behaviour {
     /// restoring gives back a state seized before a pose that did not complete.
     /// A transaction interrupted between the two has no trace to replay, and it
     /// is precisely then that the capture is all there is.
+    ///
+    /// **This one is the exception among the three, and the difference is worth
+    /// naming.** Dropping a computed pose or a computed removal is an omission:
+    /// the work is not carried, and nothing claims it was. Dropping *this* is a
+    /// lie. It is asked for on the failure path, after a step has already
+    /// changed the machine, and the caller answers that path with a failure
+    /// whose whole meaning is that the machine was put back. Let these steps go
+    /// and the machine stays half changed underneath an error that says it is
+    /// not — the one state the transaction exists to make impossible.
+    ///
+    /// ```compile_fail
+    /// #![deny(unused_must_use)]
+    /// use rigger_plan::{behaviour, Behaviour, BehaviourName, Captured};
+    ///
+    /// let served = behaviour(BehaviourName::Link);
+    /// let captured = Captured::of(Vec::new());
+    /// served.restore(&captured).unwrap();
+    /// ```
+    ///
+    /// Its twin, which differs by the one gesture and compiles — without it the
+    /// refusal above would be indistinguishable from a typo:
+    ///
+    /// ```no_run
+    /// use rigger_plan::{behaviour, Behaviour, BehaviourName, Captured};
+    ///
+    /// let served = behaviour(BehaviourName::Link);
+    /// let captured = Captured::of(Vec::new());
+    /// let giving_back = served.restore(&captured).unwrap();
+    /// carry_out(&giving_back.effects);
+    /// # fn carry_out(_: &[rigger_plan::Effect]) {}
+    /// ```
     fn restore(&self, captured: &Captured) -> Result<Restoration, BehaviourError>;
 }
 

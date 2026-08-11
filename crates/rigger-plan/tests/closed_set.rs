@@ -360,7 +360,7 @@ fn guard_a4_the_behaviour_contract_still_carries_the_three_examples_that_realise
         .expect("read the crate's own source");
 
     assert_eq!(
-        fenced_examples(&contract_doc(&source)),
+        fenced_examples(&preamble(&source, "\npub trait Behaviour {")),
         vec![
             "".to_string(),
             "compile_fail".to_string(),
@@ -372,20 +372,64 @@ fn guard_a4_the_behaviour_contract_still_carries_the_three_examples_that_realise
     );
 }
 
-/// The doc block of the contract: the run of `///` lines immediately above the
-/// declaration of the trait.
+/// Every value this crate hands back carries `#[must_use]`, and each is refused
+/// by a pair of examples on the method that hands it back rather than by an
+/// assertion here.
+///
+/// **What this adds is the only thing those pairs cannot hold: their own
+/// existence.** Delete an attribute and its `compile_fail` starts compiling, so
+/// the doctest goes red by itself. Delete the doc block instead and nothing
+/// anywhere goes red — the attribute keeps working and stops being measured,
+/// which is the state this whole file exists to refuse.
+///
+/// It lives here rather than in a file of its own because the helper it needs
+/// was already written for the guard above, and because both anchor examples on
+/// the same trait. Nothing about this crate being pure changes the shape: what a
+/// dropped value costs here is a computed thing never carried, not a disk left
+/// half written.
+#[test]
+fn guard_every_must_use_of_the_behaviour_contract_still_carries_the_pair_that_measures_it() {
+    let source = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("src/lib.rs"))
+        .expect("read the crate's own source");
+
+    for (method, anchor) in [
+        ("Behaviour::pose", "\n    fn pose("),
+        ("Behaviour::undo", "\n    fn undo("),
+        ("Behaviour::restore", "\n    fn restore("),
+    ] {
+        assert_eq!(
+            fenced_examples(&preamble(&source, anchor)),
+            vec!["compile_fail".to_string(), "no_run".to_string()],
+            "the doc block of `{method}` no longer carries the refusal that drops the value and \
+             the twin that keeps it — the attribute on the value it hands back is then held by \
+             nothing, and dropping that value goes back to compiling in silence"
+        );
+    }
+}
+
+/// The lines immediately above a declaration: its doc block and its attributes,
+/// in source order.
 ///
 /// Anchored on the declaration and not on the file, so that fences moved onto
 /// another item stop counting — which is the way a count over a whole file goes
 /// green while the thing it was watching is gone.
-fn contract_doc(source: &str) -> String {
-    let declaration = source
-        .find("\npub trait Behaviour {")
-        .expect("the closed set's contract must still be a trait named `Behaviour`");
-    let mut block: Vec<&str> = source[..declaration]
+///
+/// **It takes the first occurrence**, which for the trait's own methods is the
+/// declaration rather than any implementation of it: the trait precedes the
+/// members of the set in this source. Should that ever stop being true, the
+/// preamble found would be an implementation's — which carries no fenced
+/// examples — and every caller below goes red rather than quietly green.
+fn preamble(source: &str, declaration: &str) -> String {
+    let at = source
+        .find(declaration)
+        .unwrap_or_else(|| panic!("`{}` must still be declared here", declaration.trim()));
+    let mut block: Vec<&str> = source[..at]
         .lines()
         .rev()
-        .take_while(|line| line.trim_start().starts_with("///"))
+        .take_while(|line| {
+            let trimmed = line.trim_start();
+            trimmed.starts_with("///") || trimmed.starts_with("#[")
+        })
         .collect();
     block.reverse();
     block.join("\n")
