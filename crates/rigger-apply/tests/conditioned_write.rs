@@ -260,7 +260,7 @@ fn guard_the_pose_keeps_the_mode_the_owner_set() {
     fs::set_permissions(&target, fs::Permissions::from_mode(0o600)).expect("restrict the document");
 
     // WHEN the pose runs.
-    merge_into_file::<Jsonc>(&target, &fragment()).expect("the pose must succeed");
+    let _ = merge_into_file::<Jsonc>(&target, &fragment()).expect("the pose must succeed");
 
     // THEN the document received it, and still carries the mode from before.
     assert!(fs::read_to_string(&target)
@@ -299,7 +299,7 @@ fn guard_the_pose_keeps_the_mode_of_the_document_a_link_designates() {
     std::os::unix::fs::symlink(&real, &link).expect("create the link");
 
     // WHEN the pose runs on the link.
-    merge_into_file::<Jsonc>(&link, &fragment()).expect("the pose must succeed");
+    let _ = merge_into_file::<Jsonc>(&link, &fragment()).expect("the pose must succeed");
 
     // THEN the versioned document received it, and still carries its own mode.
     assert!(fs::read_to_string(&real)

@@ -594,7 +594,7 @@ fn a4_a_rollback_leaves_alone_an_address_whose_seized_state_is_still_there() {
     let machine = machine("untouched-address");
     let store = machine.join("store/acme-review-1.0");
     let first = machine.join("root/review.md");
-    pose(
+    let _ = pose(
         BehaviourName::Link,
         &first,
         &artefact(&store, Placement::Link),

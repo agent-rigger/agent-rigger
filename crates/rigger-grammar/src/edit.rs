@@ -193,7 +193,18 @@ impl Edit {
 
 /// What undoes exactly the edit that produced it — and **nothing else**. What
 /// the product did not write does not appear in it, so cannot come out of it.
+///
+/// **The attribute below is here for a caller in another crate**, and that is
+/// the whole of why a pure value carries it. This crate is pure: nothing here
+/// has written anything, and dropping an inverse computed by [`merge`] costs a
+/// computation. By the time `rigger-apply` hands one back, the document on disk
+/// has already been rewritten, and this is the only thing that reverses it —
+/// dropping it there is an irreversible edit. The attribute has to sit on the
+/// declaration to be seen through the unwrapping the caller does; there is no
+/// placement on the caller's side that reaches it.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[must_use = "an inverse is what reverses an edit that has already been written; dropping it \
+              leaves the edit with nothing to undo it"]
 pub enum Inverse {
     /// Remove the keys the edit added, restore those whose value it replaced.
     Keys {

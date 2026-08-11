@@ -167,6 +167,8 @@ pub fn capture(path: &Path) -> Result<Capture, TxnError> {
 /// fragment of an owned document left lying in its owner's directory, and
 /// abandonment also happens through an error higher up, or through a panic.
 #[derive(Debug)]
+#[must_use = "a staged content is written by `commit` and by nothing else; dropping it takes the \
+              temporary away and leaves the document as it was"]
 pub struct Staged {
     /// The path as the caller gave it. It is the one refusals name: it is the
     /// one its owner recognises.
@@ -232,6 +234,38 @@ impl Drop for Staged {
 /// Writes `contents` into a temporary of the **directory of the document**,
 /// touching neither the document nor `target`. When `target` is a symbolic link,
 /// the document is what it points to.
+///
+/// **Dropping what this returns writes nothing**, and the [`Drop`] that makes
+/// that safe is what makes it quiet: the temporary goes away, the document is
+/// left as it was, and a forgotten write looks exactly like a write that was
+/// never asked for. The attribute on [`Staged`] is what the compiler says it
+/// with:
+///
+/// ```compile_fail
+/// #![deny(unused_must_use)]
+/// use std::path::Path;
+/// use rigger_apply::stage;
+///
+/// stage(Path::new("settings.json"), "AFTER").unwrap();
+/// ```
+///
+/// Its twin, which differs by the one gesture and compiles — without it the
+/// refusal above would be indistinguishable from a typo:
+///
+/// ```no_run
+/// use std::path::Path;
+/// use rigger_apply::{stage, Fingerprint};
+///
+/// let staged = stage(Path::new("settings.json"), "AFTER").unwrap();
+/// staged.commit(&Fingerprint::of(b"BEFORE")).unwrap();
+/// ```
+///
+/// **What the attribute closes is one of three forms, and only one.**
+/// `let _ = stage(..)?;` and `let _staged = stage(..)?;` stay silent under it,
+/// and are meant to: both are refusals somebody wrote down, and a reader sees
+/// them. The bound-and-unused form is already covered by `unused_variables`
+/// under `-D warnings`. What is left, and what the attribute is for, is the
+/// form where nothing is written at all.
 pub fn stage(target: &Path, contents: &str) -> Result<Staged, TxnError> {
     let document = designated_document(target)?;
     let temporary = temporary_path(&document);
@@ -392,6 +426,61 @@ impl From<TxnError> for ApplyError {
 /// read here would compare the document with itself, always match, and let a
 /// rewrite landing between the capture and the rename go through unseen — the
 /// pose would replace it, and report success.
+///
+/// **The document is already rewritten when this returns**, at the `commit`
+/// below, and what comes back is the only thing that reverses it. Dropping it
+/// does not lose an intention: it loses the undo of an edit that has landed.
+///
+/// ```compile_fail
+/// #![deny(unused_must_use)]
+/// use std::path::Path;
+/// use rigger_apply::merge_into_file;
+/// use rigger_grammar::{Edit, Jsonc};
+///
+/// merge_into_file::<Jsonc>(
+///     Path::new("settings.json"),
+///     &Edit::values(&["instructions"], ["docs/pose.md"]),
+/// )
+/// .unwrap();
+/// ```
+///
+/// Its twin, which differs by the one gesture and compiles — without it the
+/// refusal above would be indistinguishable from a typo:
+///
+/// ```no_run
+/// use std::path::Path;
+/// use rigger_apply::merge_into_file;
+/// use rigger_grammar::{Edit, Jsonc};
+///
+/// let undo = merge_into_file::<Jsonc>(
+///     Path::new("settings.json"),
+///     &Edit::values(&["instructions"], ["docs/pose.md"]),
+/// )
+/// .unwrap();
+/// record(undo);
+/// # fn record(_: rigger_grammar::Inverse) {}
+/// ```
+///
+/// **The attribute that refuses the first of those is on [`Inverse`] itself, in
+/// `rigger-grammar`, and moving it onto this function would measure nothing.**
+/// The reason is worth the paragraph, because the move looks like a
+/// simplification — it would keep the attribute in the crate that carries the
+/// danger. Both real call sites read `merge_into_file(..).expect(..)`, and the
+/// `expect` *uses* what the function returned. A `must_use` on the function is
+/// satisfied there. What gets dropped is the [`Inverse`] one level down, after
+/// the unwrapping, and only an attribute on the type sees that far.
+///
+/// Worse than useless: it would have passed its own pair of doctests. A
+/// `compile_fail` written against the bare `merge_into_file(..);` form goes red
+/// under a function attribute, so the witness would have looked satisfied while
+/// the form that actually occurs stayed open. That is the limit of the
+/// instrument — `compile_fail` asserts "does not build", never "does not build
+/// for my reason" — meeting a real case.
+///
+/// The general form, so that it need not be rediscovered per type: **a
+/// `must_use` on a function returning [`Result`] adds nothing at all**, because
+/// the standard library already marks `Result` itself. It would catch only the
+/// bare call, which warns today without any of this.
 pub fn merge_into_file<G: Grammar>(path: &Path, edit: &Edit) -> Result<Inverse, ApplyError> {
     let captured = capture(path)?;
     let merged = merge::<G>(captured.content(), edit)?;

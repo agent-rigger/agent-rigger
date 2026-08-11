@@ -550,6 +550,8 @@ impl std::error::Error for PoseError {}
 
 /// What a pose leaves behind for the registry to record.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[must_use = "a pose that is not recorded is a thing posed on the disk that nothing can ever take \
+              back; hand this to the registry"]
 pub struct Posted {
     /// What undoes it.
     pub trace: Trace,
@@ -567,6 +569,43 @@ pub struct Posted {
 /// records** — and only then does anything change on the disk. A pose the
 /// registry could not describe is a thing nothing could ever remove, and it is
 /// refused before it happens rather than discovered afterwards.
+///
+/// **The thing is on the disk when this returns, and its trace is nowhere
+/// yet.** Dropping what comes back does not abandon an intention; it leaves a
+/// posed artefact that no removal will ever find, which is the damage this
+/// product exists to prevent. The refusal is the compiler's:
+///
+/// ```compile_fail
+/// #![deny(unused_must_use)]
+/// use std::path::{Path, PathBuf};
+/// use rigger_apply::{pose, OnDisk};
+/// use rigger_plan::{BehaviourName, Fragment, Placement};
+///
+/// let fragment = Fragment::Artefact {
+///     store: PathBuf::from("/store/acme-review-1.0"),
+///     contents: "# Review\n".to_string(),
+///     placement: Placement::Link,
+/// };
+/// pose(BehaviourName::Link, Path::new("review.md"), &fragment, &OnDisk).unwrap();
+/// ```
+///
+/// Its twin, which differs by the one gesture and compiles — without it the
+/// refusal above would be indistinguishable from a typo:
+///
+/// ```no_run
+/// use std::path::{Path, PathBuf};
+/// use rigger_apply::{pose, OnDisk};
+/// use rigger_plan::{BehaviourName, Fragment, Placement};
+///
+/// let fragment = Fragment::Artefact {
+///     store: PathBuf::from("/store/acme-review-1.0"),
+///     contents: "# Review\n".to_string(),
+///     placement: Placement::Link,
+/// };
+/// let posted = pose(BehaviourName::Link, Path::new("review.md"), &fragment, &OnDisk).unwrap();
+/// record(posted);
+/// # fn record(_: rigger_apply::Posted) {}
+/// ```
 pub fn pose(
     name: BehaviourName,
     address: &Path,
