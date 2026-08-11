@@ -157,6 +157,35 @@ impl Registry {
     /// follows cannot happen after the lock was released, because it holds a
     /// borrow of the proof. The order of the three gestures stops being a
     /// convention somebody could get wrong.
+    ///
+    /// **Dropping what this returns writes nothing at all.** There is no
+    /// [`Drop`] here to make that visible and nothing on the disk has changed
+    /// yet, so a run that lets it go simply never records its mutations and
+    /// reports whatever it reported. The attribute on [`Fresh`] is what the
+    /// compiler says it with:
+    ///
+    /// ```compile_fail
+    /// #![deny(unused_must_use)]
+    /// use rigger_apply::SystemLiveness;
+    /// use rigger_registry::Registry;
+    ///
+    /// let registry = Registry::at("registry.rigger");
+    /// let held = registry.lock().acquire(&SystemLiveness).unwrap();
+    /// registry.reread(&held).unwrap();
+    /// ```
+    ///
+    /// Its twin, which differs by the one gesture and compiles — without it the
+    /// refusal above would be indistinguishable from a typo:
+    ///
+    /// ```no_run
+    /// use rigger_apply::SystemLiveness;
+    /// use rigger_registry::Registry;
+    ///
+    /// let registry = Registry::at("registry.rigger");
+    /// let held = registry.lock().acquire(&SystemLiveness).unwrap();
+    /// let fresh = registry.reread(&held).unwrap();
+    /// fresh.commit(&[]).unwrap();
+    /// ```
     pub fn reread<'lock>(&self, held: &'lock Held) -> Result<Fresh<'lock>, RegistryError> {
         if held.path() != self.lock.path() {
             return Err(RegistryError::LockElsewhere {
@@ -180,6 +209,8 @@ impl Registry {
 /// [`Registry::reread`], which needs the proof that the lock is held. Its
 /// lifetime is that proof's, so it cannot outlive the exclusion.
 #[derive(Debug)]
+#[must_use = "the mutations of a run are written by `commit` and by nothing else; dropping this \
+              writes none of them and reports nothing"]
 pub struct Fresh<'lock> {
     /// Held so the exclusion cannot be released while this value is alive. It
     /// is read to name the lock in a refusal, and handed on as the proof the
@@ -306,6 +337,8 @@ pub trait Consent {
 
 /// What a transaction came to.
 #[derive(Debug)]
+#[must_use = "this is the answer to the question that was asked; dropping it reports success for a \
+              run the caller refused"]
 pub enum Outcome {
     /// The caller refused. The registry was not touched, and the lock was never
     /// taken.
@@ -327,6 +360,48 @@ pub enum Outcome {
 /// what the types of [`Registry::reread`] and [`Fresh::commit`] allow. What this
 /// function decides is the one thing they cannot, which is that the question is
 /// asked **before** the lock is taken.
+///
+/// **What comes back is the answer to the question.** `Ok` says the transaction
+/// reached a conclusion, not that it wrote: a caller who refused and a caller
+/// whose write landed are told apart by this value and by nothing else.
+/// Dropping it turns a refusal into a silent success.
+///
+/// ```compile_fail
+/// #![deny(unused_must_use)]
+/// use rigger_apply::SystemLiveness;
+/// use rigger_registry::{transact, Consent, Decision, Proposal, Registry};
+///
+/// struct Granting;
+/// impl Consent for Granting {
+///     fn decide(&self, _: &Proposal<'_>) -> Decision {
+///         Decision::Granted
+///     }
+/// }
+///
+/// transact(&Registry::at("registry.rigger"), &[], &Granting, &SystemLiveness).unwrap();
+/// ```
+///
+/// Its twin, which differs by the one gesture and compiles — without it the
+/// refusal above would be indistinguishable from a typo:
+///
+/// ```no_run
+/// use rigger_apply::SystemLiveness;
+/// use rigger_registry::{transact, Consent, Decision, Outcome, Proposal, Registry};
+///
+/// struct Granting;
+/// impl Consent for Granting {
+///     fn decide(&self, _: &Proposal<'_>) -> Decision {
+///         Decision::Granted
+///     }
+/// }
+///
+/// let outcome = transact(&Registry::at("registry.rigger"), &[], &Granting, &SystemLiveness)
+///     .unwrap();
+/// match outcome {
+///     Outcome::Committed { .. } => println!("written"),
+///     Outcome::Refused { .. } => println!("the caller said no"),
+/// }
+/// ```
 pub fn transact(
     registry: &Registry,
     mutations: &[Mutation],

@@ -115,7 +115,33 @@ const SUFFIX: &str = ".rigger-backup";
 /// to offer, and nothing that can be made to look as though there were. A
 /// boolean beside a document would let the two disagree, and whoever read it
 /// wrongly would restore an amputated registry.
+///
+/// # What the attribute below closes, and what it leaves open
+///
+/// [`Backup::take`] **writes**. By the time one of these exists, a copy is on
+/// the disk beside the registry, and it is meant to live for one interval: from
+/// just before the registry is replaced to just after. [`Fresh::commit`] is the
+/// only thing that closes that interval, and a copy left past it describes a
+/// superseded registry while carrying every sign of being whole — the next run
+/// would be offered it as a state to resume from.
+///
+/// `#[must_use]` closes **one** of the two ways to leave it open: the value
+/// dropped in statement position, where nothing is written down at all. That is
+/// worth closing and it is what the pair of examples on [`Backup::take`]
+/// measures.
+///
+/// **It does not close the other, and there is no version of it that would.** A
+/// `Backup` that is bound to a name and then never taken away — because the run
+/// returned early, or failed, or simply never reached the commit — leaves the
+/// same orphan copy, and the compiler has nothing to say about it. There is no
+/// [`Drop`] here either: unlike a staged content, one of these does not remove
+/// its file when it goes. So a reader who sees the attribute and concludes the
+/// orphan copy is guarded should read this paragraph as the correction. It is
+/// guarded against being forgotten in one line, and not against being stranded
+/// by a path that never arrives.
 #[derive(Debug)]
+#[must_use = "taking a copy has already written it; the value is what takes it away again, and \
+              dropping it leaves an orphan copy beside the registry"]
 pub enum Backup {
     /// No copy is beside the registry. Nothing was interrupted between a copy
     /// being taken and the registry being written.
@@ -251,6 +277,34 @@ impl Backup {
     /// one. Inside the write window that cannot happen — nothing reaches a write
     /// over a registry whose content did not render — and outside it, taking the
     /// exclusion first is now the price of trying.
+    ///
+    /// **The copy is on the disk when this returns**, so what comes back is not
+    /// an intention but an obligation — see the account on [`Backup`] of the
+    /// half of that obligation the compiler can hold and the half it cannot:
+    ///
+    /// ```compile_fail
+    /// #![deny(unused_must_use)]
+    /// use rigger_apply::SystemLiveness;
+    /// use rigger_registry::{Backup, Registry};
+    ///
+    /// let registry = Registry::at("registry.rigger");
+    /// let held = registry.lock().acquire(&SystemLiveness).unwrap();
+    /// Backup::take(registry.path(), &held).unwrap();
+    /// ```
+    ///
+    /// Its twin, which differs by the one gesture and compiles — without it the
+    /// refusal above would be indistinguishable from a typo:
+    ///
+    /// ```no_run
+    /// use rigger_apply::SystemLiveness;
+    /// use rigger_registry::{Backup, Registry};
+    ///
+    /// let registry = Registry::at("registry.rigger");
+    /// let held = registry.lock().acquire(&SystemLiveness).unwrap();
+    /// let taken = Backup::take(registry.path(), &held).unwrap();
+    /// close_the_interval(taken);
+    /// # fn close_the_interval(_: Backup) {}
+    /// ```
     pub fn take(registry: &Path, held: &Held) -> Result<Self, RegistryError> {
         let expected = Lock::beside(registry);
         if held.path() != expected.path() {

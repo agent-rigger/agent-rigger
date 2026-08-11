@@ -67,7 +67,8 @@ impl Consent for Granting {
 /// rendering is the only way back out of the reading, and a field dropped at the
 /// read disappears here.
 fn rewritten(registry: &Registry) -> String {
-    transact(registry, &[], &Granting, &SystemLiveness).expect("the transaction must succeed");
+    let _ =
+        transact(registry, &[], &Granting, &SystemLiveness).expect("the transaction must succeed");
     fs::read_to_string(registry.path()).expect("read the registry back")
 }
 
@@ -475,7 +476,7 @@ fn guard_a_field_this_build_does_not_know_survives_the_record_being_written_agai
 
     // WHEN the same identity is recorded again, by a run that states only what
     // this build knows.
-    transact(
+    let _ = transact(
         &registry,
         &[Mutation::Upsert(posted("acme/one", "fedcba9876543210"))],
         &Granting,

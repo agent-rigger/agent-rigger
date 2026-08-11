@@ -702,7 +702,7 @@ fn guard_a_copy_carries_the_permissions_of_the_registry() {
         .lock()
         .acquire(&SystemLiveness)
         .expect("take the exclusion the copy is made under");
-    Backup::take(registry.path(), &held).expect("take the copy");
+    let _ = Backup::take(registry.path(), &held).expect("take the copy");
     drop(held);
 
     let mode = fs::metadata(copy_of_registry(&dir))
