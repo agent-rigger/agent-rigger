@@ -1,5 +1,15 @@
-//! B8 — a removal decides on what is at its address at the moment it acts,
-//! never on a state seized before the transaction started.
+//! Which reading a removal decides on, and what it is then allowed to take
+//! away.
+//!
+//! **Two requirements meet in this file, and they fail in the same direction**
+//! — bytes an owner put somewhere, gone under cover of a removal, with the run
+//! reporting success. The file is named for the first of them and now carries
+//! both; the name is left as it is, because renaming it would move it in the
+//! history to save a word, and this line does the same work for nothing.
+//!
+//! # B8 — a removal decides on what is at its address at the moment it acts
+//!
+//! Never on a state seized before the transaction started.
 //!
 //! **Both tests are born green, and that is why this header says how each was
 //! made to go red.** The property is held today by the shape of the executor:
@@ -37,12 +47,32 @@
 //! artefact in the store. Only a reading of the machine tells that one apart
 //! from a removal that worked.
 //!
-//! **What neither of them measures**, so that nobody reads more into them than
-//! they hold: that each pre-condition is asked in full. An `Unlink` that still
-//! asked whether a link is there, but no longer whether it designates what the
-//! trace recorded, leaves both tests below green — measured, not supposed. These
-//! two are about *which reading* a removal acts on, never about how much it asks
-//! of it.
+//! **What those two do not measure**, so that nobody reads more into them than
+//! they hold: how much each pre-condition asks. They are about *which reading* a
+//! removal acts on. An `Unlink` that still asked whether a link is there, but no
+//! longer whether it designates what the trace recorded, leaves both of them
+//! green — which is what the third test below is for.
+//!
+//! # The guard — a removal takes back what it posed, and nothing else
+//!
+//! A removal reaching an address that no longer carries what the trace recorded
+//! leaves it alone and says so. What makes this worth a test of its own is that
+//! the address is a place its owner may write: the product posed there, and the
+//! owner has every right to put something else there afterwards. A removal that
+//! only asked "is this the kind of thing I posed?" would answer yes to their
+//! link and take it away.
+//!
+//! The mutation, applied to the `Unlink` arm by hand and reverted: match any
+//! link at the address rather than one designating what the trace recorded.
+//! Under it the owner's link is taken away and the run reports success.
+//!
+//! **Its counterpart for the shared store is measured elsewhere and is not
+//! repeated here**: a pose by link makes the address a door into the store, so
+//! what an owner writes at the address lands in the store entry, and taking that
+//! entry away on the strength of nothing designating it any more would destroy
+//! those bytes silently. The scenario for that one lives with the rollback
+//! tests, and removing the fingerprint comparison from the `Remove` arm turns it
+//! red — measured, not supposed.
 
 use std::cell::Cell;
 use std::fs;
@@ -259,5 +289,64 @@ fn b8_a_removal_refuses_an_address_its_owner_changed_after_the_capture_read_it()
         "a removal that believed the capture would have taken the owner's document away and \
          reported success; the run must refuse instead, and leave the machine as the capture \
          found it"
+    );
+}
+
+/// The owner re-points the link, which needs a link made outside the product.
+/// Restricted to the systems whose way of making one this test knows, exactly as
+/// the pose is: the same restriction is already carried by the scenario that
+/// poses onto a link in the conditioned-write tests.
+#[cfg(unix)]
+#[test]
+fn guard_a_removal_leaves_alone_a_link_its_owner_repointed() {
+    let machine = machine("owner-repoints-the-link");
+    let address = machine.join("root/skills/review.md");
+    let store = machine.join("store/acme-review-1.0");
+    let theirs = machine.join("root/skills/their-own-checklist.md");
+
+    let posted = pose(
+        BehaviourName::Link,
+        &address,
+        &artefact(&store, Placement::Link),
+        &OnDisk,
+    )
+    .expect("the pose the removal is about to take back");
+
+    // WHEN the owner makes the address designate a document of their own. They
+    // are entitled to: the product posed at that address, it does not own it.
+    // What is there is still a link, and still a link the product would know how
+    // to take away — which is the whole difficulty.
+    fs::write(&theirs, OWNED).expect("the owner writes their own document");
+    fs::remove_file(&address).expect("the owner takes the posed link away");
+    std::os::unix::fs::symlink(&theirs, &address).expect("the owner points it at their own");
+    let repointed = snapshot(&machine);
+
+    let failure = withdraw(
+        BehaviourName::Link,
+        &address,
+        &posted.trace,
+        Referents::Last,
+        &OnDisk,
+    )
+    .expect_err("a removal took away a link the product had not posed");
+
+    match &failure {
+        PoseError::RolledBack { step, failure } => {
+            assert_eq!(*step, 0, "the removal of the address is the first step");
+            match failure {
+                StepError::NotAsRecorded { address: named, .. } => assert_eq!(
+                    named, &address,
+                    "the refusal must name the address it left alone"
+                ),
+                other => panic!("expected the step to name what it did not recognise, got {other}"),
+            }
+        }
+        other => panic!("expected a rolled-back removal, got {other}"),
+    }
+    assert_eq!(
+        snapshot(&machine),
+        repointed,
+        "the product takes back what it posed and nothing else: a removal that asked only whether \
+         a link is there would have taken the owner's away and reported success"
     );
 }
