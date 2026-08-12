@@ -25,6 +25,7 @@
 //! this plan wants this crate pure.
 
 pub mod capability;
+pub mod coverage;
 pub mod edit;
 pub mod element;
 pub mod jsonc;

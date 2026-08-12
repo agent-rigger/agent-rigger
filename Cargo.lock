@@ -63,6 +63,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "rigger-cli"
+version = "0.0.0"
+dependencies = [
+ "rigger-grammar",
+]
+
+[[package]]
 name = "rigger-grammar"
 version = "0.0.0"
 dependencies = [

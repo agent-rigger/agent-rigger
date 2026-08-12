@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/rigger-apply",
+    "crates/rigger-cli",
     "crates/rigger-grammar",
     "crates/rigger-plan",
     "crates/rigger-registry",

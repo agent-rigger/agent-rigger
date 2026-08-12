@@ -1,0 +1,17 @@
+[package]
+name = "rigger-cli"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+# The product's first binary. No `main.rs` and no `bin` member existed before
+# this crate: every capability of the four library crates was, until now,
+# reachable only from a test. `coverage` is the one command this crate
+# carries — established to prove MD-39·1 ("the published output must be
+# produced by running the command — never prose written by hand"), not to
+# carry a fuller command surface, which belongs to another change.
+# No third-party dependency, for the same reason the rest of this workspace
+# has none on the paths it publishes: a single command needs no argument
+# parser.
+[dependencies]
+rigger-grammar = { path = "../rigger-grammar" }

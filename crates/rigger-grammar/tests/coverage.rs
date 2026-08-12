@@ -11,10 +11,15 @@
 //! the derivation names one. It does not judge whether the derivation itself
 //! is correct; that is the job of the tests it draws on.
 //!
-//! **Why the rendering lives here and not in `docs/coverage.md`.** The page
-//! has no way to write itself, and `table()` has no production caller yet —
-//! see `capability.rs`. Until one exists, a test is the only thing that can
-//! run the derivation, so a test is what renders the page.
+//! **Why the rendering is called here and not owned here.** It used to be:
+//! `table()` had no production caller, and this test was the only thing that
+//! could run the derivation, so H1 wrote the rendering here under its own
+//! mandate — no production line. `crates/rigger_grammar::coverage` now owns
+//! it, `pub`, because `crates/rigger-cli` calls it too and a binary in
+//! another crate cannot reach into this crate's tests. This file is the
+//! rendering's appellant, not its owner: it still measures the one thing
+//! neither `capability.rs` nor the CLI's own test can — that the committed
+//! page matches the table byte for byte.
 //!
 //! **Regenerating the golden.** Never hand-edit `docs/coverage.md`. When
 //! `table()` changes on purpose, run:
@@ -33,8 +38,7 @@
 use std::env;
 use std::path::PathBuf;
 
-use rigger_grammar::marker::Wrapping;
-use rigger_grammar::{Capabilities, GrammarRole, MergeAdmission, Resolution};
+use rigger_grammar::coverage::render;
 
 #[test]
 fn md39_5_coverage_page_matches_the_capability_table() {
@@ -78,137 +82,4 @@ fn golden_path() -> PathBuf {
         .join("..")
         .join("docs")
         .join("coverage.md")
-}
-
-/// Renders the coverage page from a measured table.
-///
-/// The only inputs are the public accessors of [`Capabilities`] and
-/// [`rigger_grammar::SHARED_CORPUS`] — nothing here is declared by hand about
-/// a grammar. Writing a value here that `table()` did not produce would be
-/// exactly the failure MD-39·5 exists to close, moved one file to the left.
-fn render(table: &[Capabilities]) -> String {
-    let mut page = String::new();
-    page.push_str("# Coverage\n\n");
-    page.push_str(
-        "This page is rendered from `rigger_grammar::table()` and checked byte for byte by \
-         `crates/rigger-grammar/tests/coverage.rs` — it is never edited by hand. A cell reading \
-         \"never\" names a limit the derivation measured, not one this page assumes; where the \
-         derivation also names why, the reason is under \"Declared limits\" below.\n\n",
-    );
-    page.push_str("## What each grammar can express\n\n");
-    page.push_str(&render_matrix(table));
-    page.push('\n');
-    page.push_str("## Declared limits\n\n");
-    page.push_str(
-        "Each entry below is a refusal the derivation named, with every reason it observed, in \
-         the order it observed them. Lifting one requires the grammar to change; it is never \
-         lifted by editing this page.\n\n",
-    );
-    page.push_str(&render_declared_limits(table));
-    page
-}
-
-/// The matrix itself: one row per grammar `table()` published, one column per
-/// public property of [`Capabilities`].
-fn render_matrix(table: &[Capabilities]) -> String {
-    let total_corpus = rigger_grammar::SHARED_CORPUS.len();
-    let mut out = String::new();
-    out.push_str(
-        "| Grammar | Role | Preserves trivia | Corpus documents read | Designates a list \
-         element | Applies and undoes an edit | Resolution | Carries a bounded block | \
-         `merge`, these keys at this path | `merge`, this block between these bounds |\n",
-    );
-    out.push_str("|---|---|---|---|---|---|---|---|---|---|\n");
-    for capabilities in table {
-        let grammar = capabilities.grammar();
-        let role = render_role(capabilities.role());
-        let preserves_trivia = render_bool(capabilities.preserves_trivia());
-        let corpus_read = capabilities.shared_corpus_documents_read();
-        let designates_list_element = render_bool(capabilities.designates_list_element());
-        let applies_edits = render_bool(capabilities.applies_edits());
-        let resolution = render_resolution(capabilities.resolution());
-        let bounded_block = render_wrappings(capabilities.delimiter_wrappings());
-        let merge_by_keys = render_admission(capabilities.merge_by_keys());
-        let merge_bounded_block = render_admission(capabilities.merge_bounded_block());
-        out.push_str(&format!(
-            "| `{grammar}` | {role} | {preserves_trivia} | {corpus_read} of {total_corpus} | \
-             {designates_list_element} | {applies_edits} | {resolution} | {bounded_block} | \
-             {merge_by_keys} | {merge_bounded_block} |\n"
-        ));
-    }
-    out
-}
-
-/// The reasons behind every `never` in the two `merge` columns, reusing
-/// [`rigger_grammar::MergeRefusal`]'s own [`std::fmt::Display`] rather than
-/// composing a second wording that could drift from it.
-fn render_declared_limits(table: &[Capabilities]) -> String {
-    let mut out = String::new();
-    for capabilities in table {
-        for admission in [
-            capabilities.merge_by_keys(),
-            capabilities.merge_bounded_block(),
-        ] {
-            if let MergeAdmission::Refused(refusal) = admission {
-                out.push_str(&format!("- {refusal}\n"));
-            }
-        }
-    }
-    if out.is_empty() {
-        out.push_str("No form of `merge` is refused on a published grammar today.\n");
-    }
-    out
-}
-
-fn render_role(role: GrammarRole) -> &'static str {
-    match role {
-        GrammarRole::ReadOnly => "read-only",
-        GrammarRole::ReadWrite => "read-write",
-    }
-}
-
-fn render_resolution(resolution: Resolution) -> &'static str {
-    match resolution {
-        Resolution::DependsOnOrder => "depends on order",
-        Resolution::IndependentOfOrder => "independent of order",
-    }
-}
-
-fn render_bool(value: bool) -> &'static str {
-    if value {
-        "yes"
-    } else {
-        "never"
-    }
-}
-
-fn render_admission(admission: &MergeAdmission) -> &'static str {
-    match admission {
-        MergeAdmission::Admitted => "admitted",
-        MergeAdmission::Refused(_) => "never",
-    }
-}
-
-/// The wrappings under which every document the grammar reads can carry a
-/// bounded block, in the order [`Wrapping::ALL`] declares them — the same
-/// order [`Capabilities::delimiter_wrappings`] preserves, so this reads them
-/// rather than re-deriving an order of its own.
-fn render_wrappings(wrappings: &[Wrapping]) -> String {
-    if wrappings.is_empty() {
-        return "never".to_string();
-    }
-    wrappings
-        .iter()
-        .map(|&wrapping| wrapping_name(wrapping))
-        .collect::<Vec<_>>()
-        .join(", ")
-}
-
-fn wrapping_name(wrapping: Wrapping) -> &'static str {
-    match wrapping {
-        Wrapping::LineComment => "line comment",
-        Wrapping::BlockCommentInline => "inline block comment",
-        Wrapping::BlockCommentSpanning => "spanning block comment",
-        Wrapping::Bare => "bare",
-    }
 }
