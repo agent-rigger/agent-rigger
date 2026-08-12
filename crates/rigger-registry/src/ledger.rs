@@ -441,6 +441,61 @@ pub struct Posting {
     pub trace: Trace,
 }
 
+/// Refuses when `named` and `trace` disagree about what was posed — MD-02·3:
+/// registration must refuse a posting whose declared behaviour and recorded
+/// trace contradict each other, and name what it refused.
+///
+/// **Only a `named` this build resolves is checked.** The closed set of
+/// behaviours may *shrink* between two versions of the product, and a record
+/// naming a behaviour this build no longer carries is a legitimate — if
+/// inert — entry: it is resolved and refused by [`resolve_behaviour`] at
+/// removal, by naming the behaviour, never here. Refusing it here too would
+/// also refuse a fixture built to exercise that later refusal, and would
+/// refuse a record this build cannot resolve well enough to say what shape
+/// it should have had.
+///
+/// **What each resolved member is allowed to have recorded, and why.**
+/// `link` records only [`Trace::Link`] — a store entry it materialised.
+/// `merge` records only [`Trace::Grammar`]; every [`Trace::Grammar`] is
+/// already refused by [`record`] as not recordable by this build, so this
+/// arm is reached by nothing today and is kept so that the day `merge`
+/// traces become recordable does not also have to add the check. `probe` —
+/// "observe a presence, and write nothing" — records only
+/// [`Trace::Witnessed`], the one trace with no inverse: that pairing is the
+/// affirmative half of MD-02·3, not only what it forbids, and it is what
+/// lets an adoption be posted honestly at all. `delegate` records nothing:
+/// no member of [`Trace`] is its own yet, so any trace handed under that
+/// name is wrong-shaped.
+fn behaviour_matches_trace(named: &str, trace: &Trace) -> Result<(), BehaviourError> {
+    let Ok(name) = BehaviourName::parse(named) else {
+        // Outside the closed set: not this refusal's business, see above.
+        return Ok(());
+    };
+    let (agrees, serves) = match name {
+        BehaviourName::Link => (
+            matches!(trace, Trace::Link { .. }),
+            "an artefact materialised in the shared store",
+        ),
+        BehaviourName::Merge => (
+            matches!(trace, Trace::Grammar { .. }),
+            "an edit written against a named grammar",
+        ),
+        BehaviourName::Probe => (
+            matches!(trace, Trace::Witnessed),
+            "a presence observed, with nothing written back",
+        ),
+        BehaviourName::Delegate => (false, "a pose carried out by a mechanism of the host"),
+    };
+    if agrees {
+        Ok(())
+    } else {
+        Err(BehaviourError::WrongShape {
+            behaviour: name,
+            serves,
+        })
+    }
+}
+
 impl Entry {
     /// Records one pose.
     ///
@@ -496,7 +551,17 @@ impl Entry {
     /// this build cannot record refuses here, naming why, rather than being
     /// posted under a record nothing could ever read back — see [`record`]
     /// for which traces that is, today.
+    ///
+    /// **And the behaviour named and the trace's shape are made to agree,
+    /// first — MD-02·3.** Without this, `posting.behaviour` travelled to the
+    /// entry unread: `record` dispatches on `posting.trace` alone, so a
+    /// `Posting { behaviour: "link", trace: Trace::Witnessed }` recorded,
+    /// under the label `link`, the empty list a witnessed value writes — an
+    /// adopted entry with no referent, the shape of the historical MD-02
+    /// defect. See [`behaviour_matches_trace`] for which pairings agree and
+    /// why.
     pub fn posted(posting: Posting) -> Result<Self, BehaviourError> {
+        behaviour_matches_trace(&posting.behaviour, &posting.trace)?;
         let trace = record(&posting.trace)?;
         Ok(Self {
             identity: Identity {

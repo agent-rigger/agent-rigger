@@ -18,7 +18,7 @@
 //! [`Entry::posted`], and that is what both tests below would drive directly,
 //! the same way every other test in this crate's suite does.
 //!
-//! # B5 — not delivered, and why
+//! # B5 — what this test establishes
 //!
 //! MD-02 asks that an adoption whose trace designates no referent be refused
 //! at registration, naming the address and the behaviour — never recorded and
@@ -33,38 +33,37 @@
 //! is legitimately accepted that way: `Trace::Witnessed` is exactly a value
 //! this build only observed, and B6 below measures that it is kept, not
 //! refused. The other, `Trace::Grammar`, is refused by `record`
-//! (`rigger-plan/src/lib.rs:708`) — but it is not reachable from this crate
-//! without a new dependency on `rigger-grammar` (this crate's `Cargo.toml`
-//! carries `rigger-plan` alone, added narrowly for [`Ledger::referents`]),
-//! and it is not the case MD-02 describes in any case: a merge trace has no
-//! notion of a shared-store referent to begin with, so refusing it proves
-//! nothing about referents.
+//! (`rigger-plan/src/lib.rs:708`) unconditionally, so it plays no part here.
 //!
 //! What MD-02 actually describes — an adoption meant to be link-shaped,
 //! ending up with no referent — has no way to happen through a well-typed
-//! `link` pose today, because `Trace::Link` cannot omit its `store`. It can
-//! still happen at the boundary `Entry::posted` exposes: nothing there checks
-//! that a `Posting`'s free-form `behaviour: String` label agrees with the
-//! shape of its `trace: Trace`. A `Posting` carrying `behaviour: "link"` and
-//! `trace: Trace::Witnessed` compiles, and `Entry::posted`
-//! (`rigger-registry/src/ledger.rs:499`) accepts it: `record` dispatches on
-//! the `Trace` variant alone, never reads `posting.behaviour`, and the
-//! registry ends up holding an entry labelled `link` whose recorded trace is
-//! the empty list `Trace::Witnessed` writes — the shape of the historical
-//! MD-02 defect, an adopted entry recorded as `files: []`.
+//! `link` pose, because `Trace::Link` cannot omit its `store`. It used to
+//! still happen at the boundary `Entry::posted` exposes: nothing there
+//! checked that a `Posting`'s free-form `behaviour: String` label agreed with
+//! the shape of its `trace: Trace`. A `Posting` carrying `behaviour: "link"`
+//! and `trace: Trace::Witnessed` compiled, and `Entry::posted`
+//! (`rigger-registry/src/ledger.rs:499`) accepted it: `record` dispatched on
+//! the `Trace` variant alone, never read `posting.behaviour`, and the
+//! registry ended up holding an entry labelled `link` whose recorded trace
+//! was the empty list `Trace::Witnessed` writes — the shape of the historical
+//! MD-02 defect, an adopted entry recorded as `files: []`. The test below
+//! measured that, red, before `Entry::posted` gained the check.
 //!
-//! The codebase already has the shape of the check MD-02 wants:
+//! The codebase already had the shape of the check MD-02 wants:
 //! `BehaviourError::WrongShape` refuses a trace that does not match the
 //! behaviour asked of it — for instance `Link::undo` refusing anything but a
 //! `Trace::Link` (`rigger-plan/src/lib.rs:1359`-`1372`) — but only inside a
-//! `Behaviour`'s own `pose` and `undo`, asked when a removal is decided,
-//! never when an entry is recorded. No test here can honestly assert that
-//! `Entry::posted` refuses that combination — it does not — and this crate's
-//! gate does not allow a red test to ship. So B5's instrument is not in this
-//! file. This is a product gap, matching MD-02's own historical failure mode,
-//! reported rather than fixed: closing it means deciding, in `Entry::posted`
-//! or upstream of it, how a `behaviour` label and a `Trace` shape are kept
-//! from disagreeing — a different tranche's decision, not this one's.
+//! `Behaviour`'s own `pose` and `undo`, asked when a removal is decided. It
+//! is reused rather than rebuilt: `Entry::posted` now calls a free function,
+//! `behaviour_matches_trace` (`rigger-registry/src/ledger.rs`), that resolves
+//! `posting.behaviour` through the closed set and, only when it resolves,
+//! checks the trace's shape against it — `link` against `Trace::Link`,
+//! `merge` against `Trace::Grammar`, `probe` against `Trace::Witnessed`,
+//! `delegate` against nothing, since no member of `Trace` is its own yet. A
+//! `behaviour` outside the closed set is left alone at this boundary: the set
+//! may shrink between two versions of the product, and that case is
+//! `resolve_behaviour`'s to refuse, by naming the behaviour, at removal —
+//! never here, and not this defect's shape in any case.
 //!
 //! # B6 — what this test establishes
 //!
@@ -86,7 +85,7 @@
 
 use std::path::Path;
 
-use rigger_plan::{Digest, Placement, Trace};
+use rigger_plan::{BehaviourError, BehaviourName, Digest, Placement, Trace};
 use rigger_registry::{Address, Entry, Ledger, Posting, POSED_BY};
 
 /// A fingerprint this build writes: sixteen lowercase hexadecimal digits,
@@ -128,6 +127,46 @@ fn posed(id: &str, address: &str, store: &Path) -> Entry {
         },
     })
     .expect("a link trace records")
+}
+
+#[test]
+fn b6_an_adoption_whose_trace_designates_no_referent_is_refused() {
+    // GIVEN a posting labelled `link` — an adoption meant to be link-shaped,
+    // claiming a referent in the shared store — but carrying the trace a
+    // value only observed writes: `Trace::Witnessed`, which `Trace::store`
+    // already reads as designating none.
+    let contradicted = Posting {
+        id: "acme/hand-written-plugin".to_string(),
+        provenance: "acme".to_string(),
+        behaviour: "link".to_string(),
+        posed_by: POSED_BY.to_string(),
+        root: Address::new(Path::new("/home/someone/.claude")).expect("a UTF-8 root"),
+        address: Address::new(Path::new("hand-written-plugin.js")).expect("a UTF-8 address"),
+        fingerprint: FINGERPRINT.to_string(),
+        trace: Trace::Witnessed,
+    };
+
+    // WHEN it is registered.
+    let refusal = Entry::posted(contradicted).expect_err(
+        "a `link` label over a witnessed trace must not record — MD-02·3 refuses a posting \
+         whose declared behaviour and recorded trace contradict each other",
+    );
+
+    // THEN the refusal names `link`, the behaviour the label claimed — never
+    // an entry recorded under that label with the empty trace `Witnessed`
+    // writes, the shape of the historical MD-02 defect: an adopted entry
+    // recorded as `files: []`.
+    assert!(
+        matches!(
+            &refusal,
+            BehaviourError::WrongShape { behaviour, .. } if *behaviour == BehaviourName::Link
+        ),
+        "the refusal must name `link`, the behaviour the posting claimed: {refusal}"
+    );
+    assert!(
+        refusal.to_string().contains("link"),
+        "what was refused must be nameable by whoever reads the message: {refusal}"
+    );
 }
 
 #[test]
