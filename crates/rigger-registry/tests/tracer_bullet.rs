@@ -29,7 +29,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use rigger_apply::{pose, withdraw, OnDisk, SystemLiveness};
+use rigger_apply::{pose, withdraw, OnDisk, SystemLiveness, SystemPracticability};
 use rigger_plan::{replay, BehaviourName, Digest, Fragment, Placement, Referents};
 use rigger_registry::{
     exit_code, resolve_behaviour, transact, Address, Consent, Decision, Entry, Identity, Ledger,
@@ -152,6 +152,7 @@ fn install(
             placement: Placement::Link,
         },
         &OnDisk,
+        &SystemPracticability,
     )
     .expect("the pose must succeed");
 

@@ -78,7 +78,9 @@ use std::cell::Cell;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use rigger_apply::{carry, pose, withdraw, OnDisk, PoseError, StepError, Steps};
+use rigger_apply::{
+    carry, pose, withdraw, OnDisk, PoseError, StepError, Steps, SystemPracticability,
+};
 use rigger_plan::{behaviour, BehaviourName, Digest, Effect, Fragment, Placement, Referents};
 
 /// The bytes of the artefact the scenarios pose.
@@ -246,6 +248,7 @@ fn b8_a_removal_refuses_an_address_its_owner_changed_after_the_capture_read_it()
         &address,
         &artefact(&store, Placement::Link),
         &OnDisk,
+        &SystemPracticability,
     )
     .expect("the pose the removal is about to take back");
     // What the capture is about to read: a link that is there, and a store entry
@@ -309,6 +312,7 @@ fn guard_a_removal_leaves_alone_a_link_its_owner_repointed() {
         &address,
         &artefact(&store, Placement::Link),
         &OnDisk,
+        &SystemPracticability,
     )
     .expect("the pose the removal is about to take back");
 

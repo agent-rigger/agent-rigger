@@ -452,6 +452,68 @@ fn make_link(_to: &Path, address: &Path) -> io::Result<()> {
     )))
 }
 
+/// Whether a symbolic link can actually be made inside a directory.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Practicability {
+    /// A symbolic link can be made there.
+    Practicable,
+    /// It cannot, and the reason is carried rather than discarded: it is what
+    /// the refusal has to name.
+    NotPracticable {
+        /// What the system reported instead of a link.
+        reason: String,
+    },
+}
+
+/// **Public surface, and declared as such**: whether `link` is practicable
+/// inside a directory is asked of this rather than assumed, on the pattern of
+/// [`crate::lock::LivenessProbe`].
+///
+/// What it makes measurable: the refusal [`pose`] raises when the directory a
+/// pose is about to place a link in cannot actually hold one — a volume
+/// formatted without symlink support, a container overlay that refuses them,
+/// a host without the privilege. Manufacturing one of those for a test needs
+/// a real one of those filesystems, which a portable suite does not have on
+/// hand. A test implementation answers `NotPracticable` without touching a
+/// filesystem at all, and the refusal this module raises on it is then
+/// exercised on every machine the tests run on, not only the rare one where
+/// it is true.
+///
+/// What it costs: one parameter on [`pose`], and the same temptation the
+/// liveness probe carries — that the test of the refusal covers the real
+/// probe. It does not. Whether [`SystemPracticability`] really answers
+/// `NotPracticable` on a volume that refuses a link is a measurement of a
+/// machine, and it belongs with the other characterizations of the
+/// environment.
+pub trait LinkProbe {
+    /// Whether a symbolic link can be made inside `directory`.
+    fn practicability(&self, directory: &Path) -> Practicability;
+}
+
+/// The one implementation that asks the operating system.
+///
+/// It makes a link through [`make_link`] — the same primitive [`OnDisk`] uses
+/// to place one for real — and removes it at once. Asking through a
+/// different primitive would answer a question the write does not pose. What
+/// is measured is the residue: an attempt leaves nothing behind, on the
+/// success path and on the failure path both.
+pub struct SystemPracticability;
+
+impl LinkProbe for SystemPracticability {
+    fn practicability(&self, directory: &Path) -> Practicability {
+        let probe_address = directory.join(format!(".rigger-link-probe.{}", std::process::id()));
+        match make_link(Path::new("rigger-link-probe-target"), &probe_address) {
+            Ok(()) => {
+                let _ = fs::remove_file(&probe_address);
+                Practicability::Practicable
+            }
+            Err(detail) => Practicability::NotPracticable {
+                reason: detail.to_string(),
+            },
+        }
+    }
+}
+
 /// Why a pose or a removal did not happen.
 #[derive(Debug)]
 pub enum PoseError {
@@ -470,6 +532,15 @@ pub enum PoseError {
     NotSeized {
         /// What went wrong.
         detail: StepError,
+    },
+    /// `link` is not practicable in the directory a pose is about to place
+    /// one in — checked before anything was changed. Nothing was carried
+    /// out.
+    NotLinkable {
+        /// The directory a symbolic link would have been made inside.
+        directory: PathBuf,
+        /// What the system reported instead of a link.
+        reason: String,
     },
     /// A step failed, and everything the capture seized was given back. **The
     /// machine is as it was.**
@@ -528,6 +599,11 @@ impl fmt::Display for PoseError {
                 "the state of what is about to change could not be seized, and nothing was \
                  changed — {detail}"
             ),
+            Self::NotLinkable { directory, reason } => write!(
+                f,
+                "{}: a symbolic link cannot be made there — {reason}; nothing was carried out",
+                directory.display()
+            ),
             Self::RolledBack { step, failure } => write!(
                 f,
                 "step {step} failed and the machine was given back the state it was in — {failure}"
@@ -566,9 +642,13 @@ pub struct Posted {
 ///
 /// The order is the whole of it: the address is read, the behaviour computes
 /// its steps and its trace, **the trace is put in the form the registry
-/// records** — and only then does anything change on the disk. A pose the
-/// registry could not describe is a thing nothing could ever remove, and it is
-/// refused before it happens rather than discovered afterwards.
+/// records**, `link` is asked whether it can actually reach where this pose is
+/// about to place one — and only then does anything change on the disk. A
+/// pose the registry could not describe is a thing nothing could ever remove,
+/// and a pose that cannot actually make the link it promises would otherwise
+/// be discovered mid-write, with a rollback to unwind for a condition that
+/// held before anything started. Both are refused before they happen rather
+/// than discovered afterwards.
 ///
 /// **The thing is on the disk when this returns, and its trace is nowhere
 /// yet.** Dropping what comes back does not abandon an intention; it leaves a
@@ -578,7 +658,7 @@ pub struct Posted {
 /// ```compile_fail
 /// #![deny(unused_must_use)]
 /// use std::path::{Path, PathBuf};
-/// use rigger_apply::{pose, OnDisk};
+/// use rigger_apply::{pose, OnDisk, SystemPracticability};
 /// use rigger_plan::{BehaviourName, Fragment, Placement};
 ///
 /// let fragment = Fragment::Artefact {
@@ -586,7 +666,14 @@ pub struct Posted {
 ///     contents: "# Review\n".to_string(),
 ///     placement: Placement::Link,
 /// };
-/// pose(BehaviourName::Link, Path::new("review.md"), &fragment, &OnDisk).unwrap();
+/// pose(
+///     BehaviourName::Link,
+///     Path::new("review.md"),
+///     &fragment,
+///     &OnDisk,
+///     &SystemPracticability,
+/// )
+/// .unwrap();
 /// ```
 ///
 /// Its twin, which differs by the one gesture and compiles — without it the
@@ -594,7 +681,7 @@ pub struct Posted {
 ///
 /// ```no_run
 /// use std::path::{Path, PathBuf};
-/// use rigger_apply::{pose, OnDisk};
+/// use rigger_apply::{pose, OnDisk, SystemPracticability};
 /// use rigger_plan::{BehaviourName, Fragment, Placement};
 ///
 /// let fragment = Fragment::Artefact {
@@ -602,7 +689,14 @@ pub struct Posted {
 ///     contents: "# Review\n".to_string(),
 ///     placement: Placement::Link,
 /// };
-/// let posted = pose(BehaviourName::Link, Path::new("review.md"), &fragment, &OnDisk).unwrap();
+/// let posted = pose(
+///     BehaviourName::Link,
+///     Path::new("review.md"),
+///     &fragment,
+///     &OnDisk,
+///     &SystemPracticability,
+/// )
+/// .unwrap();
 /// record(posted);
 /// # fn record(_: rigger_apply::Posted) {}
 /// ```
@@ -611,6 +705,7 @@ pub fn pose(
     address: &Path,
     fragment: &Fragment,
     steps: &dyn Steps,
+    link_probe: &dyn LinkProbe,
 ) -> Result<Posted, PoseError> {
     let served = behaviour(name);
     let observed = read_document(address)?;
@@ -624,12 +719,41 @@ pub fn pose(
         )
         .map_err(PoseError::Refused)?;
     let record = record(&posed.trace).map_err(PoseError::Refused)?;
+    require_linkable(&posed.effects, link_probe)?;
     carry(served, &posed.effects, steps)?;
     Ok(Posted {
         trace: posed.trace,
         fingerprint: posed.fingerprint,
         record,
     })
+}
+
+/// Refuses when the effects about to be carried out would place a symbolic
+/// link somewhere `link` cannot actually reach.
+///
+/// **It defers to [`StepError::NoDirectory`] rather than duplicate it.** A
+/// directory that is not there yet is not this precondition's concern — that
+/// refusal is already named, downstream inside [`carry`], by
+/// [`require_directory`] — and asking the probe to link inside a directory
+/// that was never there would only obtain a less specific reason for the same
+/// absence.
+fn require_linkable(effects: &[Effect], probe: &dyn LinkProbe) -> Result<(), PoseError> {
+    for effect in effects {
+        let Effect::Link { address, .. } = effect else {
+            continue;
+        };
+        let directory = address.parent().unwrap_or_else(|| Path::new("."));
+        if !directory.is_dir() {
+            continue;
+        }
+        if let Practicability::NotPracticable { reason } = probe.practicability(directory) {
+            return Err(PoseError::NotLinkable {
+                directory: directory.to_path_buf(),
+                reason,
+            });
+        }
+    }
+    Ok(())
 }
 
 /// Takes one thing back off, by **replaying its recorded trace**.

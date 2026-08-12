@@ -19,7 +19,10 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use rigger_apply::{carry, pose, withdraw, OnDisk, PoseError, StepError, Steps};
+use rigger_apply::{
+    carry, pose, withdraw, LinkProbe, OnDisk, PoseError, Practicability, StepError, Steps,
+    SystemPracticability,
+};
 use rigger_plan::{
     behaviour, Behaviour, BehaviourError, BehaviourName, Captured, Effect, Fragment, Placement,
     Posed, Referents, Restoration, Subject, Trace, Undone,
@@ -153,6 +156,7 @@ fn a4_an_interrupted_pose_gives_the_machine_back_the_state_it_was_in() {
         &address,
         &artefact(&store, Placement::Link),
         &FailsAfter::step(1),
+        &SystemPracticability,
     )
     .expect_err("an interrupted pose reported success");
 
@@ -181,6 +185,7 @@ fn a4_a_rollback_gives_back_a_shared_store_entry_the_transaction_had_removed() {
         &address,
         &artefact(&store, Placement::Link),
         &OnDisk,
+        &SystemPracticability,
     )
     .expect("the pose must succeed");
     let posed = snapshot(&machine);
@@ -225,6 +230,7 @@ fn a4_a_failed_restoration_names_the_restoration_and_keeps_the_state_it_seized()
         &address,
         &artefact(&store, Placement::Link),
         &FailsAfter::step(0).and_the_restoration(),
+        &SystemPracticability,
     )
     .expect_err("a pose whose restoration failed reported success");
 
@@ -335,6 +341,7 @@ fn guard_the_nominal_pose_and_removal_go_through_the_implementation_the_product_
         &address,
         &artefact(&store, Placement::Link),
         &OnDisk,
+        &SystemPracticability,
     )
     .expect("the nominal pose must succeed");
 
@@ -375,6 +382,7 @@ fn guard_a_pose_onto_an_occupied_address_refuses_and_leaves_what_is_there_alone(
         &address,
         &artefact(&store, Placement::Link),
         &OnDisk,
+        &SystemPracticability,
     )
     .expect_err("a pose wrote over a file the product had not put there");
 
@@ -404,6 +412,7 @@ fn guard_a_store_entry_holding_other_bytes_is_refused_rather_than_written_over()
         &machine.join("root/review.md"),
         &artefact(&store, Placement::Link),
         &OnDisk,
+        &SystemPracticability,
     )
     .expect_err("a store entry was written over");
 
@@ -437,6 +446,7 @@ fn a4_a_pose_whose_trace_the_registry_could_not_hold_never_touches_the_machine()
             ),
         },
         &OnDisk,
+        &SystemPracticability,
     )
     .expect_err("a pose the registry could not describe went through");
 
@@ -466,6 +476,7 @@ fn guard_a_removal_leaves_alone_what_the_trace_does_not_describe() {
         &address,
         &artefact(&store, Placement::Link),
         &OnDisk,
+        &SystemPracticability,
     )
     .expect("the pose must succeed");
     fs::remove_file(&address).expect("take the link away");
@@ -508,6 +519,7 @@ fn guard_a_pose_by_copy_and_its_removal_leave_the_machine_as_it_was() {
         &address,
         &artefact(&store, Placement::Copy),
         &OnDisk,
+        &SystemPracticability,
     )
     .expect("the pose must succeed");
 
@@ -553,6 +565,7 @@ fn guard_a_removal_leaves_alone_a_store_entry_carrying_bytes_that_are_not_the_on
         &address,
         &artefact(&store, Placement::Link),
         &OnDisk,
+        &SystemPracticability,
     )
     .expect("the pose must succeed");
 
@@ -599,6 +612,7 @@ fn a4_a_rollback_leaves_alone_an_address_whose_seized_state_is_still_there() {
         &first,
         &artefact(&store, Placement::Link),
         &OnDisk,
+        &SystemPracticability,
     )
     .expect("the first pose must succeed");
 
@@ -616,6 +630,7 @@ fn a4_a_rollback_leaves_alone_an_address_whose_seized_state_is_still_there() {
         &machine.join("root/review-too.md"),
         &artefact(&store, Placement::Link),
         &FailsAfter::step(1),
+        &SystemPracticability,
     )
     .expect_err("an interrupted pose reported success");
 
@@ -701,6 +716,7 @@ fn guard_a_pose_into_a_directory_that_is_not_there_refuses_by_naming_it() {
         &address,
         &artefact(&store, Placement::Link),
         &OnDisk,
+        &SystemPracticability,
     )
     .expect_err("a pose made a directory nothing would take away");
 
@@ -709,6 +725,63 @@ fn guard_a_pose_into_a_directory_that_is_not_there_refuses_by_naming_it() {
         "the refusal must name the directory that is not there: {failure}"
     );
     assert_eq!(snapshot(&machine), before);
+}
+
+/// A probe that always refuses, without touching a filesystem at all.
+///
+/// Manufacturing a real volume that refuses `link(2)` — one formatted without
+/// symlink support, a container overlay that withholds them — is not
+/// something a portable test has on hand. This is what makes the refusal
+/// measurable regardless: [`LinkProbe`] is asked, and the answer given here
+/// is fabricated rather than obtained from a real filesystem.
+struct AlwaysRefusesToLink;
+
+impl LinkProbe for AlwaysRefusesToLink {
+    fn practicability(&self, _directory: &Path) -> Practicability {
+        Practicability::NotPracticable {
+            reason: "this test filesystem refuses every link".to_string(),
+        }
+    }
+}
+
+#[test]
+fn md40_1_a_pose_refuses_before_writing_when_link_is_not_practicable_at_the_effective_root() {
+    // GIVEN a directory that is there — the missing-directory case is a
+    // different refusal, named by `require_directory` downstream, and is
+    // covered by `guard_a_pose_into_a_directory_that_is_not_there_refuses_by_naming_it`.
+    let machine = machine("link-not-practicable");
+    let address = machine.join("root/review.md");
+    let store = machine.join("store/acme-review-1.0");
+    let before = snapshot(&machine);
+
+    let failure = pose(
+        BehaviourName::Link,
+        &address,
+        &artefact(&store, Placement::Link),
+        &OnDisk,
+        &AlwaysRefusesToLink,
+    )
+    .expect_err("a pose went through where the probe said link was not practicable");
+
+    match &failure {
+        PoseError::NotLinkable { directory, reason } => {
+            assert_eq!(
+                directory,
+                address.parent().expect("the address has a parent")
+            );
+            assert!(
+                reason.contains("refuses every link"),
+                "the refusal must carry what the probe reported: {reason}"
+            );
+        }
+        other => panic!("expected a refusal naming why link is not practicable, got {other}"),
+    }
+    assert_eq!(
+        snapshot(&machine),
+        before,
+        "nothing must be carried out when link is not practicable at the effective root — \
+         neither the materialisation nor the link"
+    );
 }
 
 #[test]
