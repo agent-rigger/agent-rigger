@@ -961,6 +961,122 @@ fn guard_a_fixed_library_does_not_reopen_a_read_only_grammar() {
     );
 }
 
+/// A grammar that lies about `role`: it declares itself
+/// [`GrammarRole::ReadOnly`] while every part of its write path — write, read
+/// back, undo — is a real one, delegated whole to [`Jsonc`]. This is the
+/// scenario [`RefusalReason::DeclaredReadOnlyYetWritable`] exists for: a
+/// document underneath a `ReadOnly` declaration that has quietly become one
+/// the product could write, with nothing in the derivation able to see it
+/// before this slice, because the write path of a read-only grammar was never
+/// even run.
+struct LyingAboutReadOnly;
+
+impl Grammar for LyingAboutReadOnly {
+    const NAME: &'static str = "lying-about-read-only";
+    const ROLE: GrammarRole = GrammarRole::ReadOnly;
+    const RESOLUTION: Resolution = Resolution::IndependentOfOrder;
+    const PROBE: Probe = Probe {
+        source: JSONC_PROBE,
+        comment: "// probe",
+        list_path: &["allow"],
+        value_present: "read",
+        value_absent: "network",
+    };
+
+    fn round_trip(source: &str) -> Result<String, GrammarError> {
+        Jsonc::round_trip(source)
+    }
+
+    fn find_string_in_list(source: &str, path: &[&str], value: &str) -> Result<bool, GrammarError> {
+        Jsonc::find_string_in_list(source, path, value)
+    }
+
+    fn apply(source: &str, edit: &Edit) -> Result<Applied, GrammarError> {
+        Jsonc::apply(source, edit)
+    }
+
+    fn invert(source: &str, inverse: &Inverse) -> Result<String, GrammarError> {
+        Jsonc::invert(source, inverse)
+    }
+
+    fn values(source: &str) -> Result<Vec<SemanticValue>, GrammarError> {
+        Jsonc::values(source)
+    }
+}
+
+#[test]
+fn md39_2_a_grammar_that_lies_about_read_only_is_caught_by_measurement() {
+    // GIVEN a grammar declared read-only whose write path — write, read
+    // back, undo — is real and holds.
+    let capabilities = Capabilities::of::<LyingAboutReadOnly>();
+    assert!(
+        capabilities.applies_edits(),
+        "this grammar's write path must measure clean, failing which the scenario below is not \
+         the one this guard exists for"
+    );
+
+    // WHEN both forms of `merge` are asked about it.
+    // THEN both stay refused — role is a product decision, and no
+    // measurement lifts it — but both now name that the decision no longer
+    // rests on anything measured.
+    for admission in [
+        capabilities.merge_by_keys(),
+        capabilities.merge_bounded_block(),
+    ] {
+        let refusal = match admission {
+            MergeAdmission::Refused(refusal) => refusal,
+            MergeAdmission::Admitted => {
+                panic!("`merge` admitted on a grammar that declares itself read-only")
+            }
+        };
+        assert!(
+            refusal.reasons().contains(&RefusalReason::ReadOnlyGrammar),
+            "the categorical reason must still be published: {:?}",
+            refusal.reasons()
+        );
+        assert!(
+            refusal
+                .reasons()
+                .contains(&RefusalReason::DeclaredReadOnlyYetWritable),
+            "a grammar whose write path measures clean while declared read-only was not \
+             flagged: {:?}",
+            refusal.reasons()
+        );
+    }
+}
+
+/// A guard, not a scenario: the corollary that matters in production. Every
+/// grammar `table()` publishes must **not** trip
+/// [`RefusalReason::DeclaredReadOnlyYetWritable`]. If one ever does, that is
+/// not a defect of this guard — it is news: a document this crate reads has
+/// become one the product could write, and the grammar's own `ROLE`
+/// declaration needs a human to revisit it, never a silent adjustment here.
+///
+/// For `toml`, this is expected to hold: [`Toml`] does not implement a write
+/// path at all, so the measurement answers `NoWritePath`, not silence — the
+/// measurement and the declaration agree that this grammar does not write,
+/// for two different reasons that happen to point the same way.
+#[test]
+fn md39_2_no_published_grammar_contradicts_its_declared_role() {
+    for capabilities in rigger_grammar::table() {
+        for admission in [
+            capabilities.merge_by_keys(),
+            capabilities.merge_bounded_block(),
+        ] {
+            if let MergeAdmission::Refused(refusal) = admission {
+                assert!(
+                    !refusal
+                        .reasons()
+                        .contains(&RefusalReason::DeclaredReadOnlyYetWritable),
+                    "{refusal} — the declared role of `{}` no longer agrees with what its \
+                     write path measures",
+                    capabilities.grammar()
+                );
+            }
+        }
+    }
+}
+
 /// A guard, not a scenario: an implementation whose round trip **returns its
 /// input unchanged** trivially preserves any probe. It would be credited with
 /// preserving trivia, and admitted to `merge`, without any parser existing and
@@ -1712,6 +1828,133 @@ fn guard_the_source_reading_demands_one_file_per_declared_module() {
         missing[0]
     );
     fs::remove_dir_all(&root).expect("clean up the fixture");
+}
+
+/// A guard, not a scenario: [`Resolution`] cannot be measured from inside
+/// this crate — the module header of `capability.rs` says so itself, in the
+/// words this test borrows: "a property of whoever reads the document, not
+/// of the code that writes it". A test exercising the constant directly would
+/// be a tautology. What **is** checkable is the one thing standing between a
+/// declared fact and an assumption: the doc comment above every `const
+/// RESOLUTION` declaration must quote the claim it rests on, and pin it to
+/// something specific enough that what would refute it can be named — a date
+/// it was measured on, or a versioned specification that could itself
+/// change. `jsonc.rs` and `toml.rs` already carry one each, of the two
+/// different forms; this test formalises what they already do rather than
+/// inventing a new obligation, and it is meant to catch the day a grammar is
+/// added whose `RESOLUTION` is asserted rather than sourced.
+#[test]
+fn md39_2_every_resolution_declaration_cites_a_dated_or_versioned_source() {
+    let sources = crate_sources();
+    let needle = "const RESOLUTION: Resolution =";
+
+    let declarations: Vec<(&String, String)> = sources
+        .iter()
+        .filter_map(|(path, content)| {
+            doc_comment_above(content, needle).map(|comment| (path, comment))
+        })
+        .collect();
+
+    // A guard of the guard: if nothing was found, the loop below passes
+    // vacuously and protects nothing — which is exactly the mode this file's
+    // other guards of guards exist to close.
+    assert!(
+        !declarations.is_empty(),
+        "no `const RESOLUTION` declaration was found in the crate sources — this guard would \
+         protect nothing"
+    );
+
+    let unsourced: Vec<String> = declarations
+        .iter()
+        .filter(|(_, comment)| !is_dated_or_versioned_and_quoted(comment))
+        .map(|(path, comment)| {
+            format!(
+                "{path}: the doc comment above `const RESOLUTION` is not a falsifiable source \
+                 — it must quote the claim and pin it to a date or a versioned specification:\n\
+                 {comment}"
+            )
+        })
+        .collect();
+
+    assert!(unsourced.is_empty(), "{}", unsourced.join("\n\n"));
+}
+
+/// A guard of the guard: the detector below must actually discriminate a
+/// sourced claim from a bare one, not merely fail to trip on the two files it
+/// happens to be checked against today.
+#[test]
+fn guard_the_resolution_source_detector_actually_discriminates() {
+    let dated_and_quoted = "Measured on 2026-08-06: the host resolves \"by category, not by \
+                             position\" (its own documentation, quoted).";
+    let versioned_and_quoted =
+        "TOML v1.0.0 \u{a7} Keys says \"Defining a key multiple times is invalid\".";
+    let bare = "Order plays no part in how this format resolves conflicting keys.";
+    let dated_but_not_quoted = "Measured on 2026-08-06 against the host's own behaviour.";
+    let quoted_but_not_dated = "The host documentation says \"resolution is by category\".";
+
+    assert!(is_dated_or_versioned_and_quoted(dated_and_quoted));
+    assert!(is_dated_or_versioned_and_quoted(versioned_and_quoted));
+    assert!(!is_dated_or_versioned_and_quoted(bare));
+    assert!(!is_dated_or_versioned_and_quoted(dated_but_not_quoted));
+    assert!(!is_dated_or_versioned_and_quoted(quoted_but_not_dated));
+}
+
+/// The contiguous block of `///` lines immediately above the first line of
+/// `content` containing `needle`, each with its `///` prefix and the space
+/// after it stripped, joined back with newlines. `None` when `needle` does
+/// not appear in `content` at all.
+fn doc_comment_above(content: &str, needle: &str) -> Option<String> {
+    let lines: Vec<&str> = content.lines().collect();
+    let index = lines.iter().position(|line| line.contains(needle))?;
+
+    let mut collected = Vec::new();
+    let mut cursor = index;
+    while cursor > 0 {
+        let Some(text) = lines[cursor - 1].trim().strip_prefix("///") else {
+            break;
+        };
+        collected.push(text.trim_start());
+        cursor -= 1;
+    }
+    collected.reverse();
+    Some(collected.join("\n"))
+}
+
+/// Whether `comment` is sourced well enough to be falsifiable: it quotes the
+/// claim, and pins it to something specific enough that what would refute it
+/// can be named — a date it was measured on, or a versioned specification
+/// that could itself change.
+fn is_dated_or_versioned_and_quoted(comment: &str) -> bool {
+    is_quoted(comment) && (contains_a_year(comment) || contains_a_version(comment))
+}
+
+/// Whether `comment` quotes something: two or more `"` characters. A source
+/// that is not quoted is a paraphrase, and a paraphrase is exactly what
+/// drifts from what it once described without anyone noticing.
+fn is_quoted(comment: &str) -> bool {
+    comment.matches('"').count() >= 2
+}
+
+/// Whether `comment` names a calendar year plausible for this project: four
+/// consecutive ASCII digits.
+fn contains_a_year(comment: &str) -> bool {
+    comment
+        .as_bytes()
+        .windows(4)
+        .any(|w| w.iter().all(|b| b.is_ascii_digit()))
+}
+
+/// Whether `comment` names a version of an external specification — `v`
+/// immediately followed by a digit, as in "TOML v1.0.0" — or an RFC. This is
+/// the form this crate's own sourced claims use in place of a calendar date
+/// when what pins the claim is a frozen document rather than a moment
+/// measured.
+fn contains_a_version(comment: &str) -> bool {
+    comment.contains("RFC")
+        || comment
+            .as_bytes()
+            .windows(2)
+            .any(|w| (w[0] == b'v' || w[0] == b'V') && w[1].is_ascii_digit())
 }
 
 /// Reads the source of the crate. The path starts from `CARGO_MANIFEST_DIR`:

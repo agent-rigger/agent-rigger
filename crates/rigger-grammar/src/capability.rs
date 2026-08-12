@@ -249,6 +249,20 @@ pub enum RefusalReason {
     /// **categorical** reason: no measurement lifts it, least of all a library
     /// being fixed.
     ReadOnlyGrammar,
+    /// The grammar declares itself [`GrammarRole::ReadOnly`], and yet its
+    /// write path — write, read back, undo — measures clean on its probe.
+    /// [`measure_write_path`] now runs on every grammar regardless of its
+    /// declared role, precisely so this can be caught: a read-only
+    /// declaration is a product decision that no measurement lifts, but a
+    /// decision nothing ever checks against what it decided about can go
+    /// stale in silence — the document could become one the product writes,
+    /// and `merge` would keep refusing it "by decision" with nothing making
+    /// that false. This reason does not reopen the gate — [`ReadOnlyGrammar`]
+    /// above still closes it — it makes the staleness visible instead of
+    /// silent.
+    ///
+    /// [`ReadOnlyGrammar`]: RefusalReason::ReadOnlyGrammar
+    DeclaredReadOnlyYetWritable,
     /// The round trip on the probe did not return the bytes outside the trace.
     TriviaNotPreserved(TriviaDivergence),
     /// The resolution of the document depends on order of appearance.
@@ -327,6 +341,12 @@ impl fmt::Display for RefusalReason {
                 f,
                 "the product does not write the documents of this grammar — it is read-only by \
                  product decision, and that reason is lifted by no measurement"
+            ),
+            Self::DeclaredReadOnlyYetWritable => write!(
+                f,
+                "the grammar declares itself read-only, and yet the trial that writes, reads \
+                 back, and undoes an edit on its probe now measures clean — the decision above \
+                 no longer rests on anything measured, and needs a human to look at it again"
             ),
             Self::TriviaNotPreserved(divergence) => write!(
                 f,
@@ -519,23 +539,41 @@ impl Capabilities {
         // suggests that lifting that one would be enough. Read-only therefore
         // comes first — it is lifted by no measurement.
         //
-        // The write path is measured only on a grammar that declares itself
-        // writable. On a read-only grammar, the absence of a write path is not
-        // a defect but the decision itself, and publishing it as a second
-        // motive would suggest that writing one would reopen the gate.
-        let write = if G::ROLE == GrammarRole::ReadWrite {
-            measure_write_path::<G>()
-        } else {
-            Vec::new()
-        };
-        let applies_edits = G::ROLE == GrammarRole::ReadWrite && write.is_empty();
+        // The write path is now measured on **every** grammar, whatever its
+        // declared role. `role` is a product decision, not a measurement (see
+        // the module header), and admission used to take that decision at its
+        // word: a read-only grammar never had its write path run at all, so
+        // nothing could ever contradict the declaration. Running the trial
+        // unconditionally and comparing its result to the declared role below
+        // is what closes that — see
+        // [`RefusalReason::DeclaredReadOnlyYetWritable`].
+        let write = measure_write_path::<G>();
+        let write_path_holds = write.is_empty();
+        // Purely measured, per its own doc comment on
+        // [`Capabilities::applies_edits`]: "never deduced from its declared
+        // role" — true only from here on, now that the trial it reads no
+        // longer skips read-only grammars.
+        let applies_edits = write_path_holds;
+        // The one direction that is dangerous rather than merely broken. A
+        // `ReadWrite` grammar whose write path fails is already refused, by
+        // name, through `write` below — loud, and nothing new. A `ReadOnly`
+        // grammar whose write path *holds* is the scenario this slice exists
+        // for: the categorical refusal keeps standing, but it would keep
+        // standing in silence even after the reason it was true stopped
+        // being true.
+        let role_contradicted_by_measurement = G::ROLE == GrammarRole::ReadOnly && write_path_holds;
 
         let mut by_keys = Vec::new();
         if G::ROLE == GrammarRole::ReadOnly {
             by_keys.push(RefusalReason::ReadOnlyGrammar);
+            if role_contradicted_by_measurement {
+                by_keys.push(RefusalReason::DeclaredReadOnlyYetWritable);
+            }
         }
         by_keys.extend(trivia.iter().cloned());
-        by_keys.extend(write);
+        if G::ROLE == GrammarRole::ReadWrite {
+            by_keys.extend(write);
+        }
         if G::RESOLUTION == Resolution::DependsOnOrder {
             by_keys.push(RefusalReason::ResolutionDependsOnOrder);
         }
@@ -552,6 +590,9 @@ impl Capabilities {
         let mut bounded_block = Vec::new();
         if G::ROLE == GrammarRole::ReadOnly {
             bounded_block.push(RefusalReason::ReadOnlyGrammar);
+            if role_contradicted_by_measurement {
+                bounded_block.push(RefusalReason::DeclaredReadOnlyYetWritable);
+            }
         }
         bounded_block.extend(delimiters.reasons);
 
