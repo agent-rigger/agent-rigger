@@ -166,8 +166,9 @@ fn install(
         root: Address::new(root).expect("a UTF-8 root"),
         address: Address::new(Path::new(address)).expect("a UTF-8 address"),
         fingerprint: posted.fingerprint.to_string(),
-        trace: posted.record,
-    });
+        trace: posted.trace,
+    })
+    .expect("a trace the pose already proved recordable records again here");
     let outcome = match transact(
         &machine.registry(),
         &[Mutation::Upsert(entry.clone())],
@@ -551,18 +552,28 @@ fn a5_a_behaviour_this_build_lost_is_not_replaced_by_one_it_still_carries() {
 /// stays exactly what `link` recorded, which is what lets a removal that
 /// resolved the name actually act.
 fn record_again(machine: &Machine, posted: &Entry, behaviour: &str, posed_by: &str) {
+    // The trace this entry actually carries is a link trace — `install` is the
+    // only thing that wrote it — so it is read back through the behaviour that
+    // can replay it, never through `behaviour`: that parameter names what the
+    // *new* record claims, deliberately outside the closed set in some
+    // scenarios, and resolving through it here would refuse before the
+    // fixture could even be built.
+    let trace = replay(BehaviourName::Link, posted.trace()).expect("a link trace reads back");
     let outcome = transact(
         &machine.registry(),
-        &[Mutation::Upsert(Entry::posted(Posting {
-            id: posted.id().to_string(),
-            provenance: posted.provenance().to_string(),
-            behaviour: behaviour.to_string(),
-            posed_by: posed_by.to_string(),
-            root: Address::new(posted.root()).expect("a UTF-8 root"),
-            address: Address::new(posted.address()).expect("a UTF-8 address"),
-            fingerprint: posted.fingerprint().to_string(),
-            trace: posted.trace().to_vec(),
-        }))],
+        &[Mutation::Upsert(
+            Entry::posted(Posting {
+                id: posted.id().to_string(),
+                provenance: posted.provenance().to_string(),
+                behaviour: behaviour.to_string(),
+                posed_by: posed_by.to_string(),
+                root: Address::new(posted.root()).expect("a UTF-8 root"),
+                address: Address::new(posted.address()).expect("a UTF-8 address"),
+                fingerprint: posted.fingerprint().to_string(),
+                trace,
+            })
+            .expect("a link trace records"),
+        )],
         &Granting,
         &SystemLiveness,
     )

@@ -25,6 +25,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use rigger_apply::{LockError, SystemLiveness};
+use rigger_plan::{Digest, Placement, Trace};
 use rigger_registry::{
     transact, Address, Consent, Decision, Entry, Mutation, Outcome, Posting, Proposal, Registry,
     RegistryError,
@@ -63,20 +64,23 @@ fn registry_with(dir: &Path, name: &str, ids: &[&str]) -> Registry {
 }
 
 fn posing(id: &str) -> Mutation {
-    Mutation::Upsert(Entry::posted(Posting {
-        id: id.to_string(),
-        provenance: "acme".to_string(),
-        behaviour: "link".to_string(),
-        posed_by: "1.5".to_string(),
-        root: Address::new(Path::new("/home/someone")).expect("a UTF-8 address"),
-        address: Address::new(Path::new(&format!("{id}.json"))).expect("a UTF-8 address"),
-        fingerprint: "0123456789abcdef".to_string(),
-        trace: vec![
-            format!("/store/{id}"),
-            "link".to_string(),
-            "0123456789abcdef".to_string(),
-        ],
-    }))
+    Mutation::Upsert(
+        Entry::posted(Posting {
+            id: id.to_string(),
+            provenance: "acme".to_string(),
+            behaviour: "link".to_string(),
+            posed_by: "1.5".to_string(),
+            root: Address::new(Path::new("/home/someone")).expect("a UTF-8 address"),
+            address: Address::new(Path::new(&format!("{id}.json"))).expect("a UTF-8 address"),
+            fingerprint: "0123456789abcdef".to_string(),
+            trace: Trace::Link {
+                store: PathBuf::from(format!("/store/{id}")),
+                placement: Placement::Link,
+                posed: Digest::read("0123456789abcdef").expect("a fingerprint this build wrote"),
+            },
+        })
+        .expect("a link trace records"),
+    )
 }
 
 fn identifiers(registry: &Registry) -> Vec<String> {

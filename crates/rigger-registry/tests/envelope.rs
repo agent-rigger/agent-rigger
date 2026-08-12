@@ -207,6 +207,7 @@ fn a1_one_unreadable_entry_out_of_twelve_is_unjudgeable_and_the_other_eleven_are
 #[test]
 fn guard_an_unreadable_entry_is_written_back_unchanged() {
     use rigger_apply::SystemLiveness;
+    use rigger_plan::{Digest, Placement, Trace};
     use rigger_registry::{
         transact, Address, Consent, Decision, Entry, Mutation, Outcome, Posting, Proposal,
     };
@@ -228,20 +229,24 @@ fn guard_an_unreadable_entry_is_written_back_unchanged() {
 
     let outcome = transact(
         &registry,
-        &[Mutation::Upsert(Entry::posted(Posting {
-            id: "acme/other".to_string(),
-            provenance: "acme".to_string(),
-            behaviour: "link".to_string(),
-            posed_by: "1.5".to_string(),
-            root: Address::new(std::path::Path::new("/home/someone")).expect("a UTF-8 address"),
-            address: Address::new(std::path::Path::new("other.json")).expect("a UTF-8 address"),
-            fingerprint: "0123456789abcdef".to_string(),
-            trace: vec![
-                "/store/acme-other".to_string(),
-                "link".to_string(),
-                "0123456789abcdef".to_string(),
-            ],
-        }))],
+        &[Mutation::Upsert(
+            Entry::posted(Posting {
+                id: "acme/other".to_string(),
+                provenance: "acme".to_string(),
+                behaviour: "link".to_string(),
+                posed_by: "1.5".to_string(),
+                root: Address::new(std::path::Path::new("/home/someone")).expect("a UTF-8 address"),
+                address: Address::new(std::path::Path::new("other.json")).expect("a UTF-8 address"),
+                fingerprint: "0123456789abcdef".to_string(),
+                trace: Trace::Link {
+                    store: std::path::PathBuf::from("/store/acme-other"),
+                    placement: Placement::Link,
+                    posed: Digest::read("0123456789abcdef")
+                        .expect("a fingerprint this build wrote"),
+                },
+            })
+            .expect("a link trace records"),
+        )],
         &Granting,
         &SystemLiveness,
     )
@@ -345,6 +350,7 @@ fn guard_a_second_line_under_one_identifier_is_unjudgeable_and_is_written_back()
 /// product's own write path.
 #[test]
 fn guard_two_catalogues_carrying_one_name_keep_two_records() {
+    use rigger_plan::{Digest, Placement, Trace};
     use rigger_registry::{Address, Entry, Identity, Ledger, Posting};
 
     fn posted(provenance: &str) -> Entry {
@@ -357,12 +363,13 @@ fn guard_two_catalogues_carrying_one_name_keep_two_records() {
             address: Address::new(std::path::Path::new(&format!("{provenance}.md")))
                 .expect("a UTF-8 address"),
             fingerprint: "0123456789abcdef".to_string(),
-            trace: vec![
-                format!("/store/{provenance}-agents"),
-                "link".to_string(),
-                "0123456789abcdef".to_string(),
-            ],
+            trace: Trace::Link {
+                store: std::path::PathBuf::from(format!("/store/{provenance}-agents")),
+                placement: Placement::Link,
+                posed: Digest::read("0123456789abcdef").expect("a fingerprint this build wrote"),
+            },
         })
+        .expect("a link trace records")
     }
 
     let mut ledger = Ledger::empty();

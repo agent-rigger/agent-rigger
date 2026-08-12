@@ -612,6 +612,14 @@ pub enum Fragment {
 
 /// What the registry records so that a pose can be undone by **replaying** it,
 /// never by recognising shapes on disk.
+///
+/// **Two of the three variants carry what undoes them; the third carries
+/// nothing of the kind, and that is not an omission.** [`Trace::Grammar`] and
+/// [`Trace::Link`] are each produced by a step that wrote something, so each
+/// names its own opposite — an [`Inverse`] value, or the store entry and
+/// fingerprint a removal is conditioned on. [`Trace::Witnessed`] is produced by
+/// a step that wrote nothing at all: there is no opposite to compute, so there
+/// is no field here to hold one.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Trace {
     /// An edit to be undone through a named grammar.
@@ -639,6 +647,39 @@ pub enum Trace {
         /// compare the store entry with itself and condition nothing at all.
         posed: Digest,
     },
+    /// A presence this build only **observed** — nothing was written, so
+    /// there is nothing recorded that could ever give it back.
+    ///
+    /// **It carries no inverse, and that is its entire meaning.** A value
+    /// built along this path never wrote to a machine, so handing it an
+    /// inverse to carry would assert a right over bytes the product never
+    /// put there. The absence is not merely documented — it is checked: the
+    /// variant carries no field at all, so no destructuring of it can
+    /// produce one.
+    ///
+    /// ```compile_fail
+    /// use rigger_plan::Trace;
+    ///
+    /// let trace = Trace::Witnessed;
+    /// let Trace::Witnessed(inverse) = trace else {
+    ///     unreachable!()
+    /// };
+    /// let _ = inverse;
+    /// ```
+    ///
+    /// Its twin, which differs by the one gesture and compiles — without it
+    /// the refusal above would be indistinguishable from a typo that just
+    /// spelled the pattern wrong:
+    ///
+    /// ```
+    /// use rigger_plan::Trace;
+    ///
+    /// let trace = Trace::Witnessed;
+    /// let Trace::Witnessed = trace else {
+    ///     unreachable!()
+    /// };
+    /// ```
+    Witnessed,
 }
 
 impl Trace {
@@ -649,7 +690,7 @@ impl Trace {
     pub fn store(&self) -> Option<&Path> {
         match self {
             Self::Link { store, .. } => Some(store),
-            Self::Grammar { .. } => None,
+            Self::Grammar { .. } | Self::Witnessed => None,
         }
     }
 }
@@ -686,6 +727,12 @@ pub fn record(trace: &Trace) -> Result<Vec<String>, BehaviourError> {
         Trace::Grammar { .. } => Err(BehaviourError::NotRecordable {
             behaviour: BehaviourName::Merge,
         }),
+        // Nothing was written, so there is nothing to record that could give
+        // it back — the empty list, and not a new field. The registry already
+        // reads an absent trace as a legitimate empty one, so this needs no
+        // format bump: the arity of a trace belongs to the behaviour that
+        // posed, and zero is the arity this one has.
+        Trace::Witnessed => Ok(Vec::new()),
     }
 }
 

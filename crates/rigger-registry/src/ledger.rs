@@ -56,7 +56,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use rigger_apply::LockError;
-use rigger_plan::{replay, BehaviourName, Referents};
+use rigger_plan::{record, replay, BehaviourError, BehaviourName, Referents, Trace};
 
 use crate::backup::Backup;
 
@@ -427,8 +427,18 @@ pub struct Posting {
     pub address: Address,
     /// The fingerprint of the bytes that were posed.
     pub fingerprint: String,
-    /// The inverse, in the fields the behaviour that posed it writes.
-    pub trace: Vec<String>,
+    /// The trace the behaviour that posed it produced.
+    ///
+    /// **Typed, and never the recorded strings directly.** [`Entry::posted`]
+    /// is what turns this into the fields the registry writes, through
+    /// [`record`] — the one function that already knows how each member of
+    /// the closed set serialises its own trace, kept in the one crate that
+    /// declares the closed set. A caller handing over the recorded strings
+    /// instead could hand over ones no behaviour ever produced; a caller
+    /// handing over this cannot, because the only way to have one is to have
+    /// gone through a pose — or, since [`Trace::Witnessed`] was closed, to
+    /// have gone through an observation that wrote nothing.
+    pub trace: Trace,
 }
 
 impl Entry {
@@ -439,7 +449,8 @@ impl Entry {
     /// recorded as a different one:
     ///
     /// ```
-    /// use std::path::Path;
+    /// use std::path::{Path, PathBuf};
+    /// use rigger_plan::{Digest, Placement, Trace};
     /// use rigger_registry::{Address, Entry, Posting};
     /// let entry = Entry::posted(Posting {
     ///     id: "acme/skill".to_string(),
@@ -449,12 +460,13 @@ impl Entry {
     ///     root: Address::new(Path::new("/home/someone/.claude")).expect("a UTF-8 path"),
     ///     address: Address::new(Path::new("skills/review.md")).expect("a UTF-8 path"),
     ///     fingerprint: "0123456789abcdef".to_string(),
-    ///     trace: vec![
-    ///         "/home/someone/.rigger/store/acme-skill".to_string(),
-    ///         "link".to_string(),
-    ///         "0123456789abcdef".to_string(),
-    ///     ],
-    /// });
+    ///     trace: Trace::Link {
+    ///         store: PathBuf::from("/home/someone/.rigger/store/acme-skill"),
+    ///         placement: Placement::Link,
+    ///         posed: Digest::read("0123456789abcdef").expect("a fingerprint this build wrote"),
+    ///     },
+    /// })
+    /// .expect("a link trace records");
     /// assert_eq!(
     ///     entry.at(),
     ///     std::path::Path::new("/home/someone/.claude/skills/review.md"),
@@ -465,6 +477,7 @@ impl Entry {
     /// check from being one a caller has to remember:
     ///
     /// ```compile_fail
+    /// use rigger_plan::Trace;
     /// use rigger_registry::{Address, Entry, Posting};
     /// let _ = Posting {
     ///     id: "acme/skill".to_string(),
@@ -474,11 +487,18 @@ impl Entry {
     ///     root: "/home/someone/.claude".to_string(),
     ///     address: "skills/review.md".to_string(),
     ///     fingerprint: "0123456789abcdef".to_string(),
-    ///     trace: Vec::new(),
+    ///     trace: Trace::Witnessed,
     /// };
     /// ```
-    pub fn posted(posting: Posting) -> Self {
-        Self {
+    ///
+    /// **This is where a trace becomes the fields the registry writes**,
+    /// through [`record`] — never before, and never at the caller. A trace
+    /// this build cannot record refuses here, naming why, rather than being
+    /// posted under a record nothing could ever read back — see [`record`]
+    /// for which traces that is, today.
+    pub fn posted(posting: Posting) -> Result<Self, BehaviourError> {
+        let trace = record(&posting.trace)?;
+        Ok(Self {
             identity: Identity {
                 provenance: posting.provenance,
                 id: posting.id,
@@ -488,12 +508,12 @@ impl Entry {
             root: posting.root,
             address: posting.address,
             fingerprint: posting.fingerprint,
-            trace: posting.trace,
+            trace,
             // A pose writes what this build knows and nothing else. Fields it
             // does not know arrive only by reading a document somebody else
             // wrote.
             unknown: Vec::new(),
-        }
+        })
     }
 
     /// What names this record: the catalogue it came from **and** what that

@@ -28,6 +28,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use rigger_apply::SystemLiveness;
+use rigger_plan::{Digest, Placement, Trace};
 use rigger_registry::{
     transact, Address, Consent, Decision, Entry, Mutation, Posting, Proposal, Registry,
     RegistryError,
@@ -439,12 +440,13 @@ fn posted(id: &str, fingerprint: &str) -> Entry {
         address: Address::new(std::path::Path::new(&format!("{id}.json")))
             .expect("a UTF-8 address"),
         fingerprint: fingerprint.to_string(),
-        trace: vec![
-            format!("/store/{id}"),
-            "link".to_string(),
-            "0123456789abcdef".to_string(),
-        ],
+        trace: Trace::Link {
+            store: std::path::PathBuf::from(format!("/store/{id}")),
+            placement: Placement::Link,
+            posed: Digest::read("0123456789abcdef").expect("a fingerprint this build wrote"),
+        },
     })
+    .expect("a link trace records")
 }
 
 /// Guard: a field this build does not know survives the record being written

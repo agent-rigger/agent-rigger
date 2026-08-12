@@ -29,6 +29,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use rigger_apply::SystemLiveness;
+use rigger_plan::{Digest, Placement, Trace};
 use rigger_registry::{
     exit_code, transact, Address, Backup, Consent, Decision, Entry, Mutation, Outcome, Posting,
     Proposal, Registry, RegistryError, IMPOSSIBLE_REQUEST, RUNTIME_FAILURE,
@@ -87,20 +88,23 @@ impl Consent for Granting {
 /// Recording one thing as posed — a change to make so that a write happens at
 /// all. What it records is of no consequence here.
 fn posing(id: &str) -> Mutation {
-    Mutation::Upsert(Entry::posted(Posting {
-        id: id.to_string(),
-        provenance: "acme".to_string(),
-        behaviour: "link".to_string(),
-        posed_by: "1.5".to_string(),
-        root: Address::new(std::path::Path::new("/home/someone")).expect("a UTF-8 address"),
-        address: Address::new(std::path::Path::new("other.json")).expect("a UTF-8 address"),
-        fingerprint: "0123456789abcdef".to_string(),
-        trace: vec![
-            "/store/acme-other".to_string(),
-            "link".to_string(),
-            "0123456789abcdef".to_string(),
-        ],
-    }))
+    Mutation::Upsert(
+        Entry::posted(Posting {
+            id: id.to_string(),
+            provenance: "acme".to_string(),
+            behaviour: "link".to_string(),
+            posed_by: "1.5".to_string(),
+            root: Address::new(std::path::Path::new("/home/someone")).expect("a UTF-8 address"),
+            address: Address::new(std::path::Path::new("other.json")).expect("a UTF-8 address"),
+            fingerprint: "0123456789abcdef".to_string(),
+            trace: Trace::Link {
+                store: PathBuf::from("/store/acme-other"),
+                placement: Placement::Link,
+                posed: Digest::read("0123456789abcdef").expect("a fingerprint this build wrote"),
+            },
+        })
+        .expect("a link trace records"),
+    )
 }
 
 /// A whole copy, written out by hand in the format rather than through the
