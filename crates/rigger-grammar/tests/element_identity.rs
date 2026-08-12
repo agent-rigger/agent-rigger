@@ -24,8 +24,8 @@
 use rigger_grammar::element::{self, ElementTrace, FieldDivergence, RemoveError};
 use rigger_grammar::marker::Marker;
 use rigger_grammar::{
-    merge, Applied, Edit, Grammar, GrammarError, GrammarRole, Inverse, Jsonc, MergeError, Probe,
-    Resolution, SemanticValue, Value,
+    merge, unmerge, Applied, Edit, ElementUndo, Grammar, GrammarError, GrammarRole, Inverse, Jsonc,
+    MergeError, Probe, Resolution, SemanticValue, Value,
 };
 
 /// The identity of the entry this catalogue poses.
@@ -703,4 +703,241 @@ fn guard_a_removal_that_finds_no_element_refuses_by_naming_it() {
         matches!(failure, RemoveError::NotFound { .. }),
         "the refusal must say the element was not found: {failure:?}"
     );
+}
+
+// --- Differential guard: `element::remove` against `unmerge` ---------------
+//
+// Both undo the same pose of the same element, through the same writer:
+// `element::remove` (element.rs:261) builds `Inverse::Element { .. undo:
+// ElementUndo::Remove }` on the spot and calls `G::invert`; `unmerge`
+// (merge.rs:285) receives exactly that value and calls `G::invert` too. The
+// bytes they render are therefore identical by construction; only the
+// bookkeeping each one runs around that write — `element::accounted`
+// (element.rs:354-371) against `merge::accounted_for`'s `Element`/`Remove`
+// arm (merge.rs:392-404) — can differ. Twelve tests above exercise the first
+// path, four exercise the second; none had ever compared them before the
+// guards below.
+
+/// The same document once its owner has removed a field the product wrote,
+/// keeping only what they still wanted from the element.
+const FIELD_REMOVED_BY_ITS_OWNER: &str = concat!(
+    "{\n",
+    "  \"model\": \"acme/model-small\",\n",
+    "  \"hooks\": [\n",
+    "    {\n",
+    "      \"agent-rigger\": \"catalogue=jr-catalogue entry=hooks/guard\",\n",
+    "      \"command\": \"scripts/guard.sh\"\n",
+    "    },\n",
+    "    {\n",
+    "      \"matcher\": \"Write\",\n",
+    "      \"command\": \"scripts/mine.sh\"\n",
+    "    }\n",
+    "  ]\n",
+    "}\n",
+);
+
+/// The value both removal paths write through, built from `ElementTrace`'s
+/// own `pub` accessors rather than duplicated by hand — the same value
+/// `element::remove` constructs right before calling `G::invert`
+/// (element.rs:276-283) and `unmerge` receives unchanged (merge.rs:285,
+/// merge.rs:294).
+fn inverse_of(trace: &ElementTrace) -> Inverse {
+    Inverse::Element {
+        path: trace.path().to_vec(),
+        identity: trace.identity().clone(),
+        undo: ElementUndo::Remove,
+    }
+}
+
+#[test]
+fn guard_element_remove_and_unmerge_write_the_same_bytes_from_the_same_write() {
+    // [POSITIVE CONTROL] The write itself cannot differ between the two
+    // paths — only the accounting run around it can. A divergence here
+    // indicts this guard's own wiring, not the two removal paths it compares.
+    let element_bytes = element::remove::<Jsonc>(REWRITTEN_BY_THE_HOST, &trace("scripts/guard.sh"))
+        .expect("the element must be found on this document")
+        .rendered;
+    let unmerge_bytes = unmerge::<Jsonc>(
+        REWRITTEN_BY_THE_HOST,
+        &inverse_of(&trace("scripts/guard.sh")),
+    )
+    .expect("the same element, found by the same identity, must be removable the same way");
+
+    assert_eq!(
+        element_bytes, unmerge_bytes,
+        "both paths call `Grammar::invert` on the same `Inverse::Element` value and must \
+         therefore render identical bytes"
+    );
+}
+
+#[test]
+#[ignore = "unmerge rend Ok sur un document jamais touché — \
+            aucun contrôle de présence dans le bras Element/Remove. Correctif : T26"]
+fn guard_element_remove_and_unmerge_agree_on_the_verdict_when_the_element_is_not_found() {
+    // Same document, same identity, the same constructed `Inverse::Element`
+    // value on both sides — this asserts the two paths reach the **same**
+    // verdict. `element::remove` looks the identity up before writing
+    // anything (element.rs:264-269) and refuses by name — `RemoveError::
+    // NotFound` — when no element carries it, which SETTINGS never did.
+    // Whether `unmerge` refuses too is exactly what this guard exists to
+    // measure, not assume: if it does not, the assertion below is the
+    // failure, and the failure is the finding — it is not corrected by
+    // loosening what "agree" means here.
+    let element_verdict = element::remove::<Jsonc>(SETTINGS, &trace("scripts/guard.sh"));
+    assert!(
+        matches!(element_verdict, Err(RemoveError::NotFound { .. })),
+        "element::remove must refuse an identity no element carries: {element_verdict:?}"
+    );
+
+    let unmerge_verdict = unmerge::<Jsonc>(SETTINGS, &inverse_of(&trace("scripts/guard.sh")));
+    assert!(
+        unmerge_verdict.is_err(),
+        "unmerge must refuse the same identity too, but returned {unmerge_verdict:?} — \
+         `accounted_for`'s `Element`/`Remove` arm (merge.rs:392-404) runs no lookup equivalent \
+         to `element::remove`'s and stays empty when nothing is found, `Jsonc::invert` then finds \
+         no element to remove and hands the document back untouched (jsonc.rs:308-310), and since \
+         nothing disappeared between `before` and `after` the post-condition has nothing to \
+         catch — unmerge reports a removal DONE on a document it never touched"
+    );
+}
+
+/// A grammar whose write path matches JSONC except that removing an element
+/// also erases the `model` field at the root of the document — the same
+/// cross-cutting loss the existing guard
+/// `c5_a_removal_that_destroys_a_value_it_cannot_name_is_refused` already
+/// proves `element::remove` catches. Declared again here, rather than reused,
+/// because it must implement [`Grammar::comments`]: `unmerge` reads it before
+/// its `ValuesLost` witness even runs (merge.rs:287), and a grammar that
+/// leaves it unimplemented would make `unmerge` fail with `MergeError::
+/// Grammar(GrammarError::Unsupported)` — a witness the other path lacks, not
+/// the accounting disagreement this test means to compare.
+struct WideningElementRemoval;
+
+impl Grammar for WideningElementRemoval {
+    const NAME: &'static str = Jsonc::NAME;
+    const ROLE: GrammarRole = Jsonc::ROLE;
+    const RESOLUTION: Resolution = Jsonc::RESOLUTION;
+    const PROBE: Probe = Jsonc::PROBE;
+
+    fn round_trip(source: &str) -> Result<String, GrammarError> {
+        Jsonc::round_trip(source)
+    }
+
+    fn find_string_in_list(source: &str, path: &[&str], value: &str) -> Result<bool, GrammarError> {
+        Jsonc::find_string_in_list(source, path, value)
+    }
+
+    fn find_element_by_identity(
+        source: &str,
+        path: &[String],
+        identity: &Marker,
+    ) -> Result<Option<Vec<(String, Value)>>, GrammarError> {
+        Jsonc::find_element_by_identity(source, path, identity)
+    }
+
+    fn apply(source: &str, edit: &Edit) -> Result<Applied, GrammarError> {
+        Jsonc::apply(source, edit)
+    }
+
+    fn invert(source: &str, inverse: &Inverse) -> Result<String, GrammarError> {
+        Ok(Jsonc::invert(source, inverse)?.replace("  \"model\": \"acme/model-small\",\n", ""))
+    }
+
+    fn values(source: &str) -> Result<Vec<SemanticValue>, GrammarError> {
+        Jsonc::values(source)
+    }
+
+    fn comments(source: &str) -> Result<Vec<String>, GrammarError> {
+        Jsonc::comments(source)
+    }
+}
+
+#[test]
+fn guard_element_remove_and_unmerge_agree_on_a_genuine_cross_cutting_value_loss() {
+    // Where the guard above disagrees, this one must not: a write that
+    // destroys a value belonging to nobody the trace names. The two error
+    // variants are named explicitly, never through `is_err()`, because
+    // `RemoveError::ValuesLost` and `MergeError::RemovalLostValues` are the
+    // twin this comparison exists to tell apart from `MergeError::ValuesLost`
+    // (which accuses a pose, not a removal) and from `MergeError::
+    // RemovalLostComments` (the other witness — ruled out here by giving
+    // `WideningElementRemoval` a real `comments` implementation).
+    let element_error = element::remove::<WideningElementRemoval>(
+        REWRITTEN_BY_THE_HOST,
+        &trace("scripts/guard.sh"),
+    )
+    .expect_err("the write destroyed a value neither the trace nor the report accounts for");
+    match &element_error {
+        RemoveError::ValuesLost {
+            identity: found,
+            lost: disappeared,
+        } => {
+            assert_eq!(*found, identity());
+            assert_eq!(lost(disappeared), ["model = \"acme/model-small\""]);
+        }
+        other => panic!("element::remove must name the value the write destroyed: {other:?}"),
+    }
+
+    let unmerge_error = unmerge::<WideningElementRemoval>(
+        REWRITTEN_BY_THE_HOST,
+        &inverse_of(&trace("scripts/guard.sh")),
+    )
+    .expect_err("the same write must be refused through unmerge too");
+    match &unmerge_error {
+        MergeError::RemovalLostValues {
+            grammar,
+            lost: disappeared,
+        } => {
+            assert_eq!(*grammar, Jsonc::NAME);
+            assert_eq!(lost(disappeared), ["model = \"acme/model-small\""]);
+        }
+        other => panic!(
+            "unmerge must name the same value through its own twin refusal, \
+             `RemovalLostValues`, not {other:?}"
+        ),
+    }
+}
+
+#[test]
+fn guard_element_remove_and_unmerge_agree_when_only_the_owner_touched_the_element() {
+    // [KNOWN DIVERGENCES #1 AND #2, checked here and found inert]
+    // `element::accounted` (element.rs:354-371) credits every field the trace
+    // recorded as written, unconditionally, **plus** whatever the divergence
+    // report names as currently found — so a field the owner modified is
+    // credited twice (the value the product wrote, and the value now on
+    // disk) and a field the owner deleted is credited once, for a value no
+    // longer anywhere in the document. `merge::accounted_for`'s `Element`/
+    // `Remove` arm (merge.rs:392-404) has no trace fields to draw on and
+    // credits only what `find_element_by_identity` reads off the document as
+    // it stands.
+    //
+    // Neither extra credit changes a verdict on the two documents below, and
+    // the reason is the same for both: a value already absent, or already
+    // replaced, before the removal runs is not part of `before`
+    // (`Grammar::values(source)`) to begin with, so it can never surface in
+    // `values_lost(before, after)` for the two accountings to disagree about.
+    // The extra credit would only matter if it also happened to cover the
+    // disappearance of an *identical* value belonging to a neighbouring
+    // element — the collision the guard above manufactures on purpose with a
+    // widening grammar. Neither document here produces that collision by
+    // itself, so this result is corpus absence, not unreachability: the
+    // mechanism that would make the divergence observable is confirmed
+    // present in the source cited above, and is exercised deliberately in the
+    // guard above this one — just not by accident here.
+    for (case, document) in [
+        ("a field the owner modified", EDITED_BY_ITS_OWNER),
+        ("a field the owner deleted", FIELD_REMOVED_BY_ITS_OWNER),
+    ] {
+        let element_verdict = element::remove::<Jsonc>(document, &trace("scripts/guard.sh"));
+        assert!(
+            element_verdict.is_ok(),
+            "element::remove refused on the case of {case}: {element_verdict:?}"
+        );
+
+        let unmerge_verdict = unmerge::<Jsonc>(document, &inverse_of(&trace("scripts/guard.sh")));
+        assert!(
+            unmerge_verdict.is_ok(),
+            "unmerge refused on the case of {case}: {unmerge_verdict:?}"
+        );
+    }
 }
