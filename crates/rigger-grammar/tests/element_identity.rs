@@ -771,8 +771,6 @@ fn guard_element_remove_and_unmerge_write_the_same_bytes_from_the_same_write() {
 }
 
 #[test]
-#[ignore = "unmerge rend Ok sur un document jamais touché — \
-            aucun contrôle de présence dans le bras Element/Remove. Correctif : T26"]
 fn guard_element_remove_and_unmerge_agree_on_the_verdict_when_the_element_is_not_found() {
     // Same document, same identity, the same constructed `Inverse::Element`
     // value on both sides — this asserts the two paths reach the **same**

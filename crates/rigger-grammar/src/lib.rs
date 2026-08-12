@@ -145,6 +145,26 @@ pub enum GrammarError {
         /// The reserved field the edit declared.
         field: &'static str,
     },
+    /// No element of the list at `path` carries `identity`. A search for an
+    /// element by its identity found none — the document no longer carries
+    /// what was posed there, whether because it was already removed or
+    /// because its owner rewrote that passage away.
+    ///
+    /// **This is not the same fact as an empty account.** A caller reading a
+    /// list element in order to say what a removal may take is entitled to
+    /// nothing when the element is gone, and nothing is not the same value as
+    /// the element's fields: collapsing the two would let a removal report an
+    /// empty account for a passage it never found, which is indistinguishable
+    /// from a passage that was legitimately empty. The refusal keeps the two
+    /// apart.
+    ElementNotFound {
+        /// The grammar that refuses.
+        grammar: &'static str,
+        /// The path of the list it was looked for in.
+        path: String,
+        /// The identity that was looked for.
+        identity: String,
+    },
 }
 
 impl GrammarError {
@@ -203,6 +223,24 @@ impl GrammarError {
         }
     }
 
+    /// Search refusal, naming the grammar, the list, and the identity no
+    /// element of it carries.
+    pub fn element_not_found(
+        grammar: &'static str,
+        path: &[String],
+        identity: impl fmt::Display,
+    ) -> Self {
+        Self::ElementNotFound {
+            grammar,
+            path: if path.is_empty() {
+                "(root)".to_string()
+            } else {
+                path.join(".")
+            },
+            identity: identity.to_string(),
+        }
+    }
+
     /// The grammar that refused.
     pub fn grammar(&self) -> &'static str {
         match self {
@@ -211,7 +249,8 @@ impl GrammarError {
             | Self::PathNotFound { grammar, .. }
             | Self::Ambiguous { grammar, .. }
             | Self::DuplicatedIdentity { grammar, .. }
-            | Self::ReservedField { grammar, .. } => grammar,
+            | Self::ReservedField { grammar, .. }
+            | Self::ElementNotFound { grammar, .. } => grammar,
         }
     }
 }
@@ -256,6 +295,15 @@ impl fmt::Display for GrammarError {
                 "grammar `{grammar}`: the field `{field}` carries the identity of an element and \
                  is written by the product alone — a fragment able to write it could forge an \
                  identity, or overwrite the one that tells another catalogue's element apart"
+            ),
+            Self::ElementNotFound {
+                grammar,
+                path,
+                identity,
+            } => write!(
+                f,
+                "grammar `{grammar}`: no element of `{path}` carries the identity `{identity}` — \
+                 the document no longer carries what was posed there"
             ),
         }
     }

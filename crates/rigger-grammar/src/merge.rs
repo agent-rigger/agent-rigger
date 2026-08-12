@@ -387,20 +387,23 @@ fn accounted_for<G: Grammar>(source: &str, inverse: &Inverse) -> Result<Accounte
         // The pose created the element, so the whole element is the passage it
         // owns — read as it stands, since the trace of a creation records
         // nothing of the document from before. An element the identity no
-        // longer finds accounts for nothing, and the post-condition then
-        // catches whatever the write took.
+        // longer finds is not a passage that accounts for nothing: it is a
+        // trace replayed against a document that does not carry what it
+        // names, and reporting an empty account here would let `unmerge`
+        // return `Ok` for a removal that touched nothing it was ever told to.
         Inverse::Element {
             path,
             identity,
             undo: ElementUndo::Remove,
         } => {
-            if let Some(fields) = G::find_element_by_identity(source, path, identity)? {
-                values.push(SemanticValue::new(
-                    address(path, IDENTITY_KEY),
-                    Value::text(identity.to_string()),
-                ));
-                record_fields(path, &fields, &mut values);
-            }
+            let Some(fields) = G::find_element_by_identity(source, path, identity)? else {
+                return Err(GrammarError::element_not_found(G::NAME, path, identity));
+            };
+            values.push(SemanticValue::new(
+                address(path, IDENTITY_KEY),
+                Value::text(identity.to_string()),
+            ));
+            record_fields(path, &fields, &mut values);
         }
         // An update inside an element that a list somebody else owns carries:
         // only the fields the pose wrote there are its own.
