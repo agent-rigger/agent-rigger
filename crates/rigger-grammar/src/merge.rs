@@ -379,8 +379,20 @@ fn accounted_for<G: Grammar>(source: &str, inverse: &Inverse) -> Result<Accounte
         // itself is **not** a place: the values of somebody else live at the
         // very same path, and covering the path would let the removal empty the
         // array with the post-condition looking on.
+        //
+        // **Read off `source` before it enters the account**, for the same
+        // reason `Inverse::Element` reads the identity off it: a value the
+        // trace added is not a value the array still holds. Accounting for it
+        // regardless would let a value the owner had already removed leave no
+        // trace in `before`, so `values_lost(before, after)` would have
+        // nothing to compare it against, and `unmerge` would return `Ok` for a
+        // removal that touched nothing it was ever told to.
         Inverse::Values { path, added } => {
+            let list_path: Vec<&str> = path.iter().map(String::as_str).collect();
             for value in added {
+                if !G::find_string_in_list(source, &list_path, value)? {
+                    return Err(GrammarError::value_not_found(G::NAME, path, value));
+                }
                 values.push(SemanticValue::new(path.join("."), Value::text(value)));
             }
         }

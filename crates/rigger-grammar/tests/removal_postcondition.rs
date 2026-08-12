@@ -19,8 +19,8 @@
 //! what we did.
 
 use rigger_grammar::{
-    unmerge, Applied, Edit, Grammar, GrammarError, GrammarRole, Inverse, Jsonc, MergeError, Probe,
-    Resolution, SemanticValue, Value,
+    merge, unmerge, Applied, Edit, Grammar, GrammarError, GrammarRole, Inverse, Jsonc, MergeError,
+    Probe, Resolution, SemanticValue, Value,
 };
 
 /// A document carrying, besides the posed key, two values of its owner in an
@@ -181,4 +181,63 @@ fn c3_a_removal_from_an_array_accounts_for_the_values_it_added_and_not_for_the_p
         }
         other => panic!("the refusal does not come from the post-condition: {other:?}"),
     }
+}
+
+/// The twin of the identity gap `element_identity.rs` closed for
+/// `Inverse::Element`, on the other trace shape `accounted_for` handles: a
+/// value named by equality rather than an element named by identity.
+///
+/// **The gap, measured.** `accounted_for`'s `Values` arm pushed every value
+/// the trace recorded into the account without ever reading `source` — the
+/// same document `unmerge` had just parsed to compute `before`. A value the
+/// owner had since deleted was accounted for anyway, `before` never held it
+/// so `values_lost(before, after)` had nothing to compare it against, and the
+/// post-condition — built entirely from that diff — had nothing to catch.
+/// `unmerge` returned `Ok` on a document its removal never touched.
+#[test]
+fn guard_unmerge_refuses_a_value_removal_when_the_owner_has_already_removed_it() {
+    // GIVEN a value the product poses into an array the owner already writes.
+    const BEFORE: &str = concat!("{\n", "\t\"instructions\": [\"AGENTS.md\"]\n", "}\n",);
+    let merged = merge::<Jsonc>(BEFORE, &Edit::values(&["instructions"], ["posed.md"]))
+        .expect("the pose must succeed");
+    assert!(
+        merged.rendered.contains("posed.md"),
+        "the fixture must actually pose the value, or this test measures nothing: {}",
+        merged.rendered
+    );
+
+    // AND the owner has since edited the document by hand: the posed value is
+    // gone, and the owner's own new entry sits where it used to be. Nothing
+    // here replays the pose — this is an independent edit, the way an owner's
+    // edit always is.
+    const OWNER_EDITED: &str = concat!(
+        "{\n",
+        "\t\"instructions\": [\"AGENTS.md\", \"user-added.md\"]\n",
+        "}\n",
+    );
+
+    // WHEN unmerge replays the pose's trace against the document the owner
+    // produced, where the posed value is no longer there to take back.
+    let verdict = unmerge::<Jsonc>(OWNER_EDITED, &merged.inverse);
+
+    // THEN it refuses, naming what the trace no longer finds, rather than
+    // reporting a removal done on a document it never touched.
+    assert!(
+        verdict.is_err(),
+        "unmerge must refuse a value the document no longer carries, but returned {verdict:?}"
+    );
+    let message = verdict.unwrap_err().to_string();
+    for expected in ["instructions", "posed.md"] {
+        assert!(
+            message.contains(expected),
+            "the refusal does not name {expected:?}: {message}"
+        );
+    }
+
+    // AND the owner's own entry survived being asked about: this is a refusal,
+    // not a removal that landed with the wrong verdict.
+    assert!(
+        OWNER_EDITED.contains("user-added.md"),
+        "the fixture must carry the owner's own entry, or this test measures nothing"
+    );
 }

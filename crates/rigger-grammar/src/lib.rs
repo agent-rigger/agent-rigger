@@ -166,6 +166,25 @@ pub enum GrammarError {
         /// The identity that was looked for.
         identity: String,
     },
+    /// The array at `path` does not contain `value`. A trace named a value it
+    /// added, by equality, and the document no longer carries it — whether
+    /// because it was already removed or because its owner rewrote that
+    /// array away.
+    ///
+    /// **The same fact as [`Self::ElementNotFound`], for the other trace
+    /// shape.** An array named by equality has no identity to look up, so the
+    /// value itself is what the search is for; the refusal names it for the
+    /// same reason `ElementNotFound` names the identity — a caller reading
+    /// this is entitled to nothing when the value is gone, and nothing is
+    /// not the same as an empty account.
+    ValueNotFound {
+        /// The grammar that refuses.
+        grammar: &'static str,
+        /// The path of the array it was looked for in.
+        path: String,
+        /// The value that was looked for.
+        value: String,
+    },
 }
 
 impl GrammarError {
@@ -242,6 +261,24 @@ impl GrammarError {
         }
     }
 
+    /// Search refusal, naming the grammar, the array, and the value no
+    /// element of it carries.
+    pub fn value_not_found(
+        grammar: &'static str,
+        path: &[String],
+        value: impl fmt::Display,
+    ) -> Self {
+        Self::ValueNotFound {
+            grammar,
+            path: if path.is_empty() {
+                "(root)".to_string()
+            } else {
+                path.join(".")
+            },
+            value: value.to_string(),
+        }
+    }
+
     /// The grammar that refused.
     pub fn grammar(&self) -> &'static str {
         match self {
@@ -251,7 +288,8 @@ impl GrammarError {
             | Self::Ambiguous { grammar, .. }
             | Self::DuplicatedIdentity { grammar, .. }
             | Self::ReservedField { grammar, .. }
-            | Self::ElementNotFound { grammar, .. } => grammar,
+            | Self::ElementNotFound { grammar, .. }
+            | Self::ValueNotFound { grammar, .. } => grammar,
         }
     }
 }
@@ -305,6 +343,15 @@ impl fmt::Display for GrammarError {
                 f,
                 "grammar `{grammar}`: no element of `{path}` carries the identity `{identity}` — \
                  the document no longer carries what was posed there"
+            ),
+            Self::ValueNotFound {
+                grammar,
+                path,
+                value,
+            } => write!(
+                f,
+                "grammar `{grammar}`: the array `{path}` does not carry the value `{value}` — the \
+                 document no longer carries what was posed there"
             ),
         }
     }
