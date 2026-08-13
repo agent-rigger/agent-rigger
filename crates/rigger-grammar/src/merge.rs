@@ -419,11 +419,24 @@ fn accounted_for<G: Grammar>(source: &str, inverse: &Inverse) -> Result<Accounte
         }
         // An update inside an element that a list somebody else owns carries:
         // only the fields the pose wrote there are its own.
+        //
+        // **Looked up by identity first, same as the `Remove` arm above.**
+        // This account is read off `source` before `unmerge`'s own call to
+        // `Grammar::invert` (merge.rs:294), and nothing forces that ordering
+        // on every future caller of this function — `accounted_for` has
+        // exactly one today, but the guarantee this refusal protects must
+        // not depend on staying that way. Without it, an element the owner
+        // deleted outright still produces a non-empty account built from
+        // field names alone, and whether `unmerge` catches the mismatch
+        // downstream becomes a fact about `invert`, not about this function.
         Inverse::Element {
             path,
+            identity,
             undo: ElementUndo::Restore { added, replaced },
-            ..
         } => {
+            if G::find_element_by_identity(source, path, identity)?.is_none() {
+                return Err(GrammarError::element_not_found(G::NAME, path, identity));
+            }
             for name in added {
                 places.push(address(path, name));
             }

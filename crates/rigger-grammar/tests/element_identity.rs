@@ -1040,3 +1040,123 @@ fn guard_unmerge_refuses_an_element_update_when_the_owner_has_deleted_the_elemen
          {verdict:?}"
     );
 }
+
+/// A grammar whose `invert` reproduces, on purpose, the defect D10 closed:
+/// an identity `Jsonc::invert` does not find is swallowed into `Ok(source
+/// unchanged)` instead of refusing. Every other method delegates to
+/// `Jsonc`'s real implementation, `find_element_by_identity` included.
+///
+/// The guard above this one shows the composition holds: `unmerge` refuses
+/// because `invert` now does. Run through **this** grammar instead, that
+/// second line of defence is gone, and only a lookup run inside
+/// `accounted_for` itself — D11's own arm, not D10's fix in `Jsonc` — can
+/// still catch a `Restore` trace replayed against an element the document
+/// no longer carries. This isolates what D11 adds from what D10 already
+/// covers, standing in for the day `accounted_for` gains a caller, or a
+/// grammar, that does not route through a self-checking `invert`.
+struct InvertSilentOnMissingElement;
+
+impl Grammar for InvertSilentOnMissingElement {
+    const NAME: &'static str = Jsonc::NAME;
+    const ROLE: GrammarRole = Jsonc::ROLE;
+    const RESOLUTION: Resolution = Jsonc::RESOLUTION;
+    const PROBE: Probe = Jsonc::PROBE;
+
+    fn round_trip(source: &str) -> Result<String, GrammarError> {
+        Jsonc::round_trip(source)
+    }
+
+    fn find_string_in_list(source: &str, path: &[&str], value: &str) -> Result<bool, GrammarError> {
+        Jsonc::find_string_in_list(source, path, value)
+    }
+
+    fn find_element_by_identity(
+        source: &str,
+        path: &[String],
+        identity: &Marker,
+    ) -> Result<Option<Vec<(String, Value)>>, GrammarError> {
+        Jsonc::find_element_by_identity(source, path, identity)
+    }
+
+    fn apply(source: &str, edit: &Edit) -> Result<Applied, GrammarError> {
+        Jsonc::apply(source, edit)
+    }
+
+    fn invert(source: &str, inverse: &Inverse) -> Result<String, GrammarError> {
+        match Jsonc::invert(source, inverse) {
+            Err(GrammarError::ElementNotFound { .. }) => Ok(source.to_string()),
+            other => other,
+        }
+    }
+
+    fn values(source: &str) -> Result<Vec<SemanticValue>, GrammarError> {
+        Jsonc::values(source)
+    }
+
+    fn comments(source: &str) -> Result<Vec<String>, GrammarError> {
+        Jsonc::comments(source)
+    }
+}
+
+/// D11 — `accounted_for`'s `Element`/`Restore` arm (merge.rs:422-433), on its
+/// own contribution, isolated from D10's fix in `Jsonc::invert`. Before this
+/// slice, that arm built its `places` from the field names the trace
+/// recorded and never looked the identity up on `source` — the guarantee
+/// that a `Restore` trace naming a deleted element gets refused held only by
+/// composition, because `unmerge` always calls `accounted_for` before
+/// `invert`, and `invert` (since D10) refuses on its own. Route the same
+/// trace through a grammar whose `invert` does not refuse — reproducing
+/// exactly the pre-D10 defect — and only `accounted_for`'s own lookup is
+/// left standing between a deleted element and an `Ok` on a document
+/// `unmerge` never touched.
+#[test]
+fn guard_accounted_for_refuses_an_element_restore_the_document_no_longer_carries_when_invert_stays_silent(
+) {
+    // GIVEN the same `Restore`-shaped update as the two guards above.
+    let posed = merge::<Jsonc>(SETTINGS, &published("scripts/guard.sh"))
+        .expect("the pose must succeed")
+        .rendered;
+    let updated =
+        merge::<Jsonc>(&posed, &published("scripts/guard-2.sh")).expect("the update must succeed");
+    assert!(
+        matches!(
+            &updated.inverse,
+            Inverse::Element {
+                undo: ElementUndo::Restore { .. },
+                ..
+            }
+        ),
+        "the fixture must produce a `Restore` inverse, or this test measures nothing: {:?}",
+        updated.inverse
+    );
+    assert!(
+        !SETTINGS.contains(&identity().to_string()),
+        "the fixture must not carry the identity, or this test measures nothing"
+    );
+
+    // WHEN `unmerge` replays that trace through a grammar whose `invert`
+    // stays silent on the missing element — the only refusal left standing
+    // is whatever `accounted_for` itself runs.
+    let verdict = unmerge::<InvertSilentOnMissingElement>(SETTINGS, &updated.inverse);
+
+    // THEN `accounted_for` must still refuse, naming the list and the
+    // identity, rather than letting `unmerge` report a removal DONE on a
+    // document that — through this grammar's `invert` — was never touched.
+    assert!(
+        verdict.is_err(),
+        "accounted_for must refuse a Restore trace whose identity the document no longer \
+         carries even when invert's own protection does not catch it, but unmerge returned \
+         {verdict:?}"
+    );
+    match verdict {
+        Err(MergeError::Grammar(GrammarError::ElementNotFound {
+            path,
+            identity: found,
+            ..
+        })) => {
+            assert_eq!(path, "hooks");
+            assert_eq!(found, identity().to_string());
+        }
+        other => panic!("the refusal does not name what is missing: {other:?}"),
+    }
+}
