@@ -82,6 +82,19 @@
 //! `Remove` arm reads the address through, and its only constructor does the
 //! `fs::read` itself — there is no way to hand it a [`rigger_plan::Digest`]
 //! already in hand, one declared, or one read out of a registry line.
+//!
+//! **That closes construction, never comparison.** [`Measured::digest`] hands
+//! back a bare [`rigger_plan::Digest`], and a bare `Digest` compares equal to
+//! any other regardless of provenance — `Digest::of(bytes) == recorded`
+//! compiles and passes for any `bytes`, measured or not. `digest()` cannot be
+//! narrowed or removed: [`rigger_registry`]'s own diagnostic reads it back out
+//! as the one public projection this type is contracted to expose.
+//! [`Measured::matches`] is the additive answer available inside this crate —
+//! it makes the correct comparison the one that is shortest to write, by
+//! naming the read its receiver depends on. It does not make the bypass a
+//! compile error: that would require `Digest` itself to stop being freely
+//! comparable, which is a property of [`rigger_plan::Digest`], not of this
+//! crate.
 
 use std::cell::Cell;
 use std::fs;
@@ -384,6 +397,29 @@ fn md35_a_measured_fingerprint_can_only_be_produced_by_reading_the_file() {
         measured.digest(),
         Digest::of(content.as_bytes()),
         "the measured fingerprint does not match the content read from disk"
+    );
+}
+
+#[test]
+fn md35_a_measurement_matches_only_the_digest_of_the_bytes_it_read() {
+    // GIVEN a file of known content, and a `Measured` from reading it.
+    let machine = machine("measured-matches");
+    let path = machine.join("root/skills/known.txt");
+    let content = "known content, read once — matches must answer for exactly these bytes";
+    fs::write(&path, content).expect("write the file of known content");
+    let measured = Measured::of(&path).expect("a file that is there must be measurable");
+
+    // THEN `matches` answers true for the fingerprint of the bytes actually
+    // read, and false for any other — the comparison the `Remove` arm
+    // performs, spelled so the call names the read it depends on rather than
+    // comparing two bare `Digest` values that could come from anywhere.
+    assert!(
+        measured.matches(Digest::of(content.as_bytes())),
+        "matches must answer true for the digest of the bytes actually on disk"
+    );
+    assert!(
+        !measured.matches(Digest::of(b"a digest nothing here measured")),
+        "matches must answer false for a digest that does not describe what is on disk"
     );
 }
 

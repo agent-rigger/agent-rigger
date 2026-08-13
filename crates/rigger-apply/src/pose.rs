@@ -243,8 +243,24 @@ impl Steps for OnDisk {
             }
             Effect::Remove { address, posed } => match present(address)? {
                 None => Ok(()),
+                // **Reads `address` a second time.** `present` just above
+                // already read this file's bytes to decide it is a document
+                // — then discarded them, keeping only that it is one — and
+                // `Measured::of` below reads them again to get a fingerprint
+                // to compare. The cost is a few kilobytes of unmeasured text
+                // and not the point.
+                //
+                // The point is what a "fix" must not do: hash the bytes
+                // `present` already held instead of calling `Measured::of`
+                // here. That would produce a `Digest` claiming disk
+                // provenance from a value nothing re-read at comparison
+                // time — the exact escape `Measured::of` being this type's
+                // sole constructor exists to close. `Measured::of` stays the
+                // one call that turns bytes on disk into a `Digest`, even
+                // where, as here, its argument was already read a moment
+                // ago.
                 Some(Seized::Document { .. }) => {
-                    if Measured::of(address)?.digest() == *posed {
+                    if Measured::of(address)?.matches(*posed) {
                         take_away(address)
                     } else {
                         Err(StepError::NotAsRecorded {
@@ -406,6 +422,24 @@ fn present(address: &Path) -> Result<Option<Seized>, StepError> {
 /// let measured = Measured::of(Path::new("/nowhere/artefact")).unwrap();
 /// let _ = measured.digest();
 /// ```
+///
+/// # The comparison this type does not itself close
+///
+/// [`Measured::of`] guarantees the *left*-hand side of an equality was read
+/// from disk just now. Nothing here constrains the *right*-hand side:
+/// [`digest`](Measured::digest) hands back a bare [`Digest`], and a bare
+/// [`Digest`] compares equal to any other regardless of where it came from —
+/// a value a catalogue declares, one read back out of a registry line, or
+/// one a test fabricates with [`Digest::of`] compares exactly the way a disk
+/// reading does. `digest()` cannot be narrowed or dropped to close that: a
+/// diagnostic pass over a registry needs the plain [`Digest`] it hands back,
+/// and nothing else, to compare against what was recorded.
+///
+/// [`matches`](Measured::matches) does not remove the possibility either —
+/// `Digest::of(bytes) == recorded` still compiles, and still passes for any
+/// `bytes` a caller hands it. What it does is make the correct comparison
+/// the one that is shortest to write: `Measured::of(path)?.matches(recorded)`
+/// names, in its own signature, that its left-hand side was measured.
 #[derive(Debug, Clone, Copy)]
 pub struct Measured {
     digest: Digest,
@@ -435,6 +469,19 @@ impl Measured {
     /// The fingerprint itself — the one thing this type ever gives up.
     pub fn digest(&self) -> Digest {
         self.digest
+    }
+
+    /// Whether this measurement's fingerprint is `expected`.
+    ///
+    /// **The comparison this type exists for.** `self.digest() == expected`
+    /// reads the same on the page, but only names the type of the right-hand
+    /// side — a caller comparing two bare [`Digest`] values that way never
+    /// had to hold a [`Measured`] at all. Written as `matches`, a call site
+    /// names the read its receiver depends on: nothing but [`Measured::of`]
+    /// produces one, so `some_measured.matches(recorded)` cannot be reached
+    /// without a disk read behind `some_measured`, whatever `recorded` is.
+    pub fn matches(&self, expected: Digest) -> bool {
+        self.digest == expected
     }
 }
 
