@@ -37,9 +37,24 @@ pub use txn::{
 /// not live in `rigger_grammar::Capabilities`. It is stated here, in the
 /// crate that actually poses files and records their trace, rather than in
 /// `rigger-plan`, which is pure and touches no disk.
+///
+/// **This text says what the product does not do, and never what it checks.**
+/// An earlier wording added that "the structural check this product runs
+/// verifies only that an address is confined and that what a descriptor
+/// declares exists". No such check exists: the address type validates UTF-8
+/// and nothing else, and there is no descriptor and no catalogue reader in any
+/// crate here. That sentence came from the failure register, where it describes
+/// a check the target model is to build, and putting it in the present tense
+/// gave a published page a claim about confinement that a reader could take for
+/// a guarantee against path traversal.
+///
+/// **Nothing in this page can go red on a false claim**, which is why the
+/// wording carries the weight. The command's test compares the binary's output
+/// to the committed file, and both come from this constant — the text is only
+/// ever compared to itself. A page of declared limits that overstates what the
+/// product does is worse than one that says nothing, and no instrument here
+/// will catch the difference. State an absence; never a capability.
 pub const UNOBSERVED_LOAD_GRANULARITY: &str = "The product poses the files a behaviour names and \
-    records their trace; it never asks a host at what granularity — one file, a whole directory, \
-    or anything else — that host loads what was posed. So it can never know, and this page can \
-    never say, which granularity a host loads by. The structural check this product runs cannot \
-    catch it either: that check verifies only that an address is confined and that what a \
-    descriptor declares exists, never what a host does with the granularity of what was posed.";
+    records their trace; it never asks a host anything about what becomes of them afterwards. So \
+    it cannot know, and this page cannot say, whether what it posed is read one file at a time, \
+    as a whole directory, or at all.";

@@ -21,4 +21,4 @@ Each entry below is a refusal the derivation named, with every reason it observe
 
 None of the lines below come from a grammar's capability table, and none is lifted by a grammar changing. Each names something the product itself never does or never asks a host — never a claim about what any host does on its own.
 
-- The product poses the files a behaviour names and records their trace; it never asks a host at what granularity — one file, a whole directory, or anything else — that host loads what was posed. So it can never know, and this page can never say, which granularity a host loads by. The structural check this product runs cannot catch it either: that check verifies only that an address is confined and that what a descriptor declares exists, never what a host does with the granularity of what was posed.
+- The product poses the files a behaviour names and records their trace; it never asks a host anything about what becomes of them afterwards. So it cannot know, and this page cannot say, whether what it posed is read one file at a time, as a whole directory, or at all.
