@@ -487,7 +487,7 @@ fn present(address: &Path) -> Result<Option<Seized>, StepError> {
 /// thing this type exists to guarantee the provenance of, and nothing that
 /// would let the comparison drift back to a value this type never measured.
 ///
-/// ```compile_fail
+/// ```compile_fail,E0451
 /// use rigger_apply::Measured;
 /// use rigger_plan::Digest;
 ///
@@ -498,14 +498,22 @@ fn present(address: &Path) -> Result<Option<Seized>, StepError> {
 /// Its twin, which differs by the one gesture and compiles — without it the
 /// refusal above would be indistinguishable from a typo. **A `compile_fail`
 /// alone measures nothing: it goes green on any mutation**, and only the pair
-/// tells a real refusal from a broken example:
+/// tells a real refusal from a broken example.
+///
+/// **The error code on the fence is documentation, not a check — measured, not
+/// assumed.** `E0451` is the code this refusal really carries: the block was
+/// extracted into a throwaway crate and compiled to read it. But writing a
+/// deliberately wrong code on the fence and running `cargo test --doc` on this
+/// toolchain leaves the doctest green, so nothing here goes red the day the
+/// refusal starts coming from somewhere else. The code is written down so a
+/// reader can check it by hand; **what carries the guarantee is the pair**, and
+/// the pair alone.
 ///
 /// ```no_run
 /// use rigger_apply::Measured;
 /// use rigger_plan::Digest;
 ///
 /// let digest = Digest::of(b"trust me, this is what's on disk");
-/// let _ = digest;
 /// let _ = Measured::of(std::path::Path::new("/nowhere/artefact"));
 /// ```
 ///
@@ -865,7 +873,7 @@ pub struct Posted {
 /// posed artefact that no removal will ever find, which is the damage this
 /// product exists to prevent. The refusal is the compiler's:
 ///
-/// ```compile_fail
+/// ```compile_fail,unused_must_use
 /// #![deny(unused_must_use)]
 /// use std::path::{Path, PathBuf};
 /// use rigger_apply::{pose, OnDisk, SystemPracticability};

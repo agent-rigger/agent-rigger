@@ -92,12 +92,23 @@ fn guard_every_must_use_of_the_write_path_still_carries_the_pair_that_measures_i
             preamble(&txn, "\npub fn merge_into_file"),
         ),
     ] {
-        assert_eq!(
-            fenced_examples(&doc),
-            vec!["compile_fail".to_string(), "no_run".to_string()],
+        let examples = fenced_examples(&doc);
+        let refusal_and_twin = match examples.as_slice() {
+            // The refusal may carry a measured error code or lint name after a
+            // comma (`compile_fail,E0451`, `compile_fail,unused_must_use`) —
+            // that suffix is documentation, never part of what this guard
+            // measures. `compile_fail` on its own is refused just the same.
+            [refusal, twin] => {
+                (refusal == "compile_fail" || refusal.starts_with("compile_fail,"))
+                    && twin == "no_run"
+            }
+            _ => false,
+        };
+        assert!(
+            refusal_and_twin,
             "the doc block of `{declaration}` no longer carries the refusal that drops the value \
              and the twin that keeps it — the attribute on the value it hands back is then held by \
-             nothing, and dropping that value goes back to compiling in silence"
+             nothing, and dropping that value goes back to compiling in silence: {examples:?}"
         );
     }
 }

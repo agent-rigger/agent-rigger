@@ -435,7 +435,7 @@ fn accounted_for<G: Grammar>(source: &str, inverse: &Inverse) -> Result<Accounte
         //
         // **Looked up by identity first, same as the `Remove` arm above.**
         // This account is read off `source` before `unmerge`'s own call to
-        // `Grammar::invert` (merge.rs:294), and nothing forces that ordering
+        // `Grammar::invert`, and nothing forces that ordering
         // on every future caller of this function — `accounted_for` has
         // exactly one today, but the guarantee this refusal protects must
         // not depend on staying that way. Without it, an element the owner

@@ -656,12 +656,14 @@ fn c4_a_removal_does_not_take_the_delimiter_of_another_catalogue() {
     );
 }
 
-/// `marker.rs:57` promises that **both** writes compare the delimiters of the
-/// other markers, before and after — this is the `place` half of that promise,
-/// symmetric to `c4_a_removal_does_not_take_the_delimiter_of_another_catalogue`
-/// just above. An update rewrites its own bounds exactly like a removal
-/// excises them, so the same interleaving that takes a neighbour's opening
-/// delimiter with it on removal takes it with it here too.
+/// The module doc's **"A delimiter carries no value, so no comparison of
+/// values can see one go"** section promises that **both** writes compare
+/// the delimiters of the other markers, before and after — this is the
+/// `place` half of that promise, symmetric to
+/// `c4_a_removal_does_not_take_the_delimiter_of_another_catalogue` just
+/// above. An update rewrites its own bounds exactly like a removal excises
+/// them, so the same interleaving that takes a neighbour's opening delimiter
+/// with it on removal takes it with it here too.
 #[test]
 fn c4_a_pose_does_not_take_the_delimiter_of_another_catalogue() {
     let (first, second) = (marker(), homonym());

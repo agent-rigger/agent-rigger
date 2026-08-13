@@ -40,9 +40,10 @@ pub enum WithdrawalIssue {
     /// path stops partway through one and reports the remainder. Reaching a
     /// genuine partial removal would need an orchestration layer over
     /// *several* withdrawals, deciding per entry whether to keep going
-    /// after one of them fails, and no such layer exists anywhere in this
-    /// workspace: the word "catalogue" has zero occurrences across its five
-    /// crates.
+    /// after one of them fails, and nothing in this workspace builds one:
+    /// [`Self::Complete`] and [`Self::ConsentRefused`] are both constructed
+    /// in [`Self::of_withdrawal`], and no call site anywhere in this crate
+    /// constructs [`Self::Partial`].
     ///
     /// The member stays regardless. Leaving it out would make this set
     /// incomplete the day that orchestration layer is built — the exact
