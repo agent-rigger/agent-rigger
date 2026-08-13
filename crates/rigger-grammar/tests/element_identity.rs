@@ -708,11 +708,11 @@ fn guard_a_removal_that_finds_no_element_refuses_by_naming_it() {
 // --- Differential guard: `element::remove` against `unmerge` ---------------
 //
 // Both undo the same pose of the same element, through the same writer:
-// `element::remove` (element.rs:261) builds `Inverse::Element { .. undo:
+// `element::remove` builds `Inverse::Element { .. undo:
 // ElementUndo::Remove }` on the spot and calls `G::invert`; `unmerge`
 // receives exactly that value and calls `G::invert` too. The bytes they
 // render are therefore identical by construction; only the bookkeeping each
-// one runs around that write — `element::accounted` (element.rs:354-371)
+// one runs around that write — `element::accounted`
 // against `accounted_for`'s `Inverse::Element { undo: ElementUndo::Remove }`
 // arm — can differ. Twelve tests above exercise the first path, four
 // exercise the second; none had ever compared them before the guards below.
@@ -737,8 +737,8 @@ const FIELD_REMOVED_BY_ITS_OWNER: &str = concat!(
 
 /// The value both removal paths write through, built from `ElementTrace`'s
 /// own `pub` accessors rather than duplicated by hand — the same value
-/// `element::remove` constructs right before calling `G::invert`
-/// (element.rs:276-283) and `unmerge` receives unchanged, passing it on to
+/// `element::remove` constructs right before calling `G::invert`,
+/// and `unmerge` receives unchanged, passing it on to
 /// its own call to `G::invert`.
 fn inverse_of(trace: &ElementTrace) -> Inverse {
     Inverse::Element {
@@ -774,7 +774,7 @@ fn guard_element_remove_and_unmerge_agree_on_the_verdict_when_the_element_is_not
     // Same document, same identity, the same constructed `Inverse::Element`
     // value on both sides — this asserts the two paths reach the **same**
     // verdict. `element::remove` looks the identity up before writing
-    // anything (element.rs:264-269) and refuses by name — `RemoveError::
+    // anything and refuses by name — `RemoveError::
     // NotFound` — when no element carries it, which SETTINGS never did.
     // Whether `unmerge` refuses too is exactly what this guard exists to
     // measure, not assume: if it does not, the assertion below is the
@@ -899,7 +899,7 @@ fn guard_element_remove_and_unmerge_agree_on_a_genuine_cross_cutting_value_loss(
 #[test]
 fn guard_element_remove_and_unmerge_agree_when_only_the_owner_touched_the_element() {
     // [KNOWN DIVERGENCES #1 AND #2, checked here and found inert]
-    // `element::accounted` (element.rs:354-371) credits every field the trace
+    // `element::accounted` credits every field the trace
     // recorded as written, unconditionally, **plus** whatever the divergence
     // report names as currently found — so a field the owner modified is
     // credited twice (the value the product wrote, and the value now on
@@ -1164,6 +1164,117 @@ fn guard_accounted_for_refuses_an_element_restore_the_document_no_longer_carries
         })) => {
             assert_eq!(path, "hooks");
             assert_eq!(found, identity().to_string());
+        }
+        other => panic!("the refusal does not name what is missing: {other:?}"),
+    }
+}
+
+/// The element is still the product's — it carries the identity — but the
+/// owner has deleted the field the trace names. Written by hand, like every
+/// other document in this file.
+const ELEMENT_WITHOUT_ITS_COMMAND: &str = concat!(
+    "{\n",
+    "\t\"model\": \"acme/model-small\", // personal — do not touch\n",
+    "\t\"hooks\": [\n",
+    "\t\t{ \"matcher\": \"Write\", \"command\": \"scripts/mine.sh\" },\n",
+    "\t\t{ \"matcher\": \"Bash\", \"agent-rigger\": \"catalogue=jr-catalogue entry=hooks/guard\" }\n",
+    "\t]\n",
+    "}\n",
+);
+
+#[test]
+fn guard_invert_refuses_to_restore_a_field_the_owner_has_deleted() {
+    // GIVEN a real update, whose inverse restores the value the pose replaced.
+    let posed = merge::<Jsonc>(SETTINGS, &published("scripts/guard.sh"))
+        .expect("the pose must succeed")
+        .rendered;
+    let updated =
+        merge::<Jsonc>(&posed, &published("scripts/guard-2.sh")).expect("the update must succeed");
+    let Inverse::Element {
+        undo: ElementUndo::Restore { replaced, .. },
+        ..
+    } = &updated.inverse
+    else {
+        panic!(
+            "the fixture must produce a `Restore` inverse, or this test measures nothing: {:?}",
+            updated.inverse
+        );
+    };
+    assert!(
+        replaced.iter().any(|(name, _)| name == "command"),
+        "the inverse must name `command` among the fields to restore, or this test measures \
+         nothing: {replaced:?}"
+    );
+
+    // AND a document whose element is still the product's — the identity is
+    // there — but whose `command` its owner has deleted.
+    assert!(
+        ELEMENT_WITHOUT_ITS_COMMAND.contains(&identity().to_string()),
+        "the fixture must carry the identity, or the refusal would come from the element and \
+         not from the field"
+    );
+    assert!(
+        !ELEMENT_WITHOUT_ITS_COMMAND.contains("\"command\": \"scripts/guard"),
+        "the fixture must not carry the field the trace names, or this test measures nothing"
+    );
+
+    // WHEN that inverse is replayed against it.
+    let refusal = Jsonc::invert(ELEMENT_WITHOUT_ITS_COMMAND, &updated.inverse).expect_err(
+        "restoring a field the owner has deleted writes bytes this product never posed, and \
+         must be refused rather than appended",
+    );
+
+    // THEN the refusal names the element and the field, rather than putting
+    // the earlier value back where a person had removed it.
+    match &refusal {
+        GrammarError::KeyNotFound { path, key, .. } => {
+            assert_eq!(path, &format!("hooks.{}", identity()));
+            assert_eq!(key, "command");
+        }
+        other => panic!("the refusal does not name what is missing: {other:?}"),
+    }
+}
+
+#[test]
+fn guard_invert_refuses_a_field_removal_the_element_no_longer_carries() {
+    // GIVEN a first pose that creates the element with one field, then a
+    // second that **adds** a field to it — so the inverse has something to
+    // remove and not only something to restore. Both documents come out of the
+    // product, so the fixture never has to guess how it writes.
+    let narrower = Edit::element(&["hooks"], identity(), [("matcher", Value::text("Bash"))]);
+    let posed = merge::<Jsonc>(SETTINGS, &narrower)
+        .expect("the first pose must succeed")
+        .rendered;
+    let updated =
+        merge::<Jsonc>(&posed, &published("scripts/guard.sh")).expect("the pose must succeed");
+    let Inverse::Element {
+        undo: ElementUndo::Restore { added, .. },
+        ..
+    } = &updated.inverse
+    else {
+        panic!(
+            "the fixture must produce a `Restore` inverse, or this test measures nothing: {:?}",
+            updated.inverse
+        );
+    };
+    assert!(
+        added.iter().any(|name| name == "command"),
+        "the inverse must name `command` among the fields it added, or this test measures \
+         nothing: {added:?}"
+    );
+
+    // WHEN that inverse is replayed against a document whose owner has since
+    // deleted that same field.
+    let refusal = Jsonc::invert(ELEMENT_WITHOUT_ITS_COMMAND, &updated.inverse).expect_err(
+        "a field the element no longer carries must be refused rather than skipped: skipping \
+         lets a removal report success over a document it did not touch",
+    );
+
+    // THEN the refusal names it, on the same variant as the key one level up.
+    match &refusal {
+        GrammarError::KeyNotFound { path, key, .. } => {
+            assert_eq!(path, &format!("hooks.{}", identity()));
+            assert_eq!(key, "command");
         }
         other => panic!("the refusal does not name what is missing: {other:?}"),
     }

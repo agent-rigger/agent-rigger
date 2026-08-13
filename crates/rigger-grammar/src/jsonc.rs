@@ -354,20 +354,55 @@ impl Grammar for Jsonc {
                 match undo {
                     ElementUndo::Remove => element.remove(),
                     ElementUndo::Restore { added, replaced } => {
+                        // **The same refusal as `Inverse::Keys`, one level
+                        // down.** Finding the element is not finding the field:
+                        // the identity says the element is still the product's,
+                        // it says nothing about what the owner has since deleted
+                        // inside it. A trace naming a field the element no
+                        // longer carries is entitled to nothing, on both
+                        // gestures, and for the two different reasons the `Keys`
+                        // arm above sets out.
+                        //
+                        // The refusal is `KeyNotFound` rather than a variant of
+                        // its own: a field of an element *is* a key of an
+                        // object, and the reason a deleted one may not be
+                        // written back is already stated once, on that variant.
+                        // Saying it twice would let the two copies drift.
+                        let inside: Vec<String> = path
+                            .iter()
+                            .cloned()
+                            .chain(std::iter::once(identity.to_string()))
+                            .collect();
                         for name in added {
                             refuse_if_defined_twice(&element, name)?;
-                            if let Some(property) = element.get(name) {
-                                property.remove();
-                            }
+                            let Some(property) = element.get(name) else {
+                                return Err(GrammarError::key_not_found(
+                                    Jsonc::NAME,
+                                    &inside,
+                                    name,
+                                ));
+                            };
+                            property.remove();
                         }
+                        // Restoring is refused for the stronger reason. Putting
+                        // the earlier value back is defined only while the
+                        // element still holds what the pose left there; once the
+                        // owner has deleted the field, writing it back does not
+                        // undo a pose, it writes a field a person removed, out of
+                        // bytes this product never posed. Appending here passed
+                        // unseen, and would keep passing unseen: the removal's
+                        // post-condition compares what **disappeared**, so a
+                        // field that **appears** meets no check at all.
                         for (name, value) in replaced {
                             refuse_if_defined_twice(&element, name)?;
-                            match element.get(name) {
-                                Some(property) => property.set_value(input_value(value)),
-                                None => {
-                                    element.append(name, input_value(value));
-                                }
-                            }
+                            let Some(property) = element.get(name) else {
+                                return Err(GrammarError::key_not_found(
+                                    Jsonc::NAME,
+                                    &inside,
+                                    name,
+                                ));
+                            };
+                            property.set_value(input_value(value));
                         }
                     }
                 }
