@@ -13,5 +13,9 @@ publish = false
 # No third-party dependency, for the same reason the rest of this workspace
 # has none on the paths it publishes: a single command needs no argument
 # parser.
+# `rigger-apply` was added by B7 to publish MD-40's closing admission — a
+# limit of what the product itself observes, not a property of any grammar,
+# so it could not come from `rigger-grammar` alone.
 [dependencies]
+rigger-apply = { path = "../rigger-apply" }
 rigger-grammar = { path = "../rigger-grammar" }

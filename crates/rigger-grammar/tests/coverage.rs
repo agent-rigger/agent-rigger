@@ -1,4 +1,6 @@
-//! The golden test of MD-39·5: `docs/coverage.md` is rendered from
+//! The golden test of MD-39·5: the grammar-derived portion of
+//! `docs/coverage.md` — everything from `# Coverage` up to, but excluding,
+//! "## What the product cannot observe" — is rendered from
 //! `rigger_grammar::table()`, never written by hand, and compared to the
 //! committed file byte for byte.
 //!
@@ -11,6 +13,16 @@
 //! the derivation names one. It does not judge whether the derivation itself
 //! is correct; that is the job of the tests it draws on.
 //!
+//! **Narrowed scope, declared here rather than left to be discovered.** Until
+//! B7, this test compared the whole committed file. `render` now also takes
+//! `host_limits` — lines this crate is structurally unable to produce, because
+//! it is pure and knows nothing of a host — and this test calls it with none,
+//! so what it reconstructs is only the part of the page `table()` actually
+//! drives. `crates/rigger-cli/tests/coverage_command.rs` is what covers the
+//! full page today, host section included: it runs the compiled binary, which
+//! supplies `rigger-apply`'s host limits, and diffs its stdout against this
+//! same committed file in full.
+//!
 //! **Why the rendering is called here and not owned here.** It used to be:
 //! `table()` had no production caller, and this test was the only thing that
 //! could run the derivation, so H1 wrote the rendering here under its own
@@ -19,42 +31,43 @@
 //! another crate cannot reach into this crate's tests. This file is the
 //! rendering's appellant, not its owner: it still measures the one thing
 //! neither `capability.rs` nor the CLI's own test can — that the committed
-//! page matches the table byte for byte.
+//! page's grammar-derived section matches the table byte for byte.
 //!
-//! **Regenerating the golden.** Never hand-edit `docs/coverage.md`. When
-//! `table()` changes on purpose, run:
+//! **Regenerating the golden.** Never hand-edit `docs/coverage.md`. This test
+//! no longer owns the whole file, so — unlike before B7 — it offers no
+//! env-var rewrite of it: doing that here would silently truncate the host
+//! section this test cannot see. Regenerate the whole committed page by
+//! running the binary that composes both halves and overwriting the file
+//! with its output:
 //!
 //! ```text
-//! RIGGER_UPDATE_COVERAGE_GOLDEN=1 cargo test -p rigger-grammar --test coverage
+//! cargo run -p rigger-cli -- coverage > docs/coverage.md
 //! ```
 //!
-//! which overwrites the golden with the freshly rendered page instead of
-//! comparing against it, then run the test again without the variable to
-//! confirm it is green. Regenerating is a decision, not a formality: the
-//! change that does it should say what moved in `table()` to justify the new
-//! page — a silently rewritten golden compares the code to itself and stops
-//! measuring anything.
+//! then run both this test and `coverage_command.rs` to confirm the two
+//! halves — grammar-derived and host-derived — still agree with what was
+//! committed. Regenerating is a decision, not a formality: the change that
+//! does it should say what moved in `table()`, or in `rigger-apply`'s
+//! constants, to justify the new page.
 
-use std::env;
 use std::path::PathBuf;
 
 use rigger_grammar::coverage::render;
 
+/// The blank line and heading `render` only emits when handed a non-empty
+/// `host_limits` — the leading `\n` is part of the marker on purpose, because
+/// it is the separator `render` adds *before* the heading, and dropping it
+/// would leave that one byte outside what either side of the comparison
+/// below accounts for. Calling `render` with no `host_limits`, as this test
+/// does, produces exactly the text before this marker, if the golden carries
+/// it at all.
+const HOST_SECTION_BOUNDARY: &str = "\n## What the product cannot observe";
+
 #[test]
 fn md39_5_coverage_page_matches_the_capability_table() {
     let table = rigger_grammar::table();
-    let rendered = render(&table);
+    let rendered = render(&table, &[]);
     let golden_path = golden_path();
-
-    if env::var_os("RIGGER_UPDATE_COVERAGE_GOLDEN").is_some() {
-        std::fs::write(&golden_path, &rendered).unwrap_or_else(|err| {
-            panic!(
-                "cannot write the regenerated golden at {}: {err}",
-                golden_path.display()
-            )
-        });
-        return;
-    }
 
     let golden = std::fs::read_to_string(&golden_path).unwrap_or_else(|err| {
         panic!(
@@ -63,13 +76,19 @@ fn md39_5_coverage_page_matches_the_capability_table() {
         )
     });
 
+    let golden_grammar_section = match golden.find(HOST_SECTION_BOUNDARY) {
+        Some(boundary) => &golden[..boundary],
+        None => golden.as_str(),
+    };
+
     assert_eq!(
-        rendered, golden,
-        "docs/coverage.md no longer matches the page rendered from `table()`. If this \
-         divergence is expected, regenerate with `RIGGER_UPDATE_COVERAGE_GOLDEN=1 cargo test \
-         -p rigger-grammar --test coverage` and say, in the change that does it, what moved in \
-         `table()` to justify the new page — never rewrite the golden to make this test pass \
-         without knowing why it was red"
+        rendered, golden_grammar_section,
+        "the grammar-derived portion of docs/coverage.md (everything before \"{HOST_SECTION_BOUNDARY}\") \
+         no longer matches the page rendered from `table()`. If this divergence is expected, \
+         regenerate the whole committed file with `cargo run -p rigger-cli -- coverage > \
+         docs/coverage.md` and say, in the change that does it, what moved in `table()` to \
+         justify the new page — never hand-edit the golden to make this test pass without knowing \
+         why it was red"
     );
 }
 

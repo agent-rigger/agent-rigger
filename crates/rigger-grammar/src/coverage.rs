@@ -18,20 +18,30 @@
 use crate::marker::Wrapping;
 use crate::{Capabilities, GrammarRole, MergeAdmission, Resolution};
 
-/// Renders the coverage page from a measured table.
+/// Renders the coverage page from a measured table, plus limits that name
+/// something the product does not do or does not observe, no grammar's
+/// capability table involved.
 ///
-/// The only inputs are the public accessors of [`Capabilities`] and
-/// [`crate::SHARED_CORPUS`] — nothing here is declared by hand about a
-/// grammar. Writing a value here that `table()` did not produce would be
-/// exactly the failure MD-39·5 exists to close.
-pub fn render(table: &[Capabilities]) -> String {
+/// The matrix and "Declared limits" come only from the public accessors of
+/// [`Capabilities`] and [`crate::SHARED_CORPUS`] — nothing there is declared
+/// by hand about a grammar. Writing a value there that `table()` did not
+/// produce would be exactly the failure MD-39·5 exists to close. `host_limits`
+/// is different by construction: each entry is a line this function trusts
+/// its caller to have already stated correctly, because nothing in this
+/// crate — pure, and blind to any host — could measure it itself.
+pub fn render(table: &[Capabilities], host_limits: &[&str]) -> String {
     let mut page = String::new();
     page.push_str("# Coverage\n\n");
     page.push_str(
-        "This page is rendered from `rigger_grammar::table()` and checked byte for byte by \
-         `crates/rigger-grammar/tests/coverage.rs` — it is never edited by hand. A cell reading \
-         \"never\" names a limit the derivation measured, not one this page assumes; where the \
-         derivation also names why, the reason is under \"Declared limits\" below.\n\n",
+        "This page is rendered by `rigger-cli`, and it is never edited by hand. The matrix and \
+         \"Declared limits\" come from `rigger_grammar::table()`, checked byte for byte against \
+         everything above \"What the product cannot observe\" by \
+         `crates/rigger-grammar/tests/coverage.rs`; that section is not derived from any \
+         grammar's table, so the whole page — it included — is instead checked by \
+         `crates/rigger-cli/tests/coverage_command.rs`, which runs the compiled binary and \
+         compares its stdout to this file. A cell reading \"never\" in the matrix names a limit \
+         the derivation measured, not one this page assumes; where the derivation also names why, \
+         the reason is under \"Declared limits\" below.\n\n",
     );
     page.push_str("## What each grammar can express\n\n");
     page.push_str(&render_matrix(table));
@@ -43,6 +53,16 @@ pub fn render(table: &[Capabilities]) -> String {
          lifted by editing this page.\n\n",
     );
     page.push_str(&render_declared_limits(table));
+    if !host_limits.is_empty() {
+        page.push('\n');
+        page.push_str("## What the product cannot observe\n\n");
+        page.push_str(
+            "None of the lines below come from a grammar's capability table, and none is lifted \
+             by a grammar changing. Each names something the product itself never does or never \
+             asks a host — never a claim about what any host does on its own.\n\n",
+        );
+        page.push_str(&render_host_limits(host_limits));
+    }
     page
 }
 
@@ -140,6 +160,18 @@ fn render_wrappings(wrappings: &[Wrapping]) -> String {
         .map(|&wrapping| wrapping_name(wrapping))
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+/// The lines a caller supplies because this crate — pure, and blind to any
+/// host — cannot measure them itself. Same bullet form as
+/// [`render_declared_limits`], on purpose: a reader should not have to learn
+/// a second layout to read a second kind of limit.
+fn render_host_limits(limits: &[&str]) -> String {
+    let mut out = String::new();
+    for limit in limits {
+        out.push_str(&format!("- {limit}\n"));
+    }
+    out
 }
 
 fn wrapping_name(wrapping: Wrapping) -> &'static str {
