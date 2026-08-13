@@ -831,6 +831,13 @@ fn md40_1_a_pose_refuses_before_writing_when_link_is_not_practicable_at_the_effe
 struct FailsInsteadOf {
     step: usize,
     seen: Cell<usize>,
+    /// The effect that was at `step` when the harness refused it — kept so a
+    /// scenario can assert what it failed rather than assume it from the
+    /// index. `pose`'s effect order is not a property this file may take for
+    /// granted: it lives in the crate that builds `Link::pose`, and asserting
+    /// on the index alone would keep passing, unchanged, the day that order
+    /// changes and `step` stops selecting the link.
+    failed: Cell<Option<Effect>>,
 }
 
 impl FailsInsteadOf {
@@ -838,7 +845,16 @@ impl FailsInsteadOf {
         Self {
             step,
             seen: Cell::new(0),
+            failed: Cell::new(None),
         }
+    }
+
+    /// The effect the harness refused, for a scenario to assert against —
+    /// `None` if `step` was never reached.
+    fn failed_effect(&self) -> Option<Effect> {
+        let effect = self.failed.take();
+        self.failed.set(effect.clone());
+        effect
     }
 }
 
@@ -847,6 +863,7 @@ impl Steps for FailsInsteadOf {
         let seen = self.seen.get();
         self.seen.set(seen + 1);
         if seen == self.step {
+            self.failed.set(Some(effect.clone()));
             return Err(StepError::Io {
                 address: effect.address().to_path_buf(),
                 detail: io::Error::other("the primitive refused this step, for this scenario"),
@@ -873,12 +890,13 @@ fn md40_3_a_link_that_fails_after_the_precondition_passed_is_rolled_back() {
     let address = machine.join("root/review.md");
     let store = machine.join("store/acme-review-1.0");
     let before = snapshot(&machine);
+    let harness = FailsInsteadOf::step(1);
 
     let failure = pose(
         BehaviourName::Link,
         &address,
         &artefact(&store, Placement::Link),
-        &FailsInsteadOf::step(1),
+        &harness,
         &SystemPracticability,
     )
     .expect_err("a pose whose link primitive failed reported success");
@@ -887,6 +905,24 @@ fn md40_3_a_link_that_fails_after_the_precondition_passed_is_rolled_back() {
         PoseError::RolledBack { step, .. } => assert_eq!(*step, 1),
         PoseError::NotRestored { step, .. } => assert_eq!(*step, 1),
         other => panic!("expected the transaction rolled back or left unrestored, got {other}"),
+    }
+    // The name promises the failed step is the link. `step: 1` alone does not
+    // establish that — it is only an index into whatever order `Link::pose`
+    // happens to build, and that order is a fact of `rigger-plan`, not of
+    // this file. Asserting on the effect the harness actually refused makes
+    // the test measure what its name claims, rather than a position that
+    // holds only as long as the order does.
+    match harness.failed_effect() {
+        Some(Effect::Link {
+            address: linked, ..
+        }) => assert_eq!(
+            linked, address,
+            "the harness must have refused a link made at the pose's own address"
+        ),
+        other => panic!(
+            "the pose ran a scenario named after a failed link, but step 1 was {other:?} — the \
+             requirement `md40_3` states is no longer what this test measures"
+        ),
     }
     assert!(
         fs::symlink_metadata(&address).is_err(),

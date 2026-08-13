@@ -9,11 +9,11 @@
 //! address this product manages, brought under the registry's management
 //! without the product having written a byte of it. The closed set of
 //! behaviours already names the candidate for that transition —
-//! [`rigger_plan::BehaviourName::Probe`], documented as "observe a presence,
-//! and write nothing" (`rigger-plan/src/lib.rs:160`) — but `Probe`'s four
-//! methods all refuse with `BehaviourError::NotBuilt`
-//! (`rigger-plan/src/lib.rs:1560`): the behaviour is named, and nothing
-//! serves it yet. There is no distinct "adoption" code path to exercise. The
+//! [`rigger_plan::BehaviourName::Probe`], documented on the variant itself
+//! as "observe a presence, and write nothing" — but each of the four methods
+//! on `impl Behaviour for Probe` refuses through the `not_built` helper with
+//! `BehaviourError::NotBuilt`: the behaviour is named, and nothing serves it
+//! yet. There is no distinct "adoption" code path to exercise. The
 //! one entrypoint any posting — adopted or freshly written — goes through is
 //! [`Entry::posted`], and that is what both tests below would drive directly,
 //! the same way every other test in this crate's suite does.
@@ -33,7 +33,7 @@
 //! is legitimately accepted that way: `Trace::Witnessed` is exactly a value
 //! this build only observed, and B6 below measures that it is kept, not
 //! refused. The other, `Trace::Grammar`, is refused by `record`
-//! (`rigger-plan/src/lib.rs:708`) unconditionally, so it plays no part here.
+//! unconditionally, so it plays no part here.
 //!
 //! What MD-02 actually describes — an adoption meant to be link-shaped,
 //! ending up with no referent — has no way to happen through a well-typed
@@ -41,21 +41,21 @@
 //! still happen at the boundary `Entry::posted` exposes: nothing there
 //! checked that a `Posting`'s free-form `behaviour: String` label agreed with
 //! the shape of its `trace: Trace`. A `Posting` carrying `behaviour: "link"`
-//! and `trace: Trace::Witnessed` compiled, and `Entry::posted`
-//! (`rigger-registry/src/ledger.rs:499`) accepted it: `record` dispatched on
-//! the `Trace` variant alone, never read `posting.behaviour`, and the
-//! registry ended up holding an entry labelled `link` whose recorded trace
-//! was the empty list `Trace::Witnessed` writes — the shape of the historical
-//! MD-02 defect, an adopted entry recorded as `files: []`. The test below
-//! measured that, red, before `Entry::posted` gained the check.
+//! and `trace: Trace::Witnessed` compiled, and `Entry::posted` accepted it:
+//! `record` dispatched on the `Trace` variant alone, never read
+//! `posting.behaviour`, and the registry ended up holding an entry labelled
+//! `link` whose recorded trace was the empty list `Trace::Witnessed` writes
+//! — the shape of the historical MD-02 defect, an adopted entry recorded as
+//! `files: []`. The test below measured that, red, before `Entry::posted`
+//! gained the check.
 //!
 //! The codebase already had the shape of the check MD-02 wants:
 //! `BehaviourError::WrongShape` refuses a trace that does not match the
 //! behaviour asked of it — for instance `Link::undo` refusing anything but a
-//! `Trace::Link` (`rigger-plan/src/lib.rs:1359`-`1372`) — but only inside a
-//! `Behaviour`'s own `pose` and `undo`, asked when a removal is decided. It
-//! is reused rather than rebuilt: `Entry::posted` now calls a free function,
-//! `behaviour_matches_trace` (`rigger-registry/src/ledger.rs`), that resolves
+//! `Trace::Link` — but only inside a `Behaviour`'s own `pose` and `undo`,
+//! asked when a removal is decided. It is reused rather than rebuilt:
+//! `Entry::posted` now calls a free function, `behaviour_matches_trace`
+//! (`rigger-registry/src/ledger.rs`), that resolves
 //! `posting.behaviour` through the closed set and, only when it resolves,
 //! checks the trace's shape against it — `link` against `Trace::Link`,
 //! `merge` against `Trace::Grammar`, `probe` against `Trace::Witnessed`,
@@ -233,19 +233,17 @@ fn b12_a_value_the_product_only_observed_survives_a_later_removal() {
 
 /// F6 (B10) — the two arms of `behaviour_matches_trace` beside `Link` that
 /// carry real, unguarded behaviour: `Probe` and `Delegate`. `Merge` is not
-/// covered here — `record` already refuses `Trace::Grammar` unconditionally
-/// (`rigger-plan/src/lib.rs:708`), so that arm is honestly unreachable, not
-/// merely untested.
+/// covered here — `record` already refuses `Trace::Grammar` unconditionally,
+/// so that arm is honestly unreachable, not merely untested.
 ///
-/// A `probe` label claims "observe a presence, and write nothing"
-/// (`rigger-plan/src/lib.rs:160`) — its own trace shape is `Trace::Witnessed`,
-/// which designates no store referent (`Trace::store` reads `None` for it).
-/// `Trace::Link` designates one. Were this pairing accepted, the entry would
-/// count as a referent of the shared store while carrying the `probe` label,
-/// and `Probe::undo` refuses unconditionally with `BehaviourError::NotBuilt`
-/// (`rigger-plan/src/lib.rs:1577`) — so nothing could ever remove it: the
-/// store entry becomes indestructible under a label documented as writing
-/// nothing.
+/// A `probe` label claims "observe a presence, and write nothing" — its own
+/// trace shape is `Trace::Witnessed`, which designates no store referent
+/// (`Trace::store` reads `None` for it). `Trace::Link` designates one. Were
+/// this pairing accepted, the entry would count as a referent of the shared
+/// store while carrying the `probe` label, and `Probe::undo` refuses
+/// unconditionally with `BehaviourError::NotBuilt` — so nothing could ever
+/// remove it: the store entry becomes indestructible under a label
+/// documented as writing nothing.
 #[test]
 fn f6_a_probe_posting_over_a_trace_that_designates_a_referent_is_refused() {
     let contradicted = Posting {
@@ -278,8 +276,8 @@ fn f6_a_probe_posting_over_a_trace_that_designates_a_referent_is_refused() {
 }
 
 /// `Delegate` has no trace shape of its own — `record` only knows `Link`,
-/// `Grammar`, and `Witnessed` (`rigger-plan/src/lib.rs:708`) — so
-/// `behaviour_matches_trace` must refuse it unconditionally, whatever trace
+/// `Grammar`, and `Witnessed` — so `behaviour_matches_trace` must refuse it
+/// unconditionally, whatever trace
 /// accompanies it. This uses `Trace::Witnessed`, the trace that would
 /// otherwise record cleanly, precisely to show the refusal is about the label
 /// `delegate` having nothing to agree with, not about a mismatched trace

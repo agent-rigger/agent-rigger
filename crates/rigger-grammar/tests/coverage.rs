@@ -7,11 +7,10 @@
 //! **What this closes, and what it does not.** `table()` is exercised end to
 //! end by `capabilities.rs` and `conformance.rs` — this file adds the one
 //! property neither of them checks: that the page an adopter actually reads
-//! says exactly what the derivation measured, in the form
-//! `03-surface-publique.md` § 3 fixes for `coverage.md` — a matrix produced
-//! from the code, where a cell may read "never", and the reason is named where
-//! the derivation names one. It does not judge whether the derivation itself
-//! is correct; that is the job of the tests it draws on.
+//! says exactly what the derivation measured — a matrix produced from the
+//! code, where a cell may read "never", and the reason is named where the
+//! derivation names one. It does not judge whether the derivation itself is
+//! correct; that is the job of the tests it draws on.
 //!
 //! **Narrowed scope, declared here rather than left to be discovered.** Until
 //! B7, this test compared the whole committed file. `render` now also takes
