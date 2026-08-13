@@ -8,7 +8,7 @@
 //! exists against that one damage, and each of them leaves the file exactly as
 //! it was.
 //!
-//! Three modules, and the split is the one the requirements make.
+//! Four modules, and the split is the one the requirements make.
 //!
 //! [`ledger`] is **what is recorded and how it is read back**: an envelope that
 //! fails closed, entries that are tolerated one by one, and refusals whose text
@@ -25,10 +25,16 @@
 //! copy from one whose own write was interrupted by reading it alone. Restoring
 //! an amputated copy as though it were whole is the damage above, produced by
 //! the gesture meant to prevent it.
+//!
+//! [`withdrawal`] is **what a caller-facing channel reports once a removal
+//! concludes**: MD-38's closed set of issues, and the exit code each of them
+//! derives — declared once, so a channel projects it instead of choosing its
+//! own code for each event.
 
 pub mod backup;
 pub mod ledger;
 pub mod transaction;
+pub mod withdrawal;
 
 pub use backup::{Backup, WholeCopy};
 pub use ledger::{
@@ -38,3 +44,4 @@ pub use ledger::{
 pub use transaction::{
     replay, transact, Consent, Decision, Fresh, Mutation, Outcome, Proposal, Registry,
 };
+pub use withdrawal::WithdrawalIssue;
