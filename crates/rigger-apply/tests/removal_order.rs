@@ -73,13 +73,22 @@
 //! those bytes silently. The scenario for that one lives with the rollback
 //! tests, and removing the fingerprint comparison from the `Remove` arm turns it
 //! red — measured, not supposed.
+//!
+//! # MD-35 — the fingerprint the `Remove` arm compares against is measured, never handed to it
+//!
+//! The two guards above are about which *reading* a removal decides on; these
+//! two are about where the fingerprint on the other side of that reading's
+//! comparison can come from at all. [`rigger_apply::Measured`] is what the
+//! `Remove` arm reads the address through, and its only constructor does the
+//! `fs::read` itself — there is no way to hand it a [`rigger_plan::Digest`]
+//! already in hand, one declared, or one read out of a registry line.
 
 use std::cell::Cell;
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use rigger_apply::{
-    carry, pose, withdraw, OnDisk, PoseError, StepError, Steps, SystemPracticability,
+    carry, pose, withdraw, Measured, OnDisk, PoseError, StepError, Steps, SystemPracticability,
 };
 use rigger_plan::{behaviour, BehaviourName, Digest, Effect, Fragment, Placement, Referents};
 
@@ -352,5 +361,48 @@ fn guard_a_removal_leaves_alone_a_link_its_owner_repointed() {
         repointed,
         "the product takes back what it posed and nothing else: a removal that asked only whether \
          a link is there would have taken the owner's away and reported success"
+    );
+}
+
+#[test]
+fn md35_a_measured_fingerprint_can_only_be_produced_by_reading_the_file() {
+    // GIVEN a file of known content.
+    let machine = machine("measured-known-content");
+    let path = machine.join("root/skills/known.txt");
+    let content = "known content, read once and hashed — nothing else could produce this value";
+    fs::write(&path, content).expect("write the file of known content");
+
+    // WHEN its fingerprint is measured.
+    let measured = Measured::of(&path).expect("a file that is there must be measurable");
+
+    // THEN it equals the fingerprint of the bytes it was written with. The only
+    // way to obtain that equality is for `Measured::of` to have actually read
+    // the file: a value that defaulted, or that echoed something handed to it,
+    // would go red the day the content above changes and this assertion does
+    // not move with it.
+    assert_eq!(
+        measured.digest(),
+        Digest::of(content.as_bytes()),
+        "the measured fingerprint does not match the content read from disk"
+    );
+}
+
+#[test]
+fn md35_a_missing_file_cannot_produce_a_measured_fingerprint() {
+    // GIVEN a path nothing is at.
+    let machine = machine("measured-missing-file");
+    let path = machine.join("root/skills/absent.txt");
+
+    // WHEN its fingerprint is measured.
+    let failure = Measured::of(&path).expect_err("an absent file produced a fingerprint");
+
+    // THEN the refusal names the path — never a default fingerprint standing in
+    // for "nothing was there". That default is exactly the confusion MD-35
+    // names: an empty content and an absent file are not the same state, and a
+    // digest of zero bytes would make them read the same to every later
+    // comparison.
+    assert!(
+        matches!(&failure, StepError::Io { address, .. } if *address == path),
+        "the refusal does not name the path: {failure}"
     );
 }

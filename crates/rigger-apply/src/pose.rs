@@ -243,10 +243,17 @@ impl Steps for OnDisk {
             }
             Effect::Remove { address, posed } => match present(address)? {
                 None => Ok(()),
-                Some(Seized::Document { contents, .. })
-                    if Digest::of(contents.as_bytes()) == *posed =>
-                {
-                    take_away(address)
+                Some(Seized::Document { .. }) => {
+                    if Measured::of(address)?.digest() == *posed {
+                        take_away(address)
+                    } else {
+                        Err(StepError::NotAsRecorded {
+                            address: address.clone(),
+                            recorded: format!(
+                                "the artefact materialised under fingerprint {posed}"
+                            ),
+                        })
+                    }
                 }
                 Some(_) => Err(StepError::NotAsRecorded {
                     address: address.clone(),
@@ -359,6 +366,76 @@ fn present(address: &Path) -> Result<Option<Seized>, StepError> {
         address: address.to_path_buf(),
         contents,
     }))
+}
+
+/// A fingerprint **measured on the disk**, and reachable no other way.
+///
+/// [`Digest`] itself takes any bytes handed to it — a value a catalogue
+/// declares, one read back out of a registry line, one a test fabricates — and
+/// the reconciliation this product exists to perform compares two of those
+/// blindly unless something stops a declared or recorded one from posing as a
+/// disk reading. [`Measured::of`] is that stop: the **one** function able to
+/// produce a [`Measured`] value, and its body does nothing but `fs::read` the
+/// file and hash what it read. There is no second door — the field below is
+/// private, there is no `Default`, no `From<Digest>`, and no constructor that
+/// takes a [`Digest`] already in hand.
+///
+/// **What it hands back is a [`Digest`], and nothing else.** No path, no
+/// state, no timestamp: a caller putting an entry to conformance gets the one
+/// thing this type exists to guarantee the provenance of, and nothing that
+/// would let the comparison drift back to a value this type never measured.
+///
+/// ```compile_fail
+/// use rigger_apply::Measured;
+/// use rigger_plan::Digest;
+///
+/// let _ = Measured {
+///     digest: Digest::of(b"trust me, this is what's on disk"),
+/// };
+/// ```
+///
+/// Its twin, which differs by the one gesture and compiles — without it the
+/// refusal above would be indistinguishable from a typo. **A `compile_fail`
+/// alone measures nothing: it goes green on any mutation**, and only the pair
+/// tells a real refusal from a broken example:
+///
+/// ```no_run
+/// use rigger_apply::Measured;
+/// use std::path::Path;
+///
+/// let measured = Measured::of(Path::new("/nowhere/artefact")).unwrap();
+/// let _ = measured.digest();
+/// ```
+#[derive(Debug, Clone, Copy)]
+pub struct Measured {
+    digest: Digest,
+}
+
+impl Measured {
+    /// Reads `path` now, and returns the fingerprint of what it holds.
+    ///
+    /// **This is the read.** Every place in this crate that wants a
+    /// [`Measured`] value comes through here, and the `fs::read` lives in this
+    /// body and nowhere else that could produce one.
+    ///
+    /// A path nothing is at refuses rather than answering with the
+    /// fingerprint of an empty file: a missing file and an empty one are two
+    /// different states, and collapsing them to the same value is exactly
+    /// what would let a removal, or a diagnostic, mistake one for the other.
+    pub fn of(path: &Path) -> Result<Self, StepError> {
+        let bytes = fs::read(path).map_err(|detail| StepError::Io {
+            address: path.to_path_buf(),
+            detail,
+        })?;
+        Ok(Self {
+            digest: Digest::of(&bytes),
+        })
+    }
+
+    /// The fingerprint itself — the one thing this type ever gives up.
+    pub fn digest(&self) -> Digest {
+        self.digest
+    }
 }
 
 /// Refuses when anything at all is at `address`.
