@@ -86,6 +86,31 @@ impl WithdrawalIssue {
     /// two states, so this can only ever answer [`Self::Complete`] or
     /// [`Self::ConsentRefused`] — never [`Self::Partial`], for the reason
     /// its own doc comment gives.
+    ///
+    /// # What this closes, and what it does not
+    ///
+    /// **It closes the set of issues a caller can *name*, not the set of
+    /// states a caller can *claim*.** The enum is exhaustive and the
+    /// compiler holds it that way; this function, on the other hand,
+    /// derives without verifying. Its argument is a public type with public
+    /// variants, whose [`crate::Ledger`] derives `Default` and offers
+    /// `empty()`, so `of_withdrawal(&Outcome::Committed { ledger:
+    /// Ledger::empty() })` answers [`Self::Complete`] having witnessed no
+    /// transaction at all — and an [`Outcome`] produced by a transaction of
+    /// `Upsert` answers it too, since [`Outcome`] does not retain which
+    /// mutations ran.
+    ///
+    /// **Measured on 2026-08-13 and left as a declared limit, deliberately.**
+    /// Narrowing this argument to a witness only a withdrawal can produce is
+    /// not a tightening of one signature: [`Outcome`] destroys the
+    /// provenance today, so the type [`crate::transact`] returns would have
+    /// to carry it. Deciding what that type should retain, before any caller
+    /// exists to say what it needs, would build a public surface on a guess.
+    /// Nothing is at risk in the meantime — this function has no production
+    /// caller, and the binary crate does not even depend on this one. The
+    /// arbitration belongs to whichever change wires a withdrawal command,
+    /// and the window in which that break is free stays open only while
+    /// nothing here is published.
     pub fn of_withdrawal(outcome: &Outcome) -> Self {
         match outcome {
             Outcome::Committed { .. } => Self::Complete,
@@ -118,12 +143,35 @@ impl WithdrawalIssue {
     /// distinguishable from success either, and this function derives
     /// exactly that requirement and no more. [`Self::Partial`] is the one
     /// member something *did* go wrong for — some of what a withdrawal
-    /// named was left behind — so it alone keeps a code of its own.
+    /// named was left behind — so it answers the runtime failure code.
+    ///
+    /// **The codes are not this function's to invent, and one of them was.**
+    /// The exit-code contract of this product is ratified, four values wide
+    /// — 0 success or deliberate refusal, 2 request that cannot be
+    /// satisfied, 1 legitimate request the runtime failed, 130 interruption
+    /// — with one carve-out, 3, taken by a diagnostic for "the installed
+    /// state diverges from what is expected". [`Self::Partial`] first
+    /// answered `4`, which belongs to none of them. A withdrawal that
+    /// applied part of what it named is a legitimate request the runtime
+    /// failed partway, which is the contract's own definition of `1`, so
+    /// that is what it answers.
+    ///
+    /// A code of its own was weighed and refused for want of a measured
+    /// need: no command wires a withdrawal today, nothing constructs
+    /// [`Self::Partial`], and no test asserts what it returns. The day a
+    /// caller has to tell a partial withdrawal from a failure, the contract
+    /// takes a carve-out by dated amendment, the way the diagnostic took
+    /// its own.
+    ///
+    /// **Two of the contract's values cannot be reached from here**, and
+    /// that is a property of the type rather than a gap in it: this enum
+    /// derives the issue of a *transaction*, and a request that cannot be
+    /// satisfied, or one interrupted at a prompt, never produces one.
     pub fn exit_code(self) -> u8 {
         match self {
             Self::Complete => 0,
             Self::ConsentRefused => 0,
-            Self::Partial => 4,
+            Self::Partial => 1,
         }
     }
 }

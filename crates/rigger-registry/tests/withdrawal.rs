@@ -10,6 +10,12 @@
 //! withdrawals against each other. No test in this file fabricates a state
 //! to stand in for a partial withdrawal — that would carry the right name
 //! and measure nothing, which is worse than an admitted gap.
+//!
+//! **One test does name that member, and it is not a scenario.** The last one
+//! below constructs `WithdrawalIssue::Partial` directly to hold its exit code
+//! to the ratified table. It stages no withdrawal and claims none: what it
+//! measures is a contract value, the kind of fact that has no behaviour to
+//! reach it through and still goes red when somebody changes the number.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -157,4 +163,40 @@ fn md38_a_refused_consent_is_not_a_failure_and_exit_codes_like_a_complete_withdr
     );
 
     fs::remove_dir_all(&dir).expect("clean up");
+}
+
+/// The exit-code contract is ratified elsewhere and this is the only place in
+/// the product that holds one of its values to a number. Constructing the
+/// member directly is the point rather than a shortcut: `Partial` has no
+/// producer, so there is no scenario to reach it through, and what is being
+/// measured is not a behaviour but a **contract value** — the day someone
+/// gives it a code outside the ratified table again, this is what goes red.
+#[test]
+fn md38_a_partial_withdrawal_exit_codes_inside_the_ratified_table() {
+    // The ratified table is four values wide — 0 success or deliberate
+    // refusal, 2 request that cannot be satisfied, 1 legitimate request the
+    // runtime failed, 130 interruption — plus one carve-out, 3, held by a
+    // diagnostic. A withdrawal that applied part of what it named is the
+    // third of those.
+    assert_eq!(
+        WithdrawalIssue::Partial.exit_code(),
+        1,
+        "a partial withdrawal is a legitimate request the runtime failed partway, which is what \
+         the contract calls 1 — it first answered 4, which belongs to no ratified table"
+    );
+
+    // AND the whole set stays inside the table, so that a member added later
+    // cannot smuggle a fifth value in beside the one just corrected.
+    for issue in [
+        WithdrawalIssue::Complete,
+        WithdrawalIssue::ConsentRefused,
+        WithdrawalIssue::Partial,
+    ] {
+        let code = issue.exit_code();
+        assert!(
+            matches!(code, 0 | 1 | 2 | 130),
+            "{issue:?} exits with {code}, which is outside the ratified table — a value outside \
+             it is a carve-out, and a carve-out is an amendment somebody has to write"
+        );
+    }
 }
