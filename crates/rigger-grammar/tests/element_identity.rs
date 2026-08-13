@@ -940,7 +940,7 @@ fn guard_element_remove_and_unmerge_agree_when_only_the_owner_touched_the_elemen
     }
 }
 
-/// D10 — `Jsonc::invert`'s `Element` arm, on its own, without going through
+/// `Jsonc::invert`'s `Element` arm, on its own, without going through
 /// `unmerge`. An identity `identified_element` does not find used to fall
 /// through to `Ok(root.to_string())` — the document handed back unchanged —
 /// instead of refusing, for **both** shapes of `ElementUndo`: a whole element
@@ -997,7 +997,8 @@ fn guard_invert_refuses_an_element_update_the_document_no_longer_carries() {
     }
 }
 
-/// D10's own finding, re-verifying the 2026-08-12 analysis that `unmerge`
+/// The finding that closed `invert`'s silent skip, re-verifying the
+/// 2026-08-12 analysis that `unmerge`
 /// always calls `accounted_for` before its own call to `Grammar::invert`, so
 /// the silent skip above is inert in practice: true as an order, false as a
 /// guarantee. At the time, `accounted_for`'s `Inverse::Element { undo:
@@ -1009,7 +1010,7 @@ fn guard_invert_refuses_an_element_update_the_document_no_longer_carries() {
 /// `invert`'s silent skip, and came back as `Ok` on a document the write
 /// never touched.
 ///
-/// **D11 closed it from the other end.** The `Restore` arm now looks the
+/// **The accounting closed it from the other end.** The `Restore` arm now looks the
 /// identity up too, through its own call to `find_element_by_identity`, so
 /// `accounted_for` itself refuses before `unmerge` ever reaches its call to
 /// `invert` — this guard's scenario never exercises `invert`'s silent skip
@@ -1048,7 +1049,7 @@ fn guard_unmerge_refuses_an_element_update_when_the_owner_has_deleted_the_elemen
     );
 }
 
-/// A grammar whose `invert` reproduces, on purpose, the defect D10 closed:
+/// A grammar whose `invert` reproduces, on purpose, the defect since closed:
 /// an identity `Jsonc::invert` does not find is swallowed into `Ok(source
 /// unchanged)` instead of refusing. Every other method delegates to
 /// `Jsonc`'s real implementation, `find_element_by_identity` included.
@@ -1056,9 +1057,9 @@ fn guard_unmerge_refuses_an_element_update_when_the_owner_has_deleted_the_elemen
 /// The guard above this one shows the composition holds: `unmerge` refuses
 /// because `invert` now does. Run through **this** grammar instead, that
 /// second line of defence is gone, and only a lookup run inside
-/// `accounted_for` itself — D11's own arm, not D10's fix in `Jsonc` — can
+/// `accounted_for` itself — its own `Restore` arm, not the fix in `Jsonc` — can
 /// still catch a `Restore` trace replayed against an element the document
-/// no longer carries. This isolates what D11 adds from what D10 already
+/// no longer carries. This isolates what the accounting adds from what `invert` already
 /// covers, standing in for the day `accounted_for` gains a caller, or a
 /// grammar, that does not route through a self-checking `invert`.
 struct InvertSilentOnMissingElement;
@@ -1105,16 +1106,16 @@ impl Grammar for InvertSilentOnMissingElement {
     }
 }
 
-/// D11 — `accounted_for`'s `Inverse::Element { undo: ElementUndo::Restore {
-/// .. } }` arm, on its own contribution, isolated from D10's fix in
+/// `accounted_for`'s `Inverse::Element { undo: ElementUndo::Restore {
+/// .. } }` arm, on its own contribution, isolated from the fix in
 /// `Jsonc::invert`. Before this
 /// slice, that arm built its `places` from the field names the trace
 /// recorded and never looked the identity up on `source` — the guarantee
 /// that a `Restore` trace naming a deleted element gets refused held only by
 /// composition, because `unmerge` always calls `accounted_for` before
-/// `invert`, and `invert` (since D10) refuses on its own. Route the same
+/// `invert`, and `invert` now refuses on its own. Route the same
 /// trace through a grammar whose `invert` does not refuse — reproducing
-/// exactly the pre-D10 defect — and only `accounted_for`'s own lookup is
+/// exactly the defect `invert` used to carry — and only `accounted_for`'s own lookup is
 /// left standing between a deleted element and an `Ok` on a document
 /// `unmerge` never touched.
 #[test]

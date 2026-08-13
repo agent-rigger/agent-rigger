@@ -853,10 +853,10 @@ fn guard_an_absent_path_is_refused_by_being_named() {
     );
 }
 
-/// D10 — `Jsonc::invert`'s `Values` arm, on its own, without going through
+/// `Jsonc::invert`'s `Values` arm, on its own, without going through
 /// `unmerge`. `find_string_element` returning `None` used to fall out of the
 /// loop in silence and hand the document back unchanged (`Ok`) instead of
-/// refusing — the sibling of the gap D1 closed in `merge::accounted_for`, but
+/// refusing — the sibling of the gap MD-38·1 closed in `merge::accounted_for`, but
 /// on the grammar's own inverse rather than on the accounting run around it.
 /// Every caller in this crate hands `invert` a value it just wrote, or a
 /// value `accounted_for` has already found — this test is the one place that

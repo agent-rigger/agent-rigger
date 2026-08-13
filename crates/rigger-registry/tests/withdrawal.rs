@@ -185,13 +185,9 @@ fn md38_a_partial_withdrawal_exit_codes_inside_the_ratified_table() {
          the contract calls 1 — it first answered 4, which belongs to no ratified table"
     );
 
-    // AND the whole set stays inside the table, so that a member added later
-    // cannot smuggle a fifth value in beside the one just corrected.
-    for issue in [
-        WithdrawalIssue::Complete,
-        WithdrawalIssue::ConsentRefused,
-        WithdrawalIssue::Partial,
-    ] {
+    // AND every member stays inside the table, so a member added later cannot
+    // put a fifth value in beside the one just corrected.
+    for issue in every_issue() {
         let code = issue.exit_code();
         assert!(
             matches!(code, 0 | 1 | 2 | 130),
@@ -199,4 +195,32 @@ fn md38_a_partial_withdrawal_exit_codes_inside_the_ratified_table() {
              it is a carve-out, and a carve-out is an amendment somebody has to write"
         );
     }
+}
+
+/// Every member of the set, and **the match below is why this list cannot go
+/// stale**. Rust does not enumerate an enum, so a hand-written array is what
+/// there is; on its own it would be a list a new member simply never joins,
+/// which is a guard that quietly stops guarding. The match makes the compiler
+/// refuse this file until the new member is named here — the same lock
+/// `WithdrawalIssue::exit_code` carries for the codes themselves.
+///
+/// **Measured, not assumed.** Adding a fourth member with a code outside the
+/// table, in a throwaway worktree, left the whole suite green while this list
+/// was written out by hand. That is the shape this repository calls a green
+/// test that measures nothing, and it was found in the commit that introduced
+/// this guard.
+fn every_issue() -> [WithdrawalIssue; 3] {
+    let all = [
+        WithdrawalIssue::Complete,
+        WithdrawalIssue::ConsentRefused,
+        WithdrawalIssue::Partial,
+    ];
+    for issue in all {
+        match issue {
+            WithdrawalIssue::Complete
+            | WithdrawalIssue::ConsentRefused
+            | WithdrawalIssue::Partial => {}
+        }
+    }
+    all
 }

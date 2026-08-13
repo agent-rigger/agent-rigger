@@ -73,9 +73,18 @@ pub(crate) const MARKER: &str = "rigger-registry";
 /// writing it, and a build that does not know it reads the entry all the same.
 ///
 /// Version `1` is **refused and not migrated**. No registry in that format
-/// exists outside the working directories of this suite: the product has no
-/// command surface, no binary and no release, so a migration would be written
-/// for a document that does not exist.
+/// exists outside the working directories of this suite: nothing has been
+/// released, and no command writes or reads a registry — the one binary this
+/// workspace builds recognises a single subcommand, which renders a coverage
+/// page and never touches this crate. A migration would be written for a
+/// document that does not exist.
+///
+/// _That sentence used to say the product had "no command surface, no binary
+/// and no release", which was two thirds wrong once a binary landed, and it
+/// carried the whole argument for refusing to migrate. Corrected 2026-08-13
+/// against the crate list rather than against memory: what makes the
+/// migration pointless is that nothing reads this format, not that nothing
+/// runs._
 pub(crate) const FORMAT_VERSION: u32 = 2;
 
 /// The word that opens an entry's line.

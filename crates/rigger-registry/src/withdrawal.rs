@@ -157,11 +157,16 @@ impl WithdrawalIssue {
     /// that is what it answers.
     ///
     /// A code of its own was weighed and refused for want of a measured
-    /// need: no command wires a withdrawal today, nothing constructs
-    /// [`Self::Partial`], and no test asserts what it returns. The day a
-    /// caller has to tell a partial withdrawal from a failure, the contract
-    /// takes a carve-out by dated amendment, the way the diagnostic took
-    /// its own.
+    /// need, as things stood on 2026-08-13: no command wires a withdrawal,
+    /// no production path constructs [`Self::Partial`], and nothing had ever
+    /// asserted what it returns. The day a caller has to tell a partial
+    /// withdrawal from a failure, the contract takes a carve-out by dated
+    /// amendment, the way the diagnostic took its own.
+    ///
+    /// _An assertion exists now, and it is the one this correction brought:
+    /// the integration suite holds this member to `1` and holds every member
+    /// inside the ratified table. Saying "no test asserts it" in the commit
+    /// that adds the test is the shape of claim this crate keeps paying for._
     ///
     /// **Two of the contract's values cannot be reached from here**, and
     /// that is a property of the type rather than a gap in it: this enum
