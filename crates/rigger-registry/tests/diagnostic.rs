@@ -1,11 +1,12 @@
 //! What a diagnostic pass may report about a posed entry, and how it fails
 //! when it cannot answer.
 //!
-//! Four tranches share this file, because each asks the same underlying
+//! Three tranches share this file, because each asks the same underlying
 //! question from a different angle: does what the registry says about a
 //! posed entry still hold on the machine, and what does a diagnostic pass do
 //! when it cannot tell — for one entry, for the whole registry, or for
-//! something the registry never named at all.
+//! something the registry never named at all. **Only one of the three has a
+//! test here today.**
 //!
 //! **MD-35, this file's own test.** A comparison built only from what a
 //! catalogue declares and what the registry already recorded can answer
@@ -14,9 +15,9 @@
 //! supposed to describe. [`rigger_apply::Measured::of`] is the one function
 //! able to produce a fingerprint of what is actually there, because its
 //! whole body is the read. A block deleted by hand cannot make it produce
-//! one, so no comparison built on its result can ever answer `conformant`
-//! for that block — proved below by deleting one and reading the registry's
-//! own agreement with the catalogue right through the deletion.
+//! one, so no comparison built on its result can settle whether the block is
+//! conformant — proved below by deleting one and reading the registry's own
+//! agreement with the catalogue right through the deletion.
 //!
 //! **MD-36**, not yet written here: a diagnostic pass over several entries
 //! where one posed document cannot be read renders that one entry
@@ -54,6 +55,18 @@ fn machine(name: &str) -> PathBuf {
     path
 }
 
+/// This test's name promises a verdict the product does not implement: no
+/// `conformant` function exists anywhere in this repository, so nothing here
+/// can go red for failing to answer it. What the body actually establishes —
+/// that [`rigger_apply::Measured::of`] refuses to produce a fingerprint for a
+/// file deleted by hand, after showing that the catalogue's declared value
+/// and the registry's recorded value still agree through that deletion — is
+/// real, but it is narrower than the name states, and it is already covered,
+/// more strongly, by `md35_a_missing_file_cannot_produce_a_measured_fingerprint`
+/// in `rigger-apply`'s `removal_order.rs`, which additionally checks that the
+/// refusal names the missing path. Kept here for the trap it demonstrates —
+/// that two records agreeing settles nothing about the disk — not for a
+/// `conformant` verdict nothing in this repository builds.
 #[test]
 fn md35_a_block_deleted_by_hand_is_absent_and_never_conformant() {
     // MD-35 states its scenario on a bounded block posed by `merge` — a

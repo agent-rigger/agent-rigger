@@ -710,13 +710,12 @@ fn guard_a_removal_that_finds_no_element_refuses_by_naming_it() {
 // Both undo the same pose of the same element, through the same writer:
 // `element::remove` (element.rs:261) builds `Inverse::Element { .. undo:
 // ElementUndo::Remove }` on the spot and calls `G::invert`; `unmerge`
-// (merge.rs:285) receives exactly that value and calls `G::invert` too. The
-// bytes they render are therefore identical by construction; only the
-// bookkeeping each one runs around that write — `element::accounted`
-// (element.rs:354-371) against `merge::accounted_for`'s `Element`/`Remove`
-// arm (merge.rs:392-404) — can differ. Twelve tests above exercise the first
-// path, four exercise the second; none had ever compared them before the
-// guards below.
+// receives exactly that value and calls `G::invert` too. The bytes they
+// render are therefore identical by construction; only the bookkeeping each
+// one runs around that write — `element::accounted` (element.rs:354-371)
+// against `accounted_for`'s `Inverse::Element { undo: ElementUndo::Remove }`
+// arm — can differ. Twelve tests above exercise the first path, four
+// exercise the second; none had ever compared them before the guards below.
 
 /// The same document once its owner has removed a field the product wrote,
 /// keeping only what they still wanted from the element.
@@ -739,8 +738,8 @@ const FIELD_REMOVED_BY_ITS_OWNER: &str = concat!(
 /// The value both removal paths write through, built from `ElementTrace`'s
 /// own `pub` accessors rather than duplicated by hand — the same value
 /// `element::remove` constructs right before calling `G::invert`
-/// (element.rs:276-283) and `unmerge` receives unchanged (merge.rs:285,
-/// merge.rs:294).
+/// (element.rs:276-283) and `unmerge` receives unchanged, passing it on to
+/// its own call to `G::invert`.
 fn inverse_of(trace: &ElementTrace) -> Inverse {
     Inverse::Element {
         path: trace.path().to_vec(),
@@ -790,12 +789,13 @@ fn guard_element_remove_and_unmerge_agree_on_the_verdict_when_the_element_is_not
     let unmerge_verdict = unmerge::<Jsonc>(SETTINGS, &inverse_of(&trace("scripts/guard.sh")));
     assert!(
         unmerge_verdict.is_err(),
-        "unmerge must refuse the same identity too, but returned {unmerge_verdict:?} — \
-         `accounted_for`'s `Element`/`Remove` arm (merge.rs:392-404) runs no lookup equivalent \
-         to `element::remove`'s and stays empty when nothing is found, `Jsonc::invert` then finds \
-         no element to remove and hands the document back untouched (jsonc.rs:308-310), and since \
-         nothing disappeared between `before` and `after` the post-condition has nothing to \
-         catch — unmerge reports a removal DONE on a document it never touched"
+        "unmerge must refuse the same identity too, but returned {unmerge_verdict:?} — two \
+         refusals stand in front of this today, and reaching this line means both are gone: \
+         `accounted_for`'s `Inverse::Element {{ undo: ElementUndo::Remove }}` arm looks the \
+         identity up and refuses when nothing carries it, and `Jsonc::invert` refuses on the same \
+         arm rather than handing the document back untouched. Without either, nothing disappears \
+         between `before` and `after`, the post-condition has nothing to catch, and unmerge \
+         reports a removal DONE on a document it never touched"
     );
 }
 
@@ -804,9 +804,9 @@ fn guard_element_remove_and_unmerge_agree_on_the_verdict_when_the_element_is_not
 /// cross-cutting loss the existing guard
 /// `c5_a_removal_that_destroys_a_value_it_cannot_name_is_refused` already
 /// proves `element::remove` catches. Declared again here, rather than reused,
-/// because it must implement [`Grammar::comments`]: `unmerge` reads it before
-/// its `ValuesLost` witness even runs (merge.rs:287), and a grammar that
-/// leaves it unimplemented would make `unmerge` fail with `MergeError::
+/// because it must implement [`Grammar::comments`]: `unmerge` calls it before
+/// its `ValuesLost` witness even runs, and a grammar that leaves it
+/// unimplemented would make `unmerge` fail with `MergeError::
 /// Grammar(GrammarError::Unsupported)` — a witness the other path lacks, not
 /// the accounting disagreement this test means to compare.
 struct WideningElementRemoval;
@@ -904,10 +904,10 @@ fn guard_element_remove_and_unmerge_agree_when_only_the_owner_touched_the_elemen
     // report names as currently found — so a field the owner modified is
     // credited twice (the value the product wrote, and the value now on
     // disk) and a field the owner deleted is credited once, for a value no
-    // longer anywhere in the document. `merge::accounted_for`'s `Element`/
-    // `Remove` arm (merge.rs:392-404) has no trace fields to draw on and
-    // credits only what `find_element_by_identity` reads off the document as
-    // it stands.
+    // longer anywhere in the document. `merge::accounted_for`'s
+    // `Inverse::Element { undo: ElementUndo::Remove }` arm has no trace
+    // fields to draw on and credits only what `find_element_by_identity`
+    // reads off the document as it stands.
     //
     // Neither extra credit changes a verdict on the two documents below, and
     // the reason is the same for both: a value already absent, or already
@@ -998,16 +998,23 @@ fn guard_invert_refuses_an_element_update_the_document_no_longer_carries() {
 }
 
 /// D10's own finding, re-verifying the 2026-08-12 analysis that `unmerge`
-/// always calls `accounted_for` before `invert`, so the silent skip above is
-/// inert in practice: true as an order, false as a guarantee. `accounted_for`'s
-/// `Element`/`Restore` arm (merge.rs:422-433) builds its `places` from the
-/// field names the trace recorded and — unlike its `Remove` sibling three
-/// lines above — never looks the identity up on `source`. Before this slice,
-/// an element the owner had deleted outright therefore sailed through
-/// `accounted_for` unaccounted-for-nothing, reached `invert`'s silent skip,
-/// and came back as `Ok` on a document the write never touched. The fix
-/// above closes this from the inside — `invert` itself now refuses — so this
-/// guard passes regardless of what `accounted_for` does or does not check.
+/// always calls `accounted_for` before its own call to `Grammar::invert`, so
+/// the silent skip above is inert in practice: true as an order, false as a
+/// guarantee. At the time, `accounted_for`'s `Inverse::Element { undo:
+/// ElementUndo::Restore { .. } }` arm built its `places` from the field
+/// names the trace recorded and — unlike its `Inverse::Element { undo:
+/// ElementUndo::Remove }` sibling in the same match — never looked the
+/// identity up on `source`. An element the owner had deleted outright
+/// therefore sailed through `accounted_for` unaccounted-for-nothing, reached
+/// `invert`'s silent skip, and came back as `Ok` on a document the write
+/// never touched.
+///
+/// **D11 closed it from the other end.** The `Restore` arm now looks the
+/// identity up too, through its own call to `find_element_by_identity`, so
+/// `accounted_for` itself refuses before `unmerge` ever reaches its call to
+/// `invert` — this guard's scenario never exercises `invert`'s silent skip
+/// at all. What passes it today is `accounted_for`'s own refusal, not the
+/// fix inside `invert` this doc used to credit.
 #[test]
 fn guard_unmerge_refuses_an_element_update_when_the_owner_has_deleted_the_element() {
     // GIVEN the same `Restore`-shaped update as the guard above.
@@ -1098,8 +1105,9 @@ impl Grammar for InvertSilentOnMissingElement {
     }
 }
 
-/// D11 — `accounted_for`'s `Element`/`Restore` arm (merge.rs:422-433), on its
-/// own contribution, isolated from D10's fix in `Jsonc::invert`. Before this
+/// D11 — `accounted_for`'s `Inverse::Element { undo: ElementUndo::Restore {
+/// .. } }` arm, on its own contribution, isolated from D10's fix in
+/// `Jsonc::invert`. Before this
 /// slice, that arm built its `places` from the field names the trace
 /// recorded and never looked the identity up on `source` — the guarantee
 /// that a `Restore` trace naming a deleted element gets refused held only by

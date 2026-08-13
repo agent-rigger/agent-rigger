@@ -87,9 +87,14 @@
 //! back a bare [`rigger_plan::Digest`], and a bare `Digest` compares equal to
 //! any other regardless of provenance — `Digest::of(bytes) == recorded`
 //! compiles and passes for any `bytes`, measured or not. `digest()` cannot be
-//! narrowed or removed: [`rigger_registry`]'s own diagnostic reads it back out
-//! as the one public projection this type is contracted to expose.
-//! [`Measured::matches`] is the additive answer available inside this crate —
+//! narrowed or removed on that account: the projection is what a future
+//! diagnostic comparison would need to read, one public `Digest` and nothing
+//! else. **Not exercised today** — measured across this repository, the only
+//! caller of `.digest()` is this crate's own test below,
+//! `md35_a_measured_fingerprint_can_only_be_produced_by_reading_the_file`;
+//! [`rigger_registry`]'s diagnostic test calls [`Measured::of`] and checks
+//! `is_err()`, never `digest()`. [`Measured::matches`] is the additive answer
+//! available inside this crate —
 //! it makes the correct comparison the one that is shortest to write, by
 //! naming the read its receiver depends on. It does not make the bypass a
 //! compile error: that would require `Digest` itself to stop being freely

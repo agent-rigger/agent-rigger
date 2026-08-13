@@ -405,9 +405,8 @@ fn present(address: &Path) -> Result<Option<Seized>, StepError> {
 /// use rigger_apply::Measured;
 /// use rigger_plan::Digest;
 ///
-/// let _ = Measured {
-///     digest: Digest::of(b"trust me, this is what's on disk"),
-/// };
+/// let digest = Digest::of(b"trust me, this is what's on disk");
+/// let _ = Measured { digest };
 /// ```
 ///
 /// Its twin, which differs by the one gesture and compiles — without it the
@@ -417,10 +416,11 @@ fn present(address: &Path) -> Result<Option<Seized>, StepError> {
 ///
 /// ```no_run
 /// use rigger_apply::Measured;
-/// use std::path::Path;
+/// use rigger_plan::Digest;
 ///
-/// let measured = Measured::of(Path::new("/nowhere/artefact")).unwrap();
-/// let _ = measured.digest();
+/// let digest = Digest::of(b"trust me, this is what's on disk");
+/// let _ = digest;
+/// let _ = Measured::of(std::path::Path::new("/nowhere/artefact"));
 /// ```
 ///
 /// # The comparison this type does not itself close
