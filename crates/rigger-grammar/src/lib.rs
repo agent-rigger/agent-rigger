@@ -185,6 +185,32 @@ pub enum GrammarError {
         /// The value that was looked for.
         value: String,
     },
+    /// The object at `path` does not carry `key`. A trace named a key it
+    /// created, or one whose value it replaced, and the document no longer
+    /// carries it — its owner deleted it between the pose and this replay.
+    ///
+    /// **The same fact again, for the third and most common trace shape.**
+    /// [`Self::ElementNotFound`] and [`Self::ValueNotFound`] each close one arm
+    /// of the same hole, and this closes the last: a trace replayed against a
+    /// document that does not carry what it names is entitled to nothing, and
+    /// nothing is not an empty account.
+    ///
+    /// **On a replaced key it refuses a write, not a silence.** Undoing a
+    /// replacement means putting the earlier value back, and that inversion is
+    /// defined only while the document still holds what the pose left there.
+    /// Once the key is gone, writing the earlier value back does not undo a
+    /// pose — it creates a key a person removed, out of bytes this product
+    /// never posed. Nothing downstream would catch it either: a removal's
+    /// post-condition compares what **disappeared**, so a key that **appears**
+    /// passes every check made here.
+    KeyNotFound {
+        /// The grammar that refuses.
+        grammar: &'static str,
+        /// The path of the object it was looked for in.
+        path: String,
+        /// The key that was looked for.
+        key: String,
+    },
 }
 
 impl GrammarError {
@@ -279,6 +305,20 @@ impl GrammarError {
         }
     }
 
+    /// Search refusal, naming the grammar, the object, and the key it does not
+    /// carry.
+    pub fn key_not_found(grammar: &'static str, path: &[String], key: impl fmt::Display) -> Self {
+        Self::KeyNotFound {
+            grammar,
+            path: if path.is_empty() {
+                "(root)".to_string()
+            } else {
+                path.join(".")
+            },
+            key: key.to_string(),
+        }
+    }
+
     /// The grammar that refused.
     pub fn grammar(&self) -> &'static str {
         match self {
@@ -289,7 +329,8 @@ impl GrammarError {
             | Self::DuplicatedIdentity { grammar, .. }
             | Self::ReservedField { grammar, .. }
             | Self::ElementNotFound { grammar, .. }
-            | Self::ValueNotFound { grammar, .. } => grammar,
+            | Self::ValueNotFound { grammar, .. }
+            | Self::KeyNotFound { grammar, .. } => grammar,
         }
     }
 }
@@ -351,6 +392,11 @@ impl fmt::Display for GrammarError {
             } => write!(
                 f,
                 "grammar `{grammar}`: the array `{path}` does not carry the value `{value}` — the \
+                 document no longer carries what was posed there"
+            ),
+            Self::KeyNotFound { grammar, path, key } => write!(
+                f,
+                "grammar `{grammar}`: the object `{path}` does not carry the key `{key}` — the \
                  document no longer carries what was posed there"
             ),
         }

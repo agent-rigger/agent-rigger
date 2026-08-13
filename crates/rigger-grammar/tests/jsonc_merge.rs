@@ -888,3 +888,77 @@ fn guard_invert_refuses_a_value_removal_the_document_no_longer_carries() {
         other => panic!("the refusal does not name what is missing: {other:?}"),
     }
 }
+
+/// The third trace shape, on the arm the two guards above left alone.
+///
+/// `Inverse::Keys` is what a `merge` posing object keys records, and it is the
+/// most common shape this grammar produces. Its inversion skipped a key the
+/// document no longer carries, exactly as the other two arms did before they
+/// were closed — and nothing downstream could catch it: the post-condition
+/// compares what **disappeared** between the document before and the rendering
+/// after, so a replay that changes nothing leaves it nothing to compare.
+///
+/// A removal that reports success over a document it never touched is the one
+/// outcome this crate exists to prevent.
+#[test]
+fn guard_invert_refuses_a_key_removal_the_document_no_longer_carries() {
+    // GIVEN a document that does not carry the key a trace names — the owner
+    // deleted it between the pose and this replay.
+    const DOCUMENT: &str = concat!("{\n", "  \"model\": \"opus\"\n", "}\n",);
+    let inverse = Inverse::Keys {
+        path: Vec::new(),
+        added: vec!["statusLine".to_string()],
+        replaced: Vec::new(),
+    };
+    assert!(
+        !DOCUMENT.contains("statusLine"),
+        "the fixture must not carry the key, or this test measures nothing"
+    );
+
+    // WHEN `invert` replays that trace directly, with nothing standing in front
+    // of it to guarantee the key is still there.
+    let refusal = Jsonc::invert(DOCUMENT, &inverse)
+        .expect_err("a key the document no longer carries must not be silently skipped");
+
+    // THEN it names the key, rather than handing the document back untouched.
+    match &refusal {
+        GrammarError::KeyNotFound { key, .. } => assert_eq!(key, "statusLine"),
+        other => panic!("the refusal does not name what is missing: {other:?}"),
+    }
+}
+
+/// The same arm, on the gesture that does not merely stay silent but **writes**.
+///
+/// A key the pose replaced is undone by putting its earlier value back, and
+/// that inversion is only defined while the document still holds what the pose
+/// left there. Once the owner has deleted the key outright, writing the earlier
+/// value back does not undo a pose — it creates a key a person removed, with
+/// bytes this product never posed.
+///
+/// It is worse than the silent skip above, and harder to see: the post-condition
+/// only ever compares what **disappeared**, so a key that **appears** passes
+/// every check this crate makes.
+#[test]
+fn guard_invert_refuses_to_restore_a_key_the_owner_has_deleted() {
+    // GIVEN a document the owner has emptied of the key a trace replaced.
+    const DOCUMENT: &str = concat!("{\n", "  \"model\": \"opus\"\n", "}\n",);
+    let inverse = Inverse::Keys {
+        path: Vec::new(),
+        added: Vec::new(),
+        replaced: vec![("statusLine".to_string(), Value::text("before the pose"))],
+    };
+    assert!(
+        !DOCUMENT.contains("statusLine"),
+        "the fixture must not carry the key, or this test measures nothing"
+    );
+
+    // WHEN `invert` replays that trace directly.
+    let refusal = Jsonc::invert(DOCUMENT, &inverse)
+        .expect_err("restoring a key the owner deleted writes bytes this product never posed");
+
+    // THEN it names the key rather than putting it back.
+    match &refusal {
+        GrammarError::KeyNotFound { key, .. } => assert_eq!(key, "statusLine"),
+        other => panic!("the refusal does not name what is missing: {other:?}"),
+    }
+}

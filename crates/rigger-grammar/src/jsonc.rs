@@ -269,20 +269,34 @@ impl Grammar for Jsonc {
                 replaced,
             } => {
                 let object = object_at(&root, path)?;
+                // **A key the document no longer carries is a refusal, on both
+                // gestures.** The trace names keys, and a trace replayed against
+                // a document that does not carry what it names is entitled to
+                // nothing: skipping would let a removal report success over a
+                // document it never touched, and nothing downstream catches that
+                // — the post-condition compares what disappeared, and a replay
+                // that changes nothing leaves it nothing to compare.
                 for name in added {
                     refuse_if_defined_twice(&object, name)?;
-                    if let Some(property) = object.get(name) {
-                        property.remove();
-                    }
+                    let Some(property) = object.get(name) else {
+                        return Err(GrammarError::key_not_found(Jsonc::NAME, path, name));
+                    };
+                    property.remove();
                 }
+                // Restoring is refused for a stronger reason than skipping.
+                // Undoing a replacement means putting the earlier value back,
+                // and that inversion is defined only while the document still
+                // holds what the pose left there. Once the owner has deleted the
+                // key, writing the earlier value back does not undo a pose — it
+                // creates a key a person removed, out of bytes this product
+                // never posed. It would pass unseen too: the post-condition
+                // watches what disappears, never what appears.
                 for (name, value) in replaced {
                     refuse_if_defined_twice(&object, name)?;
-                    match object.get(name) {
-                        Some(property) => property.set_value(input_value(value)),
-                        None => {
-                            object.append(name, input_value(value));
-                        }
-                    }
+                    let Some(property) = object.get(name) else {
+                        return Err(GrammarError::key_not_found(Jsonc::NAME, path, name));
+                    };
+                    property.set_value(input_value(value));
                 }
             }
             Inverse::Values { path, added } => {
