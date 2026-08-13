@@ -1863,13 +1863,30 @@ fn md39_2_every_resolution_declaration_cites_a_dated_or_versioned_source() {
         })
         .collect();
 
-    // A guard of the guard: if nothing was found, the loop below passes
-    // vacuously and protects nothing — which is exactly the mode this file's
-    // other guards of guards exist to close.
-    assert!(
-        !declarations.is_empty(),
-        "no `const RESOLUTION` declaration was found in the crate sources — this guard would \
-         protect nothing"
+    // **The count is derived, not floored.** `Resolution` is a required trait
+    // constant, so every `impl Grammar for` in this crate declares one: the
+    // number of implementations is the number of declarations there must be.
+    //
+    // A floor — "at least one was found" — is only crossed from above. It lets
+    // a declaration go **invisible** to the reading and says nothing, which is
+    // what happened: this guard was widened to read every occurrence, and a
+    // declaration writing its type as `crate::Resolution`, or putting a space
+    // before the colon, still produced no entry at all. Measured green at the
+    // full suite with one of the two declarations unread. The neighbouring
+    // guard on modules had already ruled this, in this same file, for the same
+    // reason.
+    let implementations = sources
+        .iter()
+        .map(|(_, content)| content.matches("impl Grammar for").count())
+        .sum::<usize>();
+    assert_eq!(
+        declarations.len(),
+        implementations,
+        "the reading found {} `const RESOLUTION` declaration(s) for {} `impl Grammar for` in this \
+         crate — a declaration this reading cannot see is a declaration this guard does not judge, \
+         and the shape it fails to match is the interesting half",
+        declarations.len(),
+        implementations
     );
 
     let unsourced: Vec<String> = declarations
@@ -1905,8 +1922,12 @@ fn guard_the_resolution_source_detector_actually_discriminates() {
     // reason" passed while sourcing nothing — measured by mutation on
     // 2026-08-13. The check now wants a year of this century, which is still a
     // check on the **form** of a claim and never on its truth.
+    // The control that matters is a line number **inside the plausible range
+    // of years**: `1234` versus `20xx` discriminates nothing a reader cares
+    // about, and this file is itself long enough for `line 2013` to exist.
     let quoted_with_a_line_number =
-        "See src/toml.rs line 1234 for \"the reason\", which is entirely invented.";
+        "See src/toml.rs line 2013 for \"the reason\", which is entirely invented.";
+    let quoted_with_a_bare_year = "Measured in 2026: the host resolves \"by category\".";
 
     assert!(is_dated_or_versioned_and_quoted(dated_and_quoted));
     assert!(is_dated_or_versioned_and_quoted(versioned_and_quoted));
@@ -1914,6 +1935,7 @@ fn guard_the_resolution_source_detector_actually_discriminates() {
     assert!(!is_dated_or_versioned_and_quoted(dated_but_not_quoted));
     assert!(!is_dated_or_versioned_and_quoted(quoted_but_not_dated));
     assert!(!is_dated_or_versioned_and_quoted(quoted_with_a_line_number));
+    assert!(!is_dated_or_versioned_and_quoted(quoted_with_a_bare_year));
 }
 
 /// A guard of the guard, on the **reading** rather than on the detector: the
@@ -2004,13 +2026,32 @@ fn is_quoted(comment: &str) -> bool {
     comment.matches('"').count() >= 2
 }
 
-/// Whether `comment` names a calendar year plausible for this project: four
-/// consecutive ASCII digits.
+/// Whether `comment` carries a **measured date**, in the form this workspace
+/// writes them: `20xx-mm`, at least.
+///
+/// **Twice narrowed, and the second time is the one that closed the class.**
+/// It first accepted any four consecutive digits, so a comment pointing at
+/// "src/toml.rs line 1234" for "the reason" sourced a claim with a line
+/// number. Narrowing to this century did not close that — this crate's own
+/// test file is over two thousand lines, so "line 2013" walked straight
+/// through, and the positive control added alongside discriminated `1234`
+/// from `20xx` rather than a line number from a date. Requiring the month
+/// separator is what makes a line number stop looking like a date.
+///
+/// It remains a check on the **shape** of a claim. A well-formed date above an
+/// invented source passes, and nothing in this crate can read the document a
+/// claim cites. What this refuses is an undated assertion, which is all it
+/// has ever claimed to refuse.
 fn contains_a_year(comment: &str) -> bool {
-    comment
-        .as_bytes()
-        .windows(4)
-        .any(|w| w[0] == b'2' && w[1] == b'0' && w[2].is_ascii_digit() && w[3].is_ascii_digit())
+    comment.as_bytes().windows(8).any(|w| {
+        w[0] == b'2'
+            && w[1] == b'0'
+            && w[2].is_ascii_digit()
+            && w[3].is_ascii_digit()
+            && w[4] == b'-'
+            && w[5].is_ascii_digit()
+            && w[6].is_ascii_digit()
+    })
 }
 
 /// Whether `comment` names a version of an external specification — `v`
