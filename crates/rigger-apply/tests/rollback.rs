@@ -830,8 +830,7 @@ impl Steps for FailsInsteadOf {
 }
 
 #[test]
-fn md40_3_a_link_that_fails_after_the_precondition_passed_is_rolled_back_and_never_replaced_by_a_copy(
-) {
+fn md40_3_a_link_that_fails_after_the_precondition_passed_is_rolled_back() {
     // GIVEN the precondition MD-40·1 guards passing — link practicable at the
     // effective root — and the primitive that actually makes the link failing
     // anyway, for real, once `carry_out` reaches `Effect::Link`. The gap is
@@ -864,9 +863,13 @@ fn md40_3_a_link_that_fails_after_the_precondition_passed_is_rolled_back_and_nev
     }
     assert!(
         fs::symlink_metadata(&address).is_err(),
-        "no copy — no ordinary file, and no link either — may stand at the address the failed \
-         link primitive never reached: `make_link` returns its `io::Error` exactly as it is, and \
-         nothing downstream of it poses anything in its place"
+        "nothing may stand at the address once the transaction has given the machine back. \
+         **This does not measure that no copy replaces a failed link**, and reading it that way \
+         is what left that property unguarded: this harness fails *instead of* the primitive, so \
+         the arm where a fallback would be written is never entered here. The test that measures \
+         no test here measures it: see \
+         `guard_a_link_the_primitive_refuses_leaves_nothing_at_the_address`, which enters that arm \
+         and says why it still cannot tell a fallback apart"
     );
     assert_eq!(
         snapshot(&machine),
@@ -882,4 +885,78 @@ fn guard_the_behaviour_the_scenarios_run_through_is_the_one_the_closed_set_serve
     // Without this, every scenario above could be running through something the
     // catalogue can never select.
     assert_eq!(behaviour(BehaviourName::Link).name(), BehaviourName::Link);
+}
+
+/// The implementation refuses a link it cannot make, and puts nothing in its
+/// place — **under conditions this test can produce, which are not the ones
+/// that would tell a fallback apart.**
+///
+/// **What it measures.** Nothing else drives [`OnDisk`] directly on a link that
+/// the primitive itself refuses: every other scenario here fails a step through
+/// a harness, which returns instead of calling the implementation and so never
+/// enters this arm at all. This one enters it.
+///
+/// **What it cannot measure, and why no test here could.** It does not tell a
+/// copy fallback apart from the refusal. Making a link and making a file are
+/// the same gesture to a directory — creating an entry in it — so every
+/// condition that stops one stops the other: made read-only, this directory
+/// refuses the link, and refuses just as flatly the temporary file a copy
+/// would be written through. Run this scenario against an implementation that
+/// falls back to a copy and it stays green, because the fallback fails too.
+///
+/// The case that would tell them apart is a volume serving files but not links
+/// — the one the failure register names, "when the grammar is not available on
+/// the volume". No test on this filesystem can produce it. Closing that gap
+/// needs a seam on the primitive, the way the practicability probe is already
+/// injectable one level up, and it is not closed here: this guard is named for
+/// what it holds, not for what the register asks.
+#[cfg(unix)]
+#[test]
+fn guard_a_link_the_primitive_refuses_leaves_nothing_at_the_address() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let machine = machine("md40-3-primitive-refuses");
+    let store = machine.join("store");
+    fs::create_dir_all(&store).expect("create the store");
+    let target = store.join("artefact.md");
+    fs::write(&target, "the bytes a fallback would have had to copy\n").expect("write the entry");
+
+    // GIVEN a directory that exists — so the pre-condition on the directory
+    // passes — and inside which nothing may be created, which is what makes the
+    // primitive itself refuse rather than a guard in front of it.
+    let root = machine.join("root");
+    fs::create_dir_all(&root).expect("create the root");
+    fs::set_permissions(&root, fs::Permissions::from_mode(0o555)).expect("make the root read-only");
+
+    // A test that cannot produce the failure it measures must say so rather than
+    // pass. Run as a user the mode bits do not bind, the link would be made and
+    // every assertion below would go green having measured nothing at all.
+    assert!(
+        fs::write(root.join("probe"), "").is_err(),
+        "this environment ignores a read-only directory, so the link primitive cannot be made to \
+         refuse here and this test would measure nothing"
+    );
+
+    // WHEN the implementation the product uses carries out a link into it.
+    let address = root.join("artefact.md");
+    let outcome = OnDisk.carry_out(&Effect::Link {
+        address: address.clone(),
+        to: target.clone(),
+    });
+
+    // THEN it refuses, and leaves the address and the store entry alone.
+    assert!(
+        outcome.is_err(),
+        "the primitive refused nothing: {outcome:?}"
+    );
+    assert!(
+        fs::symlink_metadata(&address).is_err(),
+        "something stands where the link could not be made"
+    );
+    assert!(
+        fs::read_to_string(&target).is_ok(),
+        "the store entry must be left alone"
+    );
+
+    fs::set_permissions(&root, fs::Permissions::from_mode(0o755)).expect("give the root back");
 }
