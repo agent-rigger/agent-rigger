@@ -781,6 +781,29 @@ pub fn replay(name: BehaviourName, fields: &[String]) -> Result<Trace, Behaviour
         BehaviourName::Merge => Err(BehaviourError::NotRecordable {
             behaviour: BehaviourName::Merge,
         }),
+        // A presence this build only observed records nothing, and reads back
+        // as the shape that carries nothing.
+        //
+        // **The registry accepted writing this and could not read it back**,
+        // which is the asymmetry this arm closes. `Entry::posted` admits the
+        // pairing of a probe with a witnessed trace, and recording one writes
+        // the empty list; without an arm here the same entry came back as
+        // `NotBuilt`, indistinguishable from a behaviour this build does not
+        // serve at all. The referent count reads that difference: a trace it
+        // cannot read must keep counting, since somebody may still need what it
+        // might designate, while a trace that designates nothing must not — and
+        // it could not tell the two apart while this arm was missing.
+        BehaviourName::Probe => match fields {
+            [] => Ok(Trace::Witnessed),
+            other => Err(BehaviourError::TraceUnreadable {
+                behaviour: name,
+                reason: format!(
+                    "a presence this build only observed records nothing, and this line carries \
+                     {} field(s)",
+                    other.len()
+                ),
+            }),
+        },
         other => Err(BehaviourError::NotBuilt { behaviour: other }),
     }
 }

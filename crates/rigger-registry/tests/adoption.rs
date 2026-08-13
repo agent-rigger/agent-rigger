@@ -110,7 +110,7 @@
 
 use std::path::{Path, PathBuf};
 
-use rigger_plan::{BehaviourError, BehaviourName, Digest, Placement, Trace};
+use rigger_plan::{BehaviourError, BehaviourName, Digest, Placement, Referents, Trace};
 use rigger_registry::{Address, Entry, Ledger, Posting, POSED_BY};
 
 /// A fingerprint this build writes: sixteen lowercase hexadecimal digits,
@@ -308,5 +308,84 @@ fn f6_a_delegate_posting_is_refused_regardless_of_the_trace_it_carries() {
             BehaviourError::WrongShape { behaviour, .. } if *behaviour == BehaviourName::Delegate
         ),
         "the refusal must name `delegate`, the behaviour the posting claimed: {refusal}"
+    );
+}
+
+/// An entry whose behaviour this build cannot resolve at all — the shape the
+/// referent count is deliberately careful about.
+///
+/// The registry records a behaviour as an **unresolved name**, on purpose: the
+/// closed set may shrink between versions and an entry naming a behaviour this
+/// build no longer serves must stay readable. So such an entry can exist, and
+/// nothing about it can be replayed.
+fn from_a_behaviour_this_build_does_not_serve(id: &str, address: &str) -> Entry {
+    Entry::posted(Posting {
+        id: id.to_string(),
+        provenance: "acme".to_string(),
+        behaviour: "merge/toml".to_string(),
+        posed_by: POSED_BY.to_string(),
+        root: Address::new(Path::new("/home/someone/.claude")).expect("a UTF-8 root"),
+        address: Address::new(Path::new(address)).expect("a UTF-8 address"),
+        fingerprint: FINGERPRINT.to_string(),
+        trace: Trace::Witnessed,
+    })
+    .expect("an unresolved behaviour name is recorded rather than refused")
+}
+
+/// A witnessed entry designates no store, and must not be counted as one store's
+/// referent — least of all as every store's.
+///
+/// **What made it one.** The count replays each entry's trace to learn which
+/// store it designates, and counts as a referent anything that fails to replay.
+/// That fallback is deliberate and right: the question is whether a shared store
+/// entry may be taken away, and the safe answer to "I cannot tell" is that
+/// somebody may still need it. But a witnessed trace is not a case of "I cannot
+/// tell" — it is a shape whose whole meaning is that it designates nothing, and
+/// the registry accepts writing it. It failed to replay only because the replay
+/// had no arm for it, so the registry could record a shape it could not read
+/// back. Since the count short-circuits, one such entry answered "referents
+/// remain" for **every** store asked about, and a store entry nothing referred
+/// to could never be taken away.
+#[test]
+fn b12_a_witnessed_entry_is_not_a_referent_of_a_store_it_does_not_designate() {
+    let store = PathBuf::from("/home/someone/.claude/store/acme-review-1.0");
+    let designating = posed("acme/review", "skills/review.md", &store);
+    let mut ledger = Ledger::empty();
+    ledger.upsert(designating.clone());
+    ledger.upsert(witnessed("acme/seen", "skills/seen.md"));
+
+    // WHEN the only entry that designates the store is set aside, the witnessed
+    // one is all that is left.
+    let remaining = ledger.referents(&store, designating.identity());
+
+    assert_eq!(
+        remaining,
+        Referents::Last,
+        "a witnessed entry designates no store, so setting aside the one entry that does must          leave the store entry with no referent at all"
+    );
+}
+
+/// And the care the fix must not carry away: a trace this build genuinely
+/// cannot read still counts.
+///
+/// The two answers are meant to differ, and the file says why. An unresolvable
+/// behaviour is a real "I cannot tell", and the safe answer to it is that
+/// somebody may still need the store entry. Teaching the replay one more shape
+/// must not turn that into a licence to take away what cannot be read.
+#[test]
+fn guard_a_trace_this_build_cannot_read_still_counts_as_a_referent() {
+    let store = PathBuf::from("/home/someone/.claude/store/acme-review-1.0");
+    let designating = posed("acme/review", "skills/review.md", &store);
+    let mut ledger = Ledger::empty();
+    ledger.upsert(designating.clone());
+    ledger.upsert(from_a_behaviour_this_build_does_not_serve(
+        "acme/gone",
+        "skills/gone.md",
+    ));
+
+    assert_eq!(
+        ledger.referents(&store, designating.identity()),
+        Referents::Remaining,
+        "an entry whose behaviour this build cannot resolve must keep counting — the safe answer          to not knowing is that somebody may still need the store entry"
     );
 }
