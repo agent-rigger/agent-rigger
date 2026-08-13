@@ -363,15 +363,28 @@ fn accounted_for<G: Grammar>(source: &str, inverse: &Inverse) -> Result<Accounte
         // replaced gives that value back — in both cases what the trace names
         // is the key, and the trace never recorded what the document currently
         // holds there.
+        //
+        // **Read off `source` before it enters the account**, for the reason
+        // the two arms below are: what a removal may take is decided by the
+        // document, never by the trace. The trace not recording the current
+        // contents says what the account is made of; it says nothing about
+        // whether the key is still there, and reading the first as an answer to
+        // the second is what left this arm open while its siblings were closed.
         Inverse::Keys {
             path,
             added,
             replaced,
         } => {
             for name in added {
+                if !G::find_key(source, path, name)? {
+                    return Err(GrammarError::key_not_found(G::NAME, path, name));
+                }
                 places.push(address(path, name));
             }
             for (name, _) in replaced {
+                if !G::find_key(source, path, name)? {
+                    return Err(GrammarError::key_not_found(G::NAME, path, name));
+                }
                 places.push(address(path, name));
             }
         }

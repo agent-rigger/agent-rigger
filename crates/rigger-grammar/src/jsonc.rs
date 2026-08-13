@@ -116,6 +116,26 @@ impl Grammar for Jsonc {
             }))
     }
 
+    fn find_key(source: &str, path: &[String], key: &str) -> Result<bool, GrammarError> {
+        let root = parse(source)?;
+        let Some(mut object) = root.object_value() else {
+            return Ok(false);
+        };
+        for step in path {
+            refuse_if_defined_twice(&object, step)?;
+            match object.object_value(step) {
+                Some(child) => object = child,
+                None => return Ok(false),
+            }
+        }
+        // Ambiguity refuses rather than answers. A document defining the same
+        // key twice does not say which one a reader honours, so neither `true`
+        // nor `false` would be the truth about it — and a removal deciding on
+        // one of them would take bytes on a coin toss.
+        refuse_if_defined_twice(&object, key)?;
+        Ok(object.get(key).is_some())
+    }
+
     fn find_element_by_identity(
         source: &str,
         path: &[String],

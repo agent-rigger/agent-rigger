@@ -64,6 +64,16 @@ impl Grammar for WideningRemoval {
         Jsonc::find_string_in_list(source, path, value)
     }
 
+    // Forwarded like every search above it: this grammar differs from JSONC in
+    // its **inversion** and in nothing else, and the accounting for the trace
+    // shape used here asks this question before the inversion runs. Leaving it
+    // to the trait's default would refuse as unsupported and stop the scenario
+    // short of the post-condition it exists to measure — which is what the
+    // default is for, and why it refuses loudly rather than answering.
+    fn find_key(source: &str, path: &[String], key: &str) -> Result<bool, GrammarError> {
+        Jsonc::find_key(source, path, key)
+    }
+
     fn apply(source: &str, edit: &Edit) -> Result<Applied, GrammarError> {
         Jsonc::apply(source, edit)
     }

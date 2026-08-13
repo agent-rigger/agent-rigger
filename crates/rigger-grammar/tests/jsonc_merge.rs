@@ -24,7 +24,10 @@
 use rigger_grammar::marker::{
     place, read, remove, BlockTrace, Classification, Marker, Pose, Wrapping,
 };
-use rigger_grammar::{merge, Edit, Grammar, GrammarError, Inverse, Jsonc, MergeError, Value};
+use rigger_grammar::{
+    merge, unmerge, Applied, Edit, Grammar, GrammarError, GrammarRole, Inverse, Jsonc, MergeError,
+    Probe, Resolution, SemanticValue, Value,
+};
 
 /// What disappeared and what appeared between `before` and `after`, with the
 /// longest common prefix and the longest common suffix removed. The two
@@ -961,4 +964,81 @@ fn guard_invert_refuses_to_restore_a_key_the_owner_has_deleted() {
         GrammarError::KeyNotFound { key, .. } => assert_eq!(key, "statusLine"),
         other => panic!("the refusal does not name what is missing: {other:?}"),
     }
+}
+
+/// A grammar whose inversion stays silent on a key the document no longer
+/// carries, as this one's did before that arm was closed.
+///
+/// It exists so the guard below measures **the accounting's own lookup** and
+/// not the refusal that now sits downstream of it: with the real grammar, the
+/// inversion refuses first and the guard would pass whatever the accounting
+/// does or does not check.
+struct InvertSilentOnMissingKey;
+
+impl Grammar for InvertSilentOnMissingKey {
+    const NAME: &'static str = Jsonc::NAME;
+    const ROLE: GrammarRole = Jsonc::ROLE;
+    const RESOLUTION: Resolution = Jsonc::RESOLUTION;
+    const PROBE: Probe = Jsonc::PROBE;
+
+    fn round_trip(source: &str) -> Result<String, GrammarError> {
+        Jsonc::round_trip(source)
+    }
+
+    fn find_string_in_list(source: &str, path: &[&str], value: &str) -> Result<bool, GrammarError> {
+        Jsonc::find_string_in_list(source, path, value)
+    }
+
+    fn find_key(source: &str, path: &[String], key: &str) -> Result<bool, GrammarError> {
+        Jsonc::find_key(source, path, key)
+    }
+
+    fn apply(source: &str, edit: &Edit) -> Result<Applied, GrammarError> {
+        Jsonc::apply(source, edit)
+    }
+
+    fn invert(source: &str, inverse: &Inverse) -> Result<String, GrammarError> {
+        match Jsonc::invert(source, inverse) {
+            Err(GrammarError::KeyNotFound { .. }) => Ok(source.to_string()),
+            other => other,
+        }
+    }
+
+    fn values(source: &str) -> Result<Vec<SemanticValue>, GrammarError> {
+        Jsonc::values(source)
+    }
+
+    fn comments(source: &str) -> Result<Vec<String>, GrammarError> {
+        Jsonc::comments(source)
+    }
+}
+
+/// The accounting reads the document for the key shape too, and refuses on its
+/// own rather than leaning on the inversion downstream of it.
+///
+/// **Why the substitute grammar.** The real inversion refuses this case since
+/// the arm was closed, so a guard using it would pass no matter what the
+/// accounting checks — it would measure the wrong function. The substitute
+/// swallows exactly that refusal and nothing else, leaving the accounting's own
+/// lookup as the only thing that can still catch the missing key.
+#[test]
+fn guard_accounted_for_refuses_a_key_the_document_no_longer_carries_when_invert_stays_silent() {
+    // GIVEN a trace naming a key the document does not carry.
+    const DOCUMENT: &str = concat!("{\n", "  \"model\": \"opus\"\n", "}\n",);
+    let inverse = Inverse::Keys {
+        path: Vec::new(),
+        added: vec!["statusLine".to_string()],
+        replaced: Vec::new(),
+    };
+
+    // WHEN `unmerge` replays it through a grammar whose inversion stays silent.
+    let verdict = unmerge::<InvertSilentOnMissingKey>(DOCUMENT, &inverse);
+
+    // THEN the accounting must refuse by itself, naming the key.
+    let refusal =
+        verdict.expect_err("the accounting must refuse a key the document no longer carries");
+    assert!(
+        format!("{refusal}").contains("statusLine"),
+        "the refusal does not name the missing key: {refusal:?}"
+    );
 }

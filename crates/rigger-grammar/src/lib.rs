@@ -444,6 +444,29 @@ pub trait Grammar {
     /// a reordering no better than a line number survives a reformat.
     fn find_string_in_list(source: &str, path: &[&str], value: &str) -> Result<bool, GrammarError>;
 
+    /// Says whether the object at `path` carries `key`.
+    ///
+    /// **The third search, for the third trace shape.** A trace naming keys is
+    /// replayed against a document that may no longer carry them, and what
+    /// decides whether a removal is entitled to anything is the document, never
+    /// the trace. The other two shapes each have their search here for the same
+    /// reason; this one completes the set.
+    ///
+    /// **It surfaces a capability every writing grammar already has.** A
+    /// grammar serving `merge` cannot tell creating a key from replacing one
+    /// without asking this question, so the answer exists inside it already —
+    /// what was missing was a way for the accounting to ask it too.
+    ///
+    /// Defaulted, so that a grammar which never inverts an edit carries nothing
+    /// on its account: the default refuses as unsupported, exactly as the
+    /// inversion it would serve does.
+    fn find_key(_source: &str, _path: &[String], _key: &str) -> Result<bool, GrammarError> {
+        Err(GrammarError::unsupported(
+            Self::NAME,
+            "searching an object for a key",
+        ))
+    }
+
     /// The fields of the element of the list at `path` that carries `identity`
     /// **inside** it, or `None` when no element does. The identity itself is
     /// not among them: it is what was searched for, not something the product
