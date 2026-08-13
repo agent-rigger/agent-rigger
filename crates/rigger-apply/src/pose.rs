@@ -206,14 +206,7 @@ impl Steps for OnDisk {
                     address: address.clone(),
                 }),
             },
-            Effect::Link { address, to } => {
-                refuse_if_present(address)?;
-                require_directory(address)?;
-                make_link(to, address).map_err(|detail| StepError::Io {
-                    address: address.clone(),
-                    detail,
-                })
-            }
+            Effect::Link { address, to } => link_step(to, address, &RealLink),
             Effect::Unlink { address, to } => match present(address)? {
                 Some(Seized::Link { to: held, .. }) if held == *to => take_away(address),
                 _ => Err(StepError::NotAsRecorded {
@@ -278,6 +271,99 @@ impl Steps for OnDisk {
             },
             Effect::Restore { seized } => restore(seized),
         }
+    }
+}
+
+/// The primitive `link` actually calls to place a symbolic link — injectable
+/// on the pattern [`LinkProbe`] already carries one level up.
+///
+/// **What [`LinkProbe`] cannot cover.** [`LinkProbe`] answers, before anything
+/// runs, whether `link` is practicable in a directory; the refusal it drives
+/// is [`PoseError::NotLinkable`], raised before a single byte changes. What it
+/// does not cover is the primitive failing **for real, mid-transaction**,
+/// after the precondition has already passed — a host that revokes the
+/// privilege or remounts the volume between the probe and the write, or,
+/// named by the failure register, a volume that serves ordinary files but not
+/// links. Manufacturing that on a single disk is not possible: `link_step`
+/// below writes into the same directory a copy fallback would write its
+/// temporary file through, so any condition that blocks one — a directory
+/// made read-only, most concretely — blocks the other identically, and a test
+/// built that way cannot distinguish a refusal from a fallback that also
+/// failed. `guard_a_link_the_primitive_refuses_leaves_nothing_at_the_address`
+/// in `rollback.rs` enters the real primitive and says, in its own doc
+/// comment, why it still cannot tell them apart.
+///
+/// This trait is the seam that removes the filesystem from the question: a
+/// test implementation fails deterministically, on a directory that stays
+/// otherwise writable, so a copy fallback — if [`link_step`] wrote one — would
+/// succeed where a read-only directory would have refused it too.
+///
+/// What it costs: the same one [`LinkProbe`] already pays. This seam is not on
+/// the production path in the sense that no test forces `link_step` to be
+/// reached through anything but [`RealLink`] in ordinary use — but `RealLink`
+/// calls the exact free function [`make_link`] always called, so the
+/// production arm and the injected one run the identical body, only the
+/// primitive differing. A mutation inside `link_step` is caught from either
+/// caller.
+pub trait LinkPrimitive {
+    /// Makes a symbolic link at `address` designating `to`.
+    fn make_link(&self, to: &Path, address: &Path) -> io::Result<()>;
+}
+
+/// The [`LinkPrimitive`] [`OnDisk`] uses when nothing is injected: the same
+/// [`make_link`] the crate always called, wrapped so the production path and
+/// [`OnDisk::with_link_primitive`] run through the one [`link_step`] rather
+/// than two copies of it drifting apart.
+struct RealLink;
+
+impl LinkPrimitive for RealLink {
+    fn make_link(&self, to: &Path, address: &Path) -> io::Result<()> {
+        make_link(to, address)
+    }
+}
+
+/// The body of [`Effect::Link`], shared by [`OnDisk`]'s own arm and by
+/// [`OnDiskWithLinkPrimitive`] — the one function either caller reaches, so
+/// what a mutation changes here is caught from both.
+fn link_step(to: &Path, address: &Path, primitive: &dyn LinkPrimitive) -> Result<(), StepError> {
+    refuse_if_present(address)?;
+    require_directory(address)?;
+    primitive
+        .make_link(to, address)
+        .map_err(|detail| StepError::Io {
+            address: address.to_path_buf(),
+            detail,
+        })
+}
+
+/// [`OnDisk`], with [`Effect::Link`] carried out through an injected
+/// [`LinkPrimitive`] instead of the real symbolic-link syscall.
+///
+/// Built by [`OnDisk::with_link_primitive`], never directly: the field is
+/// private so the only door in names the type it substitutes for, the way
+/// [`SystemPracticability`] names [`LinkProbe`]. Every effect other than
+/// [`Effect::Link`] is carried out by calling [`OnDisk`] itself, not a second
+/// copy of its logic — a step this type did not really carry out on the real
+/// disk is a step no scenario built on it measures.
+pub struct OnDiskWithLinkPrimitive<'a> {
+    link: &'a dyn LinkPrimitive,
+}
+
+impl Steps for OnDiskWithLinkPrimitive<'_> {
+    fn carry_out(&self, effect: &Effect) -> Result<(), StepError> {
+        match effect {
+            Effect::Link { address, to } => link_step(to, address, self.link),
+            other => OnDisk.carry_out(other),
+        }
+    }
+}
+
+impl OnDisk {
+    /// [`OnDisk`], except [`Effect::Link`] asks `link` rather than the
+    /// operating system — see [`LinkPrimitive`] for what this makes
+    /// measurable and what it costs.
+    pub fn with_link_primitive(link: &dyn LinkPrimitive) -> OnDiskWithLinkPrimitive<'_> {
+        OnDiskWithLinkPrimitive { link }
     }
 }
 

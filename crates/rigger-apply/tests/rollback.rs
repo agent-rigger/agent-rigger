@@ -20,8 +20,8 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use rigger_apply::{
-    carry, pose, withdraw, LinkProbe, OnDisk, PoseError, Practicability, StepError, Steps,
-    SystemPracticability,
+    carry, pose, withdraw, LinkPrimitive, LinkProbe, OnDisk, PoseError, Practicability, StepError,
+    Steps, SystemPracticability,
 };
 use rigger_plan::{
     behaviour, Behaviour, BehaviourError, BehaviourName, Captured, Effect, Fragment, Placement,
@@ -986,4 +986,75 @@ fn guard_a_link_the_primitive_refuses_leaves_nothing_at_the_address() {
     );
 
     fs::set_permissions(&root, fs::Permissions::from_mode(0o755)).expect("give the root back");
+}
+
+/// A primitive that refuses every link **without touching the directory at
+/// all** — the seam `guard_a_link_the_primitive_refuses_leaves_nothing_at_the_address`
+/// says this filesystem cannot produce: a volume that serves ordinary files
+/// but not links. A read-only directory blocks a fallback's temporary file
+/// exactly as it blocks the link, so it cannot tell the two apart; this
+/// double blocks only `link`, and leaves the directory writable — a copy
+/// fallback, if `link_step` wrote one, would go through cleanly.
+struct RefusesEveryLink;
+
+impl LinkPrimitive for RefusesEveryLink {
+    fn make_link(&self, _to: &Path, _address: &Path) -> io::Result<()> {
+        Err(io::Error::other(
+            "this volume serves files but not links, for this scenario",
+        ))
+    }
+}
+
+/// B9 — the seam a real primitive failure needed, and the property it
+/// finally makes measurable: no copy replaces a link the primitive refused.
+///
+/// **What distinguishes this from every scenario above.** `SystemPracticability`
+/// still answers `Practicable` — the directory really can hold a link, so the
+/// precondition MD-40·1 guards passes — and only the injected primitive
+/// refuses, on a directory that stays writable for everything else. That is
+/// the one condition `guard_a_link_the_primitive_refuses_leaves_nothing_at_the_address`
+/// names as unreachable on this disk: there, blocking the primitive with a
+/// read-only directory blocked a copy fallback identically, so a fallback
+/// implementation would have stayed green. Here the directory is never made
+/// read-only; only `link` is refused, by the primitive itself, deterministically.
+#[test]
+fn md40_3_no_copy_replaces_a_link_the_primitive_refused_mid_transaction() {
+    let machine = machine("link-primitive-refuses-mid-transaction");
+    let address = machine.join("root/review.md");
+    let store = machine.join("store/acme-review-1.0");
+    let before = snapshot(&machine);
+
+    // WHEN `link` is asked for real, mid-transaction, after the precondition
+    // has already passed — and refuses.
+    let failure = pose(
+        BehaviourName::Link,
+        &address,
+        &artefact(&store, Placement::Link),
+        &OnDisk::with_link_primitive(&RefusesEveryLink),
+        &SystemPracticability,
+    )
+    .expect_err("a pose whose link primitive refused reported success");
+
+    match &failure {
+        PoseError::RolledBack { step, .. } => assert_eq!(*step, 1),
+        PoseError::NotRestored { step, .. } => assert_eq!(*step, 1),
+        other => panic!("expected the transaction rolled back or left unrestored, got {other}"),
+    }
+
+    // THEN nothing at all stands at the address — not a link, and not an
+    // ordinary file either. An ordinary file here is exactly what a copy
+    // fallback would have left: the assertion that names its absence.
+    assert!(
+        fs::symlink_metadata(&address).is_err(),
+        "nothing may stand at the address once the primitive has refused to link — an ordinary \
+         file here would be the copy fallback the failure register names as nowhere forbidden, \
+         and this scenario is built so such a fallback would have succeeded: the directory stays \
+         writable throughout, only `link` itself refuses"
+    );
+    assert_eq!(
+        snapshot(&machine),
+        before,
+        "the shared store must be given back exactly as it was — a copy fallback would have read \
+         its bytes from there before writing them at the address"
+    );
 }
