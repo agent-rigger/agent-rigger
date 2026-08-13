@@ -1848,10 +1848,18 @@ fn md39_2_every_resolution_declaration_cites_a_dated_or_versioned_source() {
     let sources = crate_sources();
     let needle = "const RESOLUTION: Resolution =";
 
+    // **Every** declaration, not the first of each file. The earlier reading
+    // stopped at the first match per file, so a second `const RESOLUTION` in
+    // the same file — with no doc comment at all — passed a guard whose name
+    // says "every". Measured by mutation on 2026-08-13, at the closure of the
+    // family that wrote this guard: adding an unsourced second declaration to
+    // `toml.rs` left the suite green.
     let declarations: Vec<(&String, String)> = sources
         .iter()
-        .filter_map(|(path, content)| {
-            doc_comment_above(content, needle).map(|comment| (path, comment))
+        .flat_map(|(path, content)| {
+            doc_comments_above(content, needle)
+                .into_iter()
+                .map(move |comment| (path, comment))
         })
         .collect();
 
@@ -1892,32 +1900,93 @@ fn guard_the_resolution_source_detector_actually_discriminates() {
     let dated_but_not_quoted = "Measured on 2026-08-06 against the host's own behaviour.";
     let quoted_but_not_dated = "The host documentation says \"resolution is by category\".";
 
+    // A line number is not a date. Four consecutive digits used to satisfy the
+    // year check, so a comment pointing at "src/toml.rs line 1234" for "the
+    // reason" passed while sourcing nothing — measured by mutation on
+    // 2026-08-13. The check now wants a year of this century, which is still a
+    // check on the **form** of a claim and never on its truth.
+    let quoted_with_a_line_number =
+        "See src/toml.rs line 1234 for \"the reason\", which is entirely invented.";
+
     assert!(is_dated_or_versioned_and_quoted(dated_and_quoted));
     assert!(is_dated_or_versioned_and_quoted(versioned_and_quoted));
     assert!(!is_dated_or_versioned_and_quoted(bare));
     assert!(!is_dated_or_versioned_and_quoted(dated_but_not_quoted));
     assert!(!is_dated_or_versioned_and_quoted(quoted_but_not_dated));
+    assert!(!is_dated_or_versioned_and_quoted(quoted_with_a_line_number));
 }
 
-/// The contiguous block of `///` lines immediately above the first line of
-/// `content` containing `needle`, each with its `///` prefix and the space
-/// after it stripped, joined back with newlines. `None` when `needle` does
-/// not appear in `content` at all.
-fn doc_comment_above(content: &str, needle: &str) -> Option<String> {
-    let lines: Vec<&str> = content.lines().collect();
-    let index = lines.iter().position(|line| line.contains(needle))?;
+/// A guard of the guard, on the **reading** rather than on the detector: the
+/// scan must return one entry per declaration, not one per file.
+///
+/// Written after a mutation showed that it did not. A second `const
+/// RESOLUTION` added to a source file, carrying no doc comment at all, left
+/// `md39_2_every_resolution_declaration_cites_a_dated_or_versioned_source`
+/// green — the declaration existed, the reading never saw it, and the guard
+/// reported on a set smaller than the one it names. A detector that
+/// discriminates perfectly protects nothing if what feeds it is truncated.
+#[test]
+fn guard_the_resolution_reading_sees_every_declaration_and_not_the_first() {
+    let two_declarations = concat!(
+        "impl Grammar for First {\n",
+        "    /// Measured on 2026-08-06: the host resolves \"by category\".\n",
+        "    const RESOLUTION: Resolution = Resolution::IndependentOfOrder;\n",
+        "}\n",
+        "mod second {\n",
+        "    const RESOLUTION: Resolution = Resolution::DependsOnOrder;\n",
+        "}\n",
+    );
 
-    let mut collected = Vec::new();
-    let mut cursor = index;
-    while cursor > 0 {
-        let Some(text) = lines[cursor - 1].trim().strip_prefix("///") else {
-            break;
-        };
-        collected.push(text.trim_start());
-        cursor -= 1;
-    }
-    collected.reverse();
-    Some(collected.join("\n"))
+    let comments = doc_comments_above(two_declarations, "const RESOLUTION: Resolution =");
+
+    assert_eq!(
+        comments.len(),
+        2,
+        "the reading must yield one entry per declaration; it yielded {} for two declarations, \
+         which is how an unsourced one hides behind a sourced one",
+        comments.len()
+    );
+    assert!(
+        is_dated_or_versioned_and_quoted(&comments[0]),
+        "the first declaration is sourced and must be recognised as such"
+    );
+    assert!(
+        !is_dated_or_versioned_and_quoted(&comments[1]),
+        "the second declaration carries no source at all and must be caught"
+    );
+}
+
+/// One entry per line of `content` containing `needle`: the contiguous block
+/// of `///` lines immediately above it, each with its `///` prefix and the
+/// space after it stripped, joined back with newlines. Empty when `needle`
+/// does not appear at all.
+///
+/// **Every occurrence, and that is the whole point of the plural.** This read
+/// the first match per file until 2026-08-13, so a second declaration in the
+/// same file was invisible to a guard whose name says "every" — a declaration
+/// with no doc comment above it produced no entry, and therefore nothing to
+/// judge. The failure was found by mutation, not by reading: three readings
+/// of this function called it correct.
+fn doc_comments_above(content: &str, needle: &str) -> Vec<String> {
+    let lines: Vec<&str> = content.lines().collect();
+    lines
+        .iter()
+        .enumerate()
+        .filter(|(_, line)| line.contains(needle))
+        .map(|(index, _)| {
+            let mut collected = Vec::new();
+            let mut cursor = index;
+            while cursor > 0 {
+                let Some(text) = lines[cursor - 1].trim().strip_prefix("///") else {
+                    break;
+                };
+                collected.push(text.trim_start());
+                cursor -= 1;
+            }
+            collected.reverse();
+            collected.join("\n")
+        })
+        .collect()
 }
 
 /// Whether `comment` is sourced well enough to be falsifiable: it quotes the
@@ -1941,7 +2010,7 @@ fn contains_a_year(comment: &str) -> bool {
     comment
         .as_bytes()
         .windows(4)
-        .any(|w| w.iter().all(|b| b.is_ascii_digit()))
+        .any(|w| w[0] == b'2' && w[1] == b'0' && w[2].is_ascii_digit() && w[3].is_ascii_digit())
 }
 
 /// Whether `comment` names a version of an external specification — `v`

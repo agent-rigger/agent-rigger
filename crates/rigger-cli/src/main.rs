@@ -25,13 +25,40 @@
 use std::io::Write;
 use std::process::ExitCode;
 
+/// The exit code for a request that cannot be satisfied — here, anything that
+/// is not the one command this binary knows.
+///
+/// **It is not chosen here.** The product's exit-code contract is ratified
+/// elsewhere and is four values wide: `0` success or a deliberate refusal, `1`
+/// a legitimate request the runtime failed, `2` a request that cannot be
+/// satisfied, `130` an interruption — plus one carve-out, `3`, held by a
+/// diagnostic. An unknown flag is named in that contract as an example of `2`.
+/// Naming the value here rather than writing it inline is what lets the
+/// assertion below exist at all.
+const REQUEST_CANNOT_BE_SATISFIED: u8 = 2;
+
+/// The contract's values, as ratified.
+const RATIFIED_EXIT_CODES: [u8; 4] = [0, 1, 2, 130];
+
+/// **A compile-time lock, and a narrow one — read what it does not do.** It
+/// refuses to build if a code *declared above* leaves the ratified table. It
+/// says nothing about a value written inline at a `return`: Rust cannot
+/// enumerate what a function may produce, so the day a branch answers `4`
+/// without going through a constant, nothing here goes red. What closes that
+/// gap is the integration suite, which replays every invocation this binary
+/// accepts and pins the code each one returns.
+const _: () = assert!(
+    RATIFIED_EXIT_CODES[2] == REQUEST_CANNOT_BE_SATISFIED,
+    "the refusal code must be the contract's `request that cannot be satisfied`"
+);
+
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.as_slice() {
         [command] if command == "coverage" => coverage(),
         _ => {
             eprintln!("usage: rigger-cli coverage");
-            ExitCode::from(2)
+            ExitCode::from(REQUEST_CANNOT_BE_SATISFIED)
         }
     }
 }
