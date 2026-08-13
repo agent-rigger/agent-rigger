@@ -784,6 +784,99 @@ fn md40_1_a_pose_refuses_before_writing_when_link_is_not_practicable_at_the_effe
     );
 }
 
+/// Fails the chosen step **instead of** carrying it out for real — never
+/// after.
+///
+/// `FailsAfter` always calls `OnDisk::carry_out` for the chosen step first,
+/// and only reports the failure once that call has already landed on disk:
+/// every scenario built on it measures the rollback of a change that is
+/// really there. Nothing in this crate's tests makes a step fail **at the
+/// point of attempting it**, and that is the shape a symbolic-link primitive
+/// failing for real takes — `make_link` either creates the link or returns an
+/// `io::Error`, with nothing on disk on the error path. `OnDisk::carry_out` is
+/// never called for the chosen step here, so there is nothing at its address
+/// for a rollback to remove.
+///
+/// This outlives MD-40·3: any future scenario wanting to measure a step that
+/// really fails, rather than one that succeeds and is only reported
+/// afterward, needs exactly this — on whichever effect the chosen index
+/// selects, not only a link.
+struct FailsInsteadOf {
+    step: usize,
+    seen: Cell<usize>,
+}
+
+impl FailsInsteadOf {
+    fn step(step: usize) -> Self {
+        Self {
+            step,
+            seen: Cell::new(0),
+        }
+    }
+}
+
+impl Steps for FailsInsteadOf {
+    fn carry_out(&self, effect: &Effect) -> Result<(), StepError> {
+        let seen = self.seen.get();
+        self.seen.set(seen + 1);
+        if seen == self.step {
+            return Err(StepError::Io {
+                address: effect.address().to_path_buf(),
+                detail: io::Error::other("the primitive refused this step, for this scenario"),
+            });
+        }
+        OnDisk.carry_out(effect)
+    }
+}
+
+#[test]
+fn md40_3_a_link_that_fails_after_the_precondition_passed_is_rolled_back_and_never_replaced_by_a_copy(
+) {
+    // GIVEN the precondition MD-40·1 guards passing — link practicable at the
+    // effective root — and the primitive that actually makes the link failing
+    // anyway, for real, once `carry_out` reaches `Effect::Link`. The gap is
+    // not hypothetical: `SystemPracticability` measures the directory a
+    // moment before the write, and a host can lose the privilege, or have the
+    // volume remounted, in between the two.
+    //
+    // The store entry is step 0 and the link is step 1 — the order
+    // `Link::pose` builds, and the one
+    // `a4_an_interrupted_pose_gives_the_machine_back_the_state_it_was_in`
+    // already relies on above.
+    let machine = machine("link-fails-at-carry-out");
+    let address = machine.join("root/review.md");
+    let store = machine.join("store/acme-review-1.0");
+    let before = snapshot(&machine);
+
+    let failure = pose(
+        BehaviourName::Link,
+        &address,
+        &artefact(&store, Placement::Link),
+        &FailsInsteadOf::step(1),
+        &SystemPracticability,
+    )
+    .expect_err("a pose whose link primitive failed reported success");
+
+    match &failure {
+        PoseError::RolledBack { step, .. } => assert_eq!(*step, 1),
+        PoseError::NotRestored { step, .. } => assert_eq!(*step, 1),
+        other => panic!("expected the transaction rolled back or left unrestored, got {other}"),
+    }
+    assert!(
+        fs::symlink_metadata(&address).is_err(),
+        "no copy — no ordinary file, and no link either — may stand at the address the failed \
+         link primitive never reached: `make_link` returns its `io::Error` exactly as it is, and \
+         nothing downstream of it poses anything in its place"
+    );
+    assert_eq!(
+        snapshot(&machine),
+        before,
+        "the shared store must be given back exactly as it was — a copy fallback would have had \
+         to read its bytes from there, and there is nothing left at the address for it to have \
+         written"
+    );
+}
+
 #[test]
 fn guard_the_behaviour_the_scenarios_run_through_is_the_one_the_closed_set_serves() {
     // Without this, every scenario above could be running through something the
