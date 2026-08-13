@@ -939,3 +939,104 @@ fn guard_element_remove_and_unmerge_agree_when_only_the_owner_touched_the_elemen
         );
     }
 }
+
+/// D10 — `Jsonc::invert`'s `Element` arm, on its own, without going through
+/// `unmerge`. An identity `identified_element` does not find used to fall
+/// through to `Ok(root.to_string())` — the document handed back unchanged —
+/// instead of refusing, for **both** shapes of `ElementUndo`: a whole element
+/// created by the pose (`Remove`) or fields updated inside one it did not
+/// create (`Restore`). This test drives the check with a `Restore` trace,
+/// because that is the shape whose caller-side guard turns out not to hold —
+/// see the guard below.
+#[test]
+fn guard_invert_refuses_an_element_update_the_document_no_longer_carries() {
+    // GIVEN a hook posed once, then updated: the update's inverse is a
+    // `Restore`, naming only the fields it touched inside an element it did
+    // not create.
+    let posed = merge::<Jsonc>(SETTINGS, &published("scripts/guard.sh"))
+        .expect("the pose must succeed")
+        .rendered;
+    let updated =
+        merge::<Jsonc>(&posed, &published("scripts/guard-2.sh")).expect("the update must succeed");
+    assert!(
+        matches!(
+            &updated.inverse,
+            Inverse::Element {
+                undo: ElementUndo::Restore { .. },
+                ..
+            }
+        ),
+        "the fixture must produce a `Restore` inverse, or this test measures nothing: {:?}",
+        updated.inverse
+    );
+
+    // AND the document the trace is replayed against never carried the
+    // identity at all — stands for an owner who deleted the element outright.
+    assert!(
+        !SETTINGS.contains(&identity().to_string()),
+        "the fixture must not carry the identity, or this test measures nothing"
+    );
+
+    // WHEN `invert` replays that trace directly, with no `accounted_for` and
+    // no caller-side lookup standing in front of it.
+    let refusal = Jsonc::invert(SETTINGS, &updated.inverse)
+        .expect_err("an element the document no longer carries must not be silently skipped");
+
+    // THEN it names the list and the identity, rather than handing the
+    // document back untouched.
+    match &refusal {
+        GrammarError::ElementNotFound {
+            path,
+            identity: found,
+            ..
+        } => {
+            assert_eq!(path, "hooks");
+            assert_eq!(found, &identity().to_string());
+        }
+        other => panic!("the refusal does not name what is missing: {other:?}"),
+    }
+}
+
+/// D10's own finding, re-verifying the 2026-08-12 analysis that `unmerge`
+/// always calls `accounted_for` before `invert`, so the silent skip above is
+/// inert in practice: true as an order, false as a guarantee. `accounted_for`'s
+/// `Element`/`Restore` arm (merge.rs:422-433) builds its `places` from the
+/// field names the trace recorded and — unlike its `Remove` sibling three
+/// lines above — never looks the identity up on `source`. Before this slice,
+/// an element the owner had deleted outright therefore sailed through
+/// `accounted_for` unaccounted-for-nothing, reached `invert`'s silent skip,
+/// and came back as `Ok` on a document the write never touched. The fix
+/// above closes this from the inside — `invert` itself now refuses — so this
+/// guard passes regardless of what `accounted_for` does or does not check.
+#[test]
+fn guard_unmerge_refuses_an_element_update_when_the_owner_has_deleted_the_element() {
+    // GIVEN the same `Restore`-shaped update as the guard above.
+    let posed = merge::<Jsonc>(SETTINGS, &published("scripts/guard.sh"))
+        .expect("the pose must succeed")
+        .rendered;
+    let updated =
+        merge::<Jsonc>(&posed, &published("scripts/guard-2.sh")).expect("the update must succeed");
+    assert!(
+        matches!(
+            &updated.inverse,
+            Inverse::Element {
+                undo: ElementUndo::Restore { .. },
+                ..
+            }
+        ),
+        "the fixture must produce a `Restore` inverse, or this test measures nothing: {:?}",
+        updated.inverse
+    );
+
+    // WHEN `unmerge` replays that trace against a document that never carried
+    // the element — an owner's edit, the way an owner's edit always is.
+    let verdict = unmerge::<Jsonc>(SETTINGS, &updated.inverse);
+
+    // THEN it refuses, naming what the trace no longer finds, rather than
+    // reporting an update done on a document it never touched.
+    assert!(
+        verdict.is_err(),
+        "unmerge must refuse an element update the document no longer carries, but returned \
+         {verdict:?}"
+    );
+}

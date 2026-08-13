@@ -291,9 +291,16 @@ impl Grammar for Jsonc {
                     // One occurrence per recorded value: the product added one,
                     // it removes one. Removing every element carrying the same
                     // value would take away the one the user had written before.
-                    if let Some(element) = find_string_element(&array, value)? {
-                        element.remove();
-                    }
+                    //
+                    // A value the array no longer carries is refused, never
+                    // skipped: `Ok` here would report a removal done on a
+                    // document the write never touched — the sibling, on this
+                    // grammar's own inverse, of the gap closed in
+                    // `merge::accounted_for` for the same trace shape.
+                    let Some(element) = find_string_element(&array, value)? else {
+                        return Err(GrammarError::value_not_found(Jsonc::NAME, path, value));
+                    };
+                    element.remove();
                 }
             }
             Inverse::Element {
@@ -303,10 +310,12 @@ impl Grammar for Jsonc {
             } => {
                 let array = array_at(&root, path)?;
                 // The element is found by its identity. An element that does
-                // not carry it is not the product's, whatever it looks like,
-                // and is never touched here.
+                // not carry it is not the product's, whatever it looks like —
+                // and its absence is refused rather than skipped: `Ok` here
+                // would report a removal or an update done on a document the
+                // write never touched, whichever `undo` below asks for.
                 let Some(element) = identified_element(&array, path, identity)? else {
-                    return Ok(root.to_string());
+                    return Err(GrammarError::element_not_found(Jsonc::NAME, path, identity));
                 };
                 match undo {
                     ElementUndo::Remove => element.remove(),

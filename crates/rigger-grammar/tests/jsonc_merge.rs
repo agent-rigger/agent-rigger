@@ -24,7 +24,7 @@
 use rigger_grammar::marker::{
     place, read, remove, BlockTrace, Classification, Marker, Pose, Wrapping,
 };
-use rigger_grammar::{merge, Edit, Grammar, Jsonc, MergeError, Value};
+use rigger_grammar::{merge, Edit, Grammar, GrammarError, Inverse, Jsonc, MergeError, Value};
 
 /// What disappeared and what appeared between `before` and `after`, with the
 /// longest common prefix and the longest common suffix removed. The two
@@ -848,4 +848,43 @@ fn guard_an_absent_path_is_refused_by_being_named() {
         matches!(failure, MergeError::Grammar(_)),
         "the refusal must come from the grammar: {failure:?}"
     );
+}
+
+/// D10 — `Jsonc::invert`'s `Values` arm, on its own, without going through
+/// `unmerge`. `find_string_element` returning `None` used to fall out of the
+/// loop in silence and hand the document back unchanged (`Ok`) instead of
+/// refusing — the sibling of the gap D1 closed in `merge::accounted_for`, but
+/// on the grammar's own inverse rather than on the accounting run around it.
+/// Every caller in this crate hands `invert` a value it just wrote, or a
+/// value `accounted_for` has already found — this test is the one place that
+/// removes both guards on purpose, so the refusal has to come from `invert`
+/// itself.
+#[test]
+fn guard_invert_refuses_a_value_removal_the_document_no_longer_carries() {
+    // GIVEN a document that never carried the value a trace names — stands
+    // for an owner who deleted it between the pose and this replay.
+    const DOCUMENT: &str = concat!("{\n", "  \"instructions\": [\"AGENTS.md\"]\n", "}\n",);
+    let inverse = Inverse::Values {
+        path: vec!["instructions".to_string()],
+        added: vec!["posed.md".to_string()],
+    };
+    assert!(
+        !DOCUMENT.contains("posed.md"),
+        "the fixture must not carry the value, or this test measures nothing"
+    );
+
+    // WHEN `invert` replays that trace directly, with no `accounted_for` and
+    // no caller-guaranteed presence standing in front of it.
+    let refusal = Jsonc::invert(DOCUMENT, &inverse)
+        .expect_err("a value the document no longer carries must not be silently skipped");
+
+    // THEN it names the array and the value, rather than handing the document
+    // back untouched.
+    match &refusal {
+        GrammarError::ValueNotFound { path, value, .. } => {
+            assert_eq!(path, "instructions");
+            assert_eq!(value, "posed.md");
+        }
+        other => panic!("the refusal does not name what is missing: {other:?}"),
+    }
 }
