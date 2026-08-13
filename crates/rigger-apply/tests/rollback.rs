@@ -724,6 +724,33 @@ fn guard_a_pose_into_a_directory_that_is_not_there_refuses_by_naming_it() {
         failure.to_string().contains("skills"),
         "the refusal must name the directory that is not there: {failure}"
     );
+    // F5 (B10): a substring check alone cannot tell this refusal apart from
+    // `require_linkable` letting the missing directory reach the probe —
+    // `PoseError::NotLinkable`'s message names the same directory too. The
+    // guard in `require_linkable` (`if !directory.is_dir() { continue; }`)
+    // exists precisely to defer to `StepError::NoDirectory`, the strictly
+    // more precise refusal, rather than let a missing directory surface as a
+    // generic `ENOENT` under `NotLinkable`. An operator reading "a symbolic
+    // link cannot be made there" goes looking at permissions or a container
+    // overlay; the real cause is a missing `mkdir`. So the shape is asserted
+    // directly, not just the text.
+    match &failure {
+        PoseError::RolledBack {
+            failure: StepError::NoDirectory { directory, .. },
+            ..
+        } => {
+            assert_eq!(
+                directory.as_path(),
+                address.parent().expect("the address has a parent"),
+                "the refusal must name the directory that is not there"
+            );
+        }
+        other => panic!(
+            "expected `RolledBack` over `StepError::NoDirectory` — `require_linkable`'s guard on a \
+             missing directory must defer to it rather than let the probe report a generic \
+             `NotLinkable`: {other}"
+        ),
+    }
     assert_eq!(snapshot(&machine), before);
 }
 

@@ -65,16 +65,41 @@
 //! `resolve_behaviour`'s to refuse, by naming the behaviour, at removal —
 //! never here, and not this defect's shape in any case.
 //!
-//! # B6 — what this test establishes
+//! # B6 — what this test establishes, corrected (B10, F4)
 //!
 //! A value the product only witnessed — `Trace::Witnessed`, closed by B1
 //! (MD-08·2 + MD-10·1) so that it can never carry an inverse — is posted
 //! under its own identity, alongside an ordinary `link`-posed entry. A later
-//! removal takes only the identity it names. The witnessed entry is not that
-//! identity, and `Trace::store` returns `None` for it, so it plays no part in
-//! any store-referent accounting the removal might also do: there is no
-//! path, direct or through shared-store bookkeeping, by which this removal
-//! ever held a claim on it. It survives, unchanged.
+//! removal takes only the identity it names, and the witnessed entry, which
+//! is not that identity, survives, unchanged.
+//!
+//! **What actually makes it survive.** [`Ledger::remove`] is `retain` on
+//! `Identity` alone (`rigger-registry/src/ledger.rs`) — it never reads a kept
+//! or a removed entry's `Trace`. The witnessed entry survives for the same
+//! reason any *other* identity would: it is not the one asked for. This doc
+//! used to claim the survival flowed from `Trace::store` returning `None` for
+//! `Trace::Witnessed` — i.e. from store-referent accounting `remove` was said
+//! to also perform. `remove` performs no such accounting, for any entry: the
+//! claim was false, found by a mutation that swapped `witnessed()` for an
+//! ordinary `link`-posed entry in the test below and left it green either way
+//! (closing adversarial review of famille-b, F4, 2026-08-13).
+//!
+//! `Ledger::referents` (`rigger-registry/src/ledger.rs`) is where
+//! store-referent accounting actually lives in this crate, and it *is* where
+//! `Trace::store` returning `None` for `Trace::Witnessed` would matter — but
+//! no removal in this crate calls it while taking an identity out;
+//! `referents` is a separate query a caller consults beforehand, at the
+//! boundary with `rigger-apply`, and neither this test nor `Ledger::remove`
+//! exercises it. So the stronger reading MD-10·2 invites — that a witnessed
+//! value is spared *by* referent accounting — is not measurable through this
+//! crate's `remove` today. What is measurable, and what the test below
+//! actually establishes, is the weaker fact: identity-scoped removal leaves
+//! every other identity alone, witnessed or not. That fact is not particular
+//! to `Trace::Witnessed` either — `envelope.rs` and `shared_address.rs`
+//! already establish it for ordinary `link` entries — so this test's
+//! remaining, genuine contribution is narrower still: it is the one place
+//! that posts a `Trace::Witnessed` value at all and confirms that removal
+//! treats it no differently, for better or worse.
 //!
 //! What this does not establish: that *no* removal can ever reach a witnessed
 //! entry in general. `Trace::Witnessed` carries no inverse, so nothing in
@@ -83,7 +108,7 @@
 //! (`Trace::Witnessed` cannot destructure an inverse that is not there), not
 //! a runtime property this file re-measures.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use rigger_plan::{BehaviourError, BehaviourName, Digest, Placement, Trace};
 use rigger_registry::{Address, Entry, Ledger, Posting, POSED_BY};
@@ -185,12 +210,15 @@ fn b12_a_value_the_product_only_observed_survives_a_later_removal() {
     ledger.upsert(materialised.clone());
 
     // WHEN a later removal takes away what the product posed — an identity
-    // the observed value never shared, and a store address (`Trace::store`)
-    // it never designates either.
+    // the observed value never shared. `Ledger::remove` is `retain` on
+    // `Identity` alone: it does not read `materialised`'s trace, or
+    // `observed`'s, to decide anything (B10, F4 — see the module doc).
     ledger.remove(materialised.identity());
 
-    // THEN the observed value survives. A removal that never possessed it —
-    // not by identity, not by referent — does not take it.
+    // THEN the observed value survives, because it is not the identity that
+    // was asked for — the only thing `remove` checks. This does not
+    // establish that store-referent accounting spares it: `remove` performs
+    // none, for any entry.
     assert_eq!(
         ledger.entries().len(),
         1,
@@ -200,5 +228,85 @@ fn b12_a_value_the_product_only_observed_survives_a_later_removal() {
         ledger.entries()[0],
         observed,
         "the survivor must be the witnessed entry, unchanged"
+    );
+}
+
+/// F6 (B10) — the two arms of `behaviour_matches_trace` beside `Link` that
+/// carry real, unguarded behaviour: `Probe` and `Delegate`. `Merge` is not
+/// covered here — `record` already refuses `Trace::Grammar` unconditionally
+/// (`rigger-plan/src/lib.rs:708`), so that arm is honestly unreachable, not
+/// merely untested.
+///
+/// A `probe` label claims "observe a presence, and write nothing"
+/// (`rigger-plan/src/lib.rs:160`) — its own trace shape is `Trace::Witnessed`,
+/// which designates no store referent (`Trace::store` reads `None` for it).
+/// `Trace::Link` designates one. Were this pairing accepted, the entry would
+/// count as a referent of the shared store while carrying the `probe` label,
+/// and `Probe::undo` refuses unconditionally with `BehaviourError::NotBuilt`
+/// (`rigger-plan/src/lib.rs:1577`) — so nothing could ever remove it: the
+/// store entry becomes indestructible under a label documented as writing
+/// nothing.
+#[test]
+fn f6_a_probe_posting_over_a_trace_that_designates_a_referent_is_refused() {
+    let contradicted = Posting {
+        id: "acme/hand-written-plugin".to_string(),
+        provenance: "acme".to_string(),
+        behaviour: "probe".to_string(),
+        posed_by: POSED_BY.to_string(),
+        root: Address::new(Path::new("/home/someone/.claude")).expect("a UTF-8 root"),
+        address: Address::new(Path::new("hand-written-plugin.js")).expect("a UTF-8 address"),
+        fingerprint: FINGERPRINT.to_string(),
+        trace: Trace::Link {
+            store: PathBuf::from("/home/someone/.rigger/store/acme-review-1.0"),
+            placement: Placement::Link,
+            posed: Digest::read(FINGERPRINT).expect("a fingerprint this build wrote"),
+        },
+    };
+
+    let refusal = Entry::posted(contradicted).expect_err(
+        "a `probe` label over a trace that designates a store referent must not record — \
+         `Probe::undo` always refuses, so an accepted entry would be permanently un-removable",
+    );
+
+    assert!(
+        matches!(
+            &refusal,
+            BehaviourError::WrongShape { behaviour, .. } if *behaviour == BehaviourName::Probe
+        ),
+        "the refusal must name `probe`, the behaviour the posting claimed: {refusal}"
+    );
+}
+
+/// `Delegate` has no trace shape of its own — `record` only knows `Link`,
+/// `Grammar`, and `Witnessed` (`rigger-plan/src/lib.rs:708`) — so
+/// `behaviour_matches_trace` must refuse it unconditionally, whatever trace
+/// accompanies it. This uses `Trace::Witnessed`, the trace that would
+/// otherwise record cleanly, precisely to show the refusal is about the label
+/// `delegate` having nothing to agree with, not about a mismatched trace
+/// shape.
+#[test]
+fn f6_a_delegate_posting_is_refused_regardless_of_the_trace_it_carries() {
+    let contradicted = Posting {
+        id: "acme/host-mechanism".to_string(),
+        provenance: "acme".to_string(),
+        behaviour: "delegate".to_string(),
+        posed_by: POSED_BY.to_string(),
+        root: Address::new(Path::new("/home/someone/.claude")).expect("a UTF-8 root"),
+        address: Address::new(Path::new("host-mechanism.js")).expect("a UTF-8 address"),
+        fingerprint: FINGERPRINT.to_string(),
+        trace: Trace::Witnessed,
+    };
+
+    let refusal = Entry::posted(contradicted).expect_err(
+        "a `delegate` label must not record — no member of `Trace` serves it yet, so \
+         `behaviour_matches_trace` must refuse regardless of which trace accompanies it",
+    );
+
+    assert!(
+        matches!(
+            &refusal,
+            BehaviourError::WrongShape { behaviour, .. } if *behaviour == BehaviourName::Delegate
+        ),
+        "the refusal must name `delegate`, the behaviour the posting claimed: {refusal}"
     );
 }
