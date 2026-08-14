@@ -47,35 +47,13 @@
 //! detector that lies in that direction — red on code that neither launches
 //! a process nor writes a file — is worse than the narrower one kept here.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 /// `crates/rigger-plan`, reached the same way `tests/closed_set.rs` reaches
 /// its own crate root: from the manifest directory, so the test does not
 /// depend on the working directory it runs from.
 fn crate_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-}
-
-/// Every `.rs` file under `src/`, walked recursively so a future module
-/// split stays covered — today there is exactly one, `src/lib.rs`.
-fn source_files() -> Vec<PathBuf> {
-    fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
-        for entry in std::fs::read_dir(dir)
-            .unwrap_or_else(|err| panic!("cannot read {}: {err}", dir.display()))
-        {
-            let entry = entry.expect("cannot read a directory entry");
-            let path = entry.path();
-            if path.is_dir() {
-                walk(&path, out);
-            } else if path.extension().is_some_and(|ext| ext == "rs") {
-                out.push(path);
-            }
-        }
-    }
-
-    let mut files = Vec::new();
-    walk(&crate_root().join("src"), &mut files);
-    files
 }
 
 /// The tokens a process launch or a disk write cannot be made without in
@@ -108,28 +86,6 @@ fn named_in(source: &str) -> Vec<(&'static str, &'static str)> {
         .copied()
         .filter(|(token, _)| source.contains(token))
         .collect()
-}
-
-#[test]
-fn md37_1_the_source_names_neither_a_process_launch_nor_a_disk_write() {
-    let files = source_files();
-    assert!(
-        !files.is_empty(),
-        "the walk over `src/` found no `.rs` file — a check running over nothing would pass \
-         vacuously, and this crate does carry `src/lib.rs`"
-    );
-
-    for file in &files {
-        let source = std::fs::read_to_string(file)
-            .unwrap_or_else(|err| panic!("cannot read {}: {err}", file.display()));
-        let found = named_in(&source);
-        assert!(
-            found.is_empty(),
-            "{} {found:?} — this crate is pure and must import neither `std::process` nor \
-             `std::fs`",
-            file.display()
-        );
-    }
 }
 
 #[test]

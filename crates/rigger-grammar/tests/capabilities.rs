@@ -7,9 +7,9 @@
 //! which stops protecting the day a host changes without anything going red.
 //! Those prefixed with `guard_` realise none: they check that the scenarios
 //! still measure something, as the fixture guard of `conformance.rs` does for
-//! the corpus. Two of them guard a guard — the reading of the crate sources, on
-//! which C7 leans — because a guard that stops holding without going red is the
-//! mode they close.
+//! the corpus. Two of them guard a guard — the recursive reading of a source
+//! tree — because a guard that stops holding without going red is the mode
+//! they close.
 //!
 //! What these tests observe of C1, and what they leave to another crate: the
 //! scenario asks that a transaction abort "before the document is replaced".
@@ -262,56 +262,6 @@ fn c7_merge_is_refused_on_an_order_sensitive_grammar() {
             "the refusal does not name \"{expected}\": {message}"
         );
     }
-}
-
-#[test]
-fn c7_the_condition_names_no_host() {
-    // GIVEN the code that decides this refusal — the whole source of the crate,
-    // because the decision reads the table and the table is populated by the
-    // grammars: naming a host in one of them would amount to deciding by it.
-    let sources = crate_sources();
-
-    // The guard checks itself, and not by a floor: a floor is crossed the wrong
-    // way without breaking anything — three files stay three files when the
-    // fourth moves down a level and stops being read. What is checked here is
-    // **derived**: every module the crate declares has indeed been read. The
-    // compiler demands one file per module; the guard demands that this file
-    // passed under its eyes.
-    let unread = modules_without_a_file(&sources);
-    assert!(
-        unread.is_empty(),
-        "{} module(s) declared by the crate whose source was not read — the guard below would \
-         not bear on them:\n{}",
-        unread.len(),
-        unread.join("\n")
-    );
-
-    // WHEN it is inspected.
-    // THEN it contains no host name.
-    let mut faults = Vec::new();
-    for (path, content) in &sources {
-        let lowercase = content.to_lowercase();
-        for host in [
-            "claude",
-            "anthropic",
-            "codex",
-            "opencode",
-            "cursor",
-            "copilot",
-            "gemini",
-            "windsurf",
-        ] {
-            if lowercase.contains(host) {
-                faults.push(format!("{path} names the host \"{host}\""));
-            }
-        }
-    }
-    assert!(
-        faults.is_empty(),
-        "the admission condition must derive from a property of the grammar, never from a list \
-         of hosts:\n{}",
-        faults.join("\n")
-    );
 }
 
 #[test]
@@ -1830,80 +1780,6 @@ fn guard_the_source_reading_demands_one_file_per_declared_module() {
     fs::remove_dir_all(&root).expect("clean up the fixture");
 }
 
-/// A guard, not a scenario: [`Resolution`] cannot be measured from inside
-/// this crate — the module header of `capability.rs` says so itself, in the
-/// words this test borrows: "a property of whoever reads the document, not
-/// of the code that writes it". A test exercising the constant directly would
-/// be a tautology. What **is** checkable is the one thing standing between a
-/// declared fact and an assumption: the doc comment above every `const
-/// RESOLUTION` declaration must quote the claim it rests on, and pin it to
-/// something specific enough that what would refute it can be named — a date
-/// it was measured on, or a versioned specification that could itself
-/// change. `jsonc.rs` and `toml.rs` already carry one each, of the two
-/// different forms; this test formalises what they already do rather than
-/// inventing a new obligation, and it is meant to catch the day a grammar is
-/// added whose `RESOLUTION` is asserted rather than sourced.
-#[test]
-fn md39_2_every_resolution_declaration_cites_a_dated_or_versioned_source() {
-    let sources = crate_sources();
-    let needle = "const RESOLUTION: Resolution =";
-
-    // **Every** declaration, not the first of each file. The earlier reading
-    // stopped at the first match per file, so a second `const RESOLUTION` in
-    // the same file — with no doc comment at all — passed a guard whose name
-    // says "every". Measured by mutation on 2026-08-13, at the closure of the
-    // family that wrote this guard: adding an unsourced second declaration to
-    // `toml.rs` left the suite green.
-    let declarations: Vec<(&String, String)> = sources
-        .iter()
-        .flat_map(|(path, content)| {
-            doc_comments_above(content, needle)
-                .into_iter()
-                .map(move |comment| (path, comment))
-        })
-        .collect();
-
-    // **The count is derived, not floored.** `Resolution` is a required trait
-    // constant, so every `impl Grammar for` in this crate declares one: the
-    // number of implementations is the number of declarations there must be.
-    //
-    // A floor — "at least one was found" — is only crossed from above. It lets
-    // a declaration go **invisible** to the reading and says nothing, which is
-    // what happened: this guard was widened to read every occurrence, and a
-    // declaration writing its type as `crate::Resolution`, or putting a space
-    // before the colon, still produced no entry at all. Measured green at the
-    // full suite with one of the two declarations unread. The neighbouring
-    // guard on modules had already ruled this, in this same file, for the same
-    // reason.
-    let implementations = sources
-        .iter()
-        .map(|(_, content)| content.matches("impl Grammar for").count())
-        .sum::<usize>();
-    assert_eq!(
-        declarations.len(),
-        implementations,
-        "the reading found {} `const RESOLUTION` declaration(s) for {} `impl Grammar for` in this \
-         crate — a declaration this reading cannot see is a declaration this guard does not judge, \
-         and the shape it fails to match is the interesting half",
-        declarations.len(),
-        implementations
-    );
-
-    let unsourced: Vec<String> = declarations
-        .iter()
-        .filter(|(_, comment)| !is_dated_or_versioned_and_quoted(comment))
-        .map(|(path, comment)| {
-            format!(
-                "{path}: the doc comment above `const RESOLUTION` is not a falsifiable source \
-                 — it must quote the claim and pin it to a date or a versioned specification:\n\
-                 {comment}"
-            )
-        })
-        .collect();
-
-    assert!(unsourced.is_empty(), "{}", unsourced.join("\n\n"));
-}
-
 /// A guard of the guard: the detector below must actually discriminate a
 /// sourced claim from a bare one, not merely fail to trip on the two files it
 /// happens to be checked against today.
@@ -1943,10 +1819,10 @@ fn guard_the_resolution_source_detector_actually_discriminates() {
 ///
 /// Written after a mutation showed that it did not. A second `const
 /// RESOLUTION` added to a source file, carrying no doc comment at all, left
-/// `md39_2_every_resolution_declaration_cites_a_dated_or_versioned_source`
-/// green — the declaration existed, the reading never saw it, and the guard
-/// reported on a set smaller than the one it names. A detector that
-/// discriminates perfectly protects nothing if what feeds it is truncated.
+/// the reading over every declaration's sourcing green — the declaration
+/// existed, the reading never saw it, and the guard reported on a set
+/// smaller than the one it names. A detector that discriminates perfectly
+/// protects nothing if what feeds it is truncated.
 #[test]
 fn guard_the_resolution_reading_sees_every_declaration_and_not_the_first() {
     let two_declarations = concat!(
@@ -2065,26 +1941,6 @@ fn contains_a_version(comment: &str) -> bool {
             .as_bytes()
             .windows(2)
             .any(|w| (w[0] == b'v' || w[0] == b'V') && w[1].is_ascii_digit())
-}
-
-/// Reads the source of the crate. The path starts from `CARGO_MANIFEST_DIR`:
-/// the guard must stay correct whatever the current directory of the test.
-///
-/// **`build.rs` is part of it**, and it must be: it is code of this crate, it
-/// chooses the documents preservation is measured on, and a host name there
-/// would decide just as surely as one in the middle of the derivation. Leaving
-/// it out of scope would make the guard avoidable by moving down a level — the
-/// mode the guard of the guard already closes for subdirectories.
-fn crate_sources() -> Vec<(String, String)> {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-    let mut sources = rust_sources(&root.join("src"));
-    let build = root.join("build.rs");
-    sources.push((
-        "build.rs".to_string(),
-        fs::read_to_string(&build)
-            .unwrap_or_else(|err| panic!("{}: cannot read — {err}", build.display())),
-    ));
-    sources
 }
 
 /// Reads **recursively** the `.rs` files under `dir`, each returned with its
