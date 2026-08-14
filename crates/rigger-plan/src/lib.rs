@@ -653,12 +653,30 @@ pub enum Seized {
         /// The address.
         address: PathBuf,
     },
-    /// A file was there, carrying these bytes.
+    /// A file was there, carrying these bytes, under this one permission bit.
     Document {
         /// The address.
         address: PathBuf,
         /// The bytes it carried, whole.
         contents: String,
+        /// Whether it was one the machine would run.
+        ///
+        /// **A capture holds every property a step writes, and this one is
+        /// written.** [`Effect::Materialise`] sets the mode of an entry already
+        /// carrying the bytes it materialises, so a capture holding the bytes
+        /// alone made that change invisible twice over: the comparison deciding
+        /// whether an address still carries what was seized answered "still as
+        /// seized" for a file whose mode had just been changed, and the
+        /// restoration it therefore skipped could not have given the bit back in
+        /// any case. A run that failed after that step reported a machine given
+        /// back and left a store entry — and every address designating it —
+        /// unrunnable.
+        ///
+        /// **This one bit, and never the whole mode**, for the reason
+        /// [`TreeEntry::executable`] gives: the read and write bits belong to
+        /// the umask of whoever installs, and a capture claiming to give those
+        /// back would be claiming more than the pose ever wrote.
+        executable: bool,
     },
     /// A symbolic link was there, designating this.
     Link {

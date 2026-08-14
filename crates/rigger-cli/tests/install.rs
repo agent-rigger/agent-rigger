@@ -780,3 +780,62 @@ fn one_symbolic_link_among_the_files_a_path_array_names_refuses_the_whole_entry(
         "one refused member refuses the whole entry, and nothing is written for any of them"
     );
 }
+
+/// The permission bits of what `path` resolves to — through the link a pose by
+/// link leaves at the address, a link's own mode saying nothing on this system.
+#[cfg(unix)]
+fn mode_at(path: &Path) -> u32 {
+    use std::os::unix::fs::PermissionsExt;
+
+    let read = std::fs::metadata(path).expect("read the mode");
+    read.permissions().mode() & 0o777
+}
+
+/// Installs `hook:mine` from a source under `posed`, changes that source to
+/// `upstream`, and asks for the same install again — refused, the address being
+/// occupied by what the first posed. **A refusal changes nothing**: the store
+/// entry and the address designating it both keep the mode the first gave them.
+#[cfg(unix)]
+fn a_refused_install_leaves_both_modes_alone(name: &str, posed: u32, upstream: u32) {
+    use std::os::unix::fs::PermissionsExt;
+
+    let scratch = Scratch::new(name);
+    let root = scratch.root();
+    scratch.write_source("hooks/mine.ts", "#!/usr/bin/env bun\nexit 0\n");
+    let source = scratch.base.join("hooks/mine.ts");
+    let chmod = |bits| {
+        std::fs::set_permissions(&source, std::fs::Permissions::from_mode(bits))
+            .expect("set the mode of the source the catalogue names")
+    };
+    chmod(posed);
+    let catalogue = scratch.catalogue_with("hook:mine", "hook", "path = \"hooks/mine.ts\"\n");
+    let args = ["install", catalogue.to_str().unwrap(), "hook:mine"];
+    let first = run(&root, &args);
+    assert!(first.status.success(), "{}", stderr_of(&first));
+    let store = root.join(".rigger").join("store").join("hook-mine");
+    let before = mode_at(&store);
+    chmod(upstream);
+
+    let refusal = run(&root, &args);
+
+    assert_eq!(refusal.status.code(), Some(2), "{}", stderr_of(&refusal));
+    let announced = "a refusal that announced changing nothing changed a mode";
+    assert_eq!(mode_at(&store), before, "{announced}: the store entry");
+    assert_eq!(
+        mode_at(&root.join("hook-mine")),
+        before,
+        "{announced}: the address"
+    );
+}
+
+#[test]
+#[cfg(unix)]
+fn a_refused_install_does_not_take_away_the_bit_the_first_one_posed() {
+    a_refused_install_leaves_both_modes_alone("mode-lost-on-refusal", 0o755, 0o644);
+}
+
+#[test]
+#[cfg(unix)]
+fn a_refused_install_does_not_hand_out_a_bit_the_first_one_did_not_pose() {
+    a_refused_install_leaves_both_modes_alone("mode-gained-on-refusal", 0o644, 0o755);
+}

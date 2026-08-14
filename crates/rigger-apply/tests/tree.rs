@@ -456,7 +456,12 @@ fn guard_a_tree_whose_mode_the_user_changed_is_not_uprooted_and_the_refusal_name
     )
     .expect("the pose must succeed");
     let script = address.join("scripts/build.sh");
-    fs::set_permissions(&script, fs::Permissions::from_mode(0o644)).expect("the user chmods");
+    // `u-x`, not the whole of `0o111`: a reading answering "any of the three
+    // bits" answers the same before and after this line, so the tree
+    // fingerprinted identically and was taken back as though nothing had
+    // changed it — while the owner, who this machine runs as, could no longer
+    // run the file.
+    fs::set_permissions(&script, fs::Permissions::from_mode(0o655)).expect("the user chmods");
 
     let refusal = withdraw(
         BehaviourName::Link,

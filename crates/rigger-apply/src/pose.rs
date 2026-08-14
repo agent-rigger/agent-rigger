@@ -255,12 +255,17 @@ impl Steps for OnDisk {
                     .map_err(StepError::Txn)
             }
             // **The entry already there under these bytes still has its mode
-            // set.** `Seized::Document` carries bytes and not a mode, so there
-            // is nothing to compare here and the step simply states what the
-            // mode is to be — which is idempotent, and is what makes a store
+            // set.** The step states what the mode is to be, which makes a store
             // entry a build without mode preservation left behind become
             // runnable on the next install of the same artefact instead of
             // staying silently unrunnable for ever.
+            //
+            // It is a change like any other, and it is one only because the
+            // capture holds the bit: `Seized::Document` carries it, so a later
+            // step failing gives it back. A step writing a property the capture
+            // did not hold would be a change no rollback could name — and the
+            // one it left behind here was a store entry stripped of its
+            // executable bit by a run that reported having changed nothing.
             Effect::Materialise {
                 address,
                 contents,
@@ -513,13 +518,17 @@ fn restore(seized: &Seized) -> Result<(), StepError> {
         // at a time it produces the same file, and the difference is a window.
         // The property is held by the choice of primitive, as the exchange of
         // the lock is, and not by an assertion.
-        // **Without a mode, because none was seized.** [`Seized::Document`]
-        // holds the bytes a capture read and not the permissions they were
-        // under, so the restoration writes a document the way this crate has
-        // always written one and claims nothing more. Widening the capture to
-        // the mode is a change to what a rollback promises, and ADR-0050 decides
-        // what a *pose* writes rather than what a capture holds.
-        Seized::Document { address, contents } => put(address, contents, false),
+        // **Under the one bit the capture holds**, which is the one bit a step
+        // writes: [`Effect::Materialise`] sets the mode of an entry already
+        // carrying its bytes, and a restoration ignoring it would give back the
+        // bytes of a store entry while leaving it unrunnable. The read and write
+        // bits are not given back because they were never seized and never
+        // posed — they are the umask's, here as everywhere `put` writes.
+        Seized::Document {
+            address,
+            contents,
+            executable,
+        } => put(address, contents, *executable),
         Seized::Link { address, to } => {
             take_away(address)?;
             require_directory(address)?;
@@ -605,6 +614,7 @@ fn present(address: &Path) -> Result<Option<Seized>, StepError> {
     Ok(Some(Seized::Document {
         address: address.to_path_buf(),
         contents,
+        executable: is_executable(&metadata),
     }))
 }
 
@@ -1015,11 +1025,19 @@ fn put(address: &Path, contents: &str, executable: bool) -> Result<(), StepError
 /// [`read_tree`] — two answers to "is this executable" would drift, and the day
 /// they did, a file posed through one path and fingerprinted through the other
 /// would refuse its own removal.
+///
+/// **The owner's bit, and it is exactly the bit [`set_executable`] writes.**
+/// "Any of the three" reads a mode the product never poses as one it did: a file
+/// posed executable and then `chmod u-x`'d still holds the group's and the
+/// other's bits, so that reading answered the same before and after and the
+/// removal took the file back as though nothing had changed it — while the owner
+/// could no longer run it. The two functions turn on the same bit so that what
+/// is verified is what was posed, which is the whole of what ADR-0050 asks.
 #[cfg(unix)]
 pub fn is_executable(metadata: &fs::Metadata) -> bool {
     use std::os::unix::fs::PermissionsExt;
 
-    metadata.permissions().mode() & 0o111 != 0
+    metadata.permissions().mode() & 0o100 != 0
 }
 
 /// Whether `metadata` describes a file this machine would run — **never, on a
@@ -1043,13 +1061,20 @@ pub fn is_executable(_metadata: &fs::Metadata) -> bool {
 /// deliberately withheld; deriving the bit from the read bits leaves that
 /// decision where it was made and changes only the one bit ADR-0050 puts under
 /// the fingerprint.
+///
+/// **And the owner's bit stands whatever the read bits say**, so that a file this
+/// poses as executable is one [`is_executable`] reads back as executable. Derived
+/// from the read bits alone, a umask withholding the owner's read bit would have
+/// produced a file posed executable that nothing could recognise as one — the
+/// pose and the verification disagreeing about the file the pose had just
+/// written, which is the disagreement ADR-0050 exists to forbid.
 #[cfg(unix)]
 fn set_executable(path: &Path, executable: bool) -> io::Result<()> {
     use std::os::unix::fs::PermissionsExt;
 
     let mode = fs::metadata(path)?.permissions().mode();
     let wanted = if executable {
-        mode | ((mode & 0o444) >> 2)
+        mode | 0o100 | ((mode & 0o444) >> 2)
     } else {
         mode & !0o111
     };

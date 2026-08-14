@@ -183,6 +183,7 @@ fn a4_a_seized_document_is_given_back_whole_and_a_seized_absence_is_not() {
     let document = Captured::of(vec![Seized::Document {
         address: address(),
         contents: DOCUMENT.to_string(),
+        executable: false,
     }]);
     let absence = Captured::of(vec![Seized::Absent { address: address() }]);
 
@@ -195,6 +196,7 @@ fn a4_a_seized_document_is_given_back_whole_and_a_seized_absence_is_not() {
                 seized: Seized::Document {
                     address: address(),
                     contents: DOCUMENT.to_string(),
+                    executable: false,
                 },
             }],
         },
