@@ -64,11 +64,11 @@ use std::io;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use rigger_apply::{pose, OnDisk, SystemLiveness, SystemPracticability};
+use rigger_apply::{pose, OnDisk, PoseError, StepError, SystemLiveness, SystemPracticability};
 use rigger_plan::{BehaviourName, Fragment, Placement};
 use rigger_registry::{
-    exit_code as registry_exit_code, transact, Address, Entry, Mutation, Outcome, Posting,
-    Registry, POSED_BY,
+    exit_code as registry_exit_code, transact, Address, Entry, Identity, Mutation, Outcome,
+    Posting, Registry, POSED_BY,
 };
 
 use crate::confine::confine;
@@ -232,6 +232,34 @@ pub fn run(catalog: &str, id: &str) -> ExitCode {
     ) {
         Ok(posted) => posted,
         Err(err) => {
+            // `pose` just refused an address something already occupies —
+            // and that "something" may be the very entry this same product
+            // posed on a previous run of this same command. The registry is
+            // the one place that can settle it: if it names this identity at
+            // this address, this is not damage to a file the product never
+            // touched, it is a second install of what is already installed,
+            // and the difference changes both the message and the exit code
+            // (a request that cannot be satisfied, not a runtime failure —
+            // nothing broke, the machine is exactly as the first install
+            // left it). If the registry does not carry it — the ordinary
+            // case this refusal exists for — `err`'s own message already
+            // says the honest thing and is printed unchanged.
+            if let Some(occupied) = occupied_address(&err) {
+                let identity = Identity {
+                    provenance: descriptor.catalogue.clone(),
+                    id: descriptor.id.clone(),
+                };
+                if let Some(entry) = already_installed(&root, &identity, occupied) {
+                    eprintln!(
+                        "rigger-cli: cannot install `{}`: {} already carries what this product \
+                         posed for it, from `{}` — remove it before installing again",
+                        descriptor.id,
+                        entry.at().display(),
+                        entry.provenance(),
+                    );
+                    return ExitCode::from(crate::REQUEST_CANNOT_BE_SATISFIED);
+                }
+            }
             eprintln!("rigger-cli: cannot pose `{}`: {err}", descriptor.id);
             return ExitCode::from(crate::RUNTIME_FAILURE);
         }
@@ -296,6 +324,46 @@ pub fn run(catalog: &str, id: &str) -> ExitCode {
             ExitCode::from(registry_exit_code(&err))
         }
     }
+}
+
+/// The address `pose` refused to write over because something is already
+/// there, when that is the reason `err` carries — `None` for every other
+/// refusal, none of which the registry has anything to say about.
+///
+/// Only [`PoseError::RolledBack`] is matched, deliberately not
+/// [`PoseError::NotRestored`]: the latter is a step failing **and** its own
+/// rollback failing, which leaves the machine in a state this diagnosis does
+/// not apply to and must not paper over.
+fn occupied_address(err: &PoseError) -> Option<&std::path::Path> {
+    match err {
+        PoseError::RolledBack {
+            failure: StepError::Occupied { address },
+            ..
+        } => Some(address),
+        _ => None,
+    }
+}
+
+/// The entry the registry itself already records at `identity`, when it is
+/// the entry occupying `address` — proof, read out of the registry rather
+/// than assumed, that this product posed what is there.
+///
+/// A registry that cannot be read answers `None`, the same as one that
+/// simply does not carry the identity: either way there is nothing here to
+/// stand behind a claim that this product posed it, so the caller falls back
+/// to the refusal `pose` itself already gave.
+fn already_installed(
+    root: &std::path::Path,
+    identity: &Identity,
+    address: &std::path::Path,
+) -> Option<Entry> {
+    let registry = Registry::at(root.join(".rigger").join("registry"));
+    let ledger = registry.read().ok()?;
+    ledger
+        .entries()
+        .iter()
+        .find(|entry| entry.identity() == identity && entry.at() == address)
+        .cloned()
 }
 
 /// The exit code owed for a descriptor that could not be read.

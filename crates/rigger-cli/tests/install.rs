@@ -24,6 +24,14 @@
 //! `crates/rigger-cli/src/source.rs` resolves and reads off disk, and that
 //! what its `Source::Directory` and `Source::Files` cases name rather than
 //! read is refused by name, not silently invented into something it is not.
+//!
+//! **The last two tests measure the two answers `install` owes when the
+//! address it is about to pose to is already occupied.** When the registry
+//! itself names this same catalogue entry at that address, this product
+//! posed what is occupying it, and reinstalling it is a request that cannot
+//! be satisfied — not damage, and not a reason to retry. When nothing in the
+//! registry says so, the file is left exactly as it was found, under the
+//! same refusal and the same exit code as before.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -449,5 +457,107 @@ fn a_path_array_naming_more_than_one_file_is_refused_and_nothing_is_written() {
         top_level(&root),
         Vec::<String>::new(),
         "a multi-file `path` override left something behind in the root"
+    );
+}
+
+#[test]
+fn reinstalling_an_entry_the_registry_already_recorded_is_an_impossible_request() {
+    let scratch = Scratch::new("reinstall-recorded");
+    let root = scratch.root();
+    scratch.write_source("hooks/guard-command.ts", "export const guarded = true;\n");
+    let catalogue = scratch.catalogue_with("hook:guard-command", "hook", "");
+
+    let first = run(
+        &root,
+        &["install", catalogue.to_str().unwrap(), "hook:guard-command"],
+    );
+    assert_eq!(
+        first.status.code(),
+        Some(0),
+        "the first install should have succeeded, stderr: {}",
+        stderr_of(&first)
+    );
+
+    let second = run(
+        &root,
+        &["install", catalogue.to_str().unwrap(), "hook:guard-command"],
+    );
+
+    assert_eq!(
+        second.status.code(),
+        Some(2),
+        "reinstalling what the registry already recorded should be a request that cannot be \
+         satisfied, not a runtime failure — nothing on the machine is broken, stdout: {}, \
+         stderr: {}",
+        stdout_of(&second),
+        stderr_of(&second)
+    );
+    assert_eq!(
+        stdout_of(&second),
+        "",
+        "a refused reinstall printed on stdout"
+    );
+    assert!(
+        stderr_of(&second).contains("already"),
+        "stderr does not say the entry is already installed: {}",
+        stderr_of(&second)
+    );
+    assert!(
+        stderr_of(&second).contains("acme"),
+        "stderr does not name the catalogue that already posed it: {}",
+        stderr_of(&second)
+    );
+
+    let posed = std::fs::read_to_string(root.join("hook-guard-command"))
+        .expect("what the first install posed should still be there");
+    assert_eq!(
+        posed, "export const guarded = true;\n",
+        "a refused reinstall touched what the first install had posed"
+    );
+}
+
+#[test]
+fn installing_over_a_file_the_registry_does_not_know_about_is_a_runtime_failure_and_is_left_alone()
+{
+    let scratch = Scratch::new("occupied-unrecorded");
+    let root = scratch.root();
+    scratch.write_source("hooks/guard-command.ts", "export const guarded = true;\n");
+    let catalogue = scratch.catalogue_with("hook:guard-command", "hook", "");
+    std::fs::write(
+        root.join("hook-guard-command"),
+        "not written by rigger-cli\n",
+    )
+    .expect("write a file this product never posed");
+
+    let output = run(
+        &root,
+        &["install", catalogue.to_str().unwrap(), "hook:guard-command"],
+    );
+
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "an address occupied by something the registry does not know about should still be a \
+         runtime failure, stdout: {}, stderr: {}",
+        stdout_of(&output),
+        stderr_of(&output)
+    );
+    assert_eq!(
+        stdout_of(&output),
+        "",
+        "a refused install printed on stdout"
+    );
+    assert!(
+        stderr_of(&output).contains("did not put it there"),
+        "stderr does not carry the refusal owed when the registry cannot vouch for what is \
+         there: {}",
+        stderr_of(&output)
+    );
+
+    let untouched = std::fs::read_to_string(root.join("hook-guard-command"))
+        .expect("the pre-existing file should still be there");
+    assert_eq!(
+        untouched, "not written by rigger-cli\n",
+        "install overwrote a file it never put there"
     );
 }
