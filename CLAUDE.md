@@ -66,6 +66,22 @@ not the test.
 Never work on `main` — one feature branch per change. A merge to `main` in this repository is an act
 of publication.
 
+**A branch is cleaned before it is merged, and that is what makes the working history free.** While a
+branch is in flight its commits are notes to ourselves: they may name a review, a slice, a finding
+nobody outside the room can resolve. That is useful — it is how a chantier is picked up two days
+later — and it is not what a reader who arrives through `main` should have to decode. So the two
+audiences are served in two places rather than compromised into one: the branch keeps whatever the
+work needed, and the merge presents whatever a stranger can read.
+
+Concretely, before a merge: rewrite the history the merge will publish so that every subject standing
+on `main` states a change to the product, in English, without citing a review, a family of findings,
+or a closure. Squash whatever only tracked the work getting done. A subject that cannot be written
+this way usually marks a commit that changed nothing a reader can observe, and it belongs to the
+branch alone.
+
+The rule was written down on 2026-08-14, when a slice ended with subjects like *fix what the closing
+review of the closure refused* — accurate on the branch, meaningless on `main`.
+
 ## What this code is, in one paragraph
 
 The product **assembles**; a catalogue decides what is posed. It exposes a closed, compiler-locked set
