@@ -40,6 +40,12 @@
 //!   to reason about is retired. Running the binary from an empty directory
 //!   and listing it afterwards is exactly how this tracer bullet is meant to
 //!   be checked.
+//! - **[`confine`] is the T3 answer to what T1 left open here**: the id is
+//!   read out of a catalogue this crate did not write, and nothing between
+//!   that read and the write to disk used to check it stayed under the root.
+//!   `confine` closes that — refusing an absolute id, a `..` component, or a
+//!   pre-existing symlink that would carry either the pose or the shared
+//!   store entry outside the root — before either destination is touched.
 //! - **Consent is hard-coded to always grant.** `rigger-registry::Consent` is
 //!   a decision handed in by a caller that reads a terminal; this binary
 //!   reads none yet, so there is no prompt to ask and nothing to decide
@@ -51,7 +57,9 @@
 //!   crate's own choice to make, and a fixed, visible one costs nothing to
 //!   change later.
 
-use std::path::PathBuf;
+use std::fmt;
+use std::io;
+use std::path::{Component, Path, PathBuf};
 use std::process::ExitCode;
 
 use rigger_apply::{pose, OnDisk, SystemLiveness, SystemPracticability};
@@ -88,7 +96,28 @@ pub fn run(catalog: &str, id: &str) -> ExitCode {
     // `nature/id` layout without a rename of what T1 already posed.
     let sanitized = descriptor.id.replace(':', "-");
     let address = PathBuf::from(&sanitized);
-    let store = root.join(".rigger").join("store").join(&sanitized);
+    let store_relative = PathBuf::from(".rigger").join("store").join(&sanitized);
+
+    // The id is data this reader read out of the catalogue, not written by
+    // this crate — refused here, before either destination is touched, if
+    // it would resolve outside `root`. Both destinations are checked: the
+    // pose address is exactly the (sanitised) id, and the shared store entry
+    // carries the same id as its own final component.
+    let posed_at = match confine(&root, &address) {
+        Ok(path) => path,
+        Err(err) => {
+            eprintln!("rigger-cli: cannot install `{}`: {err}", descriptor.id);
+            return ExitCode::from(confinement_exit_code(&err));
+        }
+    };
+    let store = match confine(&root, &store_relative) {
+        Ok(path) => path,
+        Err(err) => {
+            eprintln!("rigger-cli: cannot install `{}`: {err}", descriptor.id);
+            return ExitCode::from(confinement_exit_code(&err));
+        }
+    };
+
     let contents = format!(
         "kind = \"{}\"\nid = \"{}\"\nnature = \"{}\"\n",
         descriptor.kind, descriptor.id, descriptor.nature
@@ -107,7 +136,7 @@ pub fn run(catalog: &str, id: &str) -> ExitCode {
 
     let posted = match pose(
         BehaviourName::Link,
-        &root.join(&address),
+        &posed_at,
         &Fragment::Artefact {
             store,
             contents,
@@ -186,18 +215,147 @@ pub fn run(catalog: &str, id: &str) -> ExitCode {
 
 /// The exit code owed for a descriptor that could not be read.
 ///
-/// Only [`DescriptorError::NotFound`] names a request that cannot be
-/// satisfied — asking for an id the catalogue does not carry, the same shape
-/// as `rigger-cli`'s own unknown-command refusal. Every other member reports
-/// that the catalogue itself could not be read or trusted, which retyping the
-/// request does not fix.
+/// Every member answers [`crate::REQUEST_CANNOT_BE_SATISFIED`] — a `<catalog>`
+/// this reader cannot turn into a working descriptor is exactly the shape of
+/// request this code names, whether the reason is an id the catalogue does
+/// not carry, or the catalogue itself being unreadable, not UTF-8, not TOML,
+/// at a `format` this reader does not know, or missing a field an entry must
+/// carry. None of these is a fact about this machine that a retry would clear
+/// — every one of them is fixed by pointing the command at a different
+/// catalogue or a different id, which is what that code is for.
 fn descriptor_exit_code(err: &DescriptorError) -> u8 {
     match err {
-        DescriptorError::NotFound { .. } => crate::REQUEST_CANNOT_BE_SATISFIED,
-        DescriptorError::Read { .. }
+        DescriptorError::NotFound { .. }
+        | DescriptorError::Read { .. }
         | DescriptorError::NotUtf8 { .. }
         | DescriptorError::Malformed { .. }
         | DescriptorError::UnknownFormat { .. }
-        | DescriptorError::MissingField { .. } => crate::RUNTIME_FAILURE,
+        | DescriptorError::MissingField { .. } => crate::REQUEST_CANNOT_BE_SATISFIED,
+    }
+}
+
+/// Refuses to let `relative` — data this reader read out of the catalogue,
+/// not written by this crate — resolve to anywhere outside `root`: an
+/// absolute path, a `..` component, or (the one those two checks cannot see)
+/// an existing symlink among `root`'s own children that this filesystem
+/// would follow outside it. Returns the joined path on success — still not
+/// guaranteed to exist, only guaranteed to resolve under `root` as far as
+/// this filesystem can be asked today.
+///
+/// **Why this lives in `rigger-cli`, not `rigger-apply`.** `pose` takes an
+/// address as an opaque value and poses exactly there; nothing in it carries
+/// a notion of "root" an address must stay under — that notion belongs to
+/// this binary, the composition root that turns a catalogue's own `id` into
+/// a path on the caller's disk.
+fn confine(root: &Path, relative: &Path) -> Result<PathBuf, ConfinementError> {
+    if relative.is_absolute() {
+        return Err(ConfinementError::Absolute {
+            relative: relative.to_path_buf(),
+        });
+    }
+    if relative
+        .components()
+        .any(|component| matches!(component, Component::ParentDir))
+    {
+        return Err(ConfinementError::Traversal {
+            relative: relative.to_path_buf(),
+        });
+    }
+
+    let canonical_root = root.canonicalize().map_err(|detail| ConfinementError::Io {
+        path: root.to_path_buf(),
+        detail,
+    })?;
+
+    // `joined` may not exist yet — only its deepest existing ancestor can be
+    // canonicalised, and that ancestor is exactly where a symlink escaping
+    // `root` would have to sit, since nothing past it exists on this
+    // filesystem for the resolution to run through.
+    let joined = root.join(relative);
+    let mut probe: &Path = &joined;
+    while !probe.exists() {
+        match probe.parent() {
+            Some(parent) => probe = parent,
+            None => break,
+        }
+    }
+    let canonical_probe = probe
+        .canonicalize()
+        .map_err(|detail| ConfinementError::Io {
+            path: probe.to_path_buf(),
+            detail,
+        })?;
+    if !canonical_probe.starts_with(&canonical_root) {
+        return Err(ConfinementError::Symlink {
+            relative: relative.to_path_buf(),
+        });
+    }
+
+    Ok(joined)
+}
+
+/// Why [`confine`] refused an id before anything was posed for it. Every
+/// member leaves the filesystem exactly as `install` found it — `confine`
+/// runs, and refuses, before either destination it guards is touched.
+#[derive(Debug)]
+enum ConfinementError {
+    /// The id, once sanitised, is an absolute path — joining it to the root
+    /// would replace the root outright rather than resolve under it.
+    Absolute { relative: PathBuf },
+    /// The id carries a `..` component, which would resolve above the root
+    /// rather than under it.
+    Traversal { relative: PathBuf },
+    /// Once existing symlinks on this filesystem are followed, the id
+    /// resolves to a path outside the root.
+    Symlink { relative: PathBuf },
+    /// The root, or the deepest of the id's own leading directories that
+    /// exists, could not be resolved at all.
+    Io { path: PathBuf, detail: io::Error },
+}
+
+impl fmt::Display for ConfinementError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Absolute { relative } => write!(
+                f,
+                "its id resolves to the absolute path `{}` — an id must resolve to a location \
+                 under the root, not replace it",
+                relative.display()
+            ),
+            Self::Traversal { relative } => write!(
+                f,
+                "its id resolves to `{}`, which leaves the root through a `..` component",
+                relative.display()
+            ),
+            Self::Symlink { relative } => write!(
+                f,
+                "its id resolves to `{}`, which an existing symlink on this filesystem leads \
+                 outside the root",
+                relative.display()
+            ),
+            Self::Io { path, detail } => write!(
+                f,
+                "cannot resolve `{}` to check it stays under the root — {detail}",
+                path.display()
+            ),
+        }
+    }
+}
+
+impl std::error::Error for ConfinementError {}
+
+/// The exit code owed for a [`ConfinementError`].
+///
+/// [`ConfinementError::Io`] is a fact about this machine — the root or one of
+/// its own directories could not be resolved — so it answers
+/// [`crate::RUNTIME_FAILURE`]; the other three are facts about the id itself,
+/// fixed only by naming a different one, so they answer
+/// [`crate::REQUEST_CANNOT_BE_SATISFIED`].
+fn confinement_exit_code(err: &ConfinementError) -> u8 {
+    match err {
+        ConfinementError::Absolute { .. }
+        | ConfinementError::Traversal { .. }
+        | ConfinementError::Symlink { .. } => crate::REQUEST_CANNOT_BE_SATISFIED,
+        ConfinementError::Io { .. } => crate::RUNTIME_FAILURE,
     }
 }

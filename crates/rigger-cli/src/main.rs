@@ -73,8 +73,11 @@ pub(crate) const SUCCESS: u8 = 0;
 pub(crate) const RUNTIME_FAILURE: u8 = 1;
 
 /// A request that cannot be satisfied — anything that is not one of this
-/// binary's commands, an id `install` cannot find in the catalogue named, or
-/// an id `remove` cannot find in the registry.
+/// binary's commands, a catalogue `install` cannot read (missing, not
+/// UTF-8, not TOML, an unrecognised `format`, or an entry missing a field
+/// this reader requires), an id `install` cannot find in the catalogue
+/// named, an id whose own shape would resolve outside the root, or an id
+/// `remove` cannot find in the registry.
 pub(crate) const REQUEST_CANNOT_BE_SATISFIED: u8 = 2;
 
 /// **A compile-time lock, and a narrow one — read what it does not do.** It
@@ -99,7 +102,7 @@ fn main() -> ExitCode {
         [command, catalog, id] if command == "install" => install::run(catalog, id),
         [command, id] if command == "remove" => remove::run(id),
         _ => {
-            eprintln!("usage: rigger-cli coverage install <catalog> <entry-id> remove <entry-id>");
+            eprintln!("usage: rigger-cli coverage | install <catalog> <id> | remove <id>");
             ExitCode::from(REQUEST_CANNOT_BE_SATISFIED)
         }
     }
