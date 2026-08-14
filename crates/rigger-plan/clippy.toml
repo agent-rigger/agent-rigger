@@ -1,0 +1,36 @@
+# MD-37·1 — planning executes nothing and writes nothing.
+#
+# This crate decides *where* something is posed; posing it is `rigger-apply`'s
+# work, and the separation is what makes a plan safe to compute on a caller's
+# machine before that caller has consented to anything. A process launched or a
+# byte written from here would be an effect nobody asked for, at a moment the
+# product promises there are none.
+#
+# The guarantee held by construction — this crate imports neither `std::fs` nor
+# `std::process`, and has no third-party dependency — but nothing enforced it.
+# What enforced it until 2026-08-14 was a test that read this crate's own source
+# as text and looked for those tokens. Its own header admitted the hole: the
+# grouped, braced form `use std::{process as p};` breaks the substring the scan
+# looks for, so a rename could walk straight through the guard with nothing
+# going red. A check that a refactor can silently defeat is not a check.
+#
+# Clippy resolves this file from the crate's manifest directory, so the ban is
+# scoped to this crate alone — `rigger-apply` writes to disk because writing to
+# disk is its entire purpose, and `rigger-cli` spawns nothing but must stay free
+# to. The compiler resolves the path after imports are resolved, which is
+# exactly the step the text scan could not reach.
+
+disallowed-types = [
+    { path = "std::process::Command", reason = "MD-37.1: planning launches no process" },
+]
+
+disallowed-methods = [
+    { path = "std::fs::write", reason = "MD-37.1: planning writes nothing" },
+    { path = "std::fs::create_dir", reason = "MD-37.1: planning writes nothing" },
+    { path = "std::fs::create_dir_all", reason = "MD-37.1: planning writes nothing" },
+    { path = "std::fs::remove_file", reason = "MD-37.1: planning writes nothing" },
+    { path = "std::fs::remove_dir_all", reason = "MD-37.1: planning writes nothing" },
+    { path = "std::fs::copy", reason = "MD-37.1: planning writes nothing" },
+    { path = "std::fs::rename", reason = "MD-37.1: planning writes nothing" },
+    { path = "std::os::unix::fs::symlink", reason = "MD-37.1: planning writes nothing" },
+]

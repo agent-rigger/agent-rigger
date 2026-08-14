@@ -20,3 +20,22 @@ jobs:
       - run: cargo fmt --all -- --check
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test --all
+      # C7 — the admission condition derives from a property of the grammar,
+      # never from the identity of a host. A host name reaching this crate's
+      # source is the first symptom of the opposite, so it fails the build here
+      # rather than being found later in a behaviour nobody can explain.
+      #
+      # This inherits a weakness the code it replaces also had, and the
+      # repository's own convention names it: a list of names stops protecting
+      # the day a host changes, and nothing goes red. It catches the leak that
+      # has actually happened — a name copied in from a note — and it does not
+      # catch a host that did not exist when this list was written. The real
+      # guard is `c7_the_grammar_of_the_served_host_is_admitted`, which measures
+      # the property; this only keeps the cheap symptom cheap to spot.
+      - name: C7 — the grammar names no host
+        run: |
+          if grep -rniE 'claude|anthropic|codex|opencode|cursor|copilot|gemini|windsurf' \
+               crates/rigger-grammar/src/; then
+            echo "::error::a host name reached rigger-grammar/src — C7 requires the admission to derive from a property of the grammar, not from a host's identity"
+            exit 1
+          fi
