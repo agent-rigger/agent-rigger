@@ -68,6 +68,9 @@ version = "0.0.0"
 dependencies = [
  "rigger-apply",
  "rigger-grammar",
+ "rigger-plan",
+ "rigger-registry",
+ "toml_edit",
 ]
 
 [[package]]

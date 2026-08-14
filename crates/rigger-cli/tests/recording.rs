@@ -74,7 +74,7 @@ fn md39_3_an_unknown_argument_is_refused_on_stderr_with_a_nonzero_exit() {
     );
     assert_eq!(
         stderr_of(&output),
-        "usage: rigger-cli coverage\n",
+        "usage: rigger-cli coverage install <catalog> <entry-id>\n",
         "the usage line `main.rs` prints on refusal has changed"
     );
 }

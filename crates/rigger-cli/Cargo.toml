@@ -10,12 +10,23 @@ publish = false
 # carries — established to prove MD-39·1 ("the published output must be
 # produced by running the command — never prose written by hand"), not to
 # carry a fuller command surface, which belongs to another change.
-# No third-party dependency, for the same reason the rest of this workspace
-# has none on the paths it publishes: a single command needs no argument
-# parser.
+# No argument-parsing dependency: two commands, one of them fixed-arity, need
+# no parser.
 # `rigger-apply` was added by B7 to publish MD-40's closing admission — a
 # limit of what the product itself observes, not a property of any grammar,
 # so it could not come from `rigger-grammar` alone.
+# `rigger-registry` and `rigger-plan` are added here by the tracer bullet
+# (bout-en-bout T1): before this, neither was a dependency of this crate, so
+# no execution path reached the engine they carry — it was written and
+# tested but nothing called it. `install` is the first command that does.
+# `toml_edit` is not a new dependency of the workspace — `rigger-grammar`
+# already carries it at this exact version to read the catalogue's own
+# grammar; this crate uses the same version to read the one descriptor it
+# needs out of `catalog.toml` ahead of the general reader `rigger-grammar`
+# is not yet asked to serve.
 [dependencies]
 rigger-apply = { path = "../rigger-apply" }
 rigger-grammar = { path = "../rigger-grammar" }
+rigger-plan = { path = "../rigger-plan" }
+rigger-registry = { path = "../rigger-registry" }
+toml_edit = { version = "=0.25.13" }

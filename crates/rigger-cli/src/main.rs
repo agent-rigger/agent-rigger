@@ -1,5 +1,6 @@
-//! The product's one entry point today: a binary carrying a single command,
-//! `coverage`, which prints `docs/coverage.md` as rendered from the measured
+//! The product's entry point: a binary carrying two commands.
+//!
+//! `coverage` prints `docs/coverage.md` as rendered from the measured
 //! capability table and the limits no grammar's table can carry.
 //!
 //! **What MD-39·1 requires, and how this closes it.** The published output
@@ -19,11 +20,17 @@
 //! that already depends on `rigger-grammar` for the table, so it is where
 //! the two meet.
 //!
-//! **Why one command.** This crate exists to establish that mechanism, not to
-//! carry a full command surface; a fuller one is not decided here.
+//! `install` is the tracer bullet added by the bout-en-bout change's T1: the
+//! first path in this binary that reaches `rigger-registry` and
+//! `rigger-plan`, neither of which was a dependency of this crate before it.
+//! What it wires, and what it deliberately leaves for a later slice, is
+//! written out in [`install`]'s own module doc comment.
 
 use std::io::Write;
 use std::process::ExitCode;
+
+mod descriptor;
+mod install;
 
 /// Whether `code` is one the product's exit-code contract ratifies.
 ///
@@ -46,15 +53,21 @@ const fn is_ratified(code: u8) -> bool {
     matches!(code, 0 | 1 | 2 | 130)
 }
 
-/// Success: the page was written to stdout in full.
-const SUCCESS: u8 = 0;
+/// Success: the page was written to stdout in full, or the entry was posed
+/// and recorded in full.
+///
+/// `pub(crate)`, along with the two codes below: `install` answers with these
+/// same three values rather than choosing its own, so the contract this file
+/// locks covers what it returns too.
+pub(crate) const SUCCESS: u8 = 0;
 
-/// A legitimate request the runtime failed — here, stdout refusing the write.
-const RUNTIME_FAILURE: u8 = 1;
+/// A legitimate request the runtime failed — stdout refusing the write, a
+/// pose that could not be carried out, a registry that could not be written.
+pub(crate) const RUNTIME_FAILURE: u8 = 1;
 
-/// A request that cannot be satisfied — anything that is not the one command
-/// this binary knows. The contract names an unknown flag as its example.
-const REQUEST_CANNOT_BE_SATISFIED: u8 = 2;
+/// A request that cannot be satisfied — anything that is not one of this
+/// binary's commands, or an id `install` cannot find in the catalogue named.
+pub(crate) const REQUEST_CANNOT_BE_SATISFIED: u8 = 2;
 
 /// **A compile-time lock, and a narrow one — read what it does not do.** It
 /// refuses to build if a code named above leaves the transcribed contract. It
@@ -75,8 +88,9 @@ fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.as_slice() {
         [command] if command == "coverage" => coverage(),
+        [command, catalog, id] if command == "install" => install::run(catalog, id),
         _ => {
-            eprintln!("usage: rigger-cli coverage");
+            eprintln!("usage: rigger-cli coverage install <catalog> <entry-id>");
             ExitCode::from(REQUEST_CANNOT_BE_SATISFIED)
         }
     }
