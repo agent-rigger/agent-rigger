@@ -1,13 +1,18 @@
 //! Resolves the artefact a catalogue entry names to a location on disk —
 //! ADR-0048: the entry's own `path`, when it carries one, ahead of the rule
 //! [`crate::descriptor::NATURE_TABLE`] states for its nature, both confined
-//! under the catalogue's own root by [`crate::confine`].
+//! under the catalogue's own root by [`crate::confine`]. ADR-0049 § 4 adds a
+//! second override to the nature rule, alongside `path`: an entry may declare
+//! its own [`Disposition`], which then wins over the one
+//! [`crate::descriptor::NATURE_TABLE`] would have given its nature by
+//! default.
 //!
 //! What this module does not do is turn the result into bytes on a disk
-//! `install` poses — [`Source::Directory`] and [`Source::Files`] name a
-//! location without reading it, because no behaviour this workspace carries
-//! poses either shape yet; see their own doc comments for what is missing
-//! and where.
+//! `install` poses. [`Source::Directory`] and [`Source::Files`] name a
+//! location without reading it — [`crate::install`] is what turns the first
+//! into the tree [`rigger_apply::read_tree`] reads, and the second into the
+//! small one its own named files form, both planted through
+//! [`rigger_plan::Fragment::Tree`] (ADR-0049).
 
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -21,18 +26,18 @@ use crate::descriptor::{nature_location, Descriptor, Disposition};
 pub enum Source {
     /// One file to read and pose.
     File(PathBuf),
-    /// A whole directory. [`crate::descriptor::Disposition::Directory`]
-    /// names it; nothing reads it, because [`rigger_apply::Fragment`]
-    /// carries one `contents: String` per pose and no member of this crate
-    /// walks a tree into one. Posing this needs that engine extended, which
-    /// is a decision for `rigger-apply` to make, not one this crate invents
-    /// by picking a serialisation of a directory into a single string.
+    /// A whole directory, posed as one indivisible tree —
+    /// [`crate::descriptor::Disposition::Directory`] names it, by
+    /// [`crate::descriptor::NATURE_TABLE`]'s default or by an entry's own
+    /// override (ADR-0049 § 4). [`rigger_plan::Fragment::Tree`] is what a
+    /// directory this shape names is posed through.
     Directory(PathBuf),
-    /// More than one file, from a `path` array on the entry. Nothing reads
-    /// these either: [`rigger_registry::Posting`] carries one `address` and
-    /// one `fingerprint` per record, so recording more than one file under
-    /// the one id this entry names needs that record extended first — the
-    /// same open question as [`Source::Directory`], for a different reason.
+    /// More than one file, from a `path` array on the entry — planted
+    /// together as the small tree they form, each entered under its own
+    /// file name. ADR-0049 is what makes this a single address and a single
+    /// fingerprint, the same as [`Source::Directory`], rather than a shape
+    /// that would need [`rigger_registry::Posting`] extended to carry more
+    /// than the one `address` and one `fingerprint` it already does.
     Files(Vec<PathBuf>),
 }
 
@@ -132,18 +137,23 @@ fn resolve_override(
     })
 }
 
-/// The default branch of [`resolve`]: `<folder>/<local id>`, folder and
-/// disposition read from [`crate::descriptor::NATURE_TABLE`], extension
-/// appended for a file — ADR-0048 § 1.
+/// The default branch of [`resolve`]: `<folder>/<local id>`, folder read
+/// from [`crate::descriptor::NATURE_TABLE`], disposition read from there too
+/// unless the entry declares its own (ADR-0049 § 4) — extension appended for
+/// a file whose disposition carries one — ADR-0048 § 1.
 fn resolve_by_nature(
     catalogue_root: &Path,
     descriptor: &Descriptor,
 ) -> Result<Source, SourceError> {
-    let (folder, disposition) =
+    let (folder, default_disposition) =
         nature_location(&descriptor.nature).ok_or_else(|| SourceError::UnknownNature {
             nature: descriptor.nature.clone(),
             id: descriptor.id.clone(),
         })?;
+    // The entry's own declaration wins over the nature's default — the same
+    // precedence `path` already gives an entry over the nature's own folder
+    // (ADR-0049 § 4).
+    let disposition = descriptor.disposition.unwrap_or(default_disposition);
 
     // The prefix of the id equals the nature on every entry this table was
     // measured against (53 of 53); a colon-free id — which none of them are
@@ -156,6 +166,7 @@ fn resolve_by_nature(
         .unwrap_or(descriptor.id.as_str());
 
     let relative = match disposition {
+        Disposition::File { extension: "" } => PathBuf::from(folder).join(local),
         Disposition::File { extension } => {
             PathBuf::from(folder).join(format!("{local}.{extension}"))
         }
@@ -184,6 +195,17 @@ mod tests {
             nature: nature.to_string(),
             catalogue: "acme".to_string(),
             path,
+            disposition: None,
+        }
+    }
+
+    fn descriptor_with_disposition(id: &str, nature: &str, disposition: Disposition) -> Descriptor {
+        Descriptor {
+            id: id.to_string(),
+            nature: nature.to_string(),
+            catalogue: "acme".to_string(),
+            path: None,
+            disposition: Some(disposition),
         }
     }
 
@@ -216,6 +238,34 @@ mod tests {
             resolved,
             Source::Directory(root.join("skills/spec-workflow"))
         );
+    }
+
+    #[test]
+    fn an_entry_declaring_a_directory_disposition_overrides_a_file_default_nature() {
+        let root = scratch("disposition-directory-override");
+        let entry =
+            descriptor_with_disposition("hook:guard-command", "hook", Disposition::Directory);
+
+        let resolved = resolve(&root, &entry).expect("a declared disposition resolves");
+
+        assert_eq!(
+            resolved,
+            Source::Directory(root.join("hooks/guard-command"))
+        );
+    }
+
+    #[test]
+    fn an_entry_declaring_a_file_disposition_overrides_a_directory_default_nature() {
+        let root = scratch("disposition-file-override");
+        let entry = descriptor_with_disposition(
+            "skill:spec-workflow",
+            "skill",
+            Disposition::File { extension: "" },
+        );
+
+        let resolved = resolve(&root, &entry).expect("a declared disposition resolves");
+
+        assert_eq!(resolved, Source::File(root.join("skills/spec-workflow")));
     }
 
     #[test]

@@ -20,10 +20,11 @@
 //! reserves for a request fixed only by asking something different.
 //!
 //! **The tests from `installing_a_hook_poses_the_bytes_of_the_real_artefact`
-//! onward measure ADR-0048** — that what is posed is the artefact
-//! `crates/rigger-cli/src/source.rs` resolves and reads off disk, and that
-//! what its `Source::Directory` and `Source::Files` cases name rather than
-//! read is refused by name, not silently invented into something it is not.
+//! onward measure ADR-0048 and ADR-0049** — that what is posed is the
+//! artefact `crates/rigger-cli/src/source.rs` resolves and reads off disk,
+//! whether that artefact is one file, a whole directory planted as one tree,
+//! or several files a `path` array names planted as the small tree they
+//! form.
 //!
 //! **The last two tests measure the two answers `install` owes when the
 //! address it is about to pose to is already occupied.** When the registry
@@ -390,10 +391,11 @@ fn an_artefact_absent_on_disk_is_refused_and_nothing_is_written() {
 }
 
 #[test]
-fn a_directory_disposition_is_refused_and_nothing_is_written() {
+fn a_directory_disposition_poses_the_whole_tree_as_one_thing() {
     let scratch = Scratch::new("directory-disposition");
     let root = scratch.root();
     scratch.write_source("skills/spec-workflow/SKILL.md", "# Spec workflow\n");
+    scratch.write_source("skills/spec-workflow/references/notes.md", "notes\n");
     let catalogue = scratch.catalogue_with("skill:spec-workflow", "skill", "");
 
     let output = run(
@@ -407,29 +409,34 @@ fn a_directory_disposition_is_refused_and_nothing_is_written() {
 
     assert_eq!(
         output.status.code(),
-        Some(2),
-        "exit code, stdout: {}, stderr: {}",
-        stdout_of(&output),
+        Some(0),
+        "exit code, stderr: {}",
         stderr_of(&output)
     );
+    let planted = root.join("skill-spec-workflow");
     assert!(
-        stderr_of(&output).contains("directory"),
-        "stderr does not name the directory it cannot pose: {}",
-        stderr_of(&output)
+        planted.is_dir(),
+        "install should have planted a directory at `skill-spec-workflow`"
     );
     assert_eq!(
-        top_level(&root),
-        Vec::<String>::new(),
-        "a directory-disposition nature left something behind in the root"
+        std::fs::read_to_string(planted.join("SKILL.md")).expect("SKILL.md should be there"),
+        "# Spec workflow\n",
+        "the top-level file of the planted tree does not carry the source bytes"
+    );
+    assert_eq!(
+        std::fs::read_to_string(planted.join("references/notes.md"))
+            .expect("references/notes.md should be there"),
+        "notes\n",
+        "a file nested under the planted tree does not carry the source bytes"
     );
 }
 
 #[test]
-fn a_path_array_naming_more_than_one_file_is_refused_and_nothing_is_written() {
+fn a_path_array_naming_more_than_one_file_plants_them_as_one_tree() {
     let scratch = Scratch::new("multi-file-override");
     let root = scratch.root();
     scratch.write_source("guardrails/allow.json", "{}\n");
-    scratch.write_source("guardrails/deny.json", "{}\n");
+    scratch.write_source("guardrails/deny.json", "{\"deny\":true}\n");
     let catalogue = scratch.catalogue_with(
         "guardrail:claude",
         "guardrail",
@@ -443,20 +450,94 @@ fn a_path_array_naming_more_than_one_file_is_refused_and_nothing_is_written() {
 
     assert_eq!(
         output.status.code(),
+        Some(0),
+        "exit code, stderr: {}",
+        stderr_of(&output)
+    );
+    let planted = root.join("guardrail-claude");
+    assert!(
+        planted.is_dir(),
+        "install should have planted a directory at `guardrail-claude`"
+    );
+    assert_eq!(
+        std::fs::read_to_string(planted.join("allow.json")).expect("allow.json should be there"),
+        "{}\n",
+        "the tree does not carry the bytes of the first named file"
+    );
+    assert_eq!(
+        std::fs::read_to_string(planted.join("deny.json")).expect("deny.json should be there"),
+        "{\"deny\":true}\n",
+        "the tree does not carry the bytes of the second named file"
+    );
+}
+
+#[test]
+fn an_entry_declaring_a_directory_disposition_poses_a_tree_its_nature_would_not_have_named() {
+    let scratch = Scratch::new("disposition-override");
+    let root = scratch.root();
+    scratch.write_source(
+        "hooks/guard-command/main.ts",
+        "export const guarded = true;\n",
+    );
+    let catalogue = scratch.catalogue_with(
+        "hook:guard-command",
+        "hook",
+        "disposition = \"directory\"\n",
+    );
+
+    let output = run(
+        &root,
+        &["install", catalogue.to_str().unwrap(), "hook:guard-command"],
+    );
+
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "exit code, stderr: {}",
+        stderr_of(&output)
+    );
+    let planted = root.join("hook-guard-command");
+    assert!(
+        planted.is_dir(),
+        "a declared `disposition = \"directory\"` should have planted a directory, not the \
+         `.ts` file the `hook` nature would have named by default"
+    );
+    assert_eq!(
+        std::fs::read_to_string(planted.join("main.ts")).expect("main.ts should be there"),
+        "export const guarded = true;\n",
+        "the planted tree does not carry the source bytes"
+    );
+}
+
+#[test]
+fn an_invalid_disposition_is_refused_and_nothing_is_written() {
+    let scratch = Scratch::new("disposition-invalid");
+    let root = scratch.root();
+    scratch.write_source("hooks/guard-command.ts", "export const guarded = true;\n");
+    let catalogue =
+        scratch.catalogue_with("hook:guard-command", "hook", "disposition = \"folder\"\n");
+
+    let output = run(
+        &root,
+        &["install", catalogue.to_str().unwrap(), "hook:guard-command"],
+    );
+
+    assert_eq!(
+        output.status.code(),
         Some(2),
         "exit code, stdout: {}, stderr: {}",
         stdout_of(&output),
         stderr_of(&output)
     );
     assert!(
-        stderr_of(&output).contains("files"),
-        "stderr does not name the multiple files it cannot pose: {}",
+        stderr_of(&output).contains("disposition"),
+        "stderr does not name the invalid `disposition` field: {}",
         stderr_of(&output)
     );
     assert_eq!(
         top_level(&root),
         Vec::<String>::new(),
-        "a multi-file `path` override left something behind in the root"
+        "an invalid `disposition` left something behind in the root"
     );
 }
 

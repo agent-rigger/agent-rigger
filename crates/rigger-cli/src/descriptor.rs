@@ -26,10 +26,22 @@ use toml_edit::{DocumentMut, Item};
 const KNOWN_FORMAT: i64 = 1;
 
 /// Where a nature's artefact sits, relative to the folder its own row in
-/// [`NATURE_TABLE`] names.
+/// [`NATURE_TABLE`] names — and, reused for [`Descriptor::disposition`], the
+/// shape an entry declares for itself, overriding that default for this one
+/// entry alone (ADR-0049 § 4, which amends ADR-0048 § 1 the same way `path`
+/// already overrides the nature's default folder).
+///
+/// **An entry's own override never carries an extension.** `NATURE_TABLE`'s
+/// own rows always do, because they name a *default* filename shape for a
+/// nature that has never needed anything else; an entry overriding to
+/// `Disposition::File` is naming the shape alone, and a bare `<local id>` is
+/// that shape's honest reading. An entry that needs a specific extension
+/// names one through `path` instead (ADR-0048 § 2) — the exact file, which is
+/// a different question from the shape of it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Disposition {
-    /// A file named `<local id>.<extension>`.
+    /// A file — `<local id>.<extension>` when an extension is named, bare
+    /// `<local id>` when `extension` is empty.
     File { extension: &'static str },
     /// A directory named `<local id>`.
     Directory,
@@ -88,6 +100,11 @@ pub struct Descriptor {
     /// of strings in the catalogue, always read back as a list. Overrides
     /// [`NATURE_TABLE`]'s rule for this one entry (ADR-0048 § 2).
     pub path: Option<Vec<String>>,
+    /// The entry's own disposition, when it declares one — `"file"` or
+    /// `"directory"` in the catalogue, and nothing else. Overrides
+    /// [`NATURE_TABLE`]'s default disposition for this one entry
+    /// (ADR-0049 § 4).
+    pub disposition: Option<Disposition>,
 }
 
 /// Why a descriptor could not be read.
@@ -123,6 +140,9 @@ pub enum DescriptorError {
     /// string nor an array whose members are all strings — the two shapes
     /// ADR-0048 § 2 accepts.
     InvalidPath { path: PathBuf, id: String },
+    /// The entry named `id` carries a `disposition` field that is neither
+    /// `"file"` nor `"directory"` — the two words ADR-0049 § 4 accepts.
+    InvalidDisposition { path: PathBuf, id: String },
 }
 
 impl fmt::Display for DescriptorError {
@@ -159,6 +179,12 @@ impl fmt::Display for DescriptorError {
                 f,
                 "{}: entry `{id}` carries a `path` field that is neither a string nor an array of \
                  strings",
+                path.display()
+            ),
+            Self::InvalidDisposition { path, id } => write!(
+                f,
+                "{}: entry `{id}` carries a `disposition` field that is neither `\"file\"` nor \
+                 `\"directory\"`",
                 path.display()
             ),
         }
@@ -226,14 +252,27 @@ pub fn read(path: &Path, id: &str) -> Result<Descriptor, DescriptorError> {
 
     field("kind")?;
     let entry_id = field("id")?;
+    // Captured before the `path` identifier below shadows the parameter with
+    // the entry's own `path` field — every error from here on names the
+    // catalogue file, not that field, and needs the parameter's value.
+    let catalogue_path = path.to_path_buf();
     let path = match entry.get("path") {
         None => None,
         Some(item) => Some(
             read_path_field(item).ok_or_else(|| DescriptorError::InvalidPath {
-                path: path.to_path_buf(),
+                path: catalogue_path.clone(),
                 id: entry_id.clone(),
             })?,
         ),
+    };
+    let disposition = match entry.get("disposition") {
+        None => None,
+        Some(item) => Some(read_disposition_field(item).ok_or_else(|| {
+            DescriptorError::InvalidDisposition {
+                path: catalogue_path.clone(),
+                id: entry_id.clone(),
+            }
+        })?),
     };
 
     Ok(Descriptor {
@@ -241,6 +280,7 @@ pub fn read(path: &Path, id: &str) -> Result<Descriptor, DescriptorError> {
         nature: field("nature")?,
         catalogue,
         path,
+        disposition,
     })
 }
 
@@ -256,4 +296,20 @@ fn read_path_field(item: &Item) -> Option<Vec<String>> {
         .iter()
         .map(|value| value.as_str().map(str::to_string))
         .collect()
+}
+
+/// Reads a `disposition` field as the shape it names. `None` when `item` is
+/// not a string, or is a string that is neither `"file"` nor `"directory"` —
+/// the two words ADR-0049 § 4 accepts for an entry's override.
+///
+/// The `File` this produces always carries an empty `extension`: a bare
+/// `<local id>` is what naming the shape alone, without a `path`, can honestly
+/// promise — see [`Disposition`]'s own doc comment for why a specific
+/// extension is a different field's job.
+fn read_disposition_field(item: &Item) -> Option<Disposition> {
+    match item.as_str()? {
+        "file" => Some(Disposition::File { extension: "" }),
+        "directory" => Some(Disposition::Directory),
+        _ => None,
+    }
 }

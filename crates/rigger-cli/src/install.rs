@@ -30,10 +30,10 @@
 //!   whole off disk — ADR-0048.** The nature table it carries, plus an
 //!   entry's own `path` when it has one, resolves the id-to-path question
 //!   this module used to leave open by posing the descriptor's own fields
-//!   instead. What that resolution cannot yet turn into bytes — a whole
-//!   directory, or more than one file under one id — is refused by name
-//!   rather than posed as something it is not; see [`Source::Directory`]
-//!   and [`Source::Files`] for what is missing and why.
+//!   instead. A whole directory, or the several files a `path` array names,
+//!   is posed as one tree — ADR-0049 — through the same call to `pose` a
+//!   single artefact goes through, [`Fragment::Tree`] taking the place of
+//!   [`Fragment::Artefact`].
 //! - **The root is the current working directory**, because the command line
 //!   `rigger install <catalog> <id>` carries no root argument and no host
 //!   model exists to derive one from — the assistant axis this product used
@@ -61,11 +61,13 @@
 //!   change later.
 
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use rigger_apply::{pose, OnDisk, PoseError, StepError, SystemLiveness, SystemPracticability};
-use rigger_plan::{BehaviourName, Fragment, Placement};
+use rigger_apply::{
+    pose, read_tree, OnDisk, PoseError, StepError, SystemLiveness, SystemPracticability,
+};
+use rigger_plan::{BehaviourName, Fragment, Placement, Tree, TreeEntry};
 use rigger_registry::{
     exit_code as registry_exit_code, transact, Address, Entry, Identity, Mutation, Outcome,
     Posting, Registry, POSED_BY,
@@ -127,6 +129,10 @@ pub fn run(catalog: &str, id: &str) -> ExitCode {
             return ExitCode::from(crate::confine::exit_code(&err));
         }
     };
+    // Captured here, before `store` moves into whichever `Fragment` is built
+    // below, so the directory it lives in can still be made afterwards —
+    // after the source has been read, never before.
+    let store_directory = store.parent().map(Path::to_path_buf);
 
     // The catalogue's own root — `path.parent()` of the catalogue read
     // above — is what an entry's source resolves relative to (ADR-0048 § 1),
@@ -144,67 +150,51 @@ pub fn run(catalog: &str, id: &str) -> ExitCode {
             return ExitCode::from(source::exit_code(&err));
         }
     };
-    let source_file = match resolved {
-        Source::File(path) => path,
+
+    // What each arm reads off disk differs — one artefact, a whole tree, or
+    // the small tree several named files form — but every arm ends in a
+    // `Fragment` `pose` carries out the same way, through the one call below
+    // (ADR-0049): `Fragment::Tree` is planted by the same `Behaviour::Link`
+    // that materialises `Fragment::Artefact`, so nothing past this match
+    // needs to know which shape this entry named. Reading happens before
+    // anything is written: an artefact absent from the source leaves nothing
+    // behind, not even `.rigger` itself.
+    let fragment = match resolved {
+        Source::File(path) => {
+            let contents = match read_artefact_file(&path, &descriptor.id) {
+                Ok(contents) => contents,
+                Err(code) => return code,
+            };
+            Fragment::Artefact {
+                store,
+                contents,
+                placement: Placement::Link,
+            }
+        }
         Source::Directory(path) => {
-            eprintln!(
-                "rigger-cli: cannot install `{}`: `{}` is a directory, and rigger_apply::pose only \
-                 carries a single-file `Fragment::Artefact` today — posing a whole directory needs \
-                 that engine extended before this entry can be installed",
-                descriptor.id,
-                path.display()
-            );
-            return ExitCode::from(crate::REQUEST_CANNOT_BE_SATISFIED);
+            let entries = match read_tree(&path) {
+                Ok(entries) => entries,
+                Err(err) => {
+                    eprintln!("rigger-cli: cannot install `{}`: {err}", descriptor.id);
+                    return ExitCode::from(tree_read_exit_code(&err));
+                }
+            };
+            Fragment::Tree {
+                store,
+                entries,
+                placement: Placement::Link,
+            }
         }
         Source::Files(paths) => {
-            let named: Vec<String> = paths
-                .iter()
-                .map(|path| path.display().to_string())
-                .collect();
-            eprintln!(
-                "rigger-cli: cannot install `{}`: its `path` names {} files ({}), and \
-                 rigger_registry::Posting carries one address and one fingerprint per record today \
-                 — posing more than one file under this id needs that record extended before this \
-                 entry can be installed",
-                descriptor.id,
-                named.len(),
-                named.join(", ")
-            );
-            return ExitCode::from(crate::REQUEST_CANNOT_BE_SATISFIED);
-        }
-    };
-
-    let metadata = match std::fs::metadata(&source_file) {
-        Ok(metadata) => metadata,
-        Err(err) if err.kind() == io::ErrorKind::NotFound => {
-            eprintln!(
-                "rigger-cli: cannot install `{}`: no artefact at `{}`",
-                descriptor.id,
-                source_file.display()
-            );
-            return ExitCode::from(crate::REQUEST_CANNOT_BE_SATISFIED);
-        }
-        Err(err) => {
-            eprintln!("rigger-cli: cannot read `{}`: {err}", source_file.display());
-            return ExitCode::from(crate::RUNTIME_FAILURE);
-        }
-    };
-    if metadata.is_dir() {
-        eprintln!(
-            "rigger-cli: cannot install `{}`: `{}` is a directory, and rigger_apply::pose only \
-             carries a single-file `Fragment::Artefact` today — posing a whole directory needs that \
-             engine extended before this entry can be installed",
-            descriptor.id,
-            source_file.display()
-        );
-        return ExitCode::from(crate::REQUEST_CANNOT_BE_SATISFIED);
-    }
-
-    let contents = match std::fs::read_to_string(&source_file) {
-        Ok(contents) => contents,
-        Err(err) => {
-            eprintln!("rigger-cli: cannot read `{}`: {err}", source_file.display());
-            return ExitCode::from(crate::RUNTIME_FAILURE);
+            let entries = match read_named_files(&paths, &descriptor.id) {
+                Ok(entries) => entries,
+                Err(code) => return code,
+            };
+            Fragment::Tree {
+                store,
+                entries,
+                placement: Placement::Link,
+            }
         }
     };
 
@@ -212,8 +202,9 @@ pub fn run(catalog: &str, id: &str) -> ExitCode {
     // created would be a change no recorded trace could ever take away. The
     // shared store is this binary's own location, decided here and nowhere
     // else, so making the directory it lives in is this binary's own job.
-    if let Some(parent) = store.parent() {
-        if let Err(err) = std::fs::create_dir_all(parent) {
+    // The path was captured before `store` moved into `fragment` above.
+    if let Some(parent) = store_directory {
+        if let Err(err) = std::fs::create_dir_all(&parent) {
             eprintln!("rigger-cli: cannot create `{}`: {err}", parent.display());
             return ExitCode::from(crate::RUNTIME_FAILURE);
         }
@@ -222,11 +213,7 @@ pub fn run(catalog: &str, id: &str) -> ExitCode {
     let posted = match pose(
         BehaviourName::Link,
         &posed_at,
-        &Fragment::Artefact {
-            store,
-            contents,
-            placement: Placement::Link,
-        },
+        &fragment,
         &OnDisk,
         &SystemPracticability,
     ) {
@@ -384,6 +371,140 @@ fn descriptor_exit_code(err: &DescriptorError) -> u8 {
         | DescriptorError::Malformed { .. }
         | DescriptorError::UnknownFormat { .. }
         | DescriptorError::MissingField { .. }
-        | DescriptorError::InvalidPath { .. } => crate::REQUEST_CANNOT_BE_SATISFIED,
+        | DescriptorError::InvalidPath { .. }
+        | DescriptorError::InvalidDisposition { .. } => crate::REQUEST_CANNOT_BE_SATISFIED,
     }
+}
+
+/// Reads the bytes of a single artefact file — the [`Source::File`] case of
+/// [`source::resolve`] — or the exit code owed for why it could not be.
+///
+/// **The directory check stays even though `install` now knows how to pose a
+/// tree.** An entry whose disposition names a *file* — from
+/// [`crate::descriptor::NATURE_TABLE`], an entry's own override, or a
+/// single-member `path` — still promises exactly one artefact; a directory
+/// found where that promise names a file is a mismatch between what the
+/// catalogue declared and what is on disk, and the product does not
+/// silently reinterpret one shape as the other. It names the mismatch and
+/// refuses.
+fn read_artefact_file(path: &Path, id: &str) -> Result<String, ExitCode> {
+    let metadata = match std::fs::metadata(path) {
+        Ok(metadata) => metadata,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => {
+            eprintln!(
+                "rigger-cli: cannot install `{id}`: no artefact at `{}`",
+                path.display()
+            );
+            return Err(ExitCode::from(crate::REQUEST_CANNOT_BE_SATISFIED));
+        }
+        Err(err) => {
+            eprintln!("rigger-cli: cannot read `{}`: {err}", path.display());
+            return Err(ExitCode::from(crate::RUNTIME_FAILURE));
+        }
+    };
+    if metadata.is_dir() {
+        eprintln!(
+            "rigger-cli: cannot install `{id}`: `{}` is a directory, and this entry's disposition \
+             names a file — declare `disposition = \"directory\"` on the entry if a directory is \
+             what should be posed here",
+            path.display()
+        );
+        return Err(ExitCode::from(crate::REQUEST_CANNOT_BE_SATISFIED));
+    }
+    std::fs::read_to_string(path).map_err(|err| {
+        eprintln!("rigger-cli: cannot read `{}`: {err}", path.display());
+        ExitCode::from(crate::RUNTIME_FAILURE)
+    })
+}
+
+/// The exit code owed for a [`StepError`] [`read_tree`] raised while reading
+/// a *source* directory — never one raised while writing, since nothing has
+/// touched the disk yet by the time this runs.
+///
+/// [`StepError::SymbolicLink`] and [`StepError::NotUtf8`] are facts about the
+/// catalogue's own tree, fixed only by changing what it carries, so both
+/// answer [`crate::REQUEST_CANNOT_BE_SATISFIED`] — the same code
+/// [`source::exit_code`] answers for a fact about the catalogue entry itself.
+/// A missing directory answers the same, matching [`read_artefact_file`]'s
+/// own treatment of a missing file. Every other [`StepError`] this function
+/// might see is a fact about this machine, since nothing [`read_tree`] can
+/// raise names an address it wrote to — it writes nothing — so the rest
+/// answer [`crate::RUNTIME_FAILURE`].
+fn tree_read_exit_code(err: &StepError) -> u8 {
+    match err {
+        StepError::SymbolicLink { .. } | StepError::NotUtf8 { .. } => {
+            crate::REQUEST_CANNOT_BE_SATISFIED
+        }
+        StepError::Io { detail, .. } if detail.kind() == io::ErrorKind::NotFound => {
+            crate::REQUEST_CANNOT_BE_SATISFIED
+        }
+        _ => crate::RUNTIME_FAILURE,
+    }
+}
+
+/// Reads the files a multi-member `path` override names — the
+/// [`Source::Files`] case of [`source::resolve`] — as the small tree they
+/// form, each entered under its own file name.
+///
+/// **This is what turns a `path` array into a single address and a single
+/// fingerprint, rather than a shape that would need `rigger_registry::Posting`
+/// extended to carry more than the one `address` and one `fingerprint` it
+/// already does.** ADR-0049 § 4: once the unit of pose can be a whole
+/// directory, several named files under one id are exactly a small one,
+/// planted the same way [`Source::Directory`] is.
+fn read_named_files(paths: &[PathBuf], id: &str) -> Result<Tree, ExitCode> {
+    let mut entries = Vec::with_capacity(paths.len());
+    for path in paths {
+        let contents = match std::fs::read_to_string(path) {
+            Ok(contents) => contents,
+            Err(err) if err.kind() == io::ErrorKind::NotFound => {
+                eprintln!(
+                    "rigger-cli: cannot install `{id}`: no artefact at `{}`",
+                    path.display()
+                );
+                return Err(ExitCode::from(crate::REQUEST_CANNOT_BE_SATISFIED));
+            }
+            Err(err) => {
+                eprintln!("rigger-cli: cannot read `{}`: {err}", path.display());
+                return Err(ExitCode::from(crate::RUNTIME_FAILURE));
+            }
+        };
+        let name = match path.file_name().and_then(|name| name.to_str()) {
+            Some(name) => name.to_string(),
+            None => {
+                eprintln!(
+                    "rigger-cli: cannot install `{id}`: `{}` names no UTF-8 file name to plant it \
+                     under",
+                    path.display()
+                );
+                return Err(ExitCode::from(crate::REQUEST_CANNOT_BE_SATISFIED));
+            }
+        };
+        entries.push(TreeEntry { name, contents });
+    }
+    let tree = Tree::of(entries);
+    if let Some(duplicate) = first_duplicate_name(tree.entries()) {
+        eprintln!(
+            "rigger-cli: cannot install `{id}`: two of its `path` members are both named \
+             `{duplicate}` once planted — a tree needs one entry per name"
+        );
+        return Err(ExitCode::from(crate::REQUEST_CANNOT_BE_SATISFIED));
+    }
+    Ok(tree)
+}
+
+/// The first name two adjacent entries of a sorted tree share, or `None`
+/// when every one of them is distinct.
+///
+/// [`Tree::of`] sorts by name and does not itself refuse a repeat — reading a
+/// whole directory off a real filesystem can never produce two files under
+/// the same relative name, so [`read_tree`] carries no such check either.
+/// [`read_named_files`] builds a tree by hand, out of file names it did not
+/// itself confirm are distinct, so it is the one caller here that needs to
+/// ask.
+fn first_duplicate_name(entries: &[TreeEntry]) -> Option<&str> {
+    entries
+        .windows(2)
+        .find(|pair| pair[0].name == pair[1].name)
+        .map(|pair| pair[0].name.as_str())
 }
