@@ -25,12 +25,19 @@
 //! `rigger-plan`, neither of which was a dependency of this crate before it.
 //! What it wires, and what it deliberately leaves for a later slice, is
 //! written out in [`install`]'s own module doc comment.
+//!
+//! `remove` is T2 of the same change: the removal half, wired the same way
+//! against the same engine. What it wires, and why it does not compose the
+//! same way `install` does, is written out in [`remove`]'s own module doc
+//! comment.
 
 use std::io::Write;
 use std::process::ExitCode;
 
+mod consent;
 mod descriptor;
 mod install;
+mod remove;
 
 /// Whether `code` is one the product's exit-code contract ratifies.
 ///
@@ -66,7 +73,8 @@ pub(crate) const SUCCESS: u8 = 0;
 pub(crate) const RUNTIME_FAILURE: u8 = 1;
 
 /// A request that cannot be satisfied — anything that is not one of this
-/// binary's commands, or an id `install` cannot find in the catalogue named.
+/// binary's commands, an id `install` cannot find in the catalogue named, or
+/// an id `remove` cannot find in the registry.
 pub(crate) const REQUEST_CANNOT_BE_SATISFIED: u8 = 2;
 
 /// **A compile-time lock, and a narrow one — read what it does not do.** It
@@ -89,8 +97,9 @@ fn main() -> ExitCode {
     match args.as_slice() {
         [command] if command == "coverage" => coverage(),
         [command, catalog, id] if command == "install" => install::run(catalog, id),
+        [command, id] if command == "remove" => remove::run(id),
         _ => {
-            eprintln!("usage: rigger-cli coverage install <catalog> <entry-id>");
+            eprintln!("usage: rigger-cli coverage install <catalog> <entry-id> remove <entry-id>");
             ExitCode::from(REQUEST_CANNOT_BE_SATISFIED)
         }
     }

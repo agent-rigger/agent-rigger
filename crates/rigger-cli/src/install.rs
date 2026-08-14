@@ -57,21 +57,12 @@ use std::process::ExitCode;
 use rigger_apply::{pose, OnDisk, SystemLiveness, SystemPracticability};
 use rigger_plan::{BehaviourName, Fragment, Placement};
 use rigger_registry::{
-    exit_code as registry_exit_code, transact, Address, Consent, Decision, Entry, Mutation,
-    Outcome, Posting, Proposal, Registry, POSED_BY,
+    exit_code as registry_exit_code, transact, Address, Entry, Mutation, Outcome, Posting,
+    Registry, POSED_BY,
 };
 
+use crate::consent::AlwaysGranted;
 use crate::descriptor::{self, DescriptorError};
-
-/// Grants every proposal. See the module doc comment for why nothing here
-/// reads a terminal to decide otherwise.
-struct AlwaysGranted;
-
-impl Consent for AlwaysGranted {
-    fn decide(&self, _: &Proposal<'_>) -> Decision {
-        Decision::Granted
-    }
-}
 
 /// Runs `install <catalog> <id>`, and answers the process's exit code.
 pub fn run(catalog: &str, id: &str) -> ExitCode {
