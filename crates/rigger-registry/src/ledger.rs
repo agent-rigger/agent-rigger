@@ -464,7 +464,10 @@ pub struct Posting {
 /// it should have had.
 ///
 /// **What each resolved member is allowed to have recorded, and why.**
-/// `link` records only [`Trace::Link`] — a store entry it materialised.
+/// `link` records [`Trace::Link`] or [`Trace::Tree`] — a store entry it
+/// materialised, of one file or of a whole directory. The two are one member's
+/// because they are one member's: the same name poses both, undoes both with the
+/// same two gestures, and records both under three fields of the same meaning.
 /// `merge` records only [`Trace::Grammar`]; every [`Trace::Grammar`] is
 /// already refused by [`record`] as not recordable by this build, so this
 /// arm is reached by nothing today and is kept so that the day `merge`
@@ -482,8 +485,8 @@ fn behaviour_matches_trace(named: &str, trace: &Trace) -> Result<(), BehaviourEr
     };
     let (agrees, serves) = match name {
         BehaviourName::Link => (
-            matches!(trace, Trace::Link { .. }),
-            "an artefact materialised in the shared store",
+            matches!(trace, Trace::Link { .. } | Trace::Tree { .. }),
+            "an artefact or a whole tree materialised in the shared store",
         ),
         BehaviourName::Merge => (
             matches!(trace, Trace::Grammar { .. }),

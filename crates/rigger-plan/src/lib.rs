@@ -338,6 +338,81 @@ impl fmt::Display for Placement {
     }
 }
 
+/// One file of a tree: where it sits under the tree's root, and what it holds.
+///
+/// **The name is a relative path spelled with `/`, whatever machine the tree was
+/// read on.** A separator taken from the host would make one and the same tree
+/// fingerprint differently on two machines, and fingerprints are compared across
+/// machines — a tree posed on one and diagnosed on another would be reported as
+/// rewritten by somebody else, on every entry, for no reason but the spelling of
+/// a separator.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct TreeEntry {
+    /// Where the file sits under the root of the tree, `/`-separated, and never
+    /// leading with `/` nor stepping up through `..`.
+    pub name: String,
+    /// The bytes of the file.
+    pub contents: String,
+}
+
+/// The files of a directory posed as **one** thing.
+///
+/// # Why the order is a property of the value and not a discipline of callers
+///
+/// A tree is read off a disk, and a directory listing promises no order at all:
+/// the same directory yields its files in one order on one filesystem and
+/// another elsewhere. A fingerprint taken over whatever a traversal happened to
+/// return would then differ between two machines holding identical bytes, and
+/// the diagnostic that tells "the product wrote this" from "somebody rewrote it"
+/// would answer the second on every tree. [`Tree::of`] sorts, and it is the only
+/// way to build one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Tree {
+    entries: Vec<TreeEntry>,
+}
+
+impl Tree {
+    /// These files, sorted by name.
+    pub fn of(mut entries: Vec<TreeEntry>) -> Self {
+        entries.sort();
+        Self { entries }
+    }
+
+    /// The files, in that order.
+    pub fn entries(&self) -> &[TreeEntry] {
+        &self.entries
+    }
+
+    /// The fingerprint of the **sorted manifest**: every name, in order, and the
+    /// bytes under it.
+    ///
+    /// Each name and each content goes into the manifest behind its length, over
+    /// eight bytes, little-endian. Naming that is the point, as it is for
+    /// [`Digest`] itself — a reader can reimplement it and get the same answer.
+    /// Without the lengths, a file named `a` holding `bc` and a file named `ab`
+    /// holding `c` would produce the same manifest, and one tree could pass for
+    /// the other.
+    ///
+    /// **The executable bit is deliberately outside this fingerprint.** The
+    /// reference catalogue measured on 2026-08-14 carries none — 73 files, no
+    /// executable bit on any of them — but that is the measurement of one day and
+    /// not a property of the format. So two trees differing by a permission bit
+    /// alone fingerprint alike, and a removal conditioned on this fingerprint
+    /// accepts either. The day a catalogue poses a script it expects to be
+    /// runnable, this manifest has to grow a field; this paragraph is the record
+    /// that the omission was chosen rather than missed.
+    pub fn fingerprint(&self) -> Digest {
+        let mut manifest: Vec<u8> = Vec::new();
+        for entry in &self.entries {
+            manifest.extend_from_slice(&(entry.name.len() as u64).to_le_bytes());
+            manifest.extend_from_slice(entry.name.as_bytes());
+            manifest.extend_from_slice(&(entry.contents.len() as u64).to_le_bytes());
+            manifest.extend_from_slice(entry.contents.as_bytes());
+        }
+        Digest::of(&manifest)
+    }
+}
+
 /// What the registry still records against a shared store entry, besides the
 /// thing being removed.
 ///
@@ -442,6 +517,41 @@ pub enum Effect {
         /// The fingerprint of the bytes the pose materialised there.
         posed: Digest,
     },
+    /// Put this whole tree at this address, as **one** step.
+    ///
+    /// **Not N writes coordinated by a caller**, and that is the substance. A
+    /// tree written file by file is a tree whose interruption leaves a partial
+    /// directory somebody has to unwind, and a rollback that unwinds it
+    /// correctly is a promise held by vigilance. Carried out as one step, the
+    /// files are built in a transit area and the *directory* is renamed into
+    /// place: an interruption leaves nothing at the address at all, and partial
+    /// rollback stops being a thing that can be got wrong.
+    ///
+    /// **Already exactly this tree there, there is nothing to do** — that is
+    /// what lets two things ask for one materialisation, the way
+    /// [`Effect::Materialise`] does for a single file. Anything else at the
+    /// address and the step fails naming it: the product does not write over a
+    /// directory it has not observed and recorded.
+    Plant {
+        /// The directory.
+        address: PathBuf,
+        /// The files, sorted.
+        entries: Tree,
+    },
+    /// Take the whole tree at this address away, **only if it still fingerprints
+    /// as what was posed**. Already nothing there is success: absence is what
+    /// this step is for, and it is reached.
+    ///
+    /// Anything else — a file added under it, one of its own rewritten — is left
+    /// entirely alone and the step fails naming the address and both
+    /// fingerprints. The product does not delete what it did not write, and it
+    /// does not leave a directory behind without saying so.
+    Uproot {
+        /// The directory.
+        address: PathBuf,
+        /// The fingerprint of the tree the pose planted there.
+        posed: Digest,
+    },
     /// Give an address back the state a capture seized, whatever is there now.
     /// This is the one step a rollback is made of.
     Restore {
@@ -464,7 +574,9 @@ impl Effect {
             | Self::Link { address, .. }
             | Self::Unlink { address, .. }
             | Self::Discard { address, .. }
-            | Self::Remove { address, .. } => address,
+            | Self::Remove { address, .. }
+            | Self::Plant { address, .. }
+            | Self::Uproot { address, .. } => address,
             Self::Restore { seized } => seized.address(),
         }
     }
@@ -497,6 +609,22 @@ pub enum Seized {
         /// What it designated.
         to: PathBuf,
     },
+    /// A directory was there, holding this tree.
+    ///
+    /// **This member is what makes creating a directory an invertible change.**
+    /// Without it there was no state to seize at a directory address and nothing
+    /// to give back, so the product refused to write anywhere its parent
+    /// directory did not already exist — which is why a tree could not be posed
+    /// at all, by one step or by many. It carries the files themselves and not
+    /// the fact that there were some: a restoration that only knew a directory
+    /// had been there would give back an empty one, and an empty directory
+    /// standing where a user's files were is a loss reported as a rollback.
+    Directory {
+        /// The address.
+        address: PathBuf,
+        /// The files it held, sorted.
+        tree: Tree,
+    },
 }
 
 impl Seized {
@@ -505,7 +633,8 @@ impl Seized {
         match self {
             Self::Absent { address }
             | Self::Document { address, .. }
-            | Self::Link { address, .. } => address,
+            | Self::Link { address, .. }
+            | Self::Directory { address, .. } => address,
         }
     }
 }
@@ -608,6 +737,24 @@ pub enum Fragment {
         /// Whether the address gets a link or a copy.
         placement: Placement,
     },
+    /// A whole **directory**, posed as one indivisible thing.
+    ///
+    /// It is a shape of its own rather than a list of artefacts, because the
+    /// alternative was measured and it breaks the registry: N postings under one
+    /// identity make `upsert` overwrite the previous line, make the two searches
+    /// of a removal take whichever line comes first, and make each line exclude
+    /// its own sisters from the count of what still designates a store entry —
+    /// so a store entry something still needs gets taken away. Every one of
+    /// those shows up the same way, as a partial removal reporting success.
+    Tree {
+        /// The entry in the shared store — a directory. **The product decides
+        /// it, not the catalogue.**
+        store: PathBuf,
+        /// The files, sorted, with their relative names.
+        entries: Tree,
+        /// Whether the address gets a link to the store tree, or a copy of it.
+        placement: Placement,
+    },
 }
 
 /// What the registry records so that a pose can be undone by **replaying** it,
@@ -645,6 +792,24 @@ pub enum Trace {
         /// the condition would depend on a field whose meaning differs from one
         /// behaviour to the next; recomputed from what is on the disk, it would
         /// compare the store entry with itself and condition nothing at all.
+        posed: Digest,
+    },
+    /// A tree planted out of the shared store, to be undone by uprooting the
+    /// directory at the address and — when nothing else designates it any more —
+    /// the store tree with it.
+    ///
+    /// **One address and one fingerprint, exactly like [`Trace::Link`].** The
+    /// fingerprint is the digest of the sorted manifest, so the whole directory
+    /// answers for itself under a single value: that is what keeps a posting to
+    /// one identity, one address, one trace and one inverse while the thing
+    /// posed holds nine files.
+    Tree {
+        /// The store tree the pose planted.
+        store: PathBuf,
+        /// What the pose put at the address.
+        placement: Placement,
+        /// The fingerprint of the tree planted in the store — what the uprooting
+        /// of both the address and the store entry is conditioned on.
         posed: Digest,
     },
     /// A presence this build only **observed** — nothing was written, so
@@ -689,11 +854,27 @@ impl Trace {
     /// at the last of them, and "the last" is a question about the registry.
     pub fn store(&self) -> Option<&Path> {
         match self {
-            Self::Link { store, .. } => Some(store),
+            Self::Link { store, .. } | Self::Tree { store, .. } => Some(store),
             Self::Grammar { .. } | Self::Witnessed => None,
         }
     }
 }
+
+/// The word a tree trace is recorded behind, so that reading it back cannot land
+/// on a single-file one.
+///
+/// **A tree trace and a link trace record the same three things** — a store
+/// entry, a placement, a fingerprint — so nothing but this word distinguishes
+/// them once they are strings in a registry. Read as a link trace, a tree's line
+/// would send an `Unlink` at a directory and a file-shaped `Remove` at the store,
+/// both of which refuse: a posted tree nothing can take back off, which is the
+/// one damage this crate is shaped against.
+///
+/// It is written **first** and the link trace keeps its three fields untouched,
+/// so the lines already recorded by earlier builds still read back as what they
+/// were. A discriminator added to both shapes would have made every one of them
+/// unreadable on the day the product was updated.
+const TREE_TRACE: &str = "tree";
 
 /// The trace as the registry writes it: escaped fields, decided by the
 /// behaviour that posed.
@@ -724,6 +905,24 @@ pub fn record(trace: &Trace) -> Result<Vec<String>, BehaviourError> {
                 posed.to_string(),
             ])
         }
+        Trace::Tree {
+            store,
+            placement,
+            posed,
+        } => {
+            let spelled = store
+                .to_str()
+                .ok_or_else(|| BehaviourError::AddressNotSpellable {
+                    behaviour: BehaviourName::Link,
+                    address: store.clone(),
+                })?;
+            Ok(vec![
+                TREE_TRACE.to_string(),
+                spelled.to_string(),
+                placement.as_str().to_string(),
+                posed.to_string(),
+            ])
+        }
         Trace::Grammar { .. } => Err(BehaviourError::NotRecordable {
             behaviour: BehaviourName::Merge,
         }),
@@ -734,6 +933,37 @@ pub fn record(trace: &Trace) -> Result<Vec<String>, BehaviourError> {
         // posed, and zero is the arity this one has.
         Trace::Witnessed => Ok(Vec::new()),
     }
+}
+
+/// The two fields a pose out of the shared store records besides the store
+/// entry: how the address designates it, and the fingerprint every removal step
+/// is conditioned on.
+///
+/// **One reading for the single artefact and for the tree**, because the two
+/// shapes record the same pair and a second reading of it would be a second
+/// definition of what a placement and a fingerprint are. The day they drifted,
+/// one of the two shapes would accept a word the other refuses.
+fn designation(
+    name: BehaviourName,
+    placement: &str,
+    posed: &str,
+) -> Result<(Placement, Digest), BehaviourError> {
+    let read_placement =
+        Placement::read(placement).ok_or_else(|| BehaviourError::TraceUnreadable {
+            behaviour: name,
+            reason: format!(
+                "`{placement}` is not a placement this build wrote — the two it writes are `link` \
+                 and `copy`"
+            ),
+        })?;
+    let read_posed = Digest::read(posed).ok_or_else(|| BehaviourError::TraceUnreadable {
+        behaviour: name,
+        reason: format!(
+            "`{posed}` is not a fingerprint this build wrote — sixteen lowercase hexadecimal \
+             digits are, and the removal of the store entry is conditioned on it"
+        ),
+    })?;
+    Ok((read_placement, read_posed))
 }
 
 /// Reads a trace back out of what the registry recorded.
@@ -747,23 +977,16 @@ pub fn replay(name: BehaviourName, fields: &[String]) -> Result<Trace, Behaviour
     match name {
         BehaviourName::Link => match fields {
             [store, placement, posed] => {
-                let placement =
-                    Placement::read(placement).ok_or_else(|| BehaviourError::TraceUnreadable {
-                        behaviour: name,
-                        reason: format!(
-                            "`{placement}` is not a placement this build wrote — the two it writes \
-                             are `link` and `copy`"
-                        ),
-                    })?;
-                let posed = Digest::read(posed).ok_or_else(|| BehaviourError::TraceUnreadable {
-                    behaviour: name,
-                    reason: format!(
-                        "`{posed}` is not a fingerprint this build wrote — sixteen lowercase \
-                         hexadecimal digits are, and the removal of the store entry is conditioned \
-                         on it"
-                    ),
-                })?;
+                let (placement, posed) = designation(name, placement, posed)?;
                 Ok(Trace::Link {
+                    store: PathBuf::from(store),
+                    placement,
+                    posed,
+                })
+            }
+            [tag, store, placement, posed] if tag == TREE_TRACE => {
+                let (placement, posed) = designation(name, placement, posed)?;
+                Ok(Trace::Tree {
                     store: PathBuf::from(store),
                     placement,
                     posed,
@@ -772,8 +995,9 @@ pub fn replay(name: BehaviourName, fields: &[String]) -> Result<Trace, Behaviour
             other => Err(BehaviourError::TraceUnreadable {
                 behaviour: name,
                 reason: format!(
-                    "the trace carries {} fields, and a link trace is a store entry, a placement \
-                     and the fingerprint of what was materialised",
+                    "the trace carries {} field(s), and this build writes two shapes under `link` \
+                     — a store entry, a placement and a fingerprint for a single artefact, the \
+                     same three behind `{TREE_TRACE}` for a whole directory",
                     other.len()
                 ),
             }),
@@ -1319,6 +1543,14 @@ fn addresses(effects: &[Effect]) -> Vec<PathBuf> {
 /// to give back, and no amount of test added later recovers it — which is why
 /// the removal of the store entry is a step of the same list as the rest,
 /// seized like the rest.
+///
+/// **It serves two shapes, and it is one member of the set all the same.** A
+/// single artefact and a whole directory are materialised once and designated
+/// the same way, undone by the same two gestures in the same order, and recorded
+/// under the same name — what changes is that each step covers a directory
+/// instead of a file. A second member would have bought nothing and cost the one
+/// thing the closed set is for: a name in a registry that an older build, or a
+/// newer one, cannot resolve is a posted thing nothing can take back off.
 pub struct Link;
 
 impl Behaviour for Link {
@@ -1332,43 +1564,80 @@ impl Behaviour for Link {
     /// That order is what lets the rollback reverse it and never leave a link
     /// designating something already taken away.
     fn pose(&self, subject: Subject<'_>, fragment: &Fragment) -> Result<Posed, BehaviourError> {
-        let Fragment::Artefact {
-            store,
-            contents,
-            placement,
-        } = fragment
-        else {
-            return Err(BehaviourError::WrongShape {
+        match fragment {
+            Fragment::Artefact {
+                store,
+                contents,
+                placement,
+            } => {
+                let at_the_address = match placement {
+                    Placement::Link => Effect::Link {
+                        address: subject.address.to_path_buf(),
+                        to: store.clone(),
+                    },
+                    Placement::Copy => Effect::Create {
+                        address: subject.address.to_path_buf(),
+                        contents: contents.clone(),
+                    },
+                };
+                let fingerprint = Digest::of(contents.as_bytes());
+                Ok(Posed {
+                    effects: vec![
+                        Effect::Materialise {
+                            address: store.clone(),
+                            contents: contents.clone(),
+                        },
+                        at_the_address,
+                    ],
+                    trace: Trace::Link {
+                        store: store.clone(),
+                        placement: *placement,
+                        posed: fingerprint,
+                    },
+                    fingerprint,
+                })
+            }
+            // The same two steps in the same order, and the difference is that
+            // each of them is **one** step for a whole directory. A tree planted
+            // file by file would be N steps, and an interruption in the middle of
+            // them is what a rollback would then have to unwind exactly right.
+            Fragment::Tree {
+                store,
+                entries,
+                placement,
+            } => {
+                let at_the_address = match placement {
+                    Placement::Link => Effect::Link {
+                        address: subject.address.to_path_buf(),
+                        to: store.clone(),
+                    },
+                    Placement::Copy => Effect::Plant {
+                        address: subject.address.to_path_buf(),
+                        entries: entries.clone(),
+                    },
+                };
+                let fingerprint = entries.fingerprint();
+                Ok(Posed {
+                    effects: vec![
+                        Effect::Plant {
+                            address: store.clone(),
+                            entries: entries.clone(),
+                        },
+                        at_the_address,
+                    ],
+                    trace: Trace::Tree {
+                        store: store.clone(),
+                        placement: *placement,
+                        posed: fingerprint,
+                    },
+                    fingerprint,
+                })
+            }
+            Fragment::Grammar { .. } => Err(BehaviourError::WrongShape {
                 behaviour: BehaviourName::Link,
-                serves: "an artefact materialised in the shared store",
-            });
-        };
-        let at_the_address = match placement {
-            Placement::Link => Effect::Link {
-                address: subject.address.to_path_buf(),
-                to: store.clone(),
-            },
-            Placement::Copy => Effect::Create {
-                address: subject.address.to_path_buf(),
-                contents: contents.clone(),
-            },
-        };
-        let fingerprint = Digest::of(contents.as_bytes());
-        Ok(Posed {
-            effects: vec![
-                Effect::Materialise {
-                    address: store.clone(),
-                    contents: contents.clone(),
-                },
-                at_the_address,
-            ],
-            trace: Trace::Link {
-                store: store.clone(),
-                placement: *placement,
-                posed: fingerprint,
-            },
-            fingerprint,
-        })
+                serves: "an artefact or a whole tree materialised in the shared store",
+            }),
+        }
     }
 
     /// Take the address back, and the store entry with it at the last referent.
@@ -1386,33 +1655,64 @@ impl Behaviour for Link {
         trace: &Trace,
         referents: Referents,
     ) -> Result<Undone, BehaviourError> {
-        let Trace::Link {
-            store,
-            placement,
-            posed,
-        } = trace
-        else {
-            return Err(BehaviourError::WrongShape {
-                behaviour: BehaviourName::Link,
-                serves: "an artefact materialised in the shared store",
-            });
+        let effects = match trace {
+            Trace::Link {
+                store,
+                placement,
+                posed,
+            } => {
+                let mut effects = vec![match placement {
+                    Placement::Link => Effect::Unlink {
+                        address: subject.address.to_path_buf(),
+                        to: store.clone(),
+                    },
+                    Placement::Copy => Effect::Discard {
+                        address: subject.address.to_path_buf(),
+                        same_as: store.clone(),
+                    },
+                }];
+                if referents == Referents::Last {
+                    effects.push(Effect::Remove {
+                        address: store.clone(),
+                        posed: *posed,
+                    });
+                }
+                effects
+            }
+            // A tree posed by link left a symbolic link at the address, so the
+            // address is taken back the same way a single artefact's is; what
+            // differs is the store, which is a directory and is uprooted whole,
+            // under the fingerprint of the manifest that was planted.
+            Trace::Tree {
+                store,
+                placement,
+                posed,
+            } => {
+                let mut effects = vec![match placement {
+                    Placement::Link => Effect::Unlink {
+                        address: subject.address.to_path_buf(),
+                        to: store.clone(),
+                    },
+                    Placement::Copy => Effect::Uproot {
+                        address: subject.address.to_path_buf(),
+                        posed: *posed,
+                    },
+                }];
+                if referents == Referents::Last {
+                    effects.push(Effect::Uproot {
+                        address: store.clone(),
+                        posed: *posed,
+                    });
+                }
+                effects
+            }
+            Trace::Grammar { .. } | Trace::Witnessed => {
+                return Err(BehaviourError::WrongShape {
+                    behaviour: BehaviourName::Link,
+                    serves: "an artefact or a whole tree materialised in the shared store",
+                })
+            }
         };
-        let mut effects = vec![match placement {
-            Placement::Link => Effect::Unlink {
-                address: subject.address.to_path_buf(),
-                to: store.clone(),
-            },
-            Placement::Copy => Effect::Discard {
-                address: subject.address.to_path_buf(),
-                same_as: store.clone(),
-            },
-        }];
-        if referents == Referents::Last {
-            effects.push(Effect::Remove {
-                address: store.clone(),
-                posed: *posed,
-            });
-        }
         Ok(Undone { effects })
     }
 

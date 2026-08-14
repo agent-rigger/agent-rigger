@@ -53,7 +53,7 @@ use std::path::{Path, PathBuf};
 
 use rigger_plan::{
     behaviour, record, Behaviour, BehaviourError, BehaviourName, Captured, Digest, Effect,
-    Fragment, Referents, Seized, Subject, Trace,
+    Fragment, Referents, Seized, Subject, Trace, Tree, TreeEntry,
 };
 
 use crate::txn::{designated_document, stage, Fingerprint, TxnError};
@@ -85,15 +85,44 @@ pub enum StepError {
     },
     /// The directory the address lives in is not there.
     ///
-    /// **The product does not make it.** A directory created is a change the
-    /// capture would have to seize and the restoration give back, and this
-    /// version builds neither — so it refuses by naming the directory rather
-    /// than leave one behind that no removal takes away.
+    /// **The product does not make it, and that stays true now that it plants
+    /// trees.** What a tree pose creates is exactly one directory — its own
+    /// address — and that one is seized as [`Seized::Directory`] and given back
+    /// by the restoration. The directories *above* it are somebody else's, they
+    /// are not in any capture, and making one would leave behind a change no
+    /// removal takes away.
     NoDirectory {
         /// The address.
         address: PathBuf,
         /// The directory that is not there.
         directory: PathBuf,
+    },
+    /// A symbolic link was found inside a tree the product was about to read.
+    ///
+    /// **Refused before a single byte is written**, and at any depth. What a
+    /// link designates is decided elsewhere and can be moved afterwards, so a
+    /// tree carrying one is a tree whose contents the fingerprint does not
+    /// describe: the removal would then compare the manifest against something
+    /// else than what it posed, and either refuse a tree nobody touched or
+    /// delete through the link. The reference catalogue measured on 2026-08-14
+    /// holds none — 73 files, no link — which is exactly why this refusal is
+    /// writable today and would be unprovable once one existed.
+    SymbolicLink {
+        /// The link that was found.
+        address: PathBuf,
+    },
+    /// A file of a tree is named in a way that does not stay under the directory
+    /// being planted — an absolute name, or one stepping up through `..`.
+    ///
+    /// The product plants a tree by building it in a transit area, so a name
+    /// that escapes would put bytes outside both the transit area and the
+    /// address, where nothing seized them and no removal would find them.
+    /// Refused before anything is written.
+    EscapesTheTree {
+        /// The directory being planted.
+        address: PathBuf,
+        /// The name that does not stay under it.
+        name: String,
     },
     /// The bytes at the address are not UTF-8, so the product cannot hold them
     /// in order to give them back. It refuses rather than seize them lossily.
@@ -139,6 +168,19 @@ impl fmt::Display for StepError {
                  directory it created is a change no removal would take away",
                 address.display(),
                 directory.display()
+            ),
+            Self::SymbolicLink { address } => write!(
+                f,
+                "{}: a tree carrying a symbolic link is refused before anything is written — what \
+                 it designates is decided elsewhere and can be moved afterwards, so the \
+                 fingerprint of the tree would not describe what the tree holds",
+                address.display()
+            ),
+            Self::EscapesTheTree { address, name } => write!(
+                f,
+                "{}: the tree names a file `{name}`, which does not stay under it — the product \
+                 plants only inside the directory it is about to pose, and nothing was written",
+                address.display()
             ),
             Self::NotUtf8 { address } => write!(
                 f,
@@ -267,6 +309,54 @@ impl Steps for OnDisk {
                 Some(_) => Err(StepError::NotAsRecorded {
                     address: address.clone(),
                     recorded: format!("the artefact materialised under fingerprint {posed}"),
+                }),
+            },
+            // **One step for the whole directory**, and the only one that
+            // creates a directory at all. Already exactly this tree there and
+            // there is nothing to do — the store entry two things ask for is
+            // materialised once — while anything else at the address refuses,
+            // naming it. `present` reads the tree it finds, so "exactly this
+            // tree" is the manifest compared file by file and not a count or a
+            // timestamp.
+            //
+            // **One refusal for both roles, and it is [`StepError::Occupied`]
+            // rather than [`StepError::StoreConflict`].** A single file is
+            // planted by two different effects — `Create` at the address,
+            // `Materialise` in the store — so each can refuse in the words of
+            // its own place. One effect serves both here, and it cannot tell
+            // them apart: a refusal saying "the shared store already holds this
+            // entry" at an address inside somebody's root would send its reader
+            // to the wrong directory entirely, while "something is already
+            // there and it was left exactly as it is" is true of both.
+            Effect::Plant { address, entries } => match present(address)? {
+                None => plant(address, entries),
+                Some(Seized::Directory { tree, .. }) if tree == *entries => Ok(()),
+                Some(_) => Err(StepError::Occupied {
+                    address: address.clone(),
+                }),
+            },
+            // Conditioned on the fingerprint of the manifest, which is what
+            // makes a tree a user has added a file to refuse instead of being
+            // deleted: the product takes back the tree it planted, and a
+            // directory that is no longer that tree is left entirely alone and
+            // named.
+            Effect::Uproot { address, posed } => match present(address)? {
+                None => Ok(()),
+                Some(Seized::Directory { tree, .. }) if tree.fingerprint() == *posed => {
+                    take_away(address)
+                }
+                Some(Seized::Directory { tree, .. }) => Err(StepError::NotAsRecorded {
+                    address: address.clone(),
+                    recorded: format!(
+                        "the tree planted under fingerprint {posed}, and what is there now holds \
+                         {} file(s) fingerprinting as {}",
+                        tree.entries().len(),
+                        tree.fingerprint()
+                    ),
+                }),
+                Some(_) => Err(StepError::NotAsRecorded {
+                    address: address.clone(),
+                    recorded: format!("the tree planted under fingerprint {posed}"),
                 }),
             },
             Effect::Restore { seized } => restore(seized),
@@ -403,6 +493,13 @@ fn restore(seized: &Seized) -> Result<(), StepError> {
                 detail,
             })
         }
+        // **The inverse of creating a directory, which is what was missing.**
+        // The tree goes back through the same transit area and the same rename
+        // a pose uses, so a restoration that is itself interrupted leaves the
+        // address as the failed run left it rather than as a half-rebuilt
+        // directory — the failure of a restoration being, by definition, the
+        // likely case here.
+        Seized::Directory { address, tree } => plant(address, tree),
     }
 }
 
@@ -451,11 +548,17 @@ fn present(address: &Path) -> Result<Option<Seized>, StepError> {
             to,
         }));
     }
+    // **The tree itself, and not the fact that a directory is there.** This is
+    // the state [`Seized::Directory`] exists to hold: a capture recording only
+    // that something was a directory would give back an empty one, and an empty
+    // directory standing where a user's files were is a loss reported as a
+    // rollback. Reading it here is also what lets a plant tell "this very tree
+    // is already here" from "something else is here".
     if metadata.is_dir() {
-        return Err(StepError::Io {
+        return Ok(Some(Seized::Directory {
             address: address.to_path_buf(),
-            detail: io::Error::other("this is a directory, and the product poses files"),
-        });
+            tree: read_tree(address)?,
+        }));
     }
     let bytes = fs::read(address).map_err(|detail| StepError::Io {
         address: address.to_path_buf(),
@@ -579,6 +682,215 @@ impl Measured {
     }
 }
 
+/// Reads the whole directory at `root` as the tree it holds — **the one way a
+/// tree is obtained from a disk.**
+///
+/// It is public because it is where the source of a tree pose comes from: a
+/// caller hands the directory a catalogue publishes, and gets back the value the
+/// pure crate computes a pose out of. Nothing is written by then, which is what
+/// makes the refusals below refusals *before* any file operation rather than
+/// after some.
+///
+/// **Every entry is `lstat`ed, at every depth, and a symbolic link refuses.**
+/// Following one would let a tree's fingerprint describe bytes that live
+/// somewhere else and can be repointed afterwards; not following one would put a
+/// link in the store that the fingerprint does not cover either. The refusal is
+/// the only answer that stays true after the fact — and it can be written today
+/// only because no tree the product serves carries a link yet.
+///
+/// **A file the product cannot hold as text refuses too**, for the reason the
+/// capture already refuses one: a tree it cannot give back exactly is a tree it
+/// must not take away.
+///
+/// **An empty directory inside the tree carries nothing and is not kept.** A
+/// tree is its files; planting it back reconstructs every directory a file needs
+/// and none that no file needs, so an empty one would be a difference the
+/// fingerprint cannot express and the plant could not reproduce.
+pub fn read_tree(root: &Path) -> Result<Tree, StepError> {
+    let mut found = Vec::new();
+    read_tree_into(root, root, &mut found)?;
+    Ok(Tree::of(found))
+}
+
+/// One directory's worth of [`read_tree`], recursing into what it holds.
+fn read_tree_into(
+    root: &Path,
+    directory: &Path,
+    found: &mut Vec<TreeEntry>,
+) -> Result<(), StepError> {
+    let failed = |path: &Path| {
+        let path = path.to_path_buf();
+        move |detail: io::Error| StepError::Io {
+            address: path.clone(),
+            detail,
+        }
+    };
+    let listing = fs::read_dir(directory).map_err(failed(directory))?;
+    for entry in listing {
+        let entry = entry.map_err(failed(directory))?;
+        let path = entry.path();
+        // `lstat`, and never a walk that follows what it finds: `symlink_metadata`
+        // reports the link itself, so the refusal below is reached on a link to a
+        // directory as well as on a link to a file.
+        let metadata = fs::symlink_metadata(&path).map_err(failed(&path))?;
+        if metadata.file_type().is_symlink() {
+            return Err(StepError::SymbolicLink { address: path });
+        }
+        if metadata.is_dir() {
+            read_tree_into(root, &path, found)?;
+            continue;
+        }
+        let bytes = fs::read(&path).map_err(failed(&path))?;
+        let contents = String::from_utf8(bytes).map_err(|_| StepError::NotUtf8 {
+            address: path.clone(),
+        })?;
+        found.push(TreeEntry {
+            name: relative_name(root, &path)?,
+            contents,
+        });
+    }
+    Ok(())
+}
+
+/// Where `path` sits under `root`, spelled with `/` whatever this machine's
+/// separator is — see [`rigger_plan::TreeEntry`] for why the spelling is not the
+/// host's.
+fn relative_name(root: &Path, path: &Path) -> Result<String, StepError> {
+    let under = path.strip_prefix(root).map_err(|_| StepError::Io {
+        address: path.to_path_buf(),
+        detail: io::Error::other("this is not under the tree being read"),
+    })?;
+    let mut name = String::new();
+    for part in under.components() {
+        let spelled = part
+            .as_os_str()
+            .to_str()
+            .ok_or_else(|| StepError::NotUtf8 {
+                address: path.to_path_buf(),
+            })?;
+        if !name.is_empty() {
+            name.push('/');
+        }
+        name.push_str(spelled);
+    }
+    Ok(name)
+}
+
+/// The transit area a tree is built in before it is renamed onto `address`.
+///
+/// **It sits in the directory the address sits in**, and that is the whole of
+/// why the pose is atomic: `rename` does not cross filesystems, so an area
+/// anywhere else — a system temporary directory, most obviously — would degrade
+/// the rename into a copy and give back exactly the partial directory this
+/// design exists to make impossible. It is named after the address, behind a
+/// leading dot, and carries the process that is writing it: the residue of an
+/// interrupted pose is then visible next to where it would have gone, and says
+/// what left it there.
+fn transit_area(address: &Path) -> PathBuf {
+    let directory = address.parent().unwrap_or_else(|| Path::new("."));
+    let name = address
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "tree".to_string());
+    directory.join(format!(".{name}.rigger-{}.planting", std::process::id()))
+}
+
+/// Puts `tree` at `address`, through a transit area beside it and a rename — so
+/// no reader ever sees half of it, and an interruption leaves nothing at the
+/// address at all.
+///
+/// **This is the decision ADR-0049 turns on.** A tree written file by file into
+/// its final directory is visible while it is incomplete, and its interruption
+/// leaves a partial directory that something has to unwind exactly right;
+/// written into a transit area and renamed, partial rollback is not a thing that
+/// can be got wrong, because there is never a partial state to roll back. The
+/// cost is named rather than hidden: an interrupted run leaves the transit area
+/// behind, and what that costs is disk space.
+///
+/// The rename replaces whatever the address carries. Callers that must not
+/// replace anything say so themselves, before calling: [`Effect::Plant`] refuses
+/// on an address holding anything but this very tree, and it is a different
+/// promise from this one.
+fn plant(address: &Path, tree: &Tree) -> Result<(), StepError> {
+    require_directory(address)?;
+    let transit = transit_area(address);
+    let failed = |detail: io::Error| StepError::Io {
+        address: address.to_path_buf(),
+        detail,
+    };
+    // An area left by an interrupted run under this same process number is the
+    // residue this design accepts; it is cleared rather than merged into, so
+    // what lands at the address is this tree and never this tree over another.
+    let _ = fs::remove_dir_all(&transit);
+    let built = build_in_transit(address, &transit, tree);
+    if let Err(refusal) = built {
+        let _ = fs::remove_dir_all(&transit);
+        return Err(refusal);
+    }
+    if let Err(refusal) = take_away(address) {
+        let _ = fs::remove_dir_all(&transit);
+        return Err(refusal);
+    }
+    if let Err(detail) = fs::rename(&transit, address) {
+        let _ = fs::remove_dir_all(&transit);
+        return Err(failed(detail));
+    }
+    Ok(())
+}
+
+/// Builds the files of `tree` inside the transit area. Every failure leaves the
+/// area to its caller, which is what removes it: an area half built is never
+/// renamed anywhere.
+fn build_in_transit(address: &Path, transit: &Path, tree: &Tree) -> Result<(), StepError> {
+    fs::create_dir(transit).map_err(|detail| StepError::Io {
+        address: transit.to_path_buf(),
+        detail,
+    })?;
+    for entry in tree.entries() {
+        let file = confined(address, transit, &entry.name)?;
+        if let Some(parent) = file.parent() {
+            fs::create_dir_all(parent).map_err(|detail| StepError::Io {
+                address: file.clone(),
+                detail,
+            })?;
+        }
+        fs::write(&file, &entry.contents).map_err(|detail| StepError::Io {
+            address: file.clone(),
+            detail,
+        })?;
+    }
+    Ok(())
+}
+
+/// Where `name` goes inside the transit area, refusing any name that would not
+/// stay under it.
+///
+/// A name is checked **component by component** rather than searched for `..` as
+/// text: a name containing the two characters somewhere inside a filename is
+/// legitimate, and one made only of them is not, and the difference is what a
+/// substring search gets wrong in both directions.
+fn confined(address: &Path, transit: &Path, name: &str) -> Result<PathBuf, StepError> {
+    let escapes = |name: &str| StepError::EscapesTheTree {
+        address: address.to_path_buf(),
+        name: name.to_string(),
+    };
+    let mut under = transit.to_path_buf();
+    let mut parts = 0;
+    for part in Path::new(name).components() {
+        match part {
+            std::path::Component::Normal(part) => {
+                under.push(part);
+                parts += 1;
+            }
+            _ => return Err(escapes(name)),
+        }
+    }
+    if parts == 0 {
+        return Err(escapes(name));
+    }
+    Ok(under)
+}
+
 /// Refuses when anything at all is at `address`.
 fn refuse_if_present(address: &Path) -> Result<(), StepError> {
     match present(address)? {
@@ -630,17 +942,23 @@ fn put(address: &Path, contents: &str) -> Result<(), StepError> {
 
 /// Leaves nothing at `address`. Already nothing there is success: absence is
 /// what this is for, and it is reached.
+///
+/// **A directory goes whole, and a symbolic link to one does not.** The metadata
+/// is `lstat`, so a link is a link here however it was made and only its own
+/// entry is taken away — following it would delete a directory the product never
+/// posed. Every caller has already established its right to what it names: a
+/// step under its recorded condition, or a restoration giving back an absence
+/// the capture seized.
 fn take_away(address: &Path) -> Result<(), StepError> {
+    let failed = |detail: io::Error| StepError::Io {
+        address: address.to_path_buf(),
+        detail,
+    };
     match fs::symlink_metadata(address) {
         Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(()),
-        Err(detail) => Err(StepError::Io {
-            address: address.to_path_buf(),
-            detail,
-        }),
-        Ok(_) => fs::remove_file(address).map_err(|detail| StepError::Io {
-            address: address.to_path_buf(),
-            detail,
-        }),
+        Err(detail) => Err(failed(detail)),
+        Ok(metadata) if metadata.is_dir() => fs::remove_dir_all(address).map_err(failed),
+        Ok(_) => fs::remove_file(address).map_err(failed),
     }
 }
 
@@ -1112,11 +1430,20 @@ fn designated(address: &Path) -> Result<PathBuf, StepError> {
     }
 }
 
-/// The document at `address`, or `None` when there is nothing there.
+/// The document at `address`, or `None` when there is no document there.
 ///
 /// One read, and it is the one a pose is conditioned on: reading again later to
 /// obtain what the write compares against would reopen the window the
 /// conditional write exists to close.
+///
+/// **A directory carries no document, and answers `None` like an empty address
+/// does.** It is not a failure to report: a tree is posed *at* a directory
+/// address, and the behaviour that poses it is handed what a caller read there,
+/// which for a directory is nothing. The question is asked of the resolved
+/// address rather than of the link itself, because a tree posed by link leaves a
+/// symbolic link at the address and its removal reads that same address — where
+/// a reading that stopped at the link would report "not a directory" and refuse
+/// the removal of a tree the product itself planted.
 fn read_document(address: &Path) -> Result<Option<String>, PoseError> {
     match fs::read(address) {
         Ok(bytes) => match String::from_utf8(bytes) {
@@ -1127,6 +1454,7 @@ fn read_document(address: &Path) -> Result<Option<String>, PoseError> {
                 },
             }),
         },
+        Err(_) if fs::metadata(address).is_ok_and(|what| what.is_dir()) => Ok(None),
         Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(None),
         Err(detail) => Err(PoseError::NotSeized {
             detail: StepError::Io {
