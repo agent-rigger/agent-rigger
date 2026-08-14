@@ -33,6 +33,7 @@ fn entry(name: &str, contents: &str) -> TreeEntry {
     TreeEntry {
         name: name.to_string(),
         contents: contents.to_string(),
+        executable: false,
     }
 }
 
@@ -98,6 +99,43 @@ fn guard_two_trees_that_differ_only_by_where_a_name_ends_do_not_fingerprint_alik
     let other = Tree::of(vec![entry("ab", "c")]);
 
     assert_ne!(one.fingerprint(), other.fingerprint());
+}
+
+#[test]
+fn guard_the_manifest_separates_an_executable_file_and_leaves_every_other_tree_where_it_was() {
+    // The pair, and it is the pair that has teeth. Two trees differing by the
+    // bit alone must stop fingerprinting alike — the discrimination — and that
+    // must arrive without moving a value already recorded, or every tree already
+    // installed refuses its own removal naming a divergence nobody caused. The
+    // second half is the positive control, and a test of the new behaviour alone
+    // passes while breaking it.
+    //
+    // Both literals are derived from the format `Tree::fingerprint` documents —
+    // FNV-1a over the sorted manifest, each name and each content behind its
+    // length over eight little-endian bytes — computed outside this workspace
+    // rather than read out of this implementation's own output, which would bake
+    // in whatever the code does.
+    let executable = Tree::of(vec![
+        entry("SKILL.md", "# Graphify\n"),
+        entry("references/queries.md", "## Queries\n"),
+        TreeEntry {
+            name: "scripts/build.sh".to_string(),
+            contents: "#!/bin/sh\nexit 0\n".to_string(),
+            executable: true,
+        },
+    ]);
+
+    assert_eq!(
+        skill().fingerprint().to_string(),
+        "2a4640a375642316",
+        "a tree carrying no executable file must fingerprint exactly as it did before the bit was \
+         covered, or every registry already written stops describing what it posed"
+    );
+    assert_eq!(
+        executable.fingerprint().to_string(),
+        "3bca4f7768a0be96",
+        "and the same tree with one file made runnable must be a different value"
+    );
 }
 
 #[test]

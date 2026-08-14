@@ -41,11 +41,12 @@ fn materialised() -> Digest {
     Digest::of(ARTEFACT.as_bytes())
 }
 
-fn artefact(placement: Placement) -> Fragment {
+fn artefact(placement: Placement, executable: bool) -> Fragment {
     Fragment::Artefact {
         store: store(),
         contents: ARTEFACT.to_string(),
         placement,
+        executable,
     }
 }
 
@@ -63,7 +64,7 @@ fn link() -> &'static dyn Behaviour {
 #[test]
 fn guard_a_pose_materialises_the_artefact_once_and_then_designates_it() {
     let posed = link()
-        .pose(subject(&address()), &artefact(Placement::Link))
+        .pose(subject(&address()), &artefact(Placement::Link, false))
         .expect("the pose must succeed");
 
     assert_eq!(
@@ -72,6 +73,7 @@ fn guard_a_pose_materialises_the_artefact_once_and_then_designates_it() {
             Effect::Materialise {
                 address: store(),
                 contents: ARTEFACT.to_string(),
+                executable: false,
             },
             Effect::Link {
                 address: address(),
@@ -95,7 +97,7 @@ fn guard_a_pose_materialises_the_artefact_once_and_then_designates_it() {
 #[test]
 fn guard_a_pose_by_copy_records_that_it_was_a_copy_and_still_materialises_the_store_entry() {
     let posed = link()
-        .pose(subject(&address()), &artefact(Placement::Copy))
+        .pose(subject(&address()), &artefact(Placement::Copy, false))
         .expect("the pose must succeed");
 
     assert_eq!(
@@ -107,10 +109,12 @@ fn guard_a_pose_by_copy_records_that_it_was_a_copy_and_still_materialises_the_st
             Effect::Materialise {
                 address: store(),
                 contents: ARTEFACT.to_string(),
+                executable: false,
             },
             Effect::Create {
                 address: address(),
                 contents: ARTEFACT.to_string(),
+                executable: false,
             },
         ]
     );
@@ -247,7 +251,7 @@ fn guard_a_removal_is_computed_from_the_trace_and_from_nothing_that_is_on_the_ma
 #[test]
 fn a5_a_recorded_trace_reads_back_as_the_one_that_was_written() {
     let posed = link()
-        .pose(subject(&address()), &artefact(Placement::Copy))
+        .pose(subject(&address()), &artefact(Placement::Copy, false))
         .expect("the pose must succeed");
 
     let fields = record(&posed.trace).expect("a link trace must be recordable");
@@ -337,7 +341,7 @@ fn guard_the_removal_of_the_store_entry_carries_the_fingerprint_the_pose_recorde
     // fingerprint would pass them both, and no removal would ever compute the
     // step that takes a store entry away.
     let posed_now = link()
-        .pose(subject(&address()), &artefact(Placement::Link))
+        .pose(subject(&address()), &artefact(Placement::Link, false))
         .expect("the pose must succeed");
     let fields = record(&posed_now.trace).expect("a link trace must be recordable");
     let read_back = replay(BehaviourName::Link, &fields).expect("it must read back");
@@ -406,7 +410,7 @@ fn guard_a_fragment_of_another_shape_is_refused_by_naming_what_the_member_serves
 #[test]
 fn guard_the_fingerprint_is_the_one_of_the_bytes_that_were_posed() {
     let posed = link()
-        .pose(subject(&address()), &artefact(Placement::Link))
+        .pose(subject(&address()), &artefact(Placement::Link, false))
         .expect("the pose must succeed");
 
     assert_eq!(posed.fingerprint, Digest::of(ARTEFACT.as_bytes()));

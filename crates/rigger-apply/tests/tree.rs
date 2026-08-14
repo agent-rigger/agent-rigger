@@ -37,6 +37,7 @@ fn entry(name: &str, contents: &str) -> TreeEntry {
     TreeEntry {
         name: name.to_string(),
         contents: contents.to_string(),
+        executable: false,
     }
 }
 
@@ -345,6 +346,142 @@ fn guard_planting_the_same_tree_twice_changes_nothing_and_a_different_one_refuse
         snapshot(&machine),
         after_the_first,
         "and the tree that was there must be untouched, down to its nested file"
+    );
+}
+
+/// Whether the file at `path` is one this machine would run — read straight off
+/// the disk rather than through the crate's own `is_executable`, so a mutation
+/// of that function cannot leave the assertions below agreeing with it and with
+/// nothing else.
+#[cfg(unix)]
+fn runnable(path: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+
+    fs::metadata(path)
+        .expect("read the mode")
+        .permissions()
+        .mode()
+        & 0o111
+        != 0
+}
+
+/// A source directory holding one file the machine would run and one it would
+/// not — the shape a catalogue distributing a hook has, and the one the
+/// reference catalogue does not: 73 files, no executable bit among them.
+#[cfg(unix)]
+fn source_with_a_script(machine: &Path) -> PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+
+    let source = machine.join("source/graphify");
+    fs::create_dir_all(source.join("scripts")).expect("create the source tree");
+    fs::write(source.join("SKILL.md"), "# Graphify\n").expect("write the plain file");
+    let script = source.join("scripts/build.sh");
+    fs::write(&script, "#!/bin/sh\nexit 0\n").expect("write the script");
+    fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).expect("make it runnable");
+    source
+}
+
+#[test]
+#[cfg(unix)]
+fn guard_a_source_script_is_read_as_runnable_and_planted_runnable() {
+    // The defect: a source in 755 was posed in 644 and nothing said so, the
+    // reader finding out at execution, far from the pose. Both halves are
+    // measured — the walk has to see the bit and the plant has to write it —
+    // because either one dropping it fails identically for that reader.
+    let machine = machine("executable-source");
+    let address = machine.join("root/skills/graphify");
+    let store = machine.join("store/acme-graphify-1.0");
+    let source = source_with_a_script(&machine);
+
+    let entries = read_tree(&source).expect("the source tree must be readable");
+
+    assert_eq!(
+        entries
+            .entries()
+            .iter()
+            .map(|entry| (entry.name.as_str(), entry.executable))
+            .collect::<Vec<_>>(),
+        vec![("SKILL.md", false), ("scripts/build.sh", true)],
+        "the walk must carry each file's executable bit, and only where it stands"
+    );
+
+    let posted = pose(
+        BehaviourName::Link,
+        &address,
+        &fragment(&store, entries, Placement::Copy),
+        &OnDisk,
+        &SystemPracticability,
+    )
+    .expect("the pose must succeed");
+    // The trace is what a removal replays, and dropping it is what the type
+    // refuses — held here rather than ignored, so the refusal keeps its teeth.
+    assert!(matches!(posted.trace, Trace::Tree { .. }));
+
+    assert!(
+        runnable(&address.join("scripts/build.sh")),
+        "a script the catalogue distributes must be runnable where it was posed"
+    );
+    assert!(
+        !runnable(&address.join("SKILL.md")),
+        "and a file that was not runnable must not have become one — the bit is carried, not \
+         handed out"
+    );
+    assert!(
+        runnable(&store.join("scripts/build.sh")),
+        "the store tree is what a pose by link designates, so it carries the bit too"
+    );
+}
+
+#[test]
+#[cfg(unix)]
+fn guard_a_tree_whose_mode_the_user_changed_is_not_uprooted_and_the_refusal_names_the_divergence() {
+    // The consequence ADR-0050 takes on rather than hides: with the bit under
+    // the fingerprint, a `chmod` by the owner makes the removal refuse — the
+    // same answer, in the same words, adding a file to the tree already gets.
+    // The owner restores the mode and withdraws, having lost nothing.
+    use std::os::unix::fs::PermissionsExt;
+
+    let machine = machine("chmodded-tree");
+    let address = machine.join("root/skills/graphify");
+    let store = machine.join("store/acme-graphify-1.0");
+    let source = source_with_a_script(&machine);
+    let entries = read_tree(&source).expect("the source tree must be readable");
+
+    let posted = pose(
+        BehaviourName::Link,
+        &address,
+        &fragment(&store, entries, Placement::Copy),
+        &OnDisk,
+        &SystemPracticability,
+    )
+    .expect("the pose must succeed");
+    let script = address.join("scripts/build.sh");
+    fs::set_permissions(&script, fs::Permissions::from_mode(0o644)).expect("the user chmods");
+
+    let refusal = withdraw(
+        BehaviourName::Link,
+        &address,
+        &posted.trace,
+        Referents::Last,
+        &OnDisk,
+    )
+    .expect_err("this is no longer the tree that was planted");
+
+    let named = refusal.to_string();
+    assert!(
+        named.contains(&address.display().to_string()),
+        "the refusal must name the directory it left alone: {named}"
+    );
+    let Trace::Tree { posed, .. } = posted.trace else {
+        panic!("a tree pose records a tree trace");
+    };
+    assert!(
+        named.contains(&posed.to_string()),
+        "and the fingerprint it was expecting: {named}"
+    );
+    assert!(
+        script.exists() && address.join("SKILL.md").exists(),
+        "it deletes nothing, and leaves no half-emptied directory"
     );
 }
 

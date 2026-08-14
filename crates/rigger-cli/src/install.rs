@@ -65,7 +65,8 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use rigger_apply::{
-    pose, read_tree, OnDisk, PoseError, StepError, SystemLiveness, SystemPracticability,
+    is_executable, pose, read_tree, OnDisk, PoseError, StepError, SystemLiveness,
+    SystemPracticability,
 };
 use rigger_plan::{BehaviourName, Fragment, Placement, Tree, TreeEntry};
 use rigger_registry::{
@@ -161,14 +162,15 @@ pub fn run(catalog: &str, id: &str) -> ExitCode {
     // behind, not even `.rigger` itself.
     let fragment = match resolved {
         Source::File(path) => {
-            let contents = match read_artefact_file(&path, &descriptor.id) {
-                Ok(contents) => contents,
+            let (contents, executable) = match read_artefact_file(&path, &descriptor.id) {
+                Ok(read) => read,
                 Err(code) => return code,
             };
             Fragment::Artefact {
                 store,
                 contents,
                 placement: Placement::Link,
+                executable,
             }
         }
         Source::Directory(path) => {
@@ -376,8 +378,19 @@ fn descriptor_exit_code(err: &DescriptorError) -> u8 {
     }
 }
 
-/// Reads the bytes of a single artefact file — the [`Source::File`] case of
-/// [`source::resolve`] — or the exit code owed for why it could not be.
+/// Reads the bytes of a single artefact file, and whether it is one the
+/// machine would run — the [`Source::File`] case of [`source::resolve`] — or
+/// the exit code owed for why it could not be.
+///
+/// **`lstat`, and a symbolic link refuses here exactly as it does inside a
+/// tree.** This asked `stat` until ADR-0050: a link internal to the catalogue
+/// root was followed without a word, while the same link one directory down —
+/// where [`read_tree`] walks — refused. Neither reading let anything out of the
+/// root, so it was never a leak; it was a guard whose answer depended on the
+/// shape of the artefact, and nobody can reason about a guard they have to know
+/// which side of the product they are on to predict. The refusal is
+/// [`StepError::SymbolicLink`] itself rather than a message of this module's
+/// own, so the two paths cannot drift into two wordings of one rule.
 ///
 /// **The directory check stays even though `install` now knows how to pose a
 /// tree.** An entry whose disposition names a *file* — from
@@ -387,8 +400,8 @@ fn descriptor_exit_code(err: &DescriptorError) -> u8 {
 /// catalogue declared and what is on disk, and the product does not
 /// silently reinterpret one shape as the other. It names the mismatch and
 /// refuses.
-fn read_artefact_file(path: &Path, id: &str) -> Result<String, ExitCode> {
-    let metadata = match std::fs::metadata(path) {
+fn read_artefact_file(path: &Path, id: &str) -> Result<(String, bool), ExitCode> {
+    let metadata = match std::fs::symlink_metadata(path) {
         Ok(metadata) => metadata,
         Err(err) if err.kind() == io::ErrorKind::NotFound => {
             eprintln!(
@@ -402,6 +415,9 @@ fn read_artefact_file(path: &Path, id: &str) -> Result<String, ExitCode> {
             return Err(ExitCode::from(crate::RUNTIME_FAILURE));
         }
     };
+    if metadata.file_type().is_symlink() {
+        return Err(refuse_symbolic_link(path, id));
+    }
     if metadata.is_dir() {
         eprintln!(
             "rigger-cli: cannot install `{id}`: `{}` is a directory, and this entry's disposition \
@@ -411,10 +427,27 @@ fn read_artefact_file(path: &Path, id: &str) -> Result<String, ExitCode> {
         );
         return Err(ExitCode::from(crate::REQUEST_CANNOT_BE_SATISFIED));
     }
-    std::fs::read_to_string(path).map_err(|err| {
+    let contents = std::fs::read_to_string(path).map_err(|err| {
         eprintln!("rigger-cli: cannot read `{}`: {err}", path.display());
         ExitCode::from(crate::RUNTIME_FAILURE)
-    })
+    })?;
+    Ok((contents, is_executable(&metadata)))
+}
+
+/// The refusal a symbolic link found on a read path is owed — the one
+/// [`read_tree`] raises, printed and coded by this crate's own rules for a
+/// [`StepError`] raised while reading a source.
+///
+/// It exists so the single-file path and the multi-file path say the same
+/// sentence as the tree walk, without either of them writing that sentence
+/// out: a rule reworded per call site is a rule that has already started to be
+/// two rules.
+fn refuse_symbolic_link(path: &Path, id: &str) -> ExitCode {
+    let refusal = StepError::SymbolicLink {
+        address: path.to_path_buf(),
+    };
+    eprintln!("rigger-cli: cannot install `{id}`: {refusal}");
+    ExitCode::from(tree_read_exit_code(&refusal))
 }
 
 /// The exit code owed for a [`StepError`] [`read_tree`] raised while reading
@@ -455,6 +488,26 @@ fn tree_read_exit_code(err: &StepError) -> u8 {
 fn read_named_files(paths: &[PathBuf], id: &str) -> Result<Tree, ExitCode> {
     let mut entries = Vec::with_capacity(paths.len());
     for path in paths {
+        // Named one by one rather than walked, so this is the third read path
+        // and it asks the same question the other two do — `lstat` first, and a
+        // symbolic link refuses before any byte of it is read (ADR-0050).
+        let metadata = match std::fs::symlink_metadata(path) {
+            Ok(metadata) => metadata,
+            Err(err) if err.kind() == io::ErrorKind::NotFound => {
+                eprintln!(
+                    "rigger-cli: cannot install `{id}`: no artefact at `{}`",
+                    path.display()
+                );
+                return Err(ExitCode::from(crate::REQUEST_CANNOT_BE_SATISFIED));
+            }
+            Err(err) => {
+                eprintln!("rigger-cli: cannot read `{}`: {err}", path.display());
+                return Err(ExitCode::from(crate::RUNTIME_FAILURE));
+            }
+        };
+        if metadata.file_type().is_symlink() {
+            return Err(refuse_symbolic_link(path, id));
+        }
         let contents = match std::fs::read_to_string(path) {
             Ok(contents) => contents,
             Err(err) if err.kind() == io::ErrorKind::NotFound => {
@@ -480,7 +533,11 @@ fn read_named_files(paths: &[PathBuf], id: &str) -> Result<Tree, ExitCode> {
                 return Err(ExitCode::from(crate::REQUEST_CANNOT_BE_SATISFIED));
             }
         };
-        entries.push(TreeEntry { name, contents });
+        entries.push(TreeEntry {
+            name,
+            contents,
+            executable: is_executable(&metadata),
+        });
     }
     let tree = Tree::of(entries);
     if let Some(duplicate) = first_duplicate_name(tree.entries()) {

@@ -47,6 +47,7 @@ fn artefact(store: &Path, placement: Placement) -> Fragment {
         store: store.to_path_buf(),
         contents: ARTEFACT.to_string(),
         placement,
+        executable: false,
     }
 }
 
@@ -304,6 +305,7 @@ fn a4_a_step_touching_an_address_the_capture_did_not_name_is_refused_before_anyt
         &[Effect::Create {
             address: served.changes.clone(),
             contents: ARTEFACT.to_string(),
+            executable: false,
         }],
         &OnDisk,
     )

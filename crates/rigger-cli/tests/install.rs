@@ -642,3 +642,141 @@ fn installing_over_a_file_the_registry_does_not_know_about_is_a_runtime_failure_
         "install overwrote a file it never put there"
     );
 }
+
+#[test]
+#[cfg(unix)]
+fn a_single_file_artefact_the_catalogue_made_runnable_is_posed_runnable() {
+    // The defect, at a shape the reference catalogue does not have: a source in
+    // 755 was posed in 644 and the product said nothing. Measured on the file
+    // the address resolves to — the pose is by link, so the mode is carried by
+    // the store entry, and a check stopping at the link would read the mode of
+    // a link, which on this kind of system says nothing about anything.
+    use std::os::unix::fs::PermissionsExt;
+
+    let scratch = Scratch::new("executable-artefact");
+    let root = scratch.root();
+    scratch.write_source("hooks/guard-command.sh", "#!/bin/sh\nexit 0\n");
+    std::fs::set_permissions(
+        scratch.base.join("hooks/guard-command.sh"),
+        std::fs::Permissions::from_mode(0o755),
+    )
+    .expect("make the source runnable");
+    let catalogue = scratch.catalogue_with(
+        "hook:guard-command",
+        "hook",
+        "path = \"hooks/guard-command.sh\"\n",
+    );
+
+    let output = run(
+        &root,
+        &["install", catalogue.to_str().unwrap(), "hook:guard-command"],
+    );
+
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "exit code, stderr: {}",
+        stderr_of(&output)
+    );
+    let posed = root.join("hook-guard-command");
+    assert_eq!(
+        std::fs::read_to_string(&posed).expect("the pose should have written the artefact"),
+        "#!/bin/sh\nexit 0\n"
+    );
+    assert!(
+        std::fs::metadata(&posed)
+            .expect("read the mode of what the address resolves to")
+            .permissions()
+            .mode()
+            & 0o111
+            != 0,
+        "a script the catalogue distributes must be runnable where it was posed"
+    );
+}
+
+#[test]
+#[cfg(unix)]
+fn a_single_file_artefact_that_is_a_symbolic_link_is_refused_the_way_a_tree_is() {
+    // The asymmetry ADR-0050 closes. A link at any depth of a source *tree* was
+    // already refused; a source naming one *file* was `stat`ed, so a link
+    // internal to the catalogue root was followed without a word. Nothing
+    // escaped the root either way — confinement covers that on both sides — so
+    // this is not a leak but a guard whose answer depended on the shape of the
+    // artefact, which nobody can predict without knowing where they stand.
+    let scratch = Scratch::new("linked-artefact");
+    let root = scratch.root();
+    scratch.write_source("hooks/real.sh", "#!/bin/sh\nexit 0\n");
+    std::os::unix::fs::symlink("real.sh", scratch.base.join("hooks/guard-command.sh"))
+        .expect("place the link");
+    let catalogue = scratch.catalogue_with(
+        "hook:guard-command",
+        "hook",
+        "path = \"hooks/guard-command.sh\"\n",
+    );
+
+    let output = run(
+        &root,
+        &["install", catalogue.to_str().unwrap(), "hook:guard-command"],
+    );
+
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "a link in the source is a fact about the catalogue, fixed only by changing it — never a \
+         failure of this machine to retry, stderr: {}",
+        stderr_of(&output)
+    );
+    assert!(
+        stderr_of(&output).contains("a symbolic link is refused before anything is written"),
+        "the refusal must be the one a tree gets, word for word: {}",
+        stderr_of(&output)
+    );
+    assert_eq!(
+        top_level(&root),
+        Vec::<String>::new(),
+        "the source is read before anything is written, so nothing may be left behind — not even \
+         `.rigger`"
+    );
+}
+
+#[test]
+#[cfg(unix)]
+fn one_symbolic_link_among_the_files_a_path_array_names_refuses_the_whole_entry() {
+    // The third read path: named file by file rather than walked, so it
+    // inherits neither the tree walk's guard nor the single file's. The link
+    // sits second on purpose — a check made before the loop, or on whichever
+    // member is read first, lets this case through.
+    let scratch = Scratch::new("linked-among-files");
+    let root = scratch.root();
+    scratch.write_source("contexts/AGENTS.md", "# Context\n");
+    scratch.write_source("contexts/real.md", "# Real\n");
+    std::os::unix::fs::symlink("real.md", scratch.base.join("contexts/CLAUDE.md"))
+        .expect("place the link");
+    let catalogue = scratch.catalogue_with(
+        "context:claude",
+        "context",
+        "path = [\"contexts/AGENTS.md\", \"contexts/CLAUDE.md\"]\n",
+    );
+
+    let output = run(
+        &root,
+        &["install", catalogue.to_str().unwrap(), "context:claude"],
+    );
+
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "stderr: {}",
+        stderr_of(&output)
+    );
+    assert!(
+        stderr_of(&output).contains("a symbolic link is refused before anything is written"),
+        "the refusal must be the one the other two read paths give: {}",
+        stderr_of(&output)
+    );
+    assert_eq!(
+        top_level(&root),
+        Vec::<String>::new(),
+        "one refused member refuses the whole entry, and nothing is written for any of them"
+    );
+}

@@ -22,7 +22,7 @@ pub mod txn;
 
 pub use lock::{Expired, Held, Liveness, LivenessProbe, Lock, LockError, Observed, SystemLiveness};
 pub use pose::{
-    carry, pose, read_tree, withdraw, LinkPrimitive, LinkProbe, Measured, OnDisk,
+    carry, is_executable, pose, read_tree, withdraw, LinkPrimitive, LinkProbe, Measured, OnDisk,
     OnDiskWithLinkPrimitive, PoseError, Posted, Practicability, StepError, Steps,
     SystemPracticability,
 };

@@ -137,6 +137,7 @@ fn artefact(store: &Path, placement: Placement) -> Fragment {
         store: store.to_path_buf(),
         contents: ARTEFACT.to_string(),
         placement,
+        executable: false,
     }
 }
 
@@ -190,6 +191,7 @@ fn b8_a_removal_takes_away_what_the_steps_before_it_posed() {
         Effect::Materialise {
             address: store.clone(),
             contents: ARTEFACT.to_string(),
+            executable: false,
         },
         Effect::Link {
             address: linked.clone(),
@@ -198,6 +200,7 @@ fn b8_a_removal_takes_away_what_the_steps_before_it_posed() {
         Effect::Create {
             address: copied.clone(),
             contents: ARTEFACT.to_string(),
+            executable: false,
         },
         Effect::Unlink {
             address: linked,

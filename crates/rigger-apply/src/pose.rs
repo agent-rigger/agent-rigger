@@ -97,16 +97,25 @@ pub enum StepError {
         /// The directory that is not there.
         directory: PathBuf,
     },
-    /// A symbolic link was found inside a tree the product was about to read.
+    /// A symbolic link was found where the product was about to read an
+    /// artefact — inside a tree, at any depth, or as the artefact itself.
     ///
-    /// **Refused before a single byte is written**, and at any depth. What a
-    /// link designates is decided elsewhere and can be moved afterwards, so a
-    /// tree carrying one is a tree whose contents the fingerprint does not
-    /// describe: the removal would then compare the manifest against something
-    /// else than what it posed, and either refuse a tree nobody touched or
-    /// delete through the link. The reference catalogue measured on 2026-08-14
-    /// holds none — 73 files, no link — which is exactly why this refusal is
-    /// writable today and would be unprovable once one existed.
+    /// **Refused before a single byte is written.** What a link designates is
+    /// decided elsewhere and can be moved afterwards, so what carries one is
+    /// something whose contents the fingerprint does not describe: the removal
+    /// would then compare what was recorded against something else than what it
+    /// posed, and either refuse what nobody touched or delete through the link.
+    /// The reference catalogue measured on 2026-08-14 holds none — 73 files, no
+    /// link — which is exactly why this refusal is writable today and would be
+    /// unprovable once one existed.
+    ///
+    /// **The refusal does not depend on the shape of the artefact**, and
+    /// ADR-0050 is what made that true: a single-file artefact used to be
+    /// `stat`ed rather than `lstat`ed, so a link inside the catalogue root was
+    /// followed without a word while the same link one directory down refused.
+    /// A guard that answers differently on either side of a product is a guard
+    /// nobody can reason about — which is why the message below names a link and
+    /// never a tree.
     SymbolicLink {
         /// The link that was found.
         address: PathBuf,
@@ -171,9 +180,9 @@ impl fmt::Display for StepError {
             ),
             Self::SymbolicLink { address } => write!(
                 f,
-                "{}: a tree carrying a symbolic link is refused before anything is written — what \
-                 it designates is decided elsewhere and can be moved afterwards, so the \
-                 fingerprint of the tree would not describe what the tree holds",
+                "{}: a symbolic link is refused before anything is written — what it designates is \
+                 decided elsewhere and can be moved afterwards, so the fingerprint of what would \
+                 be posed does not describe what would be posed",
                 address.display()
             ),
             Self::EscapesTheTree { address, name } => write!(
@@ -227,9 +236,13 @@ pub struct OnDisk;
 impl Steps for OnDisk {
     fn carry_out(&self, effect: &Effect) -> Result<(), StepError> {
         match effect {
-            Effect::Create { address, contents } => {
+            Effect::Create {
+                address,
+                contents,
+                executable,
+            } => {
                 refuse_if_present(address)?;
-                put(address, contents)
+                put(address, contents, *executable)
             }
             Effect::Write {
                 address,
@@ -241,9 +254,25 @@ impl Steps for OnDisk {
                     .commit(&Fingerprint::of(expected.as_bytes()))
                     .map_err(StepError::Txn)
             }
-            Effect::Materialise { address, contents } => match present(address)? {
-                None => put(address, contents),
-                Some(Seized::Document { contents: held, .. }) if held == *contents => Ok(()),
+            // **The entry already there under these bytes still has its mode
+            // set.** `Seized::Document` carries bytes and not a mode, so there
+            // is nothing to compare here and the step simply states what the
+            // mode is to be — which is idempotent, and is what makes a store
+            // entry a build without mode preservation left behind become
+            // runnable on the next install of the same artefact instead of
+            // staying silently unrunnable for ever.
+            Effect::Materialise {
+                address,
+                contents,
+                executable,
+            } => match present(address)? {
+                None => put(address, contents, *executable),
+                Some(Seized::Document { contents: held, .. }) if held == *contents => {
+                    set_executable(address, *executable).map_err(|detail| StepError::Io {
+                        address: address.clone(),
+                        detail,
+                    })
+                }
                 Some(_) => Err(StepError::StoreConflict {
                     address: address.clone(),
                 }),
@@ -484,7 +513,13 @@ fn restore(seized: &Seized) -> Result<(), StepError> {
         // at a time it produces the same file, and the difference is a window.
         // The property is held by the choice of primitive, as the exchange of
         // the lock is, and not by an assertion.
-        Seized::Document { address, contents } => put(address, contents),
+        // **Without a mode, because none was seized.** [`Seized::Document`]
+        // holds the bytes a capture read and not the permissions they were
+        // under, so the restoration writes a document the way this crate has
+        // always written one and claims nothing more. Widening the capture to
+        // the mode is a change to what a rollback promises, and ADR-0050 decides
+        // what a *pose* writes rather than what a capture holds.
+        Seized::Document { address, contents } => put(address, contents, false),
         Seized::Link { address, to } => {
             take_away(address)?;
             require_directory(address)?;
@@ -698,6 +733,13 @@ impl Measured {
 /// the only answer that stays true after the fact — and it can be written today
 /// only because no tree the product serves carries a link yet.
 ///
+/// **Each file's executable bit is read here, and it is the whole of the mode
+/// this walk keeps.** ADR-0050 requires the mode posed to be the mode verified,
+/// and requires exactly that much of it: *"the read and write bits depend on the
+/// umask of whoever installs, so the fingerprint would vary from one machine to
+/// the next for an identical tree. The executable bit is the only one that
+/// carries an intention of the catalogue."*
+///
 /// **A file the product cannot hold as text refuses too**, for the reason the
 /// capture already refuses one: a tree it cannot give back exactly is a tree it
 /// must not take away.
@@ -747,6 +789,7 @@ fn read_tree_into(
         found.push(TreeEntry {
             name: relative_name(root, &path)?,
             contents,
+            executable: is_executable(&metadata),
         });
     }
     Ok(())
@@ -858,6 +901,15 @@ fn build_in_transit(address: &Path, transit: &Path, tree: &Tree) -> Result<(), S
             address: file.clone(),
             detail,
         })?;
+        // Inside the transit area, so that the directory renamed into place
+        // carries every file's final mode from the instant it appears: a mode
+        // set after the rename would be a second visible state, and the window
+        // between the two is exactly what planting through a rename exists to
+        // remove.
+        set_executable(&file, entry.executable).map_err(|detail| StepError::Io {
+            address: file.clone(),
+            detail,
+        })?;
     }
     Ok(())
 }
@@ -920,7 +972,12 @@ fn require_directory(address: &Path) -> Result<(), StepError> {
 /// The rename replaces whatever the address carries. Callers that must not
 /// replace anything say so themselves, before calling: [`Effect::Create`] refuses
 /// on an occupied address, and it is a different promise from this one.
-fn put(address: &Path, contents: &str) -> Result<(), StepError> {
+///
+/// **The mode is set on the temporary, before the rename.** Setting it after
+/// would make the file exist, for an instant, under a mode that is not the one
+/// posed — and leave it there for good if the process stops in between, which is
+/// the half-written state the rename exists to make impossible.
+fn put(address: &Path, contents: &str, executable: bool) -> Result<(), StepError> {
     require_directory(address)?;
     let directory = address.parent().unwrap_or_else(|| Path::new("."));
     let name = address
@@ -933,10 +990,79 @@ fn put(address: &Path, contents: &str) -> Result<(), StepError> {
         detail,
     };
     fs::write(&temporary, contents).map_err(failed)?;
+    if let Err(detail) = set_executable(&temporary, executable) {
+        let _ = fs::remove_file(&temporary);
+        return Err(failed(detail));
+    }
     if let Err(detail) = fs::rename(&temporary, address) {
         let _ = fs::remove_file(&temporary);
         return Err(failed(detail));
     }
+    Ok(())
+}
+
+/// Whether `metadata` describes a file this machine would run.
+///
+/// **One bit of the mode, and it is the only one anything here keeps.** ADR-0050
+/// rules that what is posed is what is verified and rules exactly this much of
+/// the mode: *"the read and write bits depend on the umask of whoever installs,
+/// so the fingerprint would vary from one machine to the next for an identical
+/// tree. The executable bit is the only one that carries an intention of the
+/// catalogue."*
+///
+/// It is public because the guard belongs to whoever reads an artefact off a
+/// disk, and a single file is read by `rigger-cli` rather than by
+/// [`read_tree`] — two answers to "is this executable" would drift, and the day
+/// they did, a file posed through one path and fingerprinted through the other
+/// would refuse its own removal.
+#[cfg(unix)]
+pub fn is_executable(metadata: &fs::Metadata) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+
+    metadata.permissions().mode() & 0o111 != 0
+}
+
+/// Whether `metadata` describes a file this machine would run — **never, on a
+/// system whose permissions are not a mode**.
+///
+/// This is not a stub standing in for an unwritten branch: there is no bit to
+/// read, [`set_executable`] correspondingly writes none, and the two together
+/// keep the answer consistent with what such a machine can actually hold. A tree
+/// read there fingerprints as carrying no executable file, which is true of it.
+#[cfg(not(unix))]
+pub fn is_executable(_metadata: &fs::Metadata) -> bool {
+    false
+}
+
+/// Makes what is at `path` executable, or makes it not, and does nothing when it
+/// is already what is asked.
+///
+/// **It adds the bit where a read bit already stands**, which is the gesture
+/// `chmod +x` makes rather than a fixed mode written over the file's own. A fixed
+/// `0o755` would hand out read access the umask of whoever installs had
+/// deliberately withheld; deriving the bit from the read bits leaves that
+/// decision where it was made and changes only the one bit ADR-0050 puts under
+/// the fingerprint.
+#[cfg(unix)]
+fn set_executable(path: &Path, executable: bool) -> io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let mode = fs::metadata(path)?.permissions().mode();
+    let wanted = if executable {
+        mode | ((mode & 0o444) >> 2)
+    } else {
+        mode & !0o111
+    };
+    if wanted == mode {
+        return Ok(());
+    }
+    fs::set_permissions(path, fs::Permissions::from_mode(wanted))
+}
+
+/// Makes what is at `path` executable — **nothing at all, on a system whose
+/// permissions are not a mode**, matching [`is_executable`]'s answer there.
+#[cfg(not(unix))]
+fn set_executable(_path: &Path, _executable: bool) -> io::Result<()> {
     Ok(())
 }
 
@@ -1201,6 +1327,7 @@ pub struct Posted {
 ///     store: PathBuf::from("/store/acme-review-1.0"),
 ///     contents: "# Review\n".to_string(),
 ///     placement: Placement::Link,
+///     executable: false,
 /// };
 /// pose(
 ///     BehaviourName::Link,
@@ -1224,6 +1351,7 @@ pub struct Posted {
 ///     store: PathBuf::from("/store/acme-review-1.0"),
 ///     contents: "# Review\n".to_string(),
 ///     placement: Placement::Link,
+///     executable: false,
 /// };
 /// let posted = pose(
 ///     BehaviourName::Link,

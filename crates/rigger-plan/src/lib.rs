@@ -353,6 +353,18 @@ pub struct TreeEntry {
     pub name: String,
     /// The bytes of the file.
     pub contents: String,
+    /// Whether this file is one the machine would run.
+    ///
+    /// **The executable bit alone, and never the whole mode.** ADR-0050 rules
+    /// that the mode posed is the mode verified, and it rules exactly this much
+    /// of it: *"the read and write bits depend on the umask of whoever installs,
+    /// so the fingerprint would vary from one machine to the next for an
+    /// identical tree. The executable bit is the only one that carries an
+    /// intention of the catalogue."* A wider field would make two machines
+    /// holding the same tree disagree about what is on them, and the diagnostic
+    /// that tells "the product wrote this" from "somebody rewrote it" would
+    /// answer the second on every tree installed under a different umask.
+    pub executable: bool,
 }
 
 /// The files of a directory posed as **one** thing.
@@ -371,6 +383,15 @@ pub struct Tree {
     entries: Vec<TreeEntry>,
 }
 
+/// The bit of a manifest's name-length field that says the file is executable.
+///
+/// **The top bit of a `u64`, which no length ever reaches** — a name of that
+/// many bytes cannot be held in memory, let alone written on a disk. So the
+/// field is still a length and the flag is still a flag, and a reader
+/// reimplementing [`Tree::fingerprint`] parses the eight bytes exactly as
+/// before, masking this one off.
+const EXECUTABLE: u64 = 1 << 63;
+
 impl Tree {
     /// These files, sorted by name.
     pub fn of(mut entries: Vec<TreeEntry>) -> Self {
@@ -386,25 +407,37 @@ impl Tree {
     /// The fingerprint of the **sorted manifest**: every name, in order, and the
     /// bytes under it.
     ///
+    /// **The executable bit is inside this fingerprint, and it rides in the high
+    /// bit of the name's length field.** ADR-0050 requires it: the pose now
+    /// carries the source's executable bit onto the file it writes, and *"posing
+    /// a property one does not verify deprives the removal of its criterion"* —
+    /// it could no longer say whether the disk still holds what was posed, which
+    /// is the one thing this fingerprint exists to say.
+    ///
+    /// It rides in [`EXECUTABLE`] rather than in a field of its own so that the
+    /// manifest of a tree carrying no executable file stays **byte for byte** the
+    /// one this crate wrote before the bit was covered. That is what keeps a
+    /// registry written by an earlier build both readable and *right*: nothing an
+    /// earlier build ever posed carries the bit — it could not preserve one — so
+    /// no fingerprint it recorded changes value here, and none of them starts
+    /// comparing equal to a tree it does not describe.
+    ///
     /// Each name and each content goes into the manifest behind its length, over
     /// eight bytes, little-endian. Naming that is the point, as it is for
     /// [`Digest`] itself — a reader can reimplement it and get the same answer.
     /// Without the lengths, a file named `a` holding `bc` and a file named `ab`
     /// holding `c` would produce the same manifest, and one tree could pass for
-    /// the other.
-    ///
-    /// **The executable bit is deliberately outside this fingerprint.** The
-    /// reference catalogue measured on 2026-08-14 carries none — 73 files, no
-    /// executable bit on any of them — but that is the measurement of one day and
-    /// not a property of the format. So two trees differing by a permission bit
-    /// alone fingerprint alike, and a removal conditioned on this fingerprint
-    /// accepts either. The day a catalogue poses a script it expects to be
-    /// runnable, this manifest has to grow a field; this paragraph is the record
-    /// that the omission was chosen rather than missed.
+    /// the other. The flag does not weaken that: it sits in a bit no length can
+    /// reach, so the field is still read as eight fixed bytes and still says how
+    /// far the name runs.
     pub fn fingerprint(&self) -> Digest {
         let mut manifest: Vec<u8> = Vec::new();
         for entry in &self.entries {
-            manifest.extend_from_slice(&(entry.name.len() as u64).to_le_bytes());
+            let mut name = entry.name.len() as u64;
+            if entry.executable {
+                name |= EXECUTABLE;
+            }
+            manifest.extend_from_slice(&name.to_le_bytes());
             manifest.extend_from_slice(entry.name.as_bytes());
             manifest.extend_from_slice(&(entry.contents.len() as u64).to_le_bytes());
             manifest.extend_from_slice(entry.contents.as_bytes());
@@ -445,6 +478,10 @@ pub enum Effect {
         address: PathBuf,
         /// The bytes.
         contents: String,
+        /// Whether the file left there is one the machine would run — see
+        /// [`TreeEntry::executable`] for why it is the one permission bit this
+        /// crate carries.
+        executable: bool,
     },
     /// Replace the document at this address, **conditioned on the bytes the
     /// capture read**. Any divergence is a failure naming the file, never an
@@ -463,11 +500,32 @@ pub enum Effect {
     /// materialisation. Already there with **other** bytes, the step fails
     /// naming the entry: one store entry standing for two different contents is
     /// the one state a shared store must never reach.
+    ///
+    /// **Already there with these bytes under another mode, the step sets the
+    /// mode and nothing else.** A store entry is the product's own file, and the
+    /// one thing that decides its mode is the artefact it materialises; leaving
+    /// a mode from a previous run there would make a second install of the same
+    /// artefact answer differently from the first, which is the shape of defect
+    /// ADR-0050 exists to close.
     Materialise {
         /// The store entry.
         address: PathBuf,
         /// The bytes.
         contents: String,
+        /// Whether the entry is one the machine would run — see
+        /// [`TreeEntry::executable`] for why it is the one permission bit this
+        /// crate carries.
+        ///
+        /// **The fingerprint of a single artefact does not cover it**, unlike a
+        /// tree's: [`Trace::Link`] records `Digest::of(contents)`, and giving
+        /// that value a second definition would make every fingerprint an
+        /// earlier build wrote compare unequal to the file it describes — a
+        /// removal refusing to take back what the product itself posed, on every
+        /// entry already installed. A tree pays no such price because its
+        /// manifest had a fixed-width field with a spare bit to carry the flag
+        /// in; a bare artefact's bytes have nowhere to put one that an older
+        /// value could not already be.
+        executable: bool,
     },
     /// Make a symbolic link at this address, designating `to`. If something is
     /// already at the address, the step fails naming it.
@@ -736,6 +794,12 @@ pub enum Fragment {
         contents: String,
         /// Whether the address gets a link or a copy.
         placement: Placement,
+        /// Whether the artefact is one the machine would run — read off the
+        /// source by whoever read its bytes, and carried onto what is posed.
+        /// See [`TreeEntry::executable`] for why it is the one permission bit
+        /// this crate carries, and [`Effect::Materialise::executable`] for what
+        /// a single artefact's fingerprint does and does not say about it.
+        executable: bool,
     },
     /// A whole **directory**, posed as one indivisible thing.
     ///
@@ -1264,6 +1328,7 @@ impl std::error::Error for BehaviourError {}
 /// let effects = vec![Effect::Create {
 ///     address: PathBuf::from("settings.json"),
 ///     contents: "{}\n".to_string(),
+///     executable: false,
 /// }];
 /// assert_eq!(
 ///     Outsider.capture(&effects).unwrap(),
@@ -1302,6 +1367,7 @@ impl std::error::Error for BehaviourError {}
 /// let effects = vec![Effect::Create {
 ///     address: PathBuf::from("settings.json"),
 ///     contents: "{}\n".to_string(),
+///     executable: false,
 /// }];
 /// assert_eq!(
 ///     Outsider.capture(&effects).unwrap(),
@@ -1340,6 +1406,7 @@ impl std::error::Error for BehaviourError {}
 /// let effects = vec![Effect::Create {
 ///     address: PathBuf::from("settings.json"),
 ///     contents: "{}\n".to_string(),
+///     executable: false,
 /// }];
 /// assert_eq!(
 ///     Outsider.capture(&effects).unwrap(),
@@ -1367,6 +1434,7 @@ pub trait Behaviour {
     ///     store: PathBuf::from("/store/acme-review-1.0"),
     ///     contents: "# Review\n".to_string(),
     ///     placement: Placement::Link,
+    ///     executable: false,
     /// };
     /// let subject = Subject { address: Path::new("review.md"), observed: None };
     /// served.pose(subject, &fragment).unwrap();
@@ -1384,6 +1452,7 @@ pub trait Behaviour {
     ///     store: PathBuf::from("/store/acme-review-1.0"),
     ///     contents: "# Review\n".to_string(),
     ///     placement: Placement::Link,
+    ///     executable: false,
     /// };
     /// let subject = Subject { address: Path::new("review.md"), observed: None };
     /// let posed = served.pose(subject, &fragment).unwrap();
@@ -1569,6 +1638,7 @@ impl Behaviour for Link {
                 store,
                 contents,
                 placement,
+                executable,
             } => {
                 let at_the_address = match placement {
                     Placement::Link => Effect::Link {
@@ -1578,6 +1648,7 @@ impl Behaviour for Link {
                     Placement::Copy => Effect::Create {
                         address: subject.address.to_path_buf(),
                         contents: contents.clone(),
+                        executable: *executable,
                     },
                 };
                 let fingerprint = Digest::of(contents.as_bytes());
@@ -1586,6 +1657,7 @@ impl Behaviour for Link {
                         Effect::Materialise {
                             address: store.clone(),
                             contents: contents.clone(),
+                            executable: *executable,
                         },
                         at_the_address,
                     ],

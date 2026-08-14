@@ -150,6 +150,7 @@ fn install(
             store,
             contents: ARTEFACT.to_string(),
             placement: Placement::Link,
+            executable: false,
         },
         &OnDisk,
         &SystemPracticability,
