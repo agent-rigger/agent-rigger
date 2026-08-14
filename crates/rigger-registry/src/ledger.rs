@@ -465,9 +465,12 @@ pub struct Posting {
 ///
 /// **What each resolved member is allowed to have recorded, and why.**
 /// `link` records [`Trace::Link`] or [`Trace::Tree`] — a store entry it
-/// materialised, of one file or of a whole directory. The two are one member's
-/// because they are one member's: the same name poses both, undoes both with the
-/// same two gestures, and records both under three fields of the same meaning.
+/// materialised, of one file or of a whole directory. Both belong to `link`
+/// because a file and a directory are the same gesture at two granularities:
+/// one name poses either, undoes either by replaying what it recorded, and
+/// describes either with the same three fields — the store entry, where it was
+/// placed, and the fingerprint that says the disk still holds what was posed.
+/// A second member would have to restate all three to earn its own name.
 /// `merge` records only [`Trace::Grammar`]; every [`Trace::Grammar`] is
 /// already refused by [`record`] as not recordable by this build, so this
 /// arm is reached by nothing today and is kept so that the day `merge`
