@@ -34,10 +34,12 @@
 use std::io::Write;
 use std::process::ExitCode;
 
+mod confine;
 mod consent;
 mod descriptor;
 mod install;
 mod remove;
+mod source;
 
 /// Whether `code` is one the product's exit-code contract ratifies.
 ///

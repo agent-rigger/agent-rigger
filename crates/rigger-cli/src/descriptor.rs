@@ -1,34 +1,93 @@
 //! Reads one entry's descriptor out of a catalogue — the plumbing `install`
-//! needs before it can pose anything, and nothing past that.
+//! needs before it can pose anything.
 //!
 //! **Hard-coded to the one shape a real catalogue carries today**, per this
 //! change's mandate: a `format = 1` marker at the document's root, and a flat
 //! `[[entries]]` array whose members carry `kind`, `id` and `nature` as
-//! strings. A future format is not read here — `jr-agent-rigger-catalog`'s own
-//! contract still carries open questions about how an entry is found by id at
-//! all, and this reader answers none of them; it reads the one document that
-//! exists.
+//! strings, plus an optional `path`. A future format is not read here —
+//! `jr-agent-rigger-catalog`'s own contract still carries open questions
+//! about how an entry is found by id at all, and this reader answers none of
+//! them; it reads the one document that exists.
+//!
+//! It also carries [`NATURE_TABLE`] — ADR-0048's rule for where a nature's
+//! artefact sits under the catalogue root, absent a `path` override. Turning
+//! that table, and an entry's own `path`, into a confined location on disk is
+//! [`crate::source::resolve`]'s job, not this module's: this one only reads
+//! what the catalogue says, and names the rule the nature alone implies.
 
 use std::fmt;
 use std::path::{Path, PathBuf};
 
-use toml_edit::DocumentMut;
+use toml_edit::{DocumentMut, Item};
 
 /// The format marker this reader recognises. A catalogue declaring another
 /// value is refused by naming it, rather than read as though it were this
 /// one.
 const KNOWN_FORMAT: i64 = 1;
 
+/// Where a nature's artefact sits, relative to the folder its own row in
+/// [`NATURE_TABLE`] names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Disposition {
+    /// A file named `<local id>.<extension>`.
+    File { extension: &'static str },
+    /// A directory named `<local id>`.
+    Directory,
+}
+
+/// nature → (folder under the catalogue root, disposition of what is
+/// there). ADR-0048: measured 2026-08-14 against the 53 artefact entries of
+/// the reference catalogue — 51 follow `<folder>/<local id>` exactly as this
+/// table says, and the two that do not (`context:claude`, whose file name
+/// derives from nothing, and `guardrail:claude`, which names two files) each
+/// carry an explicit `path` on their own entry, which
+/// [`crate::source::resolve`] honours ahead of this table entirely. A
+/// nature this table does not list is refused by name, not guessed at.
+pub const NATURE_TABLE: &[(&str, &str, Disposition)] = &[
+    ("hook", "hooks", Disposition::File { extension: "ts" }),
+    ("agent", "agents", Disposition::File { extension: "md" }),
+    ("skill", "skills", Disposition::Directory),
+    (
+        "workflow",
+        "workflows",
+        Disposition::File { extension: "js" },
+    ),
+    ("lib", "libs", Disposition::Directory),
+    (
+        "guardrail",
+        "guardrails",
+        Disposition::File { extension: "json" },
+    ),
+    ("context", "contexts", Disposition::File { extension: "md" }),
+];
+
+/// The folder and disposition [`NATURE_TABLE`] names for `nature`, or
+/// `None` when `nature` is not one this reader knows.
+pub fn nature_location(nature: &str) -> Option<(&'static str, Disposition)> {
+    NATURE_TABLE
+        .iter()
+        .find(|(known, _, _)| *known == nature)
+        .map(|(_, folder, disposition)| (*folder, *disposition))
+}
+
 /// The fields `install` needs out of one `[[entries]]` member, plus the
 /// catalogue's own name — read from `[meta].name` — which is what
 /// [`rigger_registry::Identity::provenance`] records: two catalogues may
 /// legitimately carry an entry under the same id, and the registry tells
 /// their records apart by this, never by the id alone.
+///
+/// `kind` is not carried here — nothing downstream of this reader consumes
+/// it — but [`read`] still requires the entry to carry one as a string,
+/// unchanged from before this struct's own `path` was added: an entry
+/// missing it fails the same way it always did.
 pub struct Descriptor {
-    pub kind: String,
     pub id: String,
     pub nature: String,
     pub catalogue: String,
+    /// The entry's own `path`, when it carries one — a string or an array
+    /// of strings in the catalogue, always read back as a list. Overrides
+    /// [`NATURE_TABLE`]'s rule for this one entry (ADR-0048 § 2).
+    pub path: Option<Vec<String>>,
 }
 
 /// Why a descriptor could not be read.
@@ -60,6 +119,10 @@ pub enum DescriptorError {
         id: String,
         field: &'static str,
     },
+    /// The entry named `id` carries a `path` field that is neither a
+    /// string nor an array whose members are all strings — the two shapes
+    /// ADR-0048 § 2 accepts.
+    InvalidPath { path: PathBuf, id: String },
 }
 
 impl fmt::Display for DescriptorError {
@@ -90,6 +153,12 @@ impl fmt::Display for DescriptorError {
             Self::MissingField { path, id, field } => write!(
                 f,
                 "{}: entry `{id}` carries no string field `{field}`",
+                path.display()
+            ),
+            Self::InvalidPath { path, id } => write!(
+                f,
+                "{}: entry `{id}` carries a `path` field that is neither a string nor an array of \
+                 strings",
                 path.display()
             ),
         }
@@ -155,10 +224,36 @@ pub fn read(path: &Path, id: &str) -> Result<Descriptor, DescriptorError> {
             })
     };
 
+    field("kind")?;
+    let entry_id = field("id")?;
+    let path = match entry.get("path") {
+        None => None,
+        Some(item) => Some(
+            read_path_field(item).ok_or_else(|| DescriptorError::InvalidPath {
+                path: path.to_path_buf(),
+                id: entry_id.clone(),
+            })?,
+        ),
+    };
+
     Ok(Descriptor {
-        kind: field("kind")?,
-        id: field("id")?,
+        id: entry_id,
         nature: field("nature")?,
         catalogue,
+        path,
     })
+}
+
+/// Reads a `path` field as either one string or an array of strings — the
+/// two shapes ADR-0048 § 2 accepts for an entry's override. `None` when
+/// `item` is neither of those two shapes, or when an array member of it is
+/// not itself a string.
+fn read_path_field(item: &Item) -> Option<Vec<String>> {
+    if let Some(single) = item.as_str() {
+        return Some(vec![single.to_string()]);
+    }
+    item.as_array()?
+        .iter()
+        .map(|value| value.as_str().map(str::to_string))
+        .collect()
 }

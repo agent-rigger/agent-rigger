@@ -40,8 +40,10 @@ impl Scratch {
         self.base.join("root")
     }
 
-    /// Writes a one-entry, `format = 1` catalogue naming `id`, and returns
-    /// its path — the one shape `crates/rigger-cli/src/descriptor.rs` reads.
+    /// Writes a one-entry, `format = 1` catalogue naming `id`, and the
+    /// `hooks/<id>.ts` file ADR-0048's nature rule resolves it to, so
+    /// `install` has a real artefact to read — returns the catalogue's
+    /// path, the one shape `crates/rigger-cli/src/descriptor.rs` reads.
     fn catalogue(&self, id: &str) -> PathBuf {
         let path = self.base.join("catalog.toml");
         std::fs::write(
@@ -52,6 +54,13 @@ impl Scratch {
             ),
         )
         .expect("write the catalogue");
+        let hooks = self.base.join("hooks");
+        std::fs::create_dir_all(&hooks).expect("create the hooks folder");
+        std::fs::write(
+            hooks.join(format!("{id}.ts")),
+            "console.log(\"review-checklist\");\n",
+        )
+        .expect("write the real artefact");
         path
     }
 }

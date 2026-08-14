@@ -18,6 +18,12 @@
 //! command that would fail identically every time. It now answers
 //! `REQUEST_CANNOT_BE_SATISFIED` (`2`), the code this binary's own contract
 //! reserves for a request fixed only by asking something different.
+//!
+//! **The tests from `installing_a_hook_poses_the_bytes_of_the_real_artefact`
+//! onward measure ADR-0048** — that what is posed is the artefact
+//! `crates/rigger-cli/src/source.rs` resolves and reads off disk, and that
+//! what its `Source::Directory` and `Source::Files` cases name rather than
+//! read is refused by name, not silently invented into something it is not.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -54,6 +60,35 @@ impl Scratch {
         )
         .expect("write the catalogue");
         path
+    }
+
+    /// Writes a one-entry, `format = 1` catalogue whose entry carries
+    /// `nature`, plus whatever literal TOML lines `extra` holds — a `path =`
+    /// override, or nothing — appended right after `nature`. The fuller
+    /// shape the ADR-0048 tests below need, `catalogue` above being fixed to
+    /// `nature = "hook"` and no override.
+    fn catalogue_with(&self, id: &str, nature: &str, extra: &str) -> PathBuf {
+        let path = self.base.join("catalog.toml");
+        std::fs::write(
+            &path,
+            format!(
+                "format = 1\n\n[meta]\nname = \"acme\"\n\n[[entries]]\nkind = \"artifact\"\nid = \
+                 \"{id}\"\nnature = \"{nature}\"\n{extra}"
+            ),
+        )
+        .expect("write the catalogue");
+        path
+    }
+
+    /// Writes `contents` at `relative`, under this scratch's own base — the
+    /// catalogue root ADR-0048 resolves an artefact source against, since
+    /// `catalogue` and `catalogue_with` both write `catalog.toml` directly
+    /// under it.
+    fn write_source(&self, relative: &str, contents: &str) {
+        let path = self.base.join(relative);
+        std::fs::create_dir_all(path.parent().expect("a source path carries a parent"))
+            .expect("create the artefact's directory");
+        std::fs::write(&path, contents).expect("write the artefact");
     }
 }
 
@@ -225,5 +260,194 @@ fn a_catalogue_that_cannot_be_read_is_an_impossible_request() {
         top_level(&root),
         Vec::<String>::new(),
         "a catalogue that cannot be read left something behind in the root"
+    );
+}
+
+#[test]
+fn installing_a_hook_poses_the_bytes_of_the_real_artefact() {
+    let scratch = Scratch::new("real-artefact");
+    let root = scratch.root();
+    scratch.write_source("hooks/guard-command.ts", "export const guarded = true;\n");
+    let catalogue = scratch.catalogue_with("hook:guard-command", "hook", "");
+
+    let output = run(
+        &root,
+        &["install", catalogue.to_str().unwrap(), "hook:guard-command"],
+    );
+
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "exit code, stderr: {}",
+        stderr_of(&output)
+    );
+    let posed = std::fs::read_to_string(root.join("hook-guard-command"))
+        .expect("the pose should have written `hook-guard-command` at the root");
+    assert_eq!(
+        posed, "export const guarded = true;\n",
+        "install posed something other than the bytes of `hooks/guard-command.ts`"
+    );
+}
+
+#[test]
+fn a_single_string_path_override_poses_the_file_it_names() {
+    let scratch = Scratch::new("override-single");
+    let root = scratch.root();
+    scratch.write_source("contexts/AGENTS.md", "# Context\n");
+    let catalogue = scratch.catalogue_with(
+        "context:claude",
+        "context",
+        "path = \"contexts/AGENTS.md\"\n",
+    );
+
+    let output = run(
+        &root,
+        &["install", catalogue.to_str().unwrap(), "context:claude"],
+    );
+
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "exit code, stderr: {}",
+        stderr_of(&output)
+    );
+    let posed = std::fs::read_to_string(root.join("context-claude"))
+        .expect("the pose should have written `context-claude` at the root");
+    assert_eq!(
+        posed, "# Context\n",
+        "install did not pose the file named by the `path` override"
+    );
+}
+
+#[test]
+fn an_unknown_nature_is_refused_and_nothing_is_written() {
+    let scratch = Scratch::new("unknown-nature");
+    let root = scratch.root();
+    let catalogue = scratch.catalogue_with("plugin:acme", "plugin", "");
+
+    let output = run(
+        &root,
+        &["install", catalogue.to_str().unwrap(), "plugin:acme"],
+    );
+
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "exit code, stdout: {}, stderr: {}",
+        stdout_of(&output),
+        stderr_of(&output)
+    );
+    assert!(
+        stderr_of(&output).contains("nature"),
+        "stderr does not name the unknown nature: {}",
+        stderr_of(&output)
+    );
+    assert_eq!(
+        top_level(&root),
+        Vec::<String>::new(),
+        "an unknown nature left something behind in the root"
+    );
+}
+
+#[test]
+fn an_artefact_absent_on_disk_is_refused_and_nothing_is_written() {
+    let scratch = Scratch::new("artefact-absent");
+    let root = scratch.root();
+    // No `hooks/guard-command.ts` is ever written for this scratch — the
+    // nature resolves cleanly, and the file it names is the thing missing.
+    let catalogue = scratch.catalogue_with("hook:guard-command", "hook", "");
+
+    let output = run(
+        &root,
+        &["install", catalogue.to_str().unwrap(), "hook:guard-command"],
+    );
+
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "exit code, stdout: {}, stderr: {}",
+        stdout_of(&output),
+        stderr_of(&output)
+    );
+    assert!(
+        stderr_of(&output).contains("no artefact"),
+        "stderr does not report the missing artefact: {}",
+        stderr_of(&output)
+    );
+    assert_eq!(
+        top_level(&root),
+        Vec::<String>::new(),
+        "an absent artefact left something behind in the root"
+    );
+}
+
+#[test]
+fn a_directory_disposition_is_refused_and_nothing_is_written() {
+    let scratch = Scratch::new("directory-disposition");
+    let root = scratch.root();
+    scratch.write_source("skills/spec-workflow/SKILL.md", "# Spec workflow\n");
+    let catalogue = scratch.catalogue_with("skill:spec-workflow", "skill", "");
+
+    let output = run(
+        &root,
+        &[
+            "install",
+            catalogue.to_str().unwrap(),
+            "skill:spec-workflow",
+        ],
+    );
+
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "exit code, stdout: {}, stderr: {}",
+        stdout_of(&output),
+        stderr_of(&output)
+    );
+    assert!(
+        stderr_of(&output).contains("directory"),
+        "stderr does not name the directory it cannot pose: {}",
+        stderr_of(&output)
+    );
+    assert_eq!(
+        top_level(&root),
+        Vec::<String>::new(),
+        "a directory-disposition nature left something behind in the root"
+    );
+}
+
+#[test]
+fn a_path_array_naming_more_than_one_file_is_refused_and_nothing_is_written() {
+    let scratch = Scratch::new("multi-file-override");
+    let root = scratch.root();
+    scratch.write_source("guardrails/allow.json", "{}\n");
+    scratch.write_source("guardrails/deny.json", "{}\n");
+    let catalogue = scratch.catalogue_with(
+        "guardrail:claude",
+        "guardrail",
+        "path = [\"guardrails/allow.json\", \"guardrails/deny.json\"]\n",
+    );
+
+    let output = run(
+        &root,
+        &["install", catalogue.to_str().unwrap(), "guardrail:claude"],
+    );
+
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "exit code, stdout: {}, stderr: {}",
+        stdout_of(&output),
+        stderr_of(&output)
+    );
+    assert!(
+        stderr_of(&output).contains("files"),
+        "stderr does not name the multiple files it cannot pose: {}",
+        stderr_of(&output)
+    );
+    assert_eq!(
+        top_level(&root),
+        Vec::<String>::new(),
+        "a multi-file `path` override left something behind in the root"
     );
 }
